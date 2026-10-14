@@ -32,7 +32,7 @@ import argparse
 import dataclasses
 import os
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 from ..config import DEFAULT_COMPARISON_TOLERANCE, Config
@@ -453,6 +453,33 @@ def _on_the_line(node: argparse.ArgumentParser, args, dest: str) -> bool:
     )
 
 
+def _refusing(row: Unread, given: Callable[[str], bool]) -> list[str] | None:
+    """Whether ``row`` refuses its flags on a line that gives the dests
+    ``given`` says: the flags of ``row.beside`` that are given (none, for a
+    row of flags read only beside them), or None when it does not."""
+    beside = [d for d in row.beside if given(d)]
+    if row.with_:
+        if not beside or any(given(d) for d in row.unless):
+            return None
+    elif beside:
+        return None
+    return beside
+
+
+def reads(path: str, dest: str, beside: Collection[str] = ()) -> bool:
+    """Whether `dstf <path>` reads the flag ``dest`` on a line that also
+    gives the flags ``beside`` (dests): it offers it (:data:`READS`) and no
+    :data:`UNREAD` row refuses it there. What a command built for someone
+    to paste may carry — the dashboard's (``compare --accept`` reads no
+    ``--tolerance``)."""
+    return dest in READS[path] and not any(
+        row.command == path
+        and dest in row.flags
+        and _refusing(row, beside.__contains__) is not None
+        for row in UNREAD
+    )
+
+
 def _unread_beside(path: str, node: argparse.ArgumentParser, args) -> str | None:
     """The first flag on the line that :data:`UNREAD` says will not be read
     beside the others, as one sentence naming both; None when there is
@@ -460,12 +487,8 @@ def _unread_beside(path: str, node: argparse.ArgumentParser, args) -> str | None
     for row in UNREAD:
         if row.command != path:
             continue
-        beside = [d for d in row.beside if _on_the_line(node, args, d)]
-        if row.with_ and (
-            not beside or any(_on_the_line(node, args, d) for d in row.unless)
-        ):
-            continue
-        if not row.with_ and beside:
+        beside = _refusing(row, lambda d: _on_the_line(node, args, d))
+        if beside is None:
             continue
         for dest in row.flags:
             if not _on_the_line(node, args, dest):
@@ -1951,4 +1974,5 @@ __all__ = [
     "READS",
     "build_arg_parser",
     "command_path",
+    "reads",
 ]

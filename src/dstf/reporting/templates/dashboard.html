@@ -245,14 +245,10 @@ body.has-selection { padding-bottom: 5em; }
   <button id="btn-download-txt" onclick="downloadFilter()">Download .txt</button>
   <label class="cmd-kind-label">Command
     <select id="cmd-kind" onchange="syncCommand()" title="Which dstf command to build for the selection">
-      <option value="run">run</option>
-      <option value="compare">compare</option>
-      <option value="compare --accept">compare --accept</option>
-      <option value="run --rerun failed,sim-failed">run --rerun failed,sim-failed</option>
-      {% if offers_author %}<option value="author">author</option>{% endif %}
-    </select>
+{% for kind in rerun_flags %}      <option value="{{ kind }}">{{ kind }}</option>
+{% endfor %}    </select>
   </label>
-  {% if not offers_author %}<span class="cmd-note">Open in dstf author: run with a testing.json that names these paths</span>{% endif %}
+  {% if not offers_author %}<span class="cmd-note">No author command: dstf author reads a testing.json, --work-dir and --backend only, and this run used more</span>{% endif %}
   <button class="btn-primary" id="btn-copy-cmd" onclick="copyCommand()">Copy rerun command</button>
   <span class="save-status" id="save-status">Copied!</span>
   <input class="cmd-out" id="cmd-out" readonly placeholder="Selection produces a rerun command here…">

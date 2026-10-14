@@ -25,7 +25,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import time
 import uuid
 from collections.abc import Iterable, Mapping
@@ -85,63 +84,91 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
         return None
 
 
-#: The flag each of `Config.overrides` is given back by, in the order a
-#: built command writes them.
+#: Each of `Config.overrides` by the flag it is given back by (its dest on
+#: the command line), in the order a built command writes them.
 _OVERRIDE_FLAGS = (
-    ("source_path", "--source-path"),
-    ("reference_root", "--reference-root"),
-    ("test_spec_file", "--test-spec"),
-    ("work_dir", "--work-dir"),
-    ("backend_name", "--backend"),
+    ("source_path", "source_path"),
+    ("reference_root", "reference_root"),
+    ("test_spec_file", "test_spec"),
+    ("work_dir", "work_dir"),
+    ("backend_name", "backend"),
+    ("backend_path", "backend_path"),
+    ("tolerance", "tolerance"),
+    ("timeout", "timeout"),
+    ("default_points", "default_points"),
 )
 
-#: The flags `dstf author` reads: it opens the project a testing.json names,
-#: with the work dir and backend it is given, and nothing else.
-_AUTHOR_READS = frozenset({"--config", "--work-dir", "--backend"})
+#: The dashboard's Command menu, in its order: each command's words after
+#: `dstf`, the command they run, and the flags its builder writes on the
+#: line besides the run's (`dashboard.js`: ``--filter`` always, ``--merge
+#: --report`` after a plain `run`).
+COMMAND_KINDS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("run", "run", frozenset({"filter", "merge", "report"})),
+    ("compare", "compare", frozenset({"filter"})),
+    ("compare --accept", "compare", frozenset({"filter", "accept"})),
+    ("run --rerun failed,sim-failed", "run", frozenset({"filter", "rerun"})),
+    ("author", "author", frozenset({"filter"})),
+)
+
+#: The commands offered only when the run had a testing.json and they read
+#: EVERY flag the run was given: `author` simulates and scores by its
+#: testing.json alone, so a run given a place or a setting it does not read
+#: is not the project it would open.
+_WHOLE = frozenset({"author"})
 
 
-def build_rerun_flags(config) -> str:
+def build_rerun_flags(config) -> dict[str, str]:
     """The flags the dashboard's command builder writes after each command
-    — `dstf <kind> <flags> --filter ...`, where the Command menu picks the
-    kind (`run`, `compare`, `compare --accept`, `run --rerun
-    failed,sim-failed`, `author`) — so that the command does the same thing
+    of its Command menu (:data:`COMMAND_KINDS`), by the command — `dstf
+    <kind> <flags> --filter ...` — so that the command does the same thing
     to the same project the run did, pasted into a terminal in any
     directory.
 
-    They name the testing.json the run read or wrote, and every place of
-    the project the run did not take from it (`Config.overrides`: a flag it
-    was given, or a default the current directory decided), each path
+    They name the testing.json the run read or wrote, and everything the
+    run did not take from it or the defaults (`Config.overrides`: a flag it
+    was given, or a place the current directory decided), each path
     absolute. They go after the command because `--work-dir` and
-    `--backend` are offered there only. A Config built with no testing.json
-    (`run_pipeline` called as a library) is named by its library and
-    reference root instead, and then the dashboard offers no `author`
-    (:func:`offers_author`)."""
+    `--backend` are offered there only. Each command carries the ones it
+    reads (`cli.parser.reads`): `compare` simulates nothing and reads no
+    `--timeout`, and `compare --accept` scores nothing and reads no
+    `--tolerance`. `author` is left out where it would not read one
+    (:data:`_WHOLE`) — as it is for a Config built with no testing.json
+    (`run_pipeline` called as a library), which is named by its library and
+    reference root instead."""
+    from ..cli.parser import reads
 
     def q(value) -> str:
         s = str(value)
         return f'"{s}"' if " " in s else s
 
     names = set(config.overrides)
-    parts = []
+    given: list[tuple[str, list[str]]] = []
     if config.config_found is not None:
-        parts += ["--config", q(Path(config.config_found).resolve())]
+        given.append(("config", [q(Path(config.config_found).resolve())]))
     else:
         names |= {"source_path", "reference_root"}
-    for name, flag in _OVERRIDE_FLAGS:
+    for name, dest in _OVERRIDE_FLAGS:
         if name not in names:
             continue
         value = getattr(config, name)
         if value is None:  # a source the Config could not place
             continue
-        parts += [flag, q(value if name == "backend_name" else Path(value).resolve())]
-    return " ".join(parts)
-
-
-def offers_author(flags: str) -> bool:
-    """Whether the dashboard can build an `author` command with ``flags``:
-    they name a testing.json and nothing `author` does not read."""
-    named = {t for t in shlex.split(flags, posix=False) if t.startswith("--")}
-    return "--config" in named and named <= _AUTHOR_READS
+        if name in ("source_path", "reference_root", "test_spec_file", "work_dir"):
+            value = Path(value).resolve()
+        # backend_path is what `locate` found, absolute, and is not resolved:
+        # a venv's python is a link whose target has none of its packages.
+        given.append((dest, [] if value is True else [q(value)]))
+    flags = {}
+    for kind, path, beside in COMMAND_KINDS:
+        carried = [(d, v) for d, v in given if reads(path, d, beside)]
+        if kind in _WHOLE and (
+            config.config_found is None or len(carried) < len(given)
+        ):
+            continue
+        flags[kind] = " ".join(
+            w for d, v in carried for w in ("--" + d.replace("_", "-"), *v)
+        )
+    return flags
 
 
 def format_run_metadata(meta: dict | None) -> dict | None:
@@ -305,7 +332,7 @@ def _manifest_rows(work_dir: Path) -> dict[str, tuple[TestRow, float | None]]:
 def build_dashboard_context(
     work_dir: Path,
     mode: str,
-    rerun_flags: str | None = None,
+    rerun_flags: Mapping[str, str] | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
 ) -> dict:
@@ -415,8 +442,11 @@ def build_dashboard_context(
     # rerun_flags precedence: explicit kwarg > snapshot's flags > none.
     # The kwarg path lets the CLI override the snapshot's flags even when
     # status.json was written by a prior run with a different config (e.g.
-    # dstf compare reading work_dir from a different invocation).
-    flags = rerun_flags or snapshot.get("rerun_flags") or ""
+    # dstf compare reading work_dir from a different invocation). A
+    # status.json of 1.0 holds one string for every command: none is read.
+    flags = rerun_flags or snapshot.get("rerun_flags")
+    if not isinstance(flags, Mapping) or not flags:
+        flags = {kind: "" for kind, _, _ in COMMAND_KINDS if kind not in _WHOLE}
 
     return {
         "mode": mode,
@@ -437,8 +467,9 @@ def build_dashboard_context(
         # word a person reads]. The class is the pill's key and the row's
         # data-status.
         "statuses": [[STATUS_CLASSES[s], STATUS_LABELS[s]] for s in PILL_STATUSES],
-        "rerun_flags": flags,
-        "offers_author": offers_author(flags),
+        # The Command menu: each command offered, and the flags after it.
+        "rerun_flags": dict(flags),
+        "offers_author": "author" in flags,
         "updated_at": snapshot.get("updated_at", time.time()),
         # Wall-clock anchor for the dashboard's live elapsed clock. JS reads
         # SNAPSHOT_WALL (= updated_at, when the snapshot was written) and
@@ -492,7 +523,7 @@ def _atomic_write(path: Path, text: str) -> None:
 def _render(
     work_dir: Path,
     mode: str,
-    rerun_flags: str | None = None,
+    rerun_flags: Mapping[str, str] | None = None,
     output_path: Path | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
@@ -516,7 +547,7 @@ def _render(
 
 
 def render_live(
-    work_dir: Path, rerun_flags: str | None = None, theme: str = "default"
+    work_dir: Path, rerun_flags: Mapping[str, str] | None = None, theme: str = "default"
 ) -> None:
     """Render dashboard.html in live mode (auto-refreshes via meta tag)."""
     _render(work_dir, mode="live", rerun_flags=rerun_flags, theme=theme)
@@ -524,7 +555,7 @@ def render_live(
 
 def render_final(
     work_dir: Path,
-    rerun_flags: str | None = None,
+    rerun_flags: Mapping[str, str] | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",
@@ -545,7 +576,7 @@ def render_final(
 def render_final_to(
     work_dir: Path,
     output_path: Path,
-    rerun_flags: str | None = None,
+    rerun_flags: Mapping[str, str] | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",

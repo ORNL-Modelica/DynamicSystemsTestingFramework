@@ -283,17 +283,32 @@ def test_rerun_flags_flows_to_template(tmp_path):
         "counts": {},
         "tests": [],
         "updated_at": 0.0,
-        "rerun_flags": '--config "/some/path/testing.json"',
+        "rerun_flags": {"run": '--config "/some/path/testing.json"'},
     }
     _write_status_json(tmp_path, snapshot)
     render_live(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "RERUN_FLAGS" in out
     assert "/some/path/testing.json" in out
+    assert '<option value="compare">' not in out, "the snapshot offers run alone"
+
+
+def test_a_1_0_status_json_s_one_flags_string_is_not_read(tmp_path):
+    """status.json of 1.0 held one string of flags for every command: the
+    page offers the commands with no flags, never that string after each."""
+    _write_status_json(
+        tmp_path,
+        {"total": 0, "tests": [], "updated_at": 0.0, "rerun_flags": "--config OLD"},
+    )
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "OLD" not in out
+    assert '<option value="compare --accept">' in out
+    assert '<option value="author">' not in out
 
 
 def test_rerun_flags_carry_no_command():
-    """The flags are the project's only — the dashboard's command menu owns
+    """The flags are the run's only — the dashboard's command menu owns
     the command, which the page writes before them (`dstf <kind> <flags>`).
     Flags that still held ``run`` would build ``dstf compare run --filter
     ...``.
@@ -313,10 +328,48 @@ def test_rerun_flags_carry_no_command():
             reference_root="/no/refs",
         )
     )
-    assert with_config == "--config /some/path/testing.json"
-    assert with_paths == "--source-path /no/lib --reference-root /no/refs"
-    for flags in (with_config, with_paths):
+    assert set(with_config.values()) == {"--config /some/path/testing.json"}
+    assert "author" in with_config
+    assert set(with_paths.values()) == {
+        "--source-path /no/lib --reference-root /no/refs"
+    }
+    assert "author" not in with_paths
+    for flags in (*with_config.values(), *with_paths.values()):
         assert not set(flags.split()) & {"dstf", "run", "compare", "discover"}
+
+
+def test_each_command_carries_the_settings_it_reads():
+    """A run given --backend-path, --tolerance, --timeout and
+    --default-points: `run` carries all four; `compare` all but --timeout
+    (it simulates nothing); `compare --accept` only --backend-path (it scores
+    nothing — the parser refuses --tolerance beside --accept); `author`,
+    which reads none, is not offered."""
+    from types import SimpleNamespace
+
+    from dstf.reporting.dashboard_render import build_rerun_flags
+
+    flags = build_rerun_flags(
+        SimpleNamespace(
+            config_found="/p/testing.json",
+            overrides=frozenset(
+                {"backend_path", "tolerance", "timeout", "default_points"}
+            ),
+            backend_path="/venv/bin/python",
+            tolerance=0.5,
+            timeout=37,
+            default_points=True,
+        )
+    )
+    every = (
+        "--config /p/testing.json --backend-path /venv/bin/python "
+        "--tolerance 0.5 --timeout 37 --default-points"
+    )
+    assert flags == {
+        "run": every,
+        "compare": every.replace(" --timeout 37", ""),
+        "compare --accept": "--config /p/testing.json --backend-path /venv/bin/python",
+        "run --rerun failed,sim-failed": every,
+    }
 
 
 def test_rerun_flags_kwarg_overrides_snapshot(tmp_path):
@@ -328,10 +381,10 @@ def test_rerun_flags_kwarg_overrides_snapshot(tmp_path):
         "counts": {},
         "tests": [],
         "updated_at": 0.0,
-        "rerun_flags": "--config STALE",
+        "rerun_flags": {"run": "--config STALE"},
     }
     _write_status_json(tmp_path, snapshot)
-    render_live(tmp_path, rerun_flags="--config FRESH")
+    render_live(tmp_path, rerun_flags={"run": "--config FRESH"})
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "FRESH" in out
     assert "STALE" not in out

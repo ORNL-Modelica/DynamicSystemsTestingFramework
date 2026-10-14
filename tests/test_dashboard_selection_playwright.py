@@ -23,7 +23,7 @@ pytest.importorskip("playwright.sync_api")
 
 pytestmark = pytest.mark.playwright
 
-from dstf.reporting.dashboard_render import render_final  # noqa: E402
+from dstf.reporting.dashboard_render import COMMAND_KINDS, render_final  # noqa: E402
 
 _MODELS = ["Lib.A", "Lib.B", "Lib.C"]
 
@@ -35,7 +35,7 @@ def _snapshot(start_wall: float) -> dict:
         "eta_seconds": None,
         "start_wall": start_wall,
         "updated_at": start_wall + 5.0,
-        "rerun_flags": "--config testing.json",
+        "rerun_flags": {kind: "--config testing.json" for kind, _, _ in COMMAND_KINDS},
         "counts": {"passed": len(_MODELS)},
         "tests": [
             {

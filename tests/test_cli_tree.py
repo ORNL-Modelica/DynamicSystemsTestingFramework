@@ -299,14 +299,10 @@ def test_every_example_parses(path, example, capsys):
 
 
 def _dashboard_kinds() -> list[str]:
-    """The dashboard's Command menu, as the template writes it."""
-    from pathlib import Path
+    """The dashboard's Command menu: every command it can offer."""
+    from dstf.reporting.dashboard_render import COMMAND_KINDS
 
-    import dstf.reporting
-
-    page = Path(dstf.reporting.__file__).parent / "templates" / "dashboard.html"
-    menu = page.read_text(encoding="utf-8").split('<select id="cmd-kind"', 1)[1]
-    kinds = re.findall(r'<option value="([^"]+)">', menu.split("</select>", 1)[0])
+    kinds = [kind for kind, _, _ in COMMAND_KINDS]
     assert "run" in kinds and "author" in kinds and len(kinds) >= 5
     return kinds
 
@@ -365,20 +361,23 @@ def built_configs(monkeypatch):
     return built
 
 
-def _page_flags(page: Path) -> str:
-    """The flags the dashboard puts after each command, as its page holds
-    them."""
+def _page_flags(page: Path) -> dict[str, str]:
+    """The flags the dashboard puts after each command it offers, by the
+    command, as its page holds them; the page's menu offers exactly those."""
     import json
 
     html = page.read_text(encoding="utf-8")
     found = re.search(r"const RERUN_FLAGS = (.*);", html)
     assert found, "the page names no flags for its commands"
-    return json.loads(found.group(1))
+    flags = json.loads(found.group(1))
+    menu = html.split('<select id="cmd-kind"', 1)[1].split("</select>", 1)[0]
+    offered = re.findall(r'<option value="([^"]+)">', menu)
+    assert sorted(offered) == sorted(flags)
+    return {kind: flags[kind] for kind in offered}
 
 
 def _check_the_built_commands(
-    flags: str,
-    offered: bool,
+    flags: dict[str, str],
     run_config,
     elsewhere: Path,
     built,
@@ -391,20 +390,20 @@ def _check_the_built_commands(
     --report` after a plain `run`), parses; `compare`, executed from
     another directory, reads the project the run read."""
     monkeypatch.chdir(elsewhere)
+    assert set(flags) <= set(_dashboard_kinds())
     lines = {}
-    for kind in _dashboard_kinds():
-        if kind == "author" and not offered:
-            continue
+    for kind, after in flags.items():
         tail = " --merge --report" if kind == "run" else ""
-        line = f'dstf {kind} {flags} --filter "{models}"{tail}'
+        line = f'dstf {kind} {after} --filter "{models}"{tail}'
         argv = shlex.split(line)
         args = _parse(argv[1:], capsys)
         assert isinstance(args, argparse.Namespace), f"{line}\n{args}"
         assert args.filter == models
         lines[kind] = argv
-    for flag, value in zip(shlex.split(flags), shlex.split(flags)[1:]):
-        if flag in PROJECT_FLAGS.values() or flag == "--work-dir":
-            assert Path(value).is_absolute(), f"{flag} {value}"
+        words = shlex.split(after)
+        for flag, value in zip(words, words[1:]):
+            if flag in PROJECT_FLAGS.values() or flag == "--work-dir":
+                assert Path(value).is_absolute(), f"{flag} {value}"
     built.clear()
     main(lines["compare"][1:])
     capsys.readouterr()
@@ -422,7 +421,7 @@ def test_every_command_the_dashboard_builds_reads_the_run_s_project(
     work dir the run read. A run made with --source-path and
     --reference-root built `dstf --source-path … author`, which exits 2."""
     from dstf.cli.common import _build_config
-    from dstf.reporting.dashboard_render import build_rerun_flags, offers_author
+    from dstf.reporting.dashboard_render import build_rerun_flags
 
     project = tmp_path / "project"
     for lib in ("Lib", "A/Lib", "bare/Lib", "nosrc/Lib"):
@@ -450,7 +449,6 @@ def test_every_command_the_dashboard_builds_reads_the_run_s_project(
     elsewhere.mkdir()
     _check_the_built_commands(
         built,
-        offers_author(built),
         config,
         elsewhere,
         built_configs,
@@ -460,6 +458,12 @@ def test_every_command_the_dashboard_builds_reads_the_run_s_project(
 
 
 _CONSTANT_CSV = "PythonTestingLib.Examples.ConstantCsv"
+
+#: What the page says where it offers no `author`.
+_NO_AUTHOR = (
+    "No author command: dstf author reads a testing.json, --work-dir and "
+    "--backend only, and this run used more"
+)
 
 #: Each override a run of the Python example can be given beside its
 #: testing.json, relative to the directory the run starts in — and whether
@@ -543,15 +547,13 @@ def test_a_run_s_dashboard_commands_do_what_the_run_did_from_anywhere(
     page = run_config.work_dir / "dashboard.html"
     flags = _page_flags(page)
     html = page.read_text(encoding="utf-8")
-    assert ('<option value="author">' in html) is author, flags
-    note = "Open in dstf author: run with a testing.json that names these paths"
-    assert (note in html) is not author
+    assert ("author" in flags) is author, flags
+    assert (_NO_AUTHOR in html) is not author
 
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     _check_the_built_commands(
         flags,
-        author,
         run_config,
         elsewhere,
         built_configs,
@@ -562,6 +564,105 @@ def test_a_run_s_dashboard_commands_do_what_the_run_did_from_anywhere(
     # what it executed: the run's results scored again, in the run's work dir
     verdicts = json.loads((run_config.work_dir / "verdicts.json").read_text())
     assert [t["model_id"] for t in verdicts["tests"]] == [_CONSTANT_CSV]
+
+
+#: Each setting a run can be given that changes what a command does to the
+#: project, beside the places: its flags (``WRAPPER`` stands for an
+#: interpreter that logs each start), and the Config field and value a
+#: pasted command must read.
+_SETTINGS = {
+    "--backend-path": (["--backend-path", "WRAPPER"], "backend_path", "WRAPPER"),
+    "--tolerance": (["--tolerance", "0.5"], "tolerance", 0.5),
+    "--timeout": (["--timeout", "37"], "timeout", 37),
+    "--default-points": (["--default-points"], "default_points", True),
+}
+
+
+@pytest.mark.parametrize("given", sorted(_SETTINGS))
+def test_the_dashboard_s_commands_carry_the_run_s_settings(
+    given, tmp_path, monkeypatch, capsys, built_configs
+):
+    """A run of the Python example given one of the settings above: the
+    dashboard's `run` and `compare`, executed from another directory, read
+    it as the run did — the run's interpreter simulates again, the run's
+    tolerance scores — and `compare --accept` and `author` carry none that
+    they do not read. A pasted `run` after `--backend-path WRAPPER`
+    simulated with the default python3; a pasted `compare` after
+    `--tolerance 0.5` scored at testing.json's 1e-2."""
+    import json
+    import shutil
+    import sys
+
+    from conftest import PROJECT_ROOT
+
+    lib = tmp_path / "lib"
+    shutil.copytree(
+        PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
+        lib,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    log = tmp_path / "starts.log"
+    wrapper = tmp_path / "py.sh"
+    wrapper.write_text(f'#!/bin/sh\necho x >> "{log}"\nexec "{sys.executable}" "$@"\n')
+    wrapper.chmod(0o755)
+
+    def starts() -> int:
+        return len(log.read_text().splitlines()) if log.exists() else 0
+
+    flags, field, value = _SETTINGS[given]
+    flags = [str(wrapper) if f == "WRAPPER" else f for f in flags]
+    value = str(wrapper) if value == "WRAPPER" else value
+    monkeypatch.chdir(tmp_path)
+    cfg = "lib/Resources/ReferenceResults/testing.json"
+    built_configs.clear()
+    main(["run", "--config", cfg, *flags, "--filter", _CONSTANT_CSV, "--no-browser"])
+    capsys.readouterr()
+    run_config = next(c for c in built_configs if c.config_found is not None)
+    assert getattr(run_config, field) == value
+    ran = starts()
+    assert (ran > 0) is (given == "--backend-path")
+    page = run_config.work_dir / "dashboard.html"
+    commands = _page_commands(page, _CONSTANT_CSV)
+    assert "author" not in commands, "author reads none of the run's settings"
+    # what each reads (`cli.parser.READS`): compare simulates nothing, and
+    # an accept scores nothing
+    carried = {
+        "run": True,
+        "run --rerun failed,sim-failed": True,
+        "compare": given != "--timeout",
+        "compare --accept": given == "--backend-path",
+    }
+    for kind, line in commands.items():
+        assert (flags[0] in line) is carried[kind], line
+        args = _parse(line[1:], capsys)
+        assert isinstance(args, argparse.Namespace), f"{line}\n{args}"
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    for kind in ("run", "compare"):
+        built_configs.clear()
+        main(commands[kind][1:])
+        capsys.readouterr()
+        pasted = next(c for c in built_configs if c.config_found is not None)
+        assert pasted.work_dir == run_config.work_dir
+        if carried[kind]:
+            assert getattr(pasted, field) == value, " ".join(commands[kind])
+        if kind == "run" and given == "--backend-path":
+            assert starts() > ran, "the pasted run simulated with another python"
+    verdicts = json.loads((run_config.work_dir / "verdicts.json").read_text())
+    assert [t["model_id"] for t in verdicts["tests"]] == [_CONSTANT_CSV]
+
+
+def _page_commands(page: Path, models: str) -> dict[str, list[str]]:
+    """Each command of the page's Command menu as its builder writes it for
+    ``models`` (`dashboard.js`: ``dstf <kind> <flags> --filter …``, and
+    ``--merge --report`` after a plain `run`), split into words."""
+    lines = {}
+    for kind, after in _page_flags(page).items():
+        tail = " --merge --report" if kind == "run" else ""
+        lines[kind] = shlex.split(f'dstf {kind} {after} --filter "{models}"{tail}')
+    return lines
 
 
 def test_with_no_testing_json_the_dashboard_offers_no_author(tmp_path, monkeypatch):
@@ -579,21 +680,23 @@ def test_with_no_testing_json_the_dashboard_offers_no_author(tmp_path, monkeypat
     config = Config(source_path=Path("Lib"), backend_name="OpenModelica")
     assert config.config_found is None
     flags = build_rerun_flags(config)
-    assert shlex.split(flags) == [
-        "--source-path",
-        str(lib),
-        "--reference-root",
-        str(config.reference_root),
-        "--work-dir",
-        str(config.work_dir),
-        "--backend",
-        "OpenModelica",
-    ]
+    assert "author" not in flags
+    for kind in ("run", "compare", "compare --accept"):
+        assert shlex.split(flags[kind]) == [
+            "--source-path",
+            str(lib),
+            "--reference-root",
+            str(config.reference_root),
+            "--work-dir",
+            str(config.work_dir),
+            "--backend",
+            "OpenModelica",
+        ], kind
     render_live(tmp_path / "w", rerun_flags=flags)
     page = (tmp_path / "w" / "dashboard.html").read_text(encoding="utf-8")
     assert '<option value="author">' not in page
     assert '<option value="run">' in page
-    assert "Open in dstf author: run with a testing.json that names these paths" in page
+    assert _NO_AUTHOR in page
 
 
 # ---------------------------------------------------------------------------

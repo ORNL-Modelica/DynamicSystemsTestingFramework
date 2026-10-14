@@ -95,12 +95,15 @@ to write instead.
 - `run --batch` on FMPy or Python was silently ignored; it is a config error.
 - `companion freeze` of a companion that does not exist exited 0; it exits 1.
 - The dashboard's copyable commands named `testing.json` by a relative path
-  and left out the run's other project flags: after `run --reference-root
-  ALT`, its `compare --accept` overwrote a baseline in `testing.json`'s own
-  reference root and left ALT alone. A command now carries every flag the
-  run was given, and the default work dir, by absolute paths, so it does
-  what the run did from any directory; `author` is offered only when it reads
-  them all.
+  and left out the run's other flags: after `run --reference-root ALT`, its
+  `compare --accept` overwrote a baseline in `testing.json`'s own reference
+  root and left ALT alone; after `run --backend-path WRAPPER`, its `run`
+  simulated with the default interpreter; after `run --tolerance 0.5`, its
+  `compare` scored at `testing.json`'s tolerance. A command now carries the
+  places the run was given, the default work dir, and `--backend-path`,
+  `--tolerance`, `--timeout` and `--default-points` where that command reads
+  them, by absolute paths, so it does what the run did from any directory;
+  `author` is offered only when it reads them all.
 - The default `testing.json` a command writes where it finds none did not
   record the library: `dstf --config <it>` from another directory found no
   project. It now records `source_path`, and the reference root and spec

@@ -67,7 +67,7 @@ class ProgressReporter:
         self,
         work_dir: Path,
         total: int,
-        rerun_flags: str | None = None,
+        rerun_flags: dict[str, str] | None = None,
         metadata: dict | None = None,
         theme: str = "default",
     ):
@@ -76,9 +76,9 @@ class ProgressReporter:
         # The bundled theme the live page is rendered in (Config.theme).
         self.theme = theme
         # Stashed for inclusion in status.json so the dashboard's rerun-
-        # command builder produces a command that does what the run did
-        # from any CWD. Computed by callers via dashboard_render.build_
-        # rerun_flags(config).
+        # command builder produces commands that do what the run did from
+        # any CWD: the flags after each command of its menu. Computed by
+        # callers via dashboard_render.build_rerun_flags(config).
         self.rerun_flags = rerun_flags
         # Run-level provenance (backend family/configured name/os/version). Serialized into
         # status.json under "metadata" and rendered as a banner by the

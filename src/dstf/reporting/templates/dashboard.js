@@ -370,11 +370,11 @@
     syncSelectionUI();
   };
 
-  // RERUN_FLAGS are the run's project flags (`--config <cfg>` and every
-  // place the run did not take from it, absolute), written AFTER the
-  // command, where each is offered; the subcommand comes from the #cmd-kind
-  // menu, so the builder is the one place that decides what `dstf` is
-  // actually asked to do. --merge/--report belong
+  // RERUN_FLAGS holds, by each command of the #cmd-kind menu, the run's
+  // flags that command reads (`--config <cfg>` and everything the run did
+  // not take from it, paths absolute), written AFTER the command, where
+  // each is offered; the subcommand comes from the menu, so the builder is
+  // the one place that decides what `dstf` is actually asked to do. --merge/--report belong
   // to a plain `run`: `compare` never re-simulates (nothing to merge) and
   // `--rerun` already selects its own scope.
   function commandKind() {
@@ -388,7 +388,7 @@
       ? `--filter "${modelIds.join(',')}"`
       : '--filter @selected.txt';
     const tail = kind === 'run' ? ' --merge --report' : '';
-    const flags = RERUN_FLAGS ? ` ${RERUN_FLAGS}` : '';
+    const flags = RERUN_FLAGS[kind] ? ` ${RERUN_FLAGS[kind]}` : '';
     return `dstf ${kind}${flags} ${filter}${tail}`;
   }
   window.syncCommand = function() {

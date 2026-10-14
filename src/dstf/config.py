@@ -5,7 +5,7 @@ import logging
 import os
 import platform
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -387,14 +387,19 @@ def _must_exist(path: Path, named: str) -> None:
         raise ConfigError(f"{named} {path}: no such directory")
 
 
-#: The Config fields that place the project and that a caller may give
-#: over its testing.json (`Config.overrides`).
+#: The Config fields a caller may give over its testing.json and the
+#: defaults (`Config.overrides`): the places of the project, then the
+#: settings that change what a run does to it.
 _OVERRIDABLE = (
     "source_path",
     "reference_root",
     "test_spec_file",
     "work_dir",
     "backend_name",
+    "backend_path",
+    "tolerance",
+    "timeout",
+    "default_points",
 )
 
 
@@ -560,12 +565,13 @@ class Config:
     # none, and the project runs on defaults.
     config_found: Path | None = field(init=False, default=None)
 
-    # Which of the project's places this Config did NOT take from its
-    # testing.json: the fields of _OVERRIDABLE the caller gave, and the ones
-    # derived from the current directory (a package found from it, the
-    # default work dir under it). A command that is to read the same
-    # project from another directory names each beside `--config` — the
-    # dashboard's commands (`reporting.dashboard_render.build_rerun_flags`).
+    # What this Config did NOT take from its testing.json and the defaults:
+    # the fields of _OVERRIDABLE the caller gave (a value other than the
+    # field's default), and the places derived from the current directory
+    # (a package found from it, the default work dir under it). A command
+    # that is to do the same thing to the same project from another
+    # directory names each beside `--config` — the dashboard's commands
+    # (`reporting.dashboard_render.build_rerun_flags`).
     overrides: frozenset[str] = field(init=False, default=frozenset())
 
     # The default testing.json this Config reads but has not written yet:
@@ -586,7 +592,10 @@ class Config:
     located: "Located | None" = field(init=False, default=None)
 
     def __post_init__(self):
-        overrides = {name for name in _OVERRIDABLE if getattr(self, name) is not None}
+        defaults = {f.name: f.default for f in fields(self)}
+        overrides = {
+            name for name in _OVERRIDABLE if getattr(self, name) != defaults[name]
+        }
         # Resolve reference root early — needed for config file search
         if self.reference_root is not None:
             self.reference_root = _resolved(Path(self.reference_root))
