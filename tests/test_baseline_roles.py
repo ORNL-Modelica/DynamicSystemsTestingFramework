@@ -1019,6 +1019,21 @@ class TestWhatEachRuleReads:
         for name in _RIGHT_IN_THE_FILE.values():
             assert validate_tree(parse_metric_tree(_warned(_leaf(against=name)))) == []
 
+    @pytest.mark.parametrize("broken", sorted(_WRONG_IN_THE_FILE))
+    def test_one_rule_is_one_sentence_where_it_is_written_and_scored(self, broken):
+        """What scoring refuses a tree for, `spec update` and the tool refuse
+        it for in the same words: the full check says each file rule as the
+        file's check does — a criterion outside a ``warn`` naming a stored
+        soft check, a stored companion or nothing is ONE rule."""
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.comparison.validator import role_lookup_from_names, validate_tree
+
+        held = role_lookup_from_names(soft_checks=["other"], companions=["rig"])
+        tree = parse_metric_tree(_WRONG_IN_THE_FILE[broken][0])
+        assert [str(e) for e in validate_tree(tree, held)] == [
+            str(e) for e in validate_tree(tree)
+        ]
+
     def test_the_full_check_refuses_what_this_folder_does_not_hold(self):
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.comparison.validator import role_lookup_from_names, validate_tree

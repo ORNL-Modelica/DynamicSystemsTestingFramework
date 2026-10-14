@@ -4174,7 +4174,9 @@ def test_a_move_the_roles_refuse_says_the_validators_sentence(tmp_path):
         tmp_path, PatchOp(A, "add", "/metrics/children/-", copy.deepcopy(WARN_LEAF))
     )
     before = list(s.spec.pending)
-    with pytest.raises(MoveRefused, match="soft check 'om_cross', which must sit"):
+    with pytest.raises(
+        MoveRefused, match="scores against 'om_cross' outside a 'warn', where only"
+    ):
         _move(s, "/metrics/children/1/children/0", Dest("at", ROOT, None))
     assert s.spec.pending == before
 

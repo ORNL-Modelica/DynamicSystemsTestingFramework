@@ -107,8 +107,11 @@ class TestValidatorRules:
             role_lookup_from_names(soft_checks=["experiment"]),
         )
         assert len(errors) == 1
-        assert "must sit under a 'warn'" in errors[0].message
-        assert "warn" in errors[0].message
+        assert errors[0].message == (
+            "This criterion scores against 'experiment' outside a 'warn', where "
+            "only the primary baseline is scored: a soft check sits under a "
+            "'warn', and a companion is only drawn."
+        )
 
     def test_companion_target_is_rejected(self):
         tree = _parse(

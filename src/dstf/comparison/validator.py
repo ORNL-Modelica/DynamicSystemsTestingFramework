@@ -19,13 +19,15 @@ one folder and not in another, where the spec is the same:
 
 4. A criterion names no companion, under ``warn`` or not.
 5. A criterion names a stored baseline — the primary or a soft check.
-6. A stored soft check sits under ``warn`` (rule 2, with its own sentence).
+
+A criterion outside ``warn`` naming a stored soft check breaks rule 2, and
+is said in rule 2's sentence: one rule, one sentence, on every surface.
 
 :func:`validate_tree` with no lookup checks the file's rules; that is the
 check a test is refused by where it is scored (``comparator.broken_roles``),
 since a soft check is imported into ONE folder and the same spec is scored
 in all of them. With a lookup (``spec update`` and the tool, which write
-the file and hold the store) it checks all six.
+the file and hold the store) it checks all five.
 """
 
 from __future__ import annotations
@@ -154,19 +156,23 @@ def _check_leaf(
     in_warn: bool,
     errors: list[ValidationError],
 ) -> None:
-    if role_of is None:
-        # The file alone: outside a warn only the primary is scored, which
-        # every folder holds. Under one, any name may be a soft check of
-        # SOME folder; one this folder lacks is a criterion not scored.
-        if not in_warn and leaf.against != "primary":
-            errors.append(
-                ValidationError(
-                    path,
-                    f"This criterion scores against {leaf.against!r} outside a "
-                    f"'warn', where only the primary baseline is scored: a soft "
-                    f"check sits under a 'warn', and a companion is only drawn.",
-                )
+    # The file alone: outside a warn only the primary is scored, which every
+    # folder holds — whatever the name is in this folder, a stored soft
+    # check, a companion or nothing: ONE rule, said in one sentence where
+    # the tree is scored and where it is written. Under a warn, any name
+    # may be a soft check of SOME folder; one this folder lacks is a
+    # criterion not scored.
+    if not in_warn and leaf.against != "primary":
+        errors.append(
+            ValidationError(
+                path,
+                f"This criterion scores against {leaf.against!r} outside a "
+                f"'warn', where only the primary baseline is scored: a soft "
+                f"check sits under a 'warn', and a companion is only drawn.",
             )
+        )
+        return
+    if role_of is None:
         return
     role = role_of(leaf.against)
     if role is None:
@@ -188,16 +194,6 @@ def _check_leaf(
                 f"(dstf soft-check add) to score against it.",
             )
         )
-        return
-    if role is BaselineRole.SOFT_CHECK and not in_warn:
-        errors.append(
-            ValidationError(
-                path,
-                f"This criterion scores against the soft check {leaf.against!r}, "
-                f"which must sit under a 'warn' so it can only warn.",
-            )
-        )
-        return
 
 
 def _has_primary_outside_warn(

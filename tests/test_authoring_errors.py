@@ -204,8 +204,8 @@ def test_a_k_of_n_left_with_fewer_children_than_k_reads_as_a_sentence(session):
 
 
 def test_two_validator_sentences_are_joined_as_sentences(session):
-    """Each already ends in a full stop: "check the name.; Every tree"."""
+    """Each already ends in a full stop: "only drawn.; Every tree"."""
     leaf = {"metric": "nrmse", "variable": "x", "against": "nope"}
     text = _refusal(session, ("add", "/metrics", leaf))
-    assert "check the name. Every tree needs" in text, text
+    assert "a companion is only drawn. Every tree needs" in text, text
     assert ".;" not in text
