@@ -99,6 +99,10 @@ to write instead.
   run was given, and the default work dir, by absolute paths, so it does
   what the run did from any directory; `author` is offered only when it reads
   them all.
+- The default `testing.json` a command writes where it finds none did not
+  record the library: `dstf --config <it>` from another directory found no
+  project. It now records `source_path`, and the reference root and spec
+  where they are not its defaults.
 
 ### How to convert your testing.json
 

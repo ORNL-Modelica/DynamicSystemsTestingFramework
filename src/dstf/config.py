@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import platform
 import re
 from dataclasses import dataclass, field
@@ -200,12 +201,16 @@ def load_config_file(path: Path) -> dict:
     return data
 
 
-def _create_default_config(config_dir: Path) -> dict:
+def _create_default_config(config_dir: Path, project: dict) -> dict:
     """Create a default testing.json and return its contents: no backend
-    named and none listed, so each machine runs with the one it has."""
+    named and none listed, so each machine runs with the one it has, and
+    the ``project`` keys that name the project the command was given
+    (`Config._project_keys`) — `--config <it>` is that project from any
+    directory."""
     config: dict = {
         "backends": {},
         "dependencies": [],
+        **project,
     }
     config_path = config_dir / CONFIG_FILENAME
     # review 2026-07-06 finding 19: the target dir may not exist yet (e.g.
@@ -660,9 +665,16 @@ class Config:
         # (review 2026-07-06 findings 11/19: a found config — even one that
         # parses to {} — must never be overwritten with defaults).
         if config_found_dir is None and self.write_default:
-            config_dir = self.reference_root if self.reference_root else repo_root
-            file_config = _create_default_config(config_dir)
-            config_found = _resolved(config_dir / CONFIG_FILENAME)
+            config_dir = _resolved(
+                self.reference_root if self.reference_root else repo_root
+            )
+            file_config = _create_default_config(
+                config_dir, self._project_keys(config_dir)
+            )
+            # From here on the file is read as any found one is: what it
+            # says is what `--config <it>` says from any directory.
+            config_found_dir = config_dir
+            config_found = config_dir / CONFIG_FILENAME
 
         # Source type (optional; default "modelica" from dataclass).
         # testing.json may set: "source_type": "fmu" | "julia" | ... (future)
@@ -896,6 +908,48 @@ class Config:
         else:
             self.work_dir = _resolved(Path(self.work_dir))
         self.overrides = frozenset(overrides)
+
+    def _project_keys(self, config_dir: Path) -> dict:
+        """What a default testing.json written in ``config_dir`` records so
+        that it alone names this project from any directory: the library,
+        and the source type, library name, reference root and spec where
+        the file would not default to them. A key that would restate its
+        default is left out."""
+
+        def rel(path: Path) -> str:
+            try:
+                return Path(os.path.relpath(path, config_dir)).as_posix()
+            except ValueError:  # another drive: no relative path reaches it
+                return str(path)
+
+        keys: dict = {}
+        modelica = self.source_type == "modelica"
+        if self.source_type != _default("source_type"):
+            keys["source_type"] = self.source_type
+        # A Modelica library without the key is looked for from the cwd;
+        # any other source is the file's directory.
+        if self.source_path is not None and (
+            modelica or self.source_path != config_dir
+        ):
+            keys["source_path"] = rel(self.source_path)
+        if not modelica and self.library_name != config_dir.name:
+            keys["library_name"] = self.library_name
+        repo_root = (
+            self.source_path.parent if modelica and self.source_path else config_dir
+        )
+        default_root = (
+            config_dir
+            if config_dir.name == "ReferenceResults"
+            else repo_root / "Resources" / "ReferenceResults"
+        )
+        root = self.reference_root or default_root
+        if root != default_root:
+            keys["reference_root"] = rel(root)
+        if self.test_spec_file is not None:
+            spec = _resolved(Path(self.test_spec_file))
+            if spec != root / "test_spec.json":
+                keys["test_spec"] = rel(spec)
+        return keys
 
     @property
     def backend(self) -> str:

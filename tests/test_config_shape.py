@@ -937,7 +937,12 @@ class TestTheRepoSFiles:
         Config(source_path=lib, reference_root=tmp_path / "refs", write_default=True)
         capsys.readouterr()
         written = json.loads((tmp_path / "refs" / "testing.json").read_text())
-        assert written == {"backends": {}, "dependencies": []}
+        assert written == {
+            "backends": {},
+            "dependencies": [],
+            "source_path": "../Lib",
+            "reference_root": ".",
+        }
         # …and it reads back clean, as the file it is.
         assert load_config_file(tmp_path / "refs") == written
 

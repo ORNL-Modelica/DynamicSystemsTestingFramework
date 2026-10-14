@@ -167,7 +167,8 @@ class TestUtilityFunctions:
         from dstf.config import _create_default_config
 
         assert list(inspect.signature(_create_default_config).parameters) == [
-            "config_dir"
+            "config_dir",
+            "project",
         ]
 
     def test_load_config_file(self, fixtures_dir):
@@ -736,6 +737,63 @@ class TestFinding19AutoCreate:
         # Nothing named, nothing found: the first backend that runs Modelica.
         assert config.backend_name == "Dymola"
         assert config.backend_path is None
+
+
+# ---------------------------------------------------------------------------
+# The default testing.json is the project's from any directory
+# ---------------------------------------------------------------------------
+
+#: How a run with no testing.json can name its project, relative to the
+#: directory it starts in: (the library, the reference root, the spec).
+_NAMED = {
+    "--source-path": ("src/Lib", None, None),
+    "--reference-root, a ReferenceResults": (
+        "src/Lib",
+        "src/Lib/Resources/ReferenceResults",
+        None,
+    ),
+    "--reference-root, any directory": ("src/Lib", "refs", None),
+    "--test-spec": ("src/Lib", "refs", "specs/my_spec.json"),
+}
+
+
+class TestTheDefaultFileNamesTheProject:
+    """A command that wrote a default testing.json named the project by
+    flags the file did not record: `dstf --config <it> compare` from another
+    directory was `Could not find a Modelica package from <cwd>`. The file
+    records the library (relative to itself) and, where they are not its
+    defaults, the reference root and the spec."""
+
+    @pytest.mark.parametrize("named", sorted(_NAMED))
+    def test_read_from_elsewhere_it_is_the_same_project(
+        self, named, tmp_path, monkeypatch, capsys
+    ):
+        source, refs, spec = _NAMED[named]
+        _make_lib(tmp_path / "src")
+        monkeypatch.chdir(tmp_path)
+        kwargs: dict = {"source_path": Path(source), "write_default": True}
+        if refs is not None:
+            kwargs["reference_root"] = Path(refs)
+        if spec is not None:
+            kwargs["test_spec_file"] = Path(spec)
+        run = Config(**kwargs)
+        assert "Created default testing.json" in capsys.readouterr().out
+        assert run.config_found is not None and run.config_found.is_file()
+        (tmp_path / "elsewhere").mkdir()
+        monkeypatch.chdir(tmp_path / "elsewhere")
+        again = Config(config_file=run.config_found)
+        for name in ("source_path", "reference_root", "spec_path", "library_name"):
+            assert getattr(again, name) == getattr(run, name), name
+
+    def test_it_restates_no_default(self, tmp_path, monkeypatch, capsys):
+        """A reference root that is the file's own directory, named
+        ReferenceResults, is the default: it is not written."""
+        lib = _make_lib(tmp_path / "src")
+        monkeypatch.chdir(tmp_path)
+        refs = lib / "Resources" / "ReferenceResults"
+        Config(source_path=lib, reference_root=refs, write_default=True)
+        written = json.loads((refs / "testing.json").read_text(encoding="utf-8"))
+        assert written == {"backends": {}, "dependencies": [], "source_path": "../.."}
 
 
 # ---------------------------------------------------------------------------
