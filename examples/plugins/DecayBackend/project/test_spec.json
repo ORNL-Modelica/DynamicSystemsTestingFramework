@@ -1,0 +1,9 @@
+{
+  "tests": [
+    {
+      "model": "Decay.Settle",
+      "variables": ["y"],
+      "simulation": {"stop_time": 4}
+    }
+  ]
+}

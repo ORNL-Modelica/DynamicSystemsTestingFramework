@@ -595,8 +595,14 @@ def _named(name: str) -> list[Path]:
 #: The shipped projects: each example's testing.json. (`tests/fixtures/
 #: testing.json` is a template the fixtures copy beside a library — where it
 #: lies its `source_path` names nothing, so it opens no project; its
-#: `test_spec.json` is walked with the others.)
-_PROJECTS = [p for p in _named("testing.json") if "examples" in p.parts]
+#: `test_spec.json` is walked with the others.) A plug-in's example project
+#: runs on its plug-in's backend, which only an installed plug-in registers:
+#: `test_plugin_example.py` installs it and runs that project.
+_PROJECTS = [
+    p
+    for p in _named("testing.json")
+    if "examples" in p.parts and "plugins" not in p.parts
+]
 
 
 class TestNoShippedFileBreaks:
