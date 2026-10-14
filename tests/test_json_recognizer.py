@@ -50,11 +50,11 @@ class TestSchemaParsing:
         assert isinstance(rec, JsonRecognizer)
 
     def test_missing_name_raises(self):
-        with pytest.raises(RecognizerSpecError, match="missing required field 'name'"):
+        with pytest.raises(RecognizerSpecError, match='recognizer: has no "name"'):
             parse_recognizer_spec({"match": {"type": "extends", "class_pattern": "*"}})
 
     def test_missing_match_raises(self):
-        with pytest.raises(RecognizerSpecError, match="missing required field 'match'"):
+        with pytest.raises(RecognizerSpecError, match='recognizer: has no "match"'):
             parse_recognizer_spec({"name": "x"})
 
     def test_unknown_match_type_raises(self):

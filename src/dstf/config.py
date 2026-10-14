@@ -764,21 +764,26 @@ class Config:
         # Recognizer instances stored on Config. CLI-provided recognizers
         # take precedence; testing.json fills in if Config wasn't given any.
         if not self.recognizers and "recognizers" in file_config:
+            from .comparison.sides import _as_json
             from .discovery.json_recognizer import (
                 RecognizerSpecError,
                 parse_recognizer_spec,
             )
 
+            entries = file_config["recognizers"]
+            if not isinstance(entries, list):
+                raise ConfigError(
+                    f"{config_found}: recognizers: must be a list, got {_as_json(entries)}"
+                )
             try:
                 self.recognizers = [
-                    parse_recognizer_spec(spec) for spec in file_config["recognizers"]
+                    parse_recognizer_spec(spec, f"recognizers[{i}]")
+                    for i, spec in enumerate(entries)
                 ]
             except RecognizerSpecError as e:
                 # A malformed recognizer is a testing.json problem the user
                 # must fix — one clean line and exit 2, not a traceback.
-                raise ConfigError(
-                    f"Invalid recognizer in {config_found or 'the config'}: {e}"
-                ) from e
+                raise ConfigError(f"{config_found}: {e}") from e
         if not self.disabled_bundled and "disable_bundled" in file_config:
             self.disabled_bundled = list(file_config["disable_bundled"])
 

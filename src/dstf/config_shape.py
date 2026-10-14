@@ -81,8 +81,74 @@ EXECUTABLES = Setting(
     path=PROGRAM,
 )
 
+
+def schema_properties(table: Mapping[str, Setting]) -> dict[str, Any]:
+    """``table`` as a JSON-Schema ``properties`` object: each key's
+    fragment, with its description and — where it has one — its default."""
+    properties: dict[str, Any] = {}
+    for key, setting in table.items():
+        node = {
+            **copy.deepcopy(dict(setting.schema)),
+            "description": setting.description,
+        }
+        if setting.default is not None:
+            node["default"] = copy.deepcopy(setting.default)
+        properties[key] = node
+    return properties
+
+
 #: ``baseline_points`` for every point the run wrote (D153).
 ALL_POINTS = "all"
+
+#: Every key of one entry of ``recognizers``, read as every other block is:
+#: a key that is not here is an error that names it
+#: (``discovery.json_recognizer.parse_recognizer_spec``), and the schema
+#: describes the entry from this table.
+RECOGNIZER: dict[str, Setting] = {
+    "name": Setting(
+        {"type": "string", "minLength": 1},
+        None,
+        "The recognizer's name, unique among the recognizers. A message "
+        "about the recognizer names it.",
+    ),
+    "applies_to": Setting(
+        _STRINGS,
+        ["modelica"],
+        "The source_type values the recognizer is run for.",
+    ),
+    "paths_include": Setting(
+        _STRINGS,
+        [],
+        "Globs on a source file's path relative to source_path, with / "
+        "between its parts. With any given, only a file that matches one "
+        "of them is looked at.",
+    ),
+    "paths_exclude": Setting(
+        _STRINGS,
+        [],
+        "Globs on the same path. A file that matches one is not looked at, "
+        "whatever paths_include says.",
+    ),
+    "match": Setting(
+        {"type": "object"},
+        None,
+        'Which classes are tests. {"type": "component-instantiation", '
+        '"component_name": ...}: a class that holds a component of that '
+        'class. {"type": "extends", "class_pattern": ...}: a class that '
+        'extends one whose name matches the glob. {"type": '
+        '"class-name-glob", "class_pattern": ...}: a class whose own full '
+        'name matches it. {"type": "all-of", "matchers": [...]} and '
+        '"any-of" combine them.',
+    ),
+    "fields": Setting(
+        {"type": "object"},
+        {},
+        "What a test takes from its class, by the field it sets (stop_time, "
+        'tolerance, simulate_only, ...): {"from": "parameter" | '
+        '"annotation" | "experiment-annotation" | "constant", ...} with '
+        "that source's own keys — name, annotation, shape, value.",
+    ),
+}
 
 #: Every key of ``testing.json``, in the order a reference page lists them.
 TESTING_JSON: dict[str, Setting] = {
@@ -227,11 +293,21 @@ TESTING_JSON: dict[str, Setting] = {
         own_rule=True,
     ),
     "recognizers": Setting(
-        {"type": "array", "items": {"type": "object"}},
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": schema_properties(RECOGNIZER),
+                "required": ["name", "match"],
+                "additionalProperties": False,
+            },
+        },
         [],
         "Rules of your own that find tests in the library's source files, "
         "added to the bundled ones: each an object with name, applies_to, "
         "match and fields.",
+        # Each entry is read by its own table, and refused by its place.
+        own_rule=True,
     ),
     "disable_bundled": Setting(
         _STRINGS,
@@ -287,18 +363,3 @@ def refused(
         named = f"{where}.{key}" if where else key
         return f"{named}: must be {said(setting.schema)}, got {_as_json(value)}"
     return None
-
-
-def schema_properties(table: Mapping[str, Setting]) -> dict[str, Any]:
-    """``table`` as a JSON-Schema ``properties`` object: each key's
-    fragment, with its description and — where it has one — its default."""
-    properties: dict[str, Any] = {}
-    for key, setting in table.items():
-        node = {
-            **copy.deepcopy(dict(setting.schema)),
-            "description": setting.description,
-        }
-        if setting.default is not None:
-            node["default"] = copy.deepcopy(setting.default)
-        properties[key] = node
-    return properties

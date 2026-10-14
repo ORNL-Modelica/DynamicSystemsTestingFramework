@@ -336,6 +336,130 @@ class TestValuesTheCodeCannotUse:
         assert "testing.json" not in str(exc.value)
 
 
+class TestARecognizerEntry:
+    """Strictness went as far as `recognizers` and stopped: inside an
+    entry, `feilds`, a key of nobody's and `"name": 3` all loaded."""
+
+    GOOD = {
+        "name": "mine:examples",
+        "applies_to": ["modelica"],
+        "match": {"type": "extends", "class_pattern": "*Icons.Example"},
+        "fields": {"stop_time": {"from": "experiment-annotation", "name": "StopTime"}},
+    }
+
+    def _refused(self, tmp_path, *entries) -> str:
+        (tmp_path / "Lib").mkdir(exist_ok=True)
+        (tmp_path / "Lib" / "package.mo").write_text("package Lib end Lib;")
+        path = tmp_path / "testing.json"
+        path.write_text(
+            json.dumps({"source_path": "Lib", "recognizers": list(entries)})
+        )
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=path, write_default=False)
+        assert str(exc.value).startswith(f"{path}: ")
+        return str(exc.value)[len(f"{path}: ") :]
+
+    @pytest.mark.parametrize(
+        ("change", "said"),
+        [
+            (
+                {"feilds": {}},
+                'recognizers[2]: unknown field "feilds" — did you mean "fields"?',
+            ),
+            (
+                {"priority": 1},
+                'recognizers[2]: unknown field "priority"; the fields here are: '
+                "applies_to, fields, match, name, paths_exclude, paths_include",
+            ),
+            ({"name": 3}, "recognizers[2].name: must be a non-empty string, got 3"),
+            (
+                {"applies_to": "modelica"},
+                'recognizers[2].applies_to: must be a list of strings, got "modelica"',
+            ),
+            (
+                {"paths_include": [1]},
+                "recognizers[2].paths_include: must be a list of strings, got [1]",
+            ),
+            ({"fields": []}, "recognizers[2].fields: must be an object, got []"),
+            (
+                {"match": "extends"},
+                'recognizers[2].match: must be an object, got "extends"',
+            ),
+            (
+                {"match": {"type": "extends", "class_patern": "*"}},
+                'recognizers[2].match: unknown field "class_patern" — did you '
+                'mean "class_pattern"?',
+            ),
+            (
+                {"fields": {"stop_time": {"from": "constant", "value": 1, "nam": 2}}},
+                'recognizers[2].fields.stop_time: unknown field "nam"; the fields '
+                "here are: from, value",
+            ),
+        ],
+    )
+    def test_a_key_nothing_reads_or_a_wrong_type_names_its_place(
+        self, tmp_path, change, said
+    ):
+        assert (
+            self._refused(
+                tmp_path, self.GOOD, {**self.GOOD, "name": "b"}, {**self.GOOD, **change}
+            )
+            == said
+        )
+
+    def test_an_entry_that_is_no_object(self, tmp_path):
+        assert self._refused(tmp_path, "mine") == (
+            'recognizers[0]: must be an object, got "mine"'
+        )
+
+    def test_a_missing_key_names_its_place_too(self, tmp_path):
+        entry = {k: v for k, v in self.GOOD.items() if k != "match"}
+        assert self._refused(tmp_path, entry) == 'recognizers[0]: has no "match"'
+        entry = {k: v for k, v in self.GOOD.items() if k != "name"}
+        assert self._refused(tmp_path, entry) == 'recognizers[0]: has no "name"'
+
+    def test_what_a_recognizer_means_is_still_its_own_sentence(self, tmp_path):
+        said = self._refused(tmp_path, {**self.GOOD, "match": {"type": "inheritance"}})
+        assert said.startswith(
+            "recognizers[0].match: recognizer 'mine:examples' has unknown match "
+            "type 'inheritance'. Known: ["
+        )
+
+    def test_a_good_entry_loads(self, tmp_path):
+        (tmp_path / "Lib").mkdir()
+        (tmp_path / "Lib" / "package.mo").write_text("package Lib end Lib;")
+        path = tmp_path / "testing.json"
+        path.write_text(json.dumps({"source_path": "Lib", "recognizers": [self.GOOD]}))
+        (recognizer,) = Config(config_file=path, write_default=False).recognizers
+        assert recognizer.name == "mine:examples"
+
+    def test_the_schema_describes_the_entry(self):
+        from dstf.config_shape import RECOGNIZER
+
+        items = build_config_schema()["properties"]["recognizers"]["items"]
+        assert items["type"] == "object" and items["additionalProperties"] is False
+        assert list(items["properties"]) == list(RECOGNIZER)
+        assert items["required"] == ["name", "match"]
+        for key, setting in RECOGNIZER.items():
+            assert items["properties"][key]["description"] == setting.description
+            assert len(setting.description) > 20
+
+    def test_the_key_tables_are_the_interpreters(self):
+        from dstf.discovery import json_recognizer as jr
+
+        assert set(jr._MATCH_KEYS) == set(jr._MATCH_INTERPRETERS)
+        assert set(jr._FIELD_KEYS) == set(jr._FIELD_INTERPRETERS)
+
+    def test_the_default_of_applies_to_is_the_table_s(self):
+        from dstf.config_shape import RECOGNIZER
+        from dstf.discovery.json_recognizer import parse_recognizer_spec
+
+        entry = {k: v for k, v in self.GOOD.items() if k != "applies_to"}
+        assert parse_recognizer_spec(entry).applies_to == frozenset(
+            RECOGNIZER["applies_to"].default
+        )
+
+
 class TestWrongTypes:
     @pytest.mark.parametrize(
         ("key", "value", "said"),
@@ -351,7 +475,7 @@ class TestWrongTypes:
             (
                 "recognizers",
                 {"name": "x"},
-                'must be a list of objects, got {"name": "x"}',
+                'must be a list, got {"name": "x"}',
             ),
             ("disable_bundled", "x", 'must be a list of strings, got "x"'),
             ("metadata", "text", 'must be an object, got "text"'),
@@ -382,6 +506,8 @@ class TestWrongTypes:
             "worker_startup_timeout",
             # The registered backends' — a plug-in's among them.
             "source_type",
+            # Each entry by its own table, refused by its place.
+            "recognizers",
         }
 
 
@@ -757,6 +883,11 @@ class TestTheRepoSFiles:
         data = load_config_file(REPO / path)
         blocks = _backend_blocks(data.get("backends", {}), path, (REPO / path).parent)
         assert all(isinstance(block, dict) for block in blocks.values())
+        # …and each recognizer of its own is read by the entry's table.
+        from dstf.discovery.json_recognizer import parse_recognizer_spec
+
+        for i, entry in enumerate(data.get("recognizers", [])):
+            assert parse_recognizer_spec(entry, f"recognizers[{i}]").name
 
     @pytest.mark.parametrize("example", ["modelica", "julia", "python"])
     def test_an_example_s_backends_are_blocks_of_executables(self, example):
