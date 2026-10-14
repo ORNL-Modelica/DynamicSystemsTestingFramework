@@ -166,3 +166,71 @@ def test_an_fmu_entry_with_no_source_is_refused_in_one_sentence(tmp_path, monkey
         "Model: its test_spec.json entry names no FMU — an FMPy test runs "
         "the .fmu its 'source' names, a path relative to the spec file."
     )
+
+
+# ---------------------------------------------------------------------------
+# A file that is not there: the sentence names the path it looked for
+# ---------------------------------------------------------------------------
+
+
+def _missing(tmp_path, source=None):
+    from conftest import make_test_model
+
+    lib = tmp_path / "Lib"
+    lib.mkdir()
+    config = SimpleNamespace(source_path=lib)
+    test = make_test_model("Lib.Examples.Gone")
+    test.source_file = None if source is None else Path(source)
+    return config, test
+
+
+def test_with_no_source_the_sentence_names_the_file_and_both_ways_out(tmp_path):
+    from dstf.backends.common.json_driver import source_not_found
+
+    config, test = _missing(tmp_path)
+    looked = config.source_path / "Lib.Examples.Gone.py"
+    assert source_not_found(test, config, ".py", "Python") == (
+        "Python source not found for Lib.Examples.Gone. Its test_spec.json "
+        f"entry has no 'source', and there is no file at {looked}: add a "
+        "'source' naming its .py file, or put the file at that path."
+    )
+
+
+def test_with_a_source_the_sentence_names_where_it_resolves(tmp_path):
+    from dstf.backends.common.json_driver import source_not_found
+
+    config, test = _missing(tmp_path, source="Examples/Gone.jl")
+    looked = config.source_path / "Examples" / "Gone.jl"
+    assert source_not_found(test, config, ".jl", "Julia") == (
+        "Julia source not found for Lib.Examples.Gone. Its test_spec.json "
+        f"entry's 'source' is {looked}, where there is no file."
+    )
+
+
+def test_the_python_backend_says_the_sentence(tmp_path):
+    """No interpreter is started: the file is looked for first."""
+    from dstf.backends.common.json_driver import source_not_found
+    from dstf.backends.python.backend import PythonBackend
+
+    config, test = _missing(tmp_path)
+    backend = PythonBackend.__new__(PythonBackend)
+    backend.config = config
+    result = backend.run_single_test(test, "test_0001", 1, 1)
+    assert not result.success
+    assert result.error_message == source_not_found(test, config, ".py", "Python")
+
+
+def test_the_persistent_julia_worker_says_the_same_sentence(tmp_path):
+    """The worker resolves the file itself, before it sends a request: the
+    same sentence as `--batch`'s. No julia is started — the process is a
+    stand-in that is alive."""
+    from dstf.backends.common.json_driver import source_not_found
+    from dstf.backends.julia.persistent_backend import JuliaWorker
+
+    config, test = _missing(tmp_path)
+    worker = JuliaWorker.__new__(JuliaWorker)
+    worker.config = config
+    worker.proc = SimpleNamespace(poll=lambda: None)
+    result = worker.run_test_with_timeout(test, "test_0001", 5.0)
+    assert not result.success
+    assert result.error_message == source_not_found(test, config, ".jl", "Julia")

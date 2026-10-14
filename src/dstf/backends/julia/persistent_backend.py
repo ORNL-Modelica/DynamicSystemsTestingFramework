@@ -41,7 +41,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
-from ..common.json_driver import resolve_source_file
+from ..common.json_driver import resolve_source_file, source_not_found
 from ..persistent import STARTUP_TIMEOUT_HINT, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult, timeout_message
 from .backend import JuliaBackend, JuliaConfig
@@ -195,9 +195,11 @@ class JuliaWorker(Worker):
                 model_id=test.model_id,
                 test_key=test_key,
                 success=False,
-                error_message=(
-                    f"Julia source not found for {test.model_id}. "
-                    f"Ensure the test_spec.json 'source' field resolves to a .jl file."
+                error_message=source_not_found(
+                    test,
+                    self.config,
+                    JuliaBackend.source_suffix,
+                    JuliaBackend.tool_label,
                 ),
             )
 

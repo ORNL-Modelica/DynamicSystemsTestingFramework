@@ -107,7 +107,9 @@ lists each one and where it went.
   test), is refused.
 - A `test_spec.json` entry of a Python or Julia test with no `source` ran the
   library's folder (`Cannot load <library dir>`) instead of the file named
-  after its model, `<source_path>/<model>.py` (`.jl`); it runs that file. An
+  after its model, `<source_path>/<model>.py` (`.jl`); it runs that file, and
+  where there is none, its failure names the path it looked for and says to
+  add a `source` or put the file there. An
   FMPy entry with no `source` handed fmpy the folder as its FMU; it fails in
   one sentence that names the entry.
 - A hand-written `metrics` tree that scored a soft check outside `warn`
