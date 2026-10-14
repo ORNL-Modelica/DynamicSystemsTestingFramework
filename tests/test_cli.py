@@ -1841,7 +1841,7 @@ class TestConfigErrorCleanExit:
         bad.write_text("{ nope", encoding="utf-8")
         rc = main(["--config", str(bad), "discover"])
         assert rc == 2
-        assert "Malformed JSON" in capsys.readouterr().err
+        assert f"Config error: {bad.resolve()}: not JSON (" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

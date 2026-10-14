@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config_shape import PROGRAM, TESTING_JSON, Setting, refused
 from .config_shape import default as _default
+from .json_types import is_number
 
 if TYPE_CHECKING:
     from .backends.locate import Located
@@ -110,13 +111,50 @@ def baseline_points_refused(named: str, value: object) -> str | None:
     )
 
 
+def json_from_bytes(raw: bytes, label: str) -> Any:
+    """The JSON value a file's bytes hold, or :class:`ConfigError` naming
+    ``label``: bytes that are no UTF-8 text, an empty file, text that is no
+    JSON — or JSON no reader can hold, a number of thousands of digits or
+    brackets nested by the ten thousand, which ``json`` refuses with errors
+    of other kinds.
+
+    THE one decoder of the two files a person writes: ``testing.json``
+    (:func:`load_config_file`) and ``test_spec.json``
+    (``spec_parser.spec_document_from_bytes``). A key written twice keeps
+    its last value, as ``json`` reads it.
+
+    ``utf-8-sig``: a file a Windows editor saved keeps a BOM, and a BOM is
+    not a reason to refuse a file that otherwise parses."""
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"{label}: not UTF-8 text ({e})") from e
+    if not text.strip():
+        raise ConfigError(f"{label}: the file is empty")
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError) as e:
+        raise ConfigError(f"{label}: not JSON ({e})") from e
+
+
+def _resolved(path: Path) -> Path:
+    """``path``, absolute and with its links followed — or
+    :class:`ConfigError` naming it where the system cannot follow them (a
+    link that leads back to itself)."""
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError) as e:  # RuntimeError: pathlib before 3.13
+        raise ConfigError(f"{path}: {e}") from e
+
+
 def load_config_file(path: Path) -> dict:
     """Load a testing.json config file.
 
     A missing file returns ``{}`` (no config there). An EXISTING file that
-    cannot be read or parsed raises :class:`ConfigError` naming the file —
-    review 2026-07-06 finding 11: silently returning ``{}`` let the
-    auto-create branch overwrite the user's testing.json.
+    cannot be read or decoded (:func:`json_from_bytes`) raises
+    :class:`ConfigError` naming the file — review 2026-07-06 finding 11:
+    silently returning ``{}`` let the auto-create branch overwrite the
+    user's testing.json.
 
     So does one that holds a key nothing reads, or a value of another type
     than its key takes (``config_shape.TESTING_JSON``): ``"tolerence":
@@ -129,13 +167,10 @@ def load_config_file(path: Path) -> dict:
     if not path.exists():
         return {}
     try:
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
     except OSError as e:
-        raise ConfigError(f"Cannot read config file {path}: {e}") from e
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ConfigError(f"Malformed JSON in config file {path}: {e}") from e
+        raise ConfigError(f"{path}: {e}") from e
+    data = json_from_bytes(raw, str(path))
     if not isinstance(data, dict):
         raise ConfigError(
             f"{path}: must be an object, got {json.dumps(data, default=str)[:60]}"
@@ -444,7 +479,7 @@ class Config:
     def __post_init__(self):
         # Resolve reference root early — needed for config file search
         if self.reference_root is not None:
-            self.reference_root = Path(self.reference_root).resolve()
+            self.reference_root = _resolved(Path(self.reference_root))
 
         # Load config file first — it may provide source_path
         file_config = {}
@@ -452,7 +487,7 @@ class Config:
         # The file that was read, for an error to name.
         config_found: Path | None = None
         if self.config_file:
-            config_path = Path(self.config_file).resolve()
+            config_path = _resolved(Path(self.config_file))
             if config_path.is_dir():
                 config_path = config_path / CONFIG_FILENAME
             if not config_path.is_file():
@@ -469,7 +504,7 @@ class Config:
             if self.reference_root is not None:
                 search_dirs.insert(0, self.reference_root)
             if self.source_path is not None:
-                pkg = Path(self.source_path).resolve()
+                pkg = _resolved(Path(self.source_path))
                 search_dirs.insert(0, pkg)  # package dir
                 search_dirs.insert(0, pkg.parent)  # repo root
             for search_dir in search_dirs:
@@ -479,7 +514,7 @@ class Config:
                 # the auto-create-defaults branch.
                 if (search_dir / CONFIG_FILENAME).is_file():
                     file_config = load_config_file(search_dir)
-                    config_found_dir = search_dir.resolve()
+                    config_found_dir = _resolved(search_dir)
                     config_found = config_found_dir / CONFIG_FILENAME
                     break
 
@@ -496,12 +531,12 @@ class Config:
             # main() prints one line instead of a traceback.
             try:
                 if self.source_path is not None:
-                    self.source_path = Path(self.source_path).resolve()
+                    self.source_path = _resolved(Path(self.source_path))
                     if not (self.source_path / "package.mo").exists():
                         self.source_path = find_package_dir(self.source_path)
                 elif "source_path" in file_config:
                     base_dir = config_found_dir or Path.cwd()
-                    self.source_path = (base_dir / file_config["source_path"]).resolve()
+                    self.source_path = _resolved(base_dir / file_config["source_path"])
                     if not (self.source_path / "package.mo").exists():
                         self.source_path = find_package_dir(self.source_path)
                 else:
@@ -530,10 +565,10 @@ class Config:
             # backends that need it (JuliaBackend for --project=) find the
             # right directory. CLI arg > config file > config dir > cwd.
             if self.source_path is not None:
-                self.source_path = Path(self.source_path).resolve()
+                self.source_path = _resolved(Path(self.source_path))
             elif "source_path" in file_config:
                 base_dir = config_found_dir or Path.cwd()
-                self.source_path = (base_dir / file_config["source_path"]).resolve()
+                self.source_path = _resolved(base_dir / file_config["source_path"])
             elif config_found_dir is not None:
                 self.source_path = config_found_dir
             repo_root = config_found_dir or (
@@ -548,7 +583,7 @@ class Config:
         # try repo_root now — existence-based, same as the search loop above.
         if config_found_dir is None and (repo_root / CONFIG_FILENAME).is_file():
             file_config = load_config_file(repo_root)
-            config_found_dir = repo_root.resolve()
+            config_found_dir = _resolved(repo_root)
             config_found = config_found_dir / CONFIG_FILENAME
 
         # Auto-create testing.json ONLY if no config file was found anywhere
@@ -640,11 +675,7 @@ class Config:
         # A worker start's bound: one positive finite number of seconds.
         startup = file_config.get("worker_startup_timeout")
         if startup is not None:
-            if (
-                isinstance(startup, bool)
-                or not isinstance(startup, int | float)
-                or not 0 < startup < float("inf")
-            ):
+            if not is_number(startup) or not startup > 0:
                 raise ConfigError(
                     f"testing.json worker_startup_timeout must be a positive "
                     f"number of seconds, got {startup!r}"
@@ -707,7 +738,7 @@ class Config:
             ref_path = file_config.get("reference_root")
             if ref_path:
                 base_dir = config_found_dir or repo_root
-                self.reference_root = (base_dir / ref_path).resolve()
+                self.reference_root = _resolved(base_dir / ref_path)
             else:
                 # Default: if testing.json lives in a ReferenceResults dir, use that;
                 # otherwise fall back to <repo>/Resources/ReferenceResults
@@ -738,7 +769,7 @@ class Config:
                     continue
                 dep_path = Path(dep)
                 if not dep_path.is_absolute():
-                    dep_path = (base_dir / dep_path).resolve()
+                    dep_path = _resolved(base_dir / dep_path)
                 resolved_deps.append(str(dep_path))
             self.dependencies = resolved_deps
 
@@ -747,9 +778,9 @@ class Config:
             spec_path = file_config.get("test_spec")
             if spec_path:
                 base_dir = config_found_dir or repo_root
-                self.test_spec_file = (base_dir / spec_path).resolve()
+                self.test_spec_file = _resolved(base_dir / spec_path)
         else:
-            self.test_spec_file = Path(self.test_spec_file).resolve()
+            self.test_spec_file = _resolved(Path(self.test_spec_file))
 
         # Work directory
         if self.work_dir is None:
@@ -762,7 +793,7 @@ class Config:
                     # test_spec / dependencies), not the CWD — `compare`
                     # from another directory must find the same results.
                     work_path = (config_found_dir or repo_root) / work_path
-                self.work_dir = work_path.resolve()
+                self.work_dir = _resolved(work_path)
             else:
                 backend_dir = self.backend_name.replace(" ", "_")
                 self.work_dir = (
@@ -773,7 +804,7 @@ class Config:
                     / self.os_name
                 )
         else:
-            self.work_dir = Path(self.work_dir).resolve()
+            self.work_dir = _resolved(Path(self.work_dir))
 
     @property
     def backend(self) -> str:

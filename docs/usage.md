@@ -202,7 +202,7 @@ Config error: …/test_spec.json: the file is empty
 Config error: …/test_spec.json: not UTF-8 text ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)
 ```
 
-A file saved with a UTF-8 byte-order mark is read. A project whose spec file does not exist, or holds `{}` or `{"tests": []}`, has no spec tests, which is no error.
+A file saved with a UTF-8 byte-order mark is read, and a key written twice keeps its last value. `testing.json` is decoded by the same decoder, with the same three sentences under its own path — a number of thousands of digits, or brackets nested by the ten thousand, is `not JSON (…)` in either file. A project whose spec file does not exist, or holds `{}` or `{"tests": []}`, has no spec tests, which is no error.
 
 The `comparison` section a baseline stores in its reference JSON goes through the same check: its `variable_overrides` are merged under the spec's, so a stored override with a key nothing reads stops a command that would compare against it — `Config error: <reference file>: comparison.variable_overrides[x]: …`, exit 2, from `run` before it simulates anything and from `compare` — while `dstf author` opens and shows that one test FAIL, `Not scored:` with the same sentence.
 

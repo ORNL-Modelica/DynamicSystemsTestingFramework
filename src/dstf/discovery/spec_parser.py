@@ -5,7 +5,7 @@ import logging
 from collections.abc import Iterable
 from pathlib import Path
 
-from ..config import ConfigError, baseline_points_refused
+from ..config import ConfigError, baseline_points_refused, json_from_bytes
 from ..json_types import HOLDS, SAID
 from ..storage.ref_index import _atomic_write_text
 from . import spec_shape
@@ -147,26 +147,16 @@ def spec_document_from_bytes(raw: bytes, label: str) -> dict:
     ``label``: bytes that are no UTF-8 text, text that is no JSON, a root
     that cannot hold a ``tests`` list (:func:`check_root_keys`).
 
-    THE one decoder of a ``test_spec.json``. Every reader comes through it —
-    discovery, ``spec update`` and the edit helpers (:func:`read_spec_document`)
-    and the authoring Session, which hashes the same bytes — so a file is
-    read by all of them or by none, with one sentence. ``discover`` /
-    ``run`` / ``compare`` logged ``Failed to read test spec`` and went on
-    with a spec of no tests (exit 1, ``No tests found.``), and a UTF-16 or
-    binary file was a traceback out of every command but ``dstf author``.
-
-    ``utf-8-sig``: a spec a Windows editor saved keeps a BOM, and a BOM is
-    not a reason to refuse a file that otherwise parses."""
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError as e:
-        raise ConfigError(f"{label}: not UTF-8 text ({e})") from e
-    if not text.strip():
-        raise ConfigError(f"{label}: the file is empty")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ConfigError(f"{label}: not JSON ({e})") from e
+    THE one reader of a ``test_spec.json``'s bytes. Every reader comes
+    through it — discovery, ``spec update`` and the edit helpers
+    (:func:`read_spec_document`) and the authoring Session, which hashes the
+    same bytes — so a file is read by all of them or by none, with one
+    sentence. ``discover`` / ``run`` / ``compare`` logged ``Failed to read
+    test spec`` and went on with a spec of no tests (exit 1, ``No tests
+    found.``), and a UTF-16 or binary file was a traceback out of every
+    command but ``dstf author``. The bytes are decoded as ``testing.json``'s
+    are (``config.json_from_bytes``)."""
+    data = json_from_bytes(raw, label)
     tests = check_root_keys(data, label)
     assert isinstance(data, dict)  # check_root_keys
     data.setdefault("tests", tests)

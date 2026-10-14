@@ -113,6 +113,87 @@ class TestUnknownKeys:
         assert str(exc.value) == f'{path}: must be an object, got ["a"]'
 
 
+class TestAFileThatIsNotThatFile:
+    """testing.json is decoded by the decoder test_spec.json is
+    (`config.json_from_bytes`): what is no UTF-8 JSON is one sentence that
+    names the file, exit 2 — it was a traceback from every command."""
+
+    CASES = {
+        "UTF-16": (
+            json.dumps({"source_path": "Lib"}).encode("utf-16"),
+            "not UTF-8 text (",
+        ),
+        "a 5000-digit number": (
+            b'{"max_embedded_samples": ' + b"1" * 5000 + b"}",
+            "not JSON (Exceeds the limit ",
+        ),
+        "nested 100000 deep": (
+            b'{"metadata": ' + b"[" * 100000 + b"]" * 100000 + b"}",
+            "not JSON (maximum recursion depth exceeded",
+        ),
+        "not JSON": (b"{ nope", "not JSON (Expecting property name"),
+        "empty": (b"", "the file is empty"),
+        "a 401-digit worker_startup_timeout": (
+            b'{"source_path": "Lib", "worker_startup_timeout": 1' + b"0" * 400 + b"}",
+            "worker_startup_timeout must be a positive number of seconds, got 1000",
+        ),
+    }
+
+    @pytest.mark.parametrize("case", sorted(CASES))
+    @pytest.mark.parametrize("command", [["discover"], ["check"], ["compare"]])
+    def test_it_is_one_sentence_that_names_the_file(
+        self, tmp_path, capsys, case, command
+    ):
+        raw, said = self.CASES[case]
+        (tmp_path / "Lib").mkdir()
+        (tmp_path / "Lib" / "package.mo").write_text("package Lib end Lib;")
+        path = tmp_path / "testing.json"
+        path.write_bytes(raw)
+        assert main(["--config", str(path), *command]) == 2
+        err = capsys.readouterr().err
+        assert err.startswith("Config error: ") and said in err, err
+        assert err.count("\n") == 1 and "Traceback" not in err
+        if "worker_startup_timeout" not in case:
+            assert err.startswith(f"Config error: {path}: {said}")
+
+    def test_a_byte_order_mark_is_read_as_the_spec_s_is(self, tmp_path):
+        path = _project(tmp_path, {})
+        path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+        assert Config(config_file=path).config_found == path
+
+    def test_a_key_written_twice_is_its_last_value(self, tmp_path):
+        """As in test_spec.json: `json` keeps the last, and says nothing."""
+        path = _project(tmp_path, {})
+        path.write_text(
+            '{"source_type": "python", "backend": "Python", '
+            '"tolerance": 0.5, "tolerance": 0.25}'
+        )
+        assert Config(config_file=path).tolerance == 0.25
+
+    def test_the_spec_is_decoded_by_the_same_function(self, tmp_path):
+        from dstf.discovery.spec_parser import spec_document_from_bytes
+
+        for raw, said in (
+            (b'{"tests": [], "x": ' + b"1" * 5000 + b"}", "F: not JSON (Exceeds"),
+            (b"[" * 100000 + b"]" * 100000, "F: not JSON (maximum recursion"),
+        ):
+            with pytest.raises(ConfigError) as exc:
+                spec_document_from_bytes(raw, "F")
+            assert str(exc.value).startswith(said)
+
+    @pytest.mark.parametrize("flag", ["--config", "--source-path", "--reference-root"])
+    def test_a_path_that_is_a_symlink_loop(self, tmp_path, capsys, flag):
+        a, b = tmp_path / "a", tmp_path / "b"
+        try:
+            a.symlink_to(b)
+            b.symlink_to(a)
+        except OSError:
+            pytest.skip("no symlinks here")
+        assert main(["discover", flag, str(a)]) == 2
+        err = capsys.readouterr().err
+        assert err.startswith(f"Config error: {a}: ") and "Traceback" not in err
+
+
 class TestWrongTypes:
     @pytest.mark.parametrize(
         ("key", "value", "said"),
