@@ -6,8 +6,9 @@ dist/
 build/
 *.egg
 
-# Virtual environments
+# Virtual environments (.venv-example/: the one docs/guides/first-run.md makes)
 .venv/
+.venv-example/
 venv/
 .env
 
