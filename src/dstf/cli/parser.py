@@ -187,7 +187,11 @@ class _Root(argparse.ArgumentParser):
             i += 1
         for dest, value in before.items():
             after = getattr(parsed, dest, None)
-            if after != value:
+            # Each of the four is a path: `./C` and `C`, or `C` and its
+            # absolute spelling, are one value.
+            if after != value and (
+                after is None or Path(after).resolve() != Path(value).resolve()
+            ):
                 return (
                     f"{PROJECT_FLAGS[dest]} is given twice, {value} before the "
                     f"command and {after} after it: write it once"

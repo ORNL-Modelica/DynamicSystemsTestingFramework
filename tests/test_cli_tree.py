@@ -954,6 +954,10 @@ def test_a_project_flag_with_two_values_is_refused(flag, spelled, capsys):
     # the same value on both sides, or one side twice (argparse's last wins)
     args = _parse([*given("a.json"), "discover", *given("a.json")], capsys)
     assert getattr(args, _dest(flag)) == "a.json"
+    # the same path, spelled two ways
+    for other in ("./a.json", str(Path("a.json").resolve())):
+        args = _parse([*given("a.json"), "discover", *given(other)], capsys)
+        assert isinstance(args, argparse.Namespace), f"{flag} a.json / {other}"
     args = _parse(["discover", *given("a.json"), *given("b.json")], capsys)
     assert getattr(args, _dest(flag)) == "b.json"
 
