@@ -580,6 +580,22 @@ class TestOpenModelica:
             Rule(SEARCH, "PATH"),
         )
 
+    def test_program_files_is_searched_by_version_not_by_spelling(
+        self, no_installs, tmp_path, monkeypatch
+    ):
+        """1.9.0 sorted above 1.25.0: the folders were compared as text."""
+        from dstf.backends.openmodelica import backend as om
+
+        base = tmp_path / "Program Files"
+        for version in ("1.9.0", "1.25.0", "1.22.3"):
+            _program(base / f"OpenModelica{version}-64bit" / "bin" / "omc.exe")
+        monkeypatch.setattr(
+            om, "_install_folders", lambda: [(base, "OpenModelica*/bin/omc.exe")]
+        )
+        found = OpenModelicaBackend.locate({}).parts[0]
+        assert found.path == str(base / "OpenModelica1.25.0-64bit" / "bin" / "omc.exe")
+        assert found.rule == Rule(SEARCH, f"the standard folder {base}")
+
 
 class TestJulia:
     def test_juliaup_s_folder_is_searched_newest_first(self, no_installs, tmp_path):
@@ -1008,6 +1024,42 @@ class TestAPlugInBackend:
         assert source_types() == ["modelica", "fmu", "julia", "python", "acme"]
         schema = build_config_schema()
         assert schema["properties"]["source_type"]["enum"] == source_types()
+
+    def test_the_schema_reads_an_entry_s_backend_as_the_loader_does(
+        self, no_installs, tmp_path, acme
+    ):
+        """A backend whose name starts with another's — `AcmePlus` beside
+        `Acme` — is its own: the loader takes the longest name an entry
+        starts with, and the schema's `^Acme` used to hold an `AcmePlus`
+        entry to BOTH tables."""
+        import re as regex
+
+        from dstf.reporting.schema_export import build_config_schema
+
+        @register("AcmePlus")
+        class AcmePlusBackend(Backend):
+            settings = {
+                **Backend.settings,
+                "cores": Setting({"type": "integer"}, 1, "How many cores it may use."),
+            }
+
+            def read_result(self, test, test_key):  # pragma: no cover
+                raise NotImplementedError
+
+        try:
+            path = tmp_path / "testing.json"
+            blocks = {"AcmePlus 2": {"cores": 4}, "Acme 3": {"licence_server": "x"}}
+            path.write_text(json.dumps({"source_type": "acme", "backends": blocks}))
+            Config(config_file=path)  # the loader takes both
+            patterns = build_config_schema()["properties"]["backends"][
+                "patternProperties"
+            ]
+            for entry, block in blocks.items():
+                matching = [p for p in patterns if regex.search(p, entry)]
+                assert len(matching) == 1, (entry, matching)
+                assert set(block) <= set(patterns[matching[0]]["properties"])
+        finally:
+            _REGISTRY.pop("AcmePlus", None)
 
     def test_it_is_listed_after_the_built_ins(self, acme):
         names = backend_names()

@@ -204,7 +204,7 @@ def load_config_file(path: Path) -> dict:
     return data
 
 
-def _create_default_config(config_dir: Path, library_name: str) -> dict:
+def _create_default_config(config_dir: Path) -> dict:
     """Create a default testing.json and return its contents: no backend
     named and none listed, so each machine runs with the one it has."""
     config: dict = {
@@ -627,7 +627,7 @@ class Config:
         # parses to {} — must never be overwritten with defaults).
         if config_found_dir is None and self.write_default:
             config_dir = self.reference_root if self.reference_root else repo_root
-            file_config = _create_default_config(config_dir, self.library_name)
+            file_config = _create_default_config(config_dir)
 
         # Source type (optional; default "modelica" from dataclass).
         # testing.json may set: "source_type": "fmu" | "julia" | ... (future)

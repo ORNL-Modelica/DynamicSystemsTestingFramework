@@ -432,12 +432,17 @@ def build_config_schema() -> dict:
     # What `Config` holds the value to: one a registered backend runs.
     properties["source_type"]["enum"] = source_types()
     blocks: dict[str, Any] = {}
-    for name in backend_names():
+    names = backend_names()
+    for name in names:
         cls = backend_class(name)
         if cls is None:
             continue
-        # An entry is its backend's by how its name STARTS: "Dymola 2025".
-        blocks[f"^{re.escape(name)}"] = {
+        # An entry is its backend's by how its name STARTS: "Dymola 2025" —
+        # the LONGEST backend name it starts with (`backend_family`), so
+        # the pattern of `Acme` lets by what starts with `AcmePlus`.
+        longer = [other[len(name) :] for other in names if other.startswith(name)]
+        beyond = "|".join(re.escape(rest) for rest in longer if rest)
+        blocks[f"^{re.escape(name)}" + (f"(?!{beyond})" if beyond else "")] = {
             "type": "object",
             "title": f"{name} settings",
             "properties": schema_properties(cls.settings),

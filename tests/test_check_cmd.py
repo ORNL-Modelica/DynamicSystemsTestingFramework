@@ -478,6 +478,31 @@ class TestTheBackendsOwnDiagnoses:
         assert len(missing.fixes) == 1 and "[om] extra" in missing.fixes[0]
         assert "--batch" in missing.fixes[0]
 
+    def test_fmpy_not_found_says_what_is_true(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        """It said `set "executables" in its block`, which for FMPy — a
+        Python library, with no setting at all — is itself a config error."""
+        import importlib.util
+
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+        path = _python_project(tmp_path / "proj", source_type="fmu")
+        assert main(["--config", str(path), "check"]) == 1
+        out = capsys.readouterr().out
+        assert "executables" not in out
+        assert out.endswith(
+            "\nFAIL — FMPy is not ready. Fix one of:\n"
+            "  1. Install fmpy: reinstall dstf with the [fmpy] extra "
+            "(from a checkout: uv sync --extra fmpy --locked --inexact)\n"
+        )
+
+    def test_a_backend_with_no_executables_setting_is_not_told_to_set_one(self):
+        from dstf.backends.fmpy.backend import FmpyBackend
+        from dstf.cli.diag_cmds import _default_fixes
+
+        assert _default_fixes("Acme", FmpyBackend) == ("Install Acme",)
+        assert "executables" in _default_fixes("Python", DymolaBackend)[0]
+
     def test_a_backend_that_says_no_more_gets_the_locate_lines(self, no_installs):
         """FMPy and Python override nothing: a new backend has a diagnosis
         for free."""

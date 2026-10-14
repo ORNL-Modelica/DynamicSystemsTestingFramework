@@ -51,7 +51,7 @@ from ...config_shape import Setting
 from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
 from .. import register
-from ..base import Backend
+from ..base import Backend, Diagnosis
 from ..common import result_files
 from ..common.result_variables import criterion_variables
 from ..locate import SEARCH, Found, Located, Rule
@@ -156,6 +156,23 @@ class FmpyBackend(Backend):
                     version,
                 ),
             )
+        )
+
+    @classmethod
+    def diagnose(
+        cls, located: Located, *, entry: str = "", config: Config | None = None
+    ) -> Diagnosis:
+        """The located package; not found, what to install — FMPy has no
+        program for a block to name."""
+        return Diagnosis(
+            tuple(located.lines(entry)),
+            located.complete,
+            ()
+            if located.complete
+            else (
+                "Install fmpy: reinstall dstf with the [fmpy] extra "
+                "(from a checkout: uv sync --extra fmpy --locked --inexact)",
+            ),
         )
 
     def describe_tool_version(self) -> str | None:

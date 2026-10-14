@@ -377,14 +377,18 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(f"\nOK — {target} is ready.")
         return 0
     print(f"\nFAIL — {target} is not ready. Fix one of:")
-    for i, fix in enumerate(diagnosis.fixes or _default_fixes(target), start=1):
+    fixes = diagnosis.fixes or _default_fixes(target, classes[target])
+    for i, fix in enumerate(fixes, start=1):
         print(f"  {i}. {fix}")
     return 1
 
 
-def _default_fixes(name: str) -> tuple[str, ...]:
+def _default_fixes(name: str, cls) -> tuple[str, ...]:
     """What to do about a backend that says no more than that a part of it
-    was not found."""
+    was not found: install it — or, where its block takes ``executables``,
+    say where it is."""
+    if "executables" not in cls.settings:
+        return (f"Install {name}",)
     return (
         f'Install {name}, or set "executables" in its block of testing.json\'s '
         '"backends" to where it is',

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -102,6 +103,14 @@ def _install_folders() -> list[tuple[Path, str]]:
     return [(Path(program_files), "OpenModelica*/bin/omc.exe")]
 
 
+def _newest_first(omc: Path) -> tuple:
+    """Sort key: the newest OpenModelica first, by the numbers of its
+    folder's name (``OpenModelica1.25.0-64bit``) — as numbers: read as
+    text, 1.9.0 sorts above 1.25.0."""
+    folder = omc.parent.parent.name
+    return (*(-int(n) for n in re.findall(r"\d+", folder)), folder)
+
+
 @register("OpenModelica")
 class OpenModelicaBackend(Backend):
     """OpenModelica backend using omc as a subprocess driver."""
@@ -147,8 +156,7 @@ class OpenModelicaBackend(Backend):
                     cls.binaries,
                     environment=[(HOME_VARIABLE, _omc_under)],
                     folders=_install_folders(),
-                    # Newest first: a version sorts after an older one by name.
-                    best_first=lambda path: [-ord(c) for c in str(path)],
+                    best_first=_newest_first,
                 ),
             )
         )

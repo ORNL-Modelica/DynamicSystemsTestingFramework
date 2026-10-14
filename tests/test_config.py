@@ -161,6 +161,15 @@ class TestUtilityFunctions:
         with pytest.raises(ConfigError, match="Could not find a Modelica package"):
             Config(write_default=False)
 
+    def test_the_default_file_s_writer_takes_what_it_uses(self):
+        import inspect
+
+        from dstf.config import _create_default_config
+
+        assert list(inspect.signature(_create_default_config).parameters) == [
+            "config_dir"
+        ]
+
     def test_load_config_file(self, fixtures_dir):
         """Load testing.json from fixtures."""
         config = load_config_file(fixtures_dir)
