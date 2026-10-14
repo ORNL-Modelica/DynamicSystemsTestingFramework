@@ -84,6 +84,12 @@ class _Root(argparse.ArgumentParser):
         self.creates: set[str] = set()
 
     def parse_known_args(self, args=None, namespace=None):
+        if args is None:
+            import sys
+
+            args = sys.argv[1:]
+        args = list(args)
+        self._refuse_misplaced(args)
         parsed, extras = super().parse_known_args(args, namespace)
         path = command_path(parsed)
         leaf = self.commands.get(path)
@@ -118,6 +124,55 @@ class _Root(argparse.ArgumentParser):
             leaf.error(refusal)
         return parsed, extras
 
+    def _refuse_misplaced(self, argv: list[str]) -> None:
+        """A flag of a command written before the command, or between a
+        group and its action, said as where it goes — argparse took the
+        flag's value for the command (``dstf --backend Python run``:
+        ``invalid choice: 'Python'``) or listed it under a usage that
+        offers it. Only a flag some command has is said so; any other is
+        argparse's to call unrecognized."""
+        commands = _subcommands(self).choices
+        i = _find_word(self, argv, 0, commands)
+        path = argv[i] if i < len(argv) else "<command>"
+        group = commands.get(path)
+        if group is not None and group.is_group:
+            actions = _subcommands(group).choices
+            j = _find_word(group, argv, i + 1, actions)
+            path += f" {argv[j]}" if j < len(argv) else " <action>"
+            self._say_misplaced(argv[i + 1 : j], path, allowed=group, at=group)
+        self._say_misplaced(argv[:i], path, allowed=self, at=group or self)
+
+    def _say_misplaced(
+        self,
+        words: list[str],
+        path: str,
+        *,
+        allowed: argparse.ArgumentParser,
+        at: argparse.ArgumentParser,
+    ) -> None:
+        """The first of ``words`` that is a flag of some command and not of
+        ``allowed`` (the parser whose place they are written in), as the
+        error of ``path`` — or of ``at``, when ``path`` names no command."""
+        for word in words:
+            name = word.partition("=")[0]
+            if not name.startswith("-") or name in _option_strings(allowed):
+                continue
+            having = [p for p, n in self.commands.items() if name in _option_strings(n)]
+            if not having:
+                continue
+            (flag,) = {
+                a.option_strings[-1]
+                for a in self.commands[having[0]]._actions
+                if name in a.option_strings
+            }
+            leaf = self.commands.get(path)
+            if leaf is not None and name not in _option_strings(leaf):
+                leaf.error(
+                    f"{flag} does not apply: `dstf {path}` does not read it (it "
+                    f"is a flag of: {', '.join(having)})"
+                )
+            (leaf or at).error(f"{flag} goes after the command: dstf {path} {flag} …")
+
     def format_help(self) -> str:
         """argparse's help, with the commands listed by what they are for
         (``COMMAND_GROUPS``) in place of its one flat list of the ten
@@ -149,6 +204,30 @@ class _Root(argparse.ArgumentParser):
             formatter.end_section()
         formatter.add_text(self.epilog)
         return formatter.format_help()
+
+
+def _subcommands(node: argparse.ArgumentParser) -> argparse._SubParsersAction:
+    (sub,) = [a for a in node._actions if isinstance(a, argparse._SubParsersAction)]
+    return sub
+
+
+def _option_strings(node: argparse.ArgumentParser) -> set[str]:
+    return {s for a in node._actions for s in a.option_strings}
+
+
+def _find_word(
+    node: argparse.ArgumentParser, argv: list[str], start: int, names
+) -> int:
+    """The index of the first word from ``start`` on that is one of
+    ``names`` (a command, or a group's action), stepping over ``node``'s own
+    options and their values; ``len(argv)`` when there is none."""
+    takes = {s for a in node._actions if a.nargs != 0 for s in a.option_strings}
+    i = start
+    while i < len(argv) and argv[i] != "--":
+        if argv[i] in names:
+            return i
+        i += 2 if argv[i] in takes else 1
+    return len(argv)
 
 
 def command_path(args: argparse.Namespace) -> str:

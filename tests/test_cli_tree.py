@@ -568,6 +568,65 @@ def test_no_flag_is_taken_by_a_prefix_of_its_name(path, capsys):
             assert f"unrecognized arguments: {prefix}=VALUE" in text, text
 
 
+@pytest.mark.parametrize(
+    ("argv", "said"),
+    [
+        (
+            ["--backend", "Python", "run", "--no-browser"],
+            "dstf run: error: --backend goes after the command: dstf run --backend …",
+        ),
+        (
+            ["--batch", "run"],
+            "dstf run: error: --batch goes after the command: dstf run --batch …",
+        ),
+        (
+            ["--work-dir=w", "manifest", "dump"],
+            "dstf manifest dump: error: --work-dir goes after the command: "
+            "dstf manifest dump --work-dir …",
+        ),
+        # between a group and its action
+        (
+            ["spec", "--config", "C", "add", "M"],
+            "dstf spec add: error: --config goes after the command: "
+            "dstf spec add --config …",
+        ),
+        (
+            ["-i", "failed", "run"],
+            "dstf run: error: --interactive goes after the command: "
+            "dstf run --interactive …",
+        ),
+        # before a command that does not read it at all
+        (
+            ["--batch", "compare"],
+            "dstf compare: error: --batch does not apply: `dstf compare` does "
+            "not read it (it is a flag of: run)",
+        ),
+        # no command at all
+        (
+            ["--backend", "Python"],
+            "dstf: error: --backend goes after the command: dstf <command> --backend …",
+        ),
+    ],
+    ids=lambda v: " ".join(v) if isinstance(v, list) else "",
+)
+def test_a_command_s_flag_before_the_command_says_where_it_goes(argv, said, capsys):
+    """`dstf --backend Python run` was `invalid choice: 'Python'`, `dstf
+    --batch run` `unrecognized arguments: --batch` under a usage that lists
+    `[--batch]`, `dstf spec --config C add M` `invalid choice: 'C'`."""
+    text = _parse(argv, capsys)
+    assert isinstance(text, str), f"{argv} parsed"
+    assert said in text, text
+    assert "invalid choice" not in text
+
+
+def test_a_flag_no_command_has_is_still_argparse_s_to_say(capsys):
+    """Where a flag of the tree goes is said; a name that is no flag
+    anywhere (a removed one too) gets no hint."""
+    text = _parse(["--bogus", "run"], capsys)
+    assert isinstance(text, str) and "goes after" not in text
+    assert "--bogus" in text
+
+
 def test_a_refused_flag_builds_no_config(tmp_path, monkeypatch, capsys):
     """The refusal is the parser's: nothing is resolved, so nothing — a
     default testing.json beside the library — is written."""
