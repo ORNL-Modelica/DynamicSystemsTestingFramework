@@ -97,8 +97,9 @@ folders. To pin an install, list where it is under `executables`:
 
 An entry's name starts with its backend's: `Dymola 2025` is a Dymola. `backend`
 picks one entry; without it, the first entry that is found on this machine
-runs. A block that pins paths, none of which is there, is not found — no other
-install is taken in its place. Each backend's own settings are on
+runs, and `run` and `check` say in one line each entry before it that was not
+found, and why. A block that pins paths, none of which is there, is not found
+— no other install is taken in its place. Each backend's own settings are on
 [the reference page](../reference/testing-json.md#backend-settings), and
 `--backend` picks an entry for one command.
 

@@ -534,3 +534,57 @@ class TestTheBackendsOwnDiagnoses:
             f"  executable: {sys.executable}",
             "    found by: search: the running interpreter",
         )
+
+
+class TestAnEntryPassedOverIsSaid:
+    """A project that names no backend runs with the first entry of
+    `backends` found here. An entry pinned to a path that is no executable
+    was passed over without a word: `run` ran the next one and `check`
+    exited 0. Both now say, in one line, which entry was passed over and
+    why."""
+
+    @pytest.fixture
+    def project(self, tmp_path):
+        from conftest import python_example_copy
+
+        config, _ = python_example_copy(tmp_path)
+        cfg = Path(config.config_file)
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        del data["backend"]
+        pinned = tmp_path / "opt"
+        pinned.mkdir()
+        data["backends"] = {
+            "Python": {"executables": [str(pinned)]},
+            "Python here": {},
+        }
+        cfg.write_text(json.dumps(data), encoding="utf-8")
+        line = (
+            f"Python not found (the configured executables: {pinned} is a "
+            "directory) — using Python here"
+        )
+        return cfg, config.work_dir, line
+
+    def test_the_config_says_it(self, project):
+        cfg, work, line = project
+        config = Config(config_file=cfg, work_dir=work)
+        assert config.backend_name == "Python here"
+        assert config.passed_over == line
+
+    def test_none_is_said_where_the_first_is_found(self, project):
+        cfg, work, _ = project
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        data["backends"]["Python"] = {}
+        cfg.write_text(json.dumps(data), encoding="utf-8")
+        assert Config(config_file=cfg, work_dir=work).passed_over is None
+
+    def test_run_says_it(self, project, capsys):
+        cfg, work, line = project
+        main(["run", "--config", str(cfg), "--work-dir", str(work)])
+        out = capsys.readouterr().out
+        assert out.count(line) == 1, out
+
+    def test_check_says_it(self, project, capsys):
+        cfg, _work, line = project
+        assert main(["check", "--config", str(cfg)]) == 0
+        out = capsys.readouterr().out
+        assert out.count(line) == 1, out

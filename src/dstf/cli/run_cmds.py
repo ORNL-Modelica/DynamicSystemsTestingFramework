@@ -2,6 +2,7 @@
 routing they share."""
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from .common import (
     _should_review,
 )
 from .review import _interactive_review
+
+logger = logging.getLogger(__name__)
 
 #: `--report-format`: each format and the file it is written to, in the
 #: current directory, when no --output names one (``console`` writes none).
@@ -173,6 +176,11 @@ def _default_stop_time_notes(tests: list, config) -> list[str]:
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
+    if config.passed_over:
+        # The first entry of `backends` that is here runs; the ones before
+        # it that are not are said, never skipped in silence.
+        logger.info("%s", config.passed_over)
+        print(config.passed_over)
     if args.batch:
         _refuse_batch_without_workers(config)
     all_tests = discover_tests(config)

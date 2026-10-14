@@ -111,6 +111,9 @@ to write instead.
 - `manifest cleanup --orphans` with a `--test-spec` or `--work-dir` that is
   not there said `No orphan manifest entries.`; it is a config error naming
   the path.
+- A project that names no backend ran the next entry of `backends` without a
+  word when an earlier one was not found here; `run` and `check` now say which
+  entry was passed over and why.
 
 ### How to convert your testing.json
 

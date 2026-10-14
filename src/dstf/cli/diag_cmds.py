@@ -335,7 +335,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     if config is None:
         project = "no testing.json here: the search alone"
         # As a project with an empty testing.json would be read.
-        selected = _pick_backend({}, default("source_type"))
+        selected, _ = _pick_backend({}, default("source_type"))
     else:
         project = (
             f"testing.json: {config.config_found}"
@@ -382,6 +382,8 @@ def cmd_check(args: argparse.Namespace) -> int:
             if config is not None
             else "  * the backend a Modelica project with no testing.json runs with"
         )
+        if config is not None and config.passed_over:
+            print(f"  {config.passed_over}")
         print()
         target = selected
     else:

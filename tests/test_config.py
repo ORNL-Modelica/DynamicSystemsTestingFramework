@@ -415,7 +415,11 @@ class TestAutoDetectBackend:
             "Dymola": {"executables": ["C:\\nope\\dymola.exe"]},
             "OpenModelica": {"executables": ["omc"]},  # bare name → PATH lookup
         }
-        assert _pick_backend(backends, "modelica") == "OpenModelica"
+        assert _pick_backend(backends, "modelica") == (
+            "OpenModelica",
+            "Dymola not found (the configured executables: C:\\nope\\dymola.exe "
+            "does not exist) — using OpenModelica",
+        )
 
     def test_auto_detect_pinned_paths_block_fallback(self, tmp_path, monkeypatch):
         """If a backend's list holds pinned absolute paths and NONE exist, we
@@ -452,7 +456,8 @@ class TestAutoDetectBackend:
             "OpenModelica": {"executables": ["/nope/omc"]},
             "Dymola": {"executables": ["C:\\nope\\dymola.exe"]},
         }
-        assert _pick_backend(backends, "modelica") == "OpenModelica"
+        # nothing passed over: none was found to be used in its place
+        assert _pick_backend(backends, "modelica") == ("OpenModelica", None)
 
     def test_config_autopicks_when_backend_key_omitted(self, tmp_path, monkeypatch):
         """Config.__post_init__ auto-picks when testing.json omits the

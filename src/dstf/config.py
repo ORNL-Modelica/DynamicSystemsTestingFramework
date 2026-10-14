@@ -298,8 +298,12 @@ def _anchored(value: Any, setting: Setting, base_dir: Path) -> Any:
     return [one(entry) for entry in value] if isinstance(value, list) else one(value)
 
 
-def _pick_backend(backends: dict[str, dict[str, Any]], source_type: str) -> str:
-    """The backend of a project that names none.
+def _pick_backend(
+    backends: dict[str, dict[str, Any]], source_type: str
+) -> tuple[str, str | None]:
+    """The backend of a project that names none, and the line that says
+    which entries of ``backends`` before it were passed over and why — None
+    where none was.
 
     With a ``backends`` map: its first entry, in the order written, that is
     found on this machine (``Backend.locate``) — so one ``testing.json``
@@ -311,6 +315,10 @@ def _pick_backend(backends: dict[str, dict[str, Any]], source_type: str) -> str:
     Where none is found, the FIRST candidate: the run then says that this
     one is missing, and where it was looked for. Never a backend the
     project did not list.
+
+    The line is the map's only: a written entry that is not here is said
+    (`Python not found (… is a directory) — using Python 2`); a backend the
+    search alone did not find is not news.
     """
     from .backends import backend_class, backend_family, backend_names
 
@@ -325,11 +333,20 @@ def _pick_backend(backends: dict[str, dict[str, Any]], source_type: str) -> str:
             f'no backend runs source_type "{source_type}": name one with "backend" '
             f"(the backends are: {', '.join(backend_names())})"
         )
+    skipped: list[str] = []
     for name, block in candidates:
         cls = backend_class(backend_family(name))
-        if cls is not None and cls.locate(block).found:
-            return name
-    return candidates[0][0]
+        if cls is None:
+            continue
+        located = cls.locate(block)
+        if located.found:
+            said = "; ".join(skipped) if backends and skipped else None
+            return name, (f"{said} — using {name}" if said else None)
+        detail = located.parts[0].detail if located.parts else ""
+        skipped.append(
+            f"{name} not found ({detail})" if detail else f"{name} not found"
+        )
+    return candidates[0][0], None
 
 
 def dependency_is_path(entry: str) -> bool:
@@ -541,6 +558,11 @@ class Config:
     # dashboard's commands (`reporting.dashboard_render.build_rerun_flags`).
     overrides: frozenset[str] = field(init=False, default=frozenset())
 
+    # The entries of `backends` before the selected one that were not found
+    # here, and why, as one line (`_pick_backend`) — None where the project
+    # named its backend or the first entry was found. `run` and `check` say it.
+    passed_over: str | None = field(init=False, default=None)
+
     # The selected backend's block of `backends`, as written (empty: it has
     # none). `Backend.settings_of` lays it over the backend's defaults.
     backend_settings: dict[str, Any] = field(init=False, default_factory=dict)
@@ -710,7 +732,9 @@ class Config:
                 self.backend_name = file_config["backend"]
                 named = f"{config_found}: backend"
             else:
-                self.backend_name = _pick_backend(self.backends, self.source_type)
+                self.backend_name, self.passed_over = _pick_backend(
+                    self.backends, self.source_type
+                )
 
         # A name that is an entry of `backends`, a backend's, or one that
         # starts with a backend's ("Dymola 2025"). Any other names nothing
