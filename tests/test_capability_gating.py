@@ -180,9 +180,30 @@ class TestSelectBackend:
         with pytest.raises(BackendUnavailableError) as excinfo:
             select_backend(SimpleNamespace(backend="Probe"), persistent=True)
 
+        # The backends' sentence names nothing a caller may not have:
+        # `dstf author`, whose Queue shows it, has no `--batch`.
         message = str(excinfo.value)
         assert "no omc" in message
-        assert "--batch" in message
+        assert "--batch" not in message
+        assert excinfo.value.batch_runs
+
+    def test_the_cli_says_batch_where_its_script_mode_would_run(
+        self, monkeypatch, capsys
+    ):
+        """`run` has `--batch`: its refusal of the workers names it, and only
+        where the backend's script mode would run."""
+        for batch_runs, said in ((True, True), (False, False)):
+
+            def _raise(config, *, persistent, to_run, batch_runs=batch_runs):
+                raise BackendUnavailableError(
+                    "Persistent-worker Probe unavailable.", batch_runs=batch_runs
+                )
+
+            monkeypatch.setattr("dstf.backends.select_backend", _raise)
+            with pytest.raises(SystemExit):
+                cli_mod._get_backend(SimpleNamespace(), persistent=True)
+            err = capsys.readouterr().err
+            assert ("Or re-run with `--batch`" in err) is said, err
 
     def test_cli_wrapper_turns_the_error_into_exit_1(self, monkeypatch, capsys):
         """`_get_backend` is the only place the abort message is printed."""

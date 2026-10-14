@@ -61,6 +61,12 @@ def _get_backend(config, persistent: bool = False, *, to_run: bool = False):
     try:
         return select_backend(config, persistent=persistent, to_run=to_run)
     except BackendUnavailableError as exc:
+        if exc.batch_runs:
+            # The command line's own way out, which the tool does not have.
+            exc = BackendUnavailableError(
+                f"{exc}\n\nOr re-run with `--batch` to use the per-test "
+                f"subprocess backend instead."
+            )
         print(f"{exc} Aborting.", file=sys.stderr)
         sys.exit(1)
 

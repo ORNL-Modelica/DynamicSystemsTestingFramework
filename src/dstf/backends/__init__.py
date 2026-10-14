@@ -219,8 +219,17 @@ def backend_family(backend_name: str) -> str:
 class BackendUnavailableError(RuntimeError):
     """The project's backend cannot be built on this machine: no backend of
     that name is registered, its program was not found, or what it needs is not
-    installed. ``str()`` says which.
+    installed. ``str()`` says which, in words true wherever it is shown — the
+    command line and `dstf author`'s Queue alike.
+
+    ``batch_runs``: only the variant whose workers stay alive is refused;
+    the backend's per-test script mode would run. A caller that offers that
+    mode says so in its own words (the CLI's ``--batch``).
     """
+
+    def __init__(self, message: str, *, batch_runs: bool = False):
+        super().__init__(message)
+        self.batch_runs = batch_runs
 
 
 def select_backend(config, *, persistent: bool, to_run: bool = False) -> Backend:
@@ -267,12 +276,8 @@ def select_backend(config, *, persistent: bool, to_run: bool = False) -> Backend
         pcls.preflight(config)
     except RuntimeError as exc:
         raise BackendUnavailableError(
-            f"Persistent-worker {config.backend} unavailable.\n"
-            f"\n"
-            f"{exc}\n"
-            f"\n"
-            f"Or re-run with `--batch` to use the per-test subprocess "
-            f"backend instead."
+            f"Persistent-worker {config.backend} unavailable.\n\n{exc}",
+            batch_runs=True,
         ) from exc
     return _instantiate(pcls, config)
 

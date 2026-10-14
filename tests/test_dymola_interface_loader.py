@@ -275,3 +275,5 @@ def test_a_session_that_changes_backend_is_refused_the_second_dymola(
     with pytest.raises(QueueError, match="has already loaded Dymola's Python"):
         session._open_pool()
     assert "Restart dstf to run with this Dymola." in session.queue_refusal
+    # the tool's Queue names only what can be done there: it has no --batch
+    assert "--batch" not in session.queue_refusal
