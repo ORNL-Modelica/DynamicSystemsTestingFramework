@@ -4840,3 +4840,62 @@ def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
         ),
     )
     return cfg, work
+
+
+class TestABaselineThisFolderDoesNotHold:
+    """`stage` refuses what is wrong in the FILE and a name that IS a
+    companion here; a warn naming a soft check this folder does not store is
+    staged — it is one of another folder — and the pending preview says it
+    is not scored here (`Session.not_stored_notes`)."""
+
+    @staticmethod
+    def _warned(against: str) -> dict:
+        return {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+                {
+                    "combinator": "warn",
+                    "children": [
+                        {"metric": "nrmse", "variable": "x", "against": against}
+                    ],
+                },
+            ],
+        }
+
+    @pytest.mark.parametrize("model_id", [A, B])  # with a baseline; NO_REF
+    def test_it_is_staged_and_said(self, session, model_id):
+        folder = session.project.store.folder
+        session.stage(
+            [PatchOp(model_id, "add", "/metrics", self._warned("experiment"))]
+        )
+        assert session.spec.entry(model_id)["metrics"] == self._warned("experiment")
+        assert session.not_stored_notes(model_id) == [
+            f"'experiment' is not stored for {folder}: it is not scored here"
+        ]
+        # An edit of another criterion of that tree is staged too.
+        session.stage(
+            [PatchOp(model_id, "replace", "/metrics/children/0/tolerance", 0.4)]
+        )
+        assert session.spec.entry(model_id)["metrics"]["children"][0] == {
+            "metric": "nrmse",
+            "variable": "x",
+            "tolerance": 0.4,
+        }
+
+    def test_a_stored_soft_check_is_no_note(self, session):
+        t = [i / 4 for i in range(5)]
+        session.project.store.add_soft_check(
+            A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
+        )
+        session.stage([PatchOp(A, "add", "/metrics", self._warned("om_cross"))])
+        assert session.not_stored_notes(A) == []
+        assert session.not_stored_notes(B) == []  # no tree: nothing named
+
+    def test_a_companion_here_is_refused(self, session, tmp_path):
+        rig = tmp_path / "rig.csv"
+        rig.write_text("time,x\n0,0\n1,1\n", encoding="utf-8")
+        session.project.store.add_companion(A, "rig", str(rig))
+        with pytest.raises(PatchError, match="the companion 'rig'"):
+            session.stage([PatchOp(A, "add", "/metrics", self._warned("rig"))])
+        assert session.spec.pending == []

@@ -17,17 +17,23 @@ so a tree that breaks one is wrong in every ``<Backend>/<os>`` folder:
 The FOLDER's rules read which names this folder stores, and so hold in
 one folder and not in another, where the spec is the same:
 
-4. A criterion names no companion, under ``warn`` or not.
-5. A criterion names a stored baseline — the primary or a soft check.
+4. A criterion names no companion of this folder.
+5. A criterion names a baseline this folder stores — the primary or a
+   soft check.
 
-A criterion outside ``warn`` naming a stored soft check breaks rule 2, and
-is said in rule 2's sentence: one rule, one sentence, on every surface.
+A criterion outside ``warn`` naming a stored soft check or companion breaks
+rule 2, and is said in rule 2's sentence: one rule, one sentence, on every
+surface.
 
-:func:`validate_tree` with no lookup checks the file's rules; that is the
-check a test is refused by where it is scored (``comparator.broken_roles``),
-since a soft check is imported into ONE folder and the same spec is scored
-in all of them. With a lookup (``spec update`` and the tool, which write
-the file and hold the store) it checks all five.
+What a folder happens to hold or lack is never a refusal where a test is
+scored: :func:`validate_tree` with no lookup checks the file's rules, the
+check ``comparator.broken_roles`` refuses a test by, since a soft check is
+imported into ONE folder and the same spec is scored in all of them. Where
+the file is written (``spec update`` and the tool, which hold the store),
+:func:`validate_tree` with a lookup refuses rule 4 as well — a companion
+here is known wrong here — and rule 5 is a note, not a refusal: the names
+:func:`not_held_here` returns are written, and the writer says each in
+:func:`not_stored_here`'s sentence.
 """
 
 from __future__ import annotations
@@ -70,14 +76,14 @@ def validate_tree(
             baseline name, or ``None`` for an unknown name. Typical
             caller builds this from a :class:`ReferenceStore` query.
             Omitted, only the rules the file decides by itself are checked
-            (the module's 1-3): no name but ``primary`` is known, and none
-            is held against the tree for being unknown.
+            (the module's 1-3). Given, rule 4 is checked too; a name it
+            does not know is never an error (:func:`not_held_here`).
     """
     errors: list[ValidationError] = []
     _walk(tree, role_of, _path, in_warn=False, errors=errors)
 
     # Tree-level rule: at least one primary leaf outside warn.
-    if not _has_primary_outside_warn(tree, role_of or _primary_only):
+    if not _has_primary_outside_warn(tree):
         errors.append(
             ValidationError(
                 _path,
@@ -87,10 +93,6 @@ def validate_tree(
             )
         )
     return errors
-
-
-def _primary_only(name: str) -> BaselineRole | None:
-    return BaselineRole.PRIMARY if name == "primary" else None
 
 
 def _walk(
@@ -174,18 +176,10 @@ def _check_leaf(
         return
     if role_of is None:
         return
-    role = role_of(leaf.against)
-    if role is None:
-        errors.append(
-            ValidationError(
-                path,
-                f"This criterion scores against {leaf.against!r}, which is not "
-                f"a baseline of this test (the primary or a soft check); check "
-                f"the name.",
-            )
-        )
-        return
-    if role is BaselineRole.COMPANION:
+    # A name this folder does not hold is a soft check of another folder:
+    # written, with a note (`not_held_here`), and not scored here. A name
+    # that IS a companion here is known wrong here.
+    if role_of(leaf.against) is BaselineRole.COMPANION:
         errors.append(
             ValidationError(
                 path,
@@ -196,21 +190,41 @@ def _check_leaf(
         )
 
 
-def _has_primary_outside_warn(
-    node: SpecNode,
-    role_of: BaselineRoleLookup,
-    in_warn: bool = False,
-) -> bool:
+def _has_primary_outside_warn(node: SpecNode, in_warn: bool = False) -> bool:
     if isinstance(node, LeafSpec):
-        if in_warn:
-            return False
-        return role_of(node.against) is BaselineRole.PRIMARY
+        return not in_warn and node.against == "primary"
     if isinstance(node, CombinatorSpec):
         child_in_warn = in_warn or node.combinator == "warn"
-        return any(
-            _has_primary_outside_warn(c, role_of, child_in_warn) for c in node.children
-        )
+        return any(_has_primary_outside_warn(c, child_in_warn) for c in node.children)
     return False
+
+
+def not_held_here(tree: SpecNode, role_of: BaselineRoleLookup) -> list[str]:
+    """The baselines ``tree``'s criteria name that this folder (``role_of``)
+    holds none of, each once, in tree order (the module's rule 5). Not an
+    error where the file is written: a soft check is imported into one
+    folder and the same spec is scored in every one, where such a criterion
+    is not scored (under a ``warn``, an advisory one). The writer says so
+    in :func:`not_stored_here`'s sentence."""
+    names: list[str] = []
+
+    def walk(node: SpecNode) -> None:
+        if isinstance(node, LeafSpec):
+            if role_of(node.against) is None and node.against not in names:
+                names.append(node.against)
+        elif isinstance(node, CombinatorSpec):
+            for child in node.children:
+                walk(child)
+
+    walk(tree)
+    return names
+
+
+def not_stored_here(name: str, folder: str) -> str:
+    """What a write says of a criterion naming ``name``, which ``folder``
+    (``FMPy/macos``) stores no baseline of: the file is written, and that
+    criterion is not scored there."""
+    return f"{name!r} is not stored for {folder}: it is not scored here"
 
 
 # ---------------------------------------------------------------------------

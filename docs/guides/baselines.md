@@ -136,7 +136,9 @@ refused where it is scored: `run` and `compare` fail that test with the
 rule's sentence and score none of its criteria. A soft check is stored for
 one backend and OS; where the test runs with another, its criterion under
 `warn` is not scored, says `no soft check 'openmodelica' is stored for
-Dymola/linux`, and fails nothing.
+Dymola/linux`, and fails nothing. There, `dstf spec update` and the
+authoring tool write such a tree and say `'openmodelica' is not stored for
+Dymola/linux: it is not scored here`.
 
 Accepting a new primary result never touches a soft check.
 

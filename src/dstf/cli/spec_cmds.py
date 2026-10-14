@@ -149,28 +149,45 @@ def cmd_spec_update(args: argparse.Namespace) -> int:
         print(f"Failed to read {json_file}: {e}")
         return 1
 
-    from ..discovery.patch_apply import PatchError
+    from ..discovery.patch_apply import PatchError, load_spec_document
     from ..discovery.patch_envelope import parse_envelope
-    from ..discovery.spec_update import apply_validated_patches
+    from ..discovery.spec_update import (
+        apply_validated_patches,
+        not_stored_notes,
+        spec_entry,
+    )
+    from ..storage.reference_store import ReferenceStore
 
     groups = parse_envelope(update_data, label=str(json_file))
     requested = [(g.model_id, g.ops) for g in groups]
     if not requested:
         print(f"Nothing to apply: {json_file} carries no patches")
         return 0
+    store = ReferenceStore(config)
     try:
-        applied = apply_validated_patches(spec_path, requested, config)
+        applied = apply_validated_patches(spec_path, requested, config, store)
     except PatchError as e:
         print(f"Patch failed: {e}")
         return 1
     config.write_default_file()
-    _print_applied(applied, requested, spec_path)
+    written = load_spec_document(spec_path)
+    _print_applied(
+        applied,
+        requested,
+        spec_path,
+        {
+            model_id: not_stored_notes(spec_entry(written, model_id), model_id, store)
+            for model_id, _ in applied
+        },
+    )
     return 0
 
 
-def _print_applied(applied, requested, spec_path) -> None:
+def _print_applied(applied, requested, spec_path, not_stored) -> None:
     """One block per model: the materialization note when the applied ops
-    outgrew the requested ones, then the requested ops."""
+    outgrew the requested ones, then the requested ops, then a line per
+    baseline its tree names that this folder does not store (``not_stored``,
+    by model): written, and not scored here."""
     for (model_id, full), (_, ops) in zip(applied, requested):
         if len(full) > len(ops):
             # The implicit tree is an `and` of one leaf per criterion the
@@ -185,6 +202,8 @@ def _print_applied(applied, requested, spec_path) -> None:
         print(f"Applied {len(ops)} op(s) to {model_id} → {spec_path}")
         for op in ops:
             print(f"  {op.get('op'):<8} {op.get('path'):<60} {op.get('value', '')}")
+        for line in not_stored[model_id]:
+            print(line)
 
 
 def cmd_spec_schema(args: argparse.Namespace) -> int:

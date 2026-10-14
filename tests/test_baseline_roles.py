@@ -950,6 +950,34 @@ class TestRolesWhereATestIsScored:
         folder = f"{store.config.backend}/{store.config.os_name}"
         assert errors == [f"no soft check {name!r} is stored for {folder}"]
 
+    def test_a_write_names_a_baseline_this_folder_does_not_hold_and_writes(self, roles):
+        """`spec update`'s read-modify-write: a tree whose warn names a soft
+        check this folder does not hold is written; one naming a companion
+        here is refused and the file is untouched."""
+        from dstf.discovery.patch_apply import PatchError
+        from dstf.discovery.spec_update import (
+            apply_validated_patches,
+            not_stored_notes,
+        )
+
+        store, test, _ = roles
+        spec = store.config.reference_root / "spec.json"
+        spec.write_text(json.dumps({"tests": [{"model": test.model_id}]}))
+        tree = _warned(_leaf(against="nosuch"))
+        op = {"op": "add", "path": "/metrics", "value": tree}
+        apply_validated_patches(spec, [(test.model_id, [op])], store.config, store)
+        (entry,) = json.loads(spec.read_text())["tests"]
+        assert entry["metrics"] == tree
+        folder = f"{store.config.backend}/{store.config.os_name}"
+        assert not_stored_notes(entry, test.model_id, store) == [
+            f"'nosuch' is not stored for {folder}: it is not scored here"
+        ]
+        before = spec.read_bytes()
+        op = {"op": "add", "path": "/metrics", "value": _warned(_leaf(against="rig"))}
+        with pytest.raises(PatchError, match="the companion 'rig'"):
+            apply_validated_patches(spec, [(test.model_id, [op])], store.config, store)
+        assert spec.read_bytes() == before
+
     def test_a_soft_check_under_warn_warns_and_the_test_passes(self, roles):
         from dstf.reporting.status import refusal
 
@@ -1034,23 +1062,38 @@ class TestWhatEachRuleReads:
             str(e) for e in validate_tree(tree)
         ]
 
-    def test_the_full_check_refuses_what_this_folder_does_not_hold(self):
+    def test_the_full_check_refuses_a_companion_here_and_notes_a_name_not_held(
+        self,
+    ):
+        """Where the file is written, a name that IS a companion in this
+        folder is known wrong here and refused; a name this folder does not
+        hold is a soft check of some other folder, and is written, with a
+        note naming it (`not_held_here`)."""
         from dstf.comparison.tree_spec import parse_metric_tree
-        from dstf.comparison.validator import role_lookup_from_names, validate_tree
+        from dstf.comparison.validator import (
+            not_held_here,
+            not_stored_here,
+            role_lookup_from_names,
+            validate_tree,
+        )
 
         held = role_lookup_from_names(soft_checks=["other"], companions=["rig"])
-        nosuch = validate_tree(
-            parse_metric_tree(_warned(_leaf(against="nosuch"))), held
+        nosuch = parse_metric_tree(_warned(_leaf(against="nosuch")))
+        assert validate_tree(nosuch, held) == []
+        assert not_held_here(nosuch, held) == ["nosuch"]
+        assert not_stored_here("nosuch", "FMPy/macos") == (
+            "'nosuch' is not stored for FMPy/macos: it is not scored here"
         )
-        assert [e.message[:40] for e in nosuch] == [
-            "This criterion scores against 'nosuch', "
-        ]
-        rig = validate_tree(parse_metric_tree(_warned(_leaf(against="rig"))), held)
-        assert "the companion 'rig'" in rig[0].message
-        assert (
-            validate_tree(parse_metric_tree(_warned(_leaf(against="other"))), held)
-            == []
+        rig = parse_metric_tree(_warned(_leaf(against="rig")))
+        (error,) = validate_tree(rig, held)
+        assert error.message == (
+            "This criterion scores against the companion 'rig', and companions "
+            "are only drawn; import it as a soft check (dstf soft-check add) to "
+            "score against it."
         )
+        assert not_held_here(rig, held) == []
+        other = parse_metric_tree(_warned(_leaf(against="other")))
+        assert validate_tree(other, held) == [] and not_held_here(other, held) == []
 
 
 def test_discover_names_each_test_whose_tree_is_wrong_in_its_file(tmp_path, capsys):

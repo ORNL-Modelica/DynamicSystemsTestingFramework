@@ -183,6 +183,53 @@ def _write_patch(tmp_path: Path, model: str, ops: list[dict]) -> Path:
     return patch
 
 
+def test_an_edit_in_a_folder_without_the_soft_check_is_written_and_says_so(
+    tmp_path, capsys
+):
+    """The FMU example's tree warns against the soft check `experiment`,
+    stored for FMPy/linux only. In FMPy/macos an edit of another criterion
+    is written, with one line saying the soft check is not scored there —
+    not refused, which left no edit of that test possible in any folder but
+    the one the soft check was imported into."""
+    (tmp_path / "testing.json").write_text(
+        json.dumps(
+            {
+                "source_type": "fmu",
+                "backend": "FMPy",
+                "os": "macos",
+                "reference_root": ".",
+            }
+        ),
+        encoding="utf-8",
+    )
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
+            {
+                "combinator": "warn",
+                "children": [
+                    {
+                        "metric": "nrmse",
+                        "variable": "h",
+                        "against": "experiment",
+                        "tolerance": 0.2,
+                    }
+                ],
+            },
+        ],
+    }
+    spec = _write_spec(tmp_path, {"model": "BouncingBall", "metrics": tree})
+    op = {"op": "replace", "path": "/metrics/children/0/tolerance", "value": 2e-3}
+    assert _run_spec_update(spec, _write_patch(tmp_path, "BouncingBall", [op])) == 0
+    out = capsys.readouterr().out
+    assert "'experiment' is not stored for FMPy/macos: it is not scored here" in (
+        out.splitlines()
+    ), out
+    (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
+    assert entry["metrics"]["children"][0]["tolerance"] == 2e-3
+
+
 class TestSpecUpdateMaterialization:
     def test_per_leaf_op_round_trips_on_flat_entry(self, tmp_path):
         """Reporter-style per-leaf op against a flat-override entry: the

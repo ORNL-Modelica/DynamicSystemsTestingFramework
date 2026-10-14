@@ -120,7 +120,11 @@ lists each one and where it went.
   (`metrics.children[1]: …`), and none of its criteria is scored. A criterion under `warn` against a soft check that is not
   stored for this backend and OS is not scored and fails no test, as
   before; it says so, `no soft check 'experiment' is stored for
-  FMPy/macos`.
+  FMPy/macos`. Where such a tree is written, `dstf spec update` and the
+  authoring tool refused every edit of that test — and, before its first
+  accept, the tree itself; they write it, and say `'experiment' is not
+  stored for FMPy/macos: it is not scored here`. A criterion that names a
+  companion of this backend and OS is still refused there.
 - The dashboard's copyable commands named `testing.json` by a relative path
   and left out the run's other flags: after `run --reference-root ALT`, its
   `compare --accept` overwrote a baseline in `testing.json`'s own reference

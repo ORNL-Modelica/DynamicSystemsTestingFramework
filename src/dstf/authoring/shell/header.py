@@ -758,6 +758,11 @@ class PendingDrawer:
         ]
         for text in dict.fromkeys(said):
             ui.label(text).classes("text-xs dstf-mono").mark("drawer-gesture")
+        # A baseline the entry names that this folder does not store: staged
+        # all the same — a soft check of another folder — and said here, in
+        # the line `spec update` prints for it.
+        for text in session.not_stored_notes(model_id):
+            ui.label(text).classes("text-xs text-secondary").mark("drawer-not-stored")
         # Never an empty box: edits that cancel out are not here at all, and
         # neither is a tree written out and not edited (a `rescore`, a value
         # typed and cleared on a flat test) — an entry put back as saved has

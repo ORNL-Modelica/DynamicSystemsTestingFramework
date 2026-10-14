@@ -60,6 +60,7 @@ from ..discovery.spec_update import (
     implicit_tree_op,
     is_literal_variable,
     needs_materialization,
+    not_stored_notes,
     unknown_override_modes,
     validate_entry_keys,
     validate_entry_metric_tree,
@@ -1086,6 +1087,15 @@ class Session:
         if result is not None and test is not None:
             result = replace(result, variables=tracked_results(test, result))
         return tracked_names(scored, result)
+
+    def not_stored_notes(self, model_id: str) -> list[str]:
+        """A sentence per baseline the test's entry, as staged, names that
+        this folder stores none of (:func:`~dstf.discovery.spec_update.
+        not_stored_notes`): `stage` took it — a soft check of another
+        folder — and the pending preview says it is not scored here, as
+        ``spec update`` prints it."""
+        project = self._require_project()
+        return not_stored_notes(self.spec.entry(model_id), model_id, project.store)
 
     def variable_texts(self, model_id: str) -> dict[str, VariableText]:
         """``{name: VariableText}`` for this test — both readings of every

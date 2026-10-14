@@ -152,9 +152,11 @@ def validate_entry_metric_tree(
     """When the patched entry has a ``metrics`` key, parse it as the spec
     parser does — a ``null`` there is refused, like any other value that is
     no tree — and run the D66 validator against the reference store's
-    baseline roles. Skipped when the entry has no such key (implicit AND).
-    ``store`` saves the caller that already holds one (the Session) a
-    rescan of the whole partition per call."""
+    baseline roles: the file's rules, and a name that is a companion in
+    this folder. A name this folder holds no baseline of is written
+    (:func:`not_stored_notes` says it). Skipped when the entry has no such
+    key (implicit AND). ``store`` saves the caller that already holds one
+    (the Session) a rescan of the whole partition per call."""
     entry = spec_entry(data, model_id)
     if entry is None or "metrics" not in entry:
         return
@@ -185,6 +187,32 @@ def validate_entry_metric_tree(
             # Each message is a sentence that ends in its own full stop.
             reason=" ".join(e.message for e in errors),
         )
+
+
+def not_stored_notes(
+    entry: dict | None, model_id: str, store: ReferenceStore
+) -> list[str]:
+    """One sentence per baseline ``entry``'s tree names that ``store``'s
+    folder holds none of — ``'experiment' is not stored for FMPy/macos: it
+    is not scored here`` — for a writer to say beside what it wrote: the
+    entry is written, since the soft check may be one of another folder,
+    and where it is scored here the criterion is not. None for an entry
+    with no tree, or one that does not parse (a write refuses that)."""
+    if entry is None or "metrics" not in entry:
+        return []
+    from ..comparison.tree_spec import MetricSpecError, parse_metric_tree
+    from ..comparison.validator import (
+        not_held_here,
+        not_stored_here,
+        role_lookup_from_store,
+    )
+
+    try:
+        tree = parse_metric_tree(entry["metrics"])
+    except MetricSpecError:
+        return []
+    lookup = role_lookup_from_store(store, model_id)
+    return [not_stored_here(name, store.folder) for name in not_held_here(tree, lookup)]
 
 
 class UnscorableCriterion(PatchError):
