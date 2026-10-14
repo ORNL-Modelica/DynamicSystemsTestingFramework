@@ -32,8 +32,8 @@ from .registry import metric, unnamed_metrics
 #:
 #: ``quantity`` — the evaluator looks at it on each leaf, and acts on it
 #: only for a metric that declares ``accepts_quantity``. On any other
-#: metric it is the one documented inert param (docs/extensibility.md,
-#: the Metric contract, item 6; ``MetricDescriptor``): "an unrecognized
+#: metric it is the one documented inert param (``MetricDescriptor``'s
+#: ``accepts_quantity``): "an unrecognized
 #: ``quantity`` stays an inert param — a trajectory metric keeps scoring
 #: trajectories". That promise is kept here, by name, and not by leniency.
 EVERY_METRIC = tuple(spec_shape.EVERY_METRIC)

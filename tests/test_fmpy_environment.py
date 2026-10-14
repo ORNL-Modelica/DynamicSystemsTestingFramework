@@ -113,7 +113,7 @@ def test_fmpy_backend_registers_under_name():
 
     backend = get_backend(_FakeConfig())
     assert isinstance(backend, FmpyBackend)
-    # Capabilities declared as advertised in docs/extensibility.md §3
+    # Capabilities declared as the Backend contract advertises them
     from dstf.backends.types import Capability, DatasetType
 
     # review 2026-07-06 (finding 28): PERSISTENT_WORKERS was aspirational —

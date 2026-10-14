@@ -398,15 +398,15 @@ class TestTheBackendsOwnDiagnoses:
         assert not any("needed" in line for line in diagnosis.lines)
 
     def test_the_julia_example_states_its_minimum(self):
-        """What README.md and pyproject.toml's `julia` marker say the Julia
-        example needs is what its Manifest.toml was resolved with."""
+        """What the Julia setup page and pyproject.toml's `julia` marker say
+        the Julia example needs is what its Manifest.toml was resolved with."""
         needed = manifest_julia_version(
             REPO / "examples" / "julia" / "JuliaMtkTestingLib"
         )
         assert needed is not None
         minimum = ".".join(needed.split(".")[:2])
-        readme = (REPO / "README.md").read_text(encoding="utf-8")
-        assert f"install Julia {minimum}+" in readme
+        page = REPO / "docs" / "guides" / "simulators" / "julia.md"
+        assert f"Install Julia {minimum} or newer" in page.read_text(encoding="utf-8")
         pyproject = (REPO / "pyproject.toml").read_text(encoding="utf-8")
         assert f'"julia: requires Julia {minimum}+ ' in pyproject
 

@@ -1,7 +1,7 @@
 """A test declared only in ``test_spec.json`` takes its model's
 ``experiment(...)`` annotation, as a scanned test does: the entry's own
-``simulation.*`` wins, and what it omits comes from the model (docs/usage.md,
-"Two-layer contract"). Before this a spec-only entry was taken as written,
+``simulation.*`` wins, and what it omits comes from the model (the
+``simulation`` keys' descriptions in ``spec_shape``). Before this a spec-only entry was taken as written,
 and a model annotated ``StopTime=200`` ran for the framework's 1 s."""
 
 from __future__ import annotations

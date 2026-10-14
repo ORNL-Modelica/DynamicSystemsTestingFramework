@@ -686,7 +686,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   lookup explaining the vocabulary — NRMSE, tube/band/rel/abs, points,
   event-timing, dominant-frequency, PASS vs FAIL vs SIM_FAIL vs NO_REF,
   primary/soft_check/companion baseline roles, warn-wrapping. Content largely
-  exists in docs/usage.md + the mode field metadata (label/help already flow
+  exists in the guides + the mode field metadata (label/help already flow
   into the UI via mode_controls); surface it as a "?"-panel keyed by the mode
   each variable uses.
 
@@ -867,7 +867,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   Scope, in two tiers:
   (a) Free to rename — package `simulators/` → `backends/`, `SimulatorRunner`
       and the `Persistent*Runner` classes, internal variables and docstrings,
-      `docs/extensibility.md` §3 and the `plugins.py` docstring (see also the
+      the plug-in guide and the `plugins.py` docstring (see also the
       E01a follow-up: those two still justify the single entry-point group
       with the backend+metrics pairing rather than the recognizer+backend one).
   (b) Coordinated change, not a refactor — `testing.json`'s `"simulator"` and
@@ -1452,7 +1452,7 @@ planning.
   - The committed browser test compares both axis ranges after an x-only
     zoom; that holds only because its band edit does not grow the data's y
     extent (an x-only zoom leaves y on autorange).
-  - `docs/extensibility.md` still describes the interactive report's live
+  - The extensibility notes (now gone) still described the interactive report's live
     re-scoring and add-leaf dropdown, and `docs/patterns.md` future editing
     through JS templates — both predate the split.
 - **After the foundations corrections plan (2026-09-16), follow-ups** — noted
@@ -1650,7 +1650,7 @@ planning.
     TRANSFORM.
   - The report's per-variable badge reads the plain label beside the muted
     name; the tool's multi-series pill reads the disambiguated text — two
-    surfaces, one rule, but worth one sentence in usage.md if it confuses.
+    surfaces, one rule, but worth one sentence in a guide if it confuses.
   - The tree-path migrate hint is logged once per (baseline, variable); the
     flat path's override warning once per compare — `run --merge` repeats it.
   - Process: a LOOK screenshot cannot show a hover; a UI rule that puts text

@@ -3,7 +3,7 @@
 Importing this package registers the built-in metrics and combinators, so
 ``registry.metric(...)`` / ``registry.combinator(...)`` resolve before any
 spec is parsed. Third-party metrics register the same way (see
-docs/extensibility.md).
+docs/guides/plugin.md).
 """
 
 from __future__ import annotations

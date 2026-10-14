@@ -997,18 +997,11 @@ def _keys_listed(text: str, pattern: str) -> list[str]:
 
 
 class TestTheDocsListTheTable:
-    """The two key lists a person reads name the keys the code reads — no
-    more, no fewer. The notes and `$schema` are read by nothing and listed
-    by neither."""
+    """The key list a contributor reads names the keys the code reads — no
+    more, no fewer. The notes and `$schema` are read by nothing and not
+    listed. (A user reads the reference page, generated from the table.)"""
 
     KEYS = sorted(set(TESTING_JSON) - set(NOTES) - {"$schema"})
-
-    def test_usage_md_s_key_table(self):
-        text = (REPO / "docs" / "usage.md").read_text(encoding="utf-8")
-        table = text[
-            text.index("| Field | Required |") : text.index("**Backend settings.**")
-        ]
-        assert sorted(_keys_listed(table, r"^\| `([^`]+)` \|")) == self.KEYS
 
     def test_claude_md_s_configuration_list(self):
         text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")

@@ -1,6 +1,6 @@
 """Registries for comparison metrics and MetricTree combinators.
 
-The extension seam docs/extensibility.md promises for the Metric layer.
+The extension seam a plug-in uses for the Metric layer (docs/guides/plugin.md).
 Before this module the metric and combinator name spaces were closed
 if/elif chains duplicated across four files (``modes.resolve_mode``,
 ``tree_spec.VALID_METRICS`` / ``_MODE_TO_METRIC``,

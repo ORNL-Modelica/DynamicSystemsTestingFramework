@@ -20,6 +20,12 @@ nodes:
 - ``dstf-cli``: every command of the command line;
 - ``dstf-schema-url <file>``: where the site publishes a file's schema.
 
+Each section and each key row is a label a guide links instead of restating
+it: ``cli-<command>`` (``cli-spec-add``), ``mode-<name>``,
+``backend-<name>`` (lower case), and ``key-<table>-<key>``
+(``key-testing-backends``, ``key-spec-entry-baseline-points``,
+``key-backend-dymola-interface``).
+
 The two JSON schemas are written into the built site at ``schemas/`` when
 the build ends.
 """
@@ -128,21 +134,39 @@ def table(header: tuple[str, ...], rows: list[tuple[str, ...]]) -> nodes.table:
     return tbl
 
 
-def key_table(table_rows: list[Row]) -> nodes.table:
-    return table(
+def key_table(
+    table_rows: list[Row], directive: Directive | None = None, prefix: str = ""
+) -> nodes.table:
+    """A table of keys. Given the directive and a ``prefix``, each row is a
+    label a page links to: ``{ref}`backends <key-testing-backends>```."""
+    tbl = table(
         ("Key", "Type", "Default", "Description"),
         [(r.name, r.type, r.default, r.description) for r in table_rows],
     )
+    if directive is not None and prefix:
+        rows = next(iter(tbl.findall(nodes.tbody))).children
+        for row, r in zip(rows, table_rows):
+            _label(directive, row, f"key-{prefix}-{r.name}")
+    return tbl
+
+
+def _label(directive: Directive, node: nodes.Element, name: str) -> None:
+    """Make ``node`` the target of the label ``name``, which a page names
+    with ``{ref}``: ``cli-run``, ``mode-tube``, ``key-testing-backends``."""
+    anchor = nodes.make_id(name)
+    node["ids"].append(anchor)
+    node["names"].append(anchor)
+    directive.state.document.note_explicit_target(node)
 
 
 def _section(
     directive: Directive, title: str, anchor: str, *children: nodes.Node
 ) -> nodes.section:
-    section = nodes.section(ids=[nodes.make_id(anchor)])
+    section = nodes.section()
     section += nodes.title(title, "", code(title))
     for child in children:
         section += child
-    directive.state.document.note_implicit_target(section)
+    _label(directive, section, anchor)
     return section
 
 
@@ -161,7 +185,7 @@ class KeysDirective(Directive):
         known = tables()
         if name not in known:
             raise self.error(f"no key table {name!r}; there are {sorted(known)}")
-        return [key_table(key_rows(known[name]))]
+        return [key_table(key_rows(known[name]), self, name)]
 
 
 class BackendSettingsDirective(Directive):
@@ -171,7 +195,7 @@ class BackendSettingsDirective(Directive):
         out: list[nodes.Node] = []
         for name, settings in backend_tables().items():
             body: list[nodes.Node] = (
-                [key_table(key_rows(settings))]
+                [key_table(key_rows(settings), self, f"backend-{name}")]
                 if settings
                 else [nodes.paragraph("", "This backend takes no settings.")]
             )

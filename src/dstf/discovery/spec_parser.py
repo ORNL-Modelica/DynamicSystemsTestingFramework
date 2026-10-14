@@ -271,7 +271,8 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     Variable patterns:
     - Explicit: "pipe.T[1]" — exact variable name
     - Glob: "medium.T*" — matched against .mat variable names after simulation
-    - Empty list [] — simulate only, no variable comparison
+    - Empty list [] — no pattern: the UnitTests variables and those a
+      criterion names are still tracked; with neither, simulate-only
     - Wildcard ["*"] — track all variables
 
     Reads the file (:func:`read_spec_document`: a file that is no spec is

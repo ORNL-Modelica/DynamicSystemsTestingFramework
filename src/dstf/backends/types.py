@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Backend capabilities + dataset types (Phase 1 abstraction)
 # ---------------------------------------------------------------------------
-# See docs/vision.md and docs/extensibility.md. Each backend declares what it
+# See docs/vision.md and docs/guides/plugin.md. Each backend declares what it
 # supports; framework features gate on these rather than on backend class.
 
 

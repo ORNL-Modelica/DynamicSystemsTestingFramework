@@ -39,7 +39,7 @@ myst_enable_extensions = ["colon_fence"]
 myst_heading_anchors = 3
 
 #: Contributor material: plain files of the repository, not pages of the
-#: site. usage.md and extensibility.md are replaced by guides.
+#: site.
 exclude_patterns = [
     "_build",
     "decisions.md",
@@ -49,8 +49,6 @@ exclude_patterns = [
     "patterns.md",
     "constraints.md",
     "releasing.md",
-    "usage.md",
-    "extensibility.md",
     "qa",
     "design",
     "superpowers",

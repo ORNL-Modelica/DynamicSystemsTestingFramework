@@ -378,7 +378,7 @@ def _fill_from_model(test: TestModel, located: "LocatedClass") -> None:
     """Give a spec-only ``test`` what its model says: the file, and every
     simulation field the entry left unset that the model's ``experiment``
     annotation sets — the two-layer contract a scanned test already gets
-    (docs/usage.md). The entry's own ``simulation.*`` and ``source`` stay."""
+    (the ``simulation`` keys' descriptions in ``spec_shape``). The entry's own ``simulation.*`` and ``source`` stay."""
     if test.source_file == Path(""):
         test.source_file = located.mo_file
     experiment = located.experiment
@@ -408,7 +408,7 @@ def merge_tests(
         model_id: copy.deepcopy(test) for model_id, test in scanned.items()
     }
 
-    # Merge spec tests. Two-layer contract (docs/usage.md): the model's
+    # Merge spec tests. Two-layer contract (spec_shape.SIMULATION): the model's
     # experiment(...) annotation provides defaults; any field set in
     # simulation.* overrides it. DECISION (review 2026-07-06 finding 13):
     # "explicitly set in the spec" is `is not None` for ALL five sim fields —

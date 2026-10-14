@@ -335,7 +335,7 @@ def test_every_key_a_builtin_reads_is_still_taken():
 
 
 def test_quantity_on_a_trajectory_metric_stays_the_documented_inert_param():
-    """docs/extensibility.md, the Metric contract: "an unrecognized
+    """The Metric contract (``MetricDescriptor.accepts_quantity``): "an unrecognized
     `quantity` stays an inert param — a trajectory metric keeps scoring
     trajectories". Kept by name; no other key is inert."""
     for desc in registry.metrics():

@@ -1,6 +1,6 @@
 """MetricTree: composition of metric results with Boolean / weighted combinators.
 
-See docs/vision.md "Metric composition" and docs/extensibility.md §6.
+See docs/vision.md "Metric composition" and docs/guides/criteria.md.
 
 A spec with no ``metrics`` tree collapses to a degenerate flat-AND over
 per-variable ``VariableComparison`` results (``implicit_and_tree``), which is

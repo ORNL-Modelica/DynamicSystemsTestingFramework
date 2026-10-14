@@ -3,8 +3,10 @@ parses through the real command tree.
 
 A command renamed, a flag moved to another action or dropped: the page that
 still shows the old line fails here, with its file and line. Read:
-``README.md``, ``docs/usage.md``, ``CLAUDE.md``, ``docs/releasing.md`` and
-every ``README.md`` under ``examples/``.
+``README.md``, ``CHANGELOG.md``, ``CLAUDE.md``, ``docs/releasing.md``, every
+page of the documentation site (each ``.md`` under ``docs/`` that
+``docs/conf.py`` does not exclude) and every ``README.md`` under
+``examples/``.
 
 What a page may write and still parse:
 
@@ -21,8 +23,10 @@ real one.
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import io
 import re
+import runpy
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,11 +41,34 @@ REPO = Path(__file__).resolve().parents[1]
 #: project's pages, not ours.
 _FETCHED = REPO / "examples" / "fmu" / "reference-fmus-binaries"
 
+DOCS = REPO / "docs"
+
+
+def site_pages() -> list[Path]:
+    """The pages of the documentation site: every ``.md`` under ``docs/``
+    that the build does not leave out (``exclude_patterns`` in
+    ``docs/conf.py``, matched as Sphinx matches them: by the page's path
+    under ``docs/``, or by a folder it is in)."""
+    excluded = runpy.run_path(str(DOCS / "conf.py"))["exclude_patterns"]
+    pages = []
+    for page in sorted(DOCS.rglob("*.md")):
+        rel = page.relative_to(DOCS).as_posix()
+        parts = rel.split("/")
+        folders = ["/".join(parts[:i]) for i in range(1, len(parts))]
+        if any(
+            fnmatch.fnmatch(rel, pattern) or pattern in folders for pattern in excluded
+        ):
+            continue
+        pages.append(page)
+    return pages
+
+
 PAGES = [
     REPO / "README.md",
-    REPO / "docs" / "usage.md",
+    REPO / "CHANGELOG.md",
     REPO / "CLAUDE.md",
     REPO / "docs" / "releasing.md",
+    *site_pages(),
     *sorted(
         page
         for page in (REPO / "examples").rglob("README.md")
@@ -163,11 +190,27 @@ def test_the_pages_are_read():
         page.relative_to(REPO).as_posix(): sum(1 for s in SHOWN if s.page == page)
         for page in PAGES
     }
-    assert counts["README.md"] >= 5, counts
-    assert counts["docs/usage.md"] >= 20, counts
-    assert counts["CLAUDE.md"] >= 20, counts
+    assert counts["README.md"] >= 1, counts
+    assert counts["CLAUDE.md"] >= 5, counts
     assert counts["examples/python/PythonTestingLib/README.md"] >= 1, counts
     assert set(counts) >= {"docs/releasing.md", "examples/fmu/README.md"}
+    # The guides teach the command line: each shows commands, and so many
+    # in all that a page silently skipped would be missed.
+    guides = {page: n for page, n in counts.items() if page.startswith("docs/guides/")}
+    assert len(guides) >= 14, guides
+    assert sum(guides.values()) >= 20, guides
+    for page in ("first-run", "testing-json", "add-a-test", "baselines", "ci"):
+        assert guides[f"docs/guides/{page}.md"] >= 1, guides
+
+
+def test_the_site_s_pages_are_the_built_ones():
+    """The site's pages are found by the build's own exclusions: a guide is
+    read, a contributor note is not."""
+    pages = {page.relative_to(REPO).as_posix() for page in site_pages()}
+    assert {"docs/index.md", "docs/concepts.md", "docs/guides/first-run.md"} <= pages
+    assert "docs/reference/cli.md" in pages
+    assert not {"docs/decisions.md", "docs/ideas.md", "docs/architecture.md"} & pages
+    assert not any(page.startswith("docs/superpowers/") for page in pages)
 
 
 # --- the reader itself -------------------------------------------------------
