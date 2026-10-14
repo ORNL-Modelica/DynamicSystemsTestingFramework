@@ -74,9 +74,9 @@ resolves to on this machine, and by which rule.
 mean "tolerance"?` (exit 2) from every command that reads the file, and
 `backends.Dymola: unknown field …` for a key of a block. A value of another
 type than its key takes is the same error (`max_embedded_samples: must be a
-whole number, got "abc"` — and `got 1000.0`: a whole number is written as
-one, here and in `test_spec.json`), and every config error names the file by
-its path. `description` / `info` / `metadata` are for notes,
+whole number, got "abc"` — and `got 1000.0`: in this file a whole number is
+written as one; `test_spec.json` still reads `500.0` as 500), and every
+config error names the file by its path. `description` / `info` / `metadata` are for notes,
 and `$schema` may point an editor at `dstf spec schema testing`'s
 output, which lists every key with its type, default and description.
 

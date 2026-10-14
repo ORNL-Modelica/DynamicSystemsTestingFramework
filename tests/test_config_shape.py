@@ -242,8 +242,8 @@ class TestValuesTheCodeCannotUse:
     @pytest.mark.parametrize("value", [3.0, True, 1e3])
     def test_a_whole_number_is_an_int(self, tmp_path, value):
         """`"batch_size": 3.0` passed, and `run --batch` died slicing a
-        list with it. One rule (`json_types`), for every whole-number key —
-        of testing.json, of a backend's block, of test_spec.json."""
+        list with it. One rule (`json_types`), for every whole-number key
+        of testing.json and of a backend's block."""
         from dstf.json_types import holds
 
         assert not holds({"type": "integer"}, value)
@@ -263,7 +263,9 @@ class TestValuesTheCodeCannotUse:
                 Config(config_file=path)
             assert str(exc.value) == f"{path}: {said}, got {got}"
 
-    def test_a_whole_number_in_the_spec_is_an_int_too(self, tmp_path):
+    def test_the_spec_still_reads_a_whole_number_written_as_a_float(self, tmp_path):
+        """testing.json is strict about it; test_spec.json's reading is
+        pinned (`test_spec_file_errors`), and what it hands on is an int."""
         from dstf.discovery.test_registry import discover_tests
 
         path = _project(tmp_path, {"test_spec": "test_spec.json"})
@@ -276,8 +278,9 @@ class TestValuesTheCodeCannotUse:
                 }
             )
         )
-        with pytest.raises(ConfigError, match="must be a whole number, got 500.0"):
-            discover_tests(Config(config_file=path))
+        (test,) = discover_tests(Config(config_file=path))
+        assert test.number_of_intervals == 500
+        assert type(test.number_of_intervals) is int
 
     def test_os_is_one_of_three(self, tmp_path):
         path = _project(tmp_path, {"os": "bogus"})

@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from ..config import ConfigError, baseline_points_refused, json_from_bytes
-from ..json_types import HOLDS, SAID
+from ..json_types import HOLDS, SAID, is_whole
 from ..storage.ref_index import _atomic_write_text
 from . import spec_shape
 from .test_registry import TestModel
@@ -98,7 +98,10 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
             if value is None:
                 continue
             kind = spec_shape.SIMULATION[key]["type"]
-            if not HOLDS[kind](value):
+            # A whole number written as a float (`500.0`) is still read
+            # here, and reaches the test as an int (`_spec_number`): this
+            # file's reading is pinned, where testing.json's is strict.
+            if not (HOLDS[kind](value) or (kind == "integer" and is_whole(value))):
                 raise EntryKeyError(
                     f"{here}.simulation.{key}",
                     f"must be {SAID[kind]}, got {_as_json(value)}",

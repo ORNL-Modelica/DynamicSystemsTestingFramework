@@ -28,6 +28,13 @@ def is_number(value: object) -> bool:
         return False
 
 
+def is_whole(value: object) -> bool:
+    """A whole number however it is written: ``500``, and ``500.0`` too —
+    what JSON Schema calls an integer. ``test_spec.json``'s ``simulation``
+    block is read by this, and hands on an int."""
+    return is_number(value) and float(value).is_integer()  # type: ignore[arg-type]
+
+
 #: A JSON-Schema ``type`` → whether a value is one, and how a refusal says
 #: it. A whole number is WRITTEN as one: ``3``, not ``3.0`` — which JSON
 #: Schema lets by, and which then reached code that slices and counts with
