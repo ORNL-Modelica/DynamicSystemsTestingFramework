@@ -548,6 +548,9 @@ class LocatedClass:
 
     mo_file: Path
     experiment: ExperimentInfo | None
+    #: The keyword it is declared with: ``model``, ``block``, ``class`` or
+    #: ``package``. A package holds models and is none: no test simulates it.
+    kind: str
 
 
 @dataclass(frozen=True)
@@ -558,6 +561,8 @@ class _ClassSpan:
     that ends its one statement."""
 
     name: str
+    #: Its keyword: ``model``, ``block``, ``class`` or ``package``.
+    kind: str
     start: int
     body: int
     end: int
@@ -628,7 +633,7 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
     class redeclared in a sibling short class's modification.
     """
     out: list[_ClassSpan] = []
-    stack: list[tuple[str, int, int]] = []
+    stack: list[tuple[str, str, int, int]] = []
     depth, at = 0, start
     for m in _CLASS_TOKEN_RE.finditer(stripped, start, end):
         for found in _BRACKET_RE.finditer(stripped, at, m.start()):
@@ -636,16 +641,20 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
                 depth += 1 if found.group(1) in _OPENERS else -1
         at = m.end()
         closed = m.group(3)
+        # The keyword the match starts with; `end Name;` has none.
+        kind = m.group(0).split()[0]
         if closed is not None:
             if stack and stack[-1][0] == closed:
-                name, opened, body = stack.pop()
+                name, opened_kind, opened, body = stack.pop()
                 if not stack:
-                    out.append(_ClassSpan(name, opened, body, m.end()))
+                    out.append(_ClassSpan(name, opened_kind, opened, body, m.end()))
         elif m.group(2) is None:
-            stack.append((m.group(1), m.start(), m.end()))
+            stack.append((m.group(1), kind, m.start(), m.end()))
         elif not stack:
             after = _statement_end(stripped, m.end(), end)
-            out.append(_ClassSpan(m.group(1), m.start(), m.end(), after, True, depth))
+            out.append(
+                _ClassSpan(m.group(1), kind, m.start(), m.end(), after, True, depth)
+            )
     return out
 
 
@@ -724,7 +733,9 @@ def _class_in_file(
             if own[i] != "\n":
                 own[i] = " "
     return LocatedClass(
-        mo_file=path, experiment=_parse_experiment("".join(own), source=path)
+        mo_file=path,
+        experiment=_parse_experiment("".join(own), source=path),
+        kind=span.kind,
     )
 
 

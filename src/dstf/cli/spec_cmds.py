@@ -20,8 +20,9 @@ def _not_added(config, model_id: str, source: str | None) -> str | None:
     """Why ``spec add`` writes no entry for ``model_id``, as one sentence,
     or None. The entry must be one a run can simulate: a Modelica project's
     library holds its class (:func:`~dstf.discovery.mo_parser.find_class`),
-    and a test of a backend that runs a file (``Backend.source_suffix``)
-    names one that is there — ``--source``, which no other backend reads."""
+    a model and not a package, and a test of a backend that runs a file
+    (``Backend.source_suffix``) names one of that suffix that is there —
+    ``--source``, which no other backend reads."""
     from ..backends import get_backend_class
 
     # The backend the entry IS, not the entry's name: an entry named
@@ -38,16 +39,34 @@ def _not_added(config, model_id: str, source: str | None) -> str | None:
             f"the {suffix} file its entry names (--source FILE); nothing was "
             f"added."
         )
-    if source is not None and not Path(source).is_file():
-        return f"--source {source}: no such file; nothing was added."
+    if source is not None and suffix is not None:
+        if Path(source).is_dir():
+            return (
+                f"--source {source}: a directory, not a {suffix} file; nothing "
+                f"was added."
+            )
+        if not Path(source).is_file():
+            return f"--source {source}: no such file; nothing was added."
+        if Path(source).suffix.lower() != suffix.lower():
+            return (
+                f"--source {source}: a test of the {config.backend} backend runs "
+                f"a {suffix} file; nothing was added."
+            )
     if config.source_type != "modelica":
         return None
     from ..discovery.mo_parser import find_class
 
-    if find_class(config.library_dir, config.library_name, model_id) is None:
+    found = find_class(config.library_dir, config.library_name, model_id)
+    if found is None:
         return (
             f"{model_id} is no class of the library {config.library_name} "
             f"({config.library_dir}): nothing was added."
+        )
+    if found.kind == "package":
+        return (
+            f"{model_id} is a package of the library {config.library_name}, "
+            f"which holds models and is none: name one of its models; nothing "
+            f"was added."
         )
     return None
 

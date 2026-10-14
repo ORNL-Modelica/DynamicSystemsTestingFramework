@@ -1455,18 +1455,21 @@ def _add_spec(tree: _Tree, top) -> None:
             Add a test to test_spec.json: an entry for the model, tracking
             the variables named. The file is created when it is not there.
             For a model that already has an entry the command asks first,
-            and on y replaces that entry's variables and nothing else of it.
+            and on y replaces that entry's variables, and its source when
+            --source is given, and nothing else of it.
 
             Without --variables the test is simulate-only: it passes when
             its simulation completes.
 
-            A Modelica test's model is a class of the library. A Python,
-            Julia or FMU test runs a file, which --source names.
+            A Modelica test's model is a model of the library, not a
+            package. A Python, Julia or FMU test runs a file of its
+            backend's suffix (.py, .jl, .fmu), which --source names.
 
             Exit code: 0 when the entry is written, or kept on n; 1 when
-            the model is no class of a Modelica project's library, or
-            --source is missing where the backend's tests run a file, names
-            no file, or is given where they run none — and nothing is
+            the model is no class of a Modelica project's library or is a
+            package of it, or --source is missing where the backend's tests
+            run a file, names no file of the backend's suffix (a directory
+            included), or is given where they run none — and nothing is
             written; 2 for a config error.
             """,
         examples=(

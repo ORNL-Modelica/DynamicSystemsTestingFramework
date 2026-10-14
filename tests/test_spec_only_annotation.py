@@ -657,6 +657,23 @@ class TestASpecOnlyEntryTakesItsAnnotation:
         )
         assert spec.read_bytes() == before
 
+    @pytest.mark.parametrize(
+        "package", ["RodLib.Sub", "RodLib.Parts", "RodLib.Parts.Other"]
+    )
+    def test_dstf_add_of_a_package_writes_nothing(self, rodlib, capsys, package):
+        """A package is a class of the library and holds models; it is none,
+        and no run simulates it."""
+        spec = rodlib.with_name("test_spec.json")
+        before = spec.read_bytes()
+        assert main(["--config", str(rodlib), "spec", "add", package]) == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err == (
+            f"{package} is a package of the library RodLib, which holds models "
+            f"and is none: name one of its models; nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
     def test_a_non_modelica_source_is_unchanged(self, tmp_path, monkeypatch):
         """No annotation is looked for — the library is not even probed —
         and an entry with no stop time keeps the default."""
@@ -875,6 +892,49 @@ class TestSpecAddWritesAnEntryThatRuns:
             f"--source {missing}: no such file; nothing was added.\n"
         )
         assert spec.read_bytes() == before
+
+    def test_a_source_of_another_kind_is_refused(self, tmp_path, capsys):
+        """A `.csv` for a Python test was written as its `source`, and every
+        run failed it: the backend runs a file of one suffix
+        (`Backend.source_suffix`)."""
+        config = _example(tmp_path, "python")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        csv = config.parent.parent.parent / "Examples/data/constant_experiment.csv"
+        assert csv.is_file()
+        argv = ["--config", str(config), "spec", "add", "Lib.New", "--source"]
+        assert main([*argv, str(csv)]) == 1
+        assert capsys.readouterr().err == (
+            f"--source {csv}: a test of the Python backend runs a .py file; "
+            f"nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    def test_a_source_that_is_a_directory_is_refused(self, tmp_path, capsys):
+        config = _example(tmp_path, "python")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        folder = config.parent.parent.parent / "Examples"
+        argv = ["--config", str(config), "spec", "add", "Lib.New", "--source"]
+        assert main([*argv, str(folder)]) == 1
+        assert capsys.readouterr().err == (
+            f"--source {folder}: a directory, not a .py file; nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    def test_an_overwrite_takes_the_new_source(self, tmp_path, monkeypatch, capsys):
+        """`y` to "Overwrite?" replaces the entry's `source` with the one
+        given now; the old file is no longer what the test runs."""
+        config = _example(tmp_path, "python")
+        examples = config.parent.parent.parent / "Examples"
+        argv = ["--config", str(config), "spec", "add", "Lib.New", "--source"]
+        assert main([*argv, str(examples / "SimpleRamp.py")]) == 0
+        monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+        assert main([*argv, str(examples / "ConstantCsv.py")]) == 0
+        assert "Updated: Lib.New" in capsys.readouterr().out
+        spec = json.loads(Config(config_file=config).spec_path.read_text("utf-8"))
+        (entry,) = [e for e in spec["tests"] if e["model"] == "Lib.New"]
+        assert entry["source"] == "../../Examples/ConstantCsv.py"
 
     def test_a_modelica_test_names_no_file(self, rodlib, capsys):
         spec = rodlib.with_name("test_spec.json")

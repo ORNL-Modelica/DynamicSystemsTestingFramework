@@ -97,12 +97,14 @@ lists each one and where it went.
   refused.
 - `run --batch` on FMPy or Python was silently ignored; it is a config error.
 - `companion freeze` of a companion that does not exist exited 0; it exits 1.
-- `spec add` of a model that is no class of a Modelica project's library
-  wrote an entry no run could simulate, and exited 0; it says so, writes
-  nothing and exits 1.
+- `spec add` of a model that is no class of a Modelica project's library,
+  or of one of its packages, wrote an entry no run could simulate, and
+  exited 0; it says so, writes nothing and exits 1.
 - `spec add` on a Python, Julia or FMU project wrote an entry that named no
   file, and every run failed it with a Python traceback. `--source FILE`
-  names the file the test runs, and is required there.
+  names the file the test runs, and is required there; a directory, or a
+  file of another suffix than the backend runs (a `.csv` for a Python
+  test), is refused.
 - A `test_spec.json` entry of a Python or Julia test with no `source` ran the
   library's folder (`Cannot load <library dir>`) instead of the file named
   after its model, `<source_path>/<model>.py` (`.jl`); it runs that file. An
