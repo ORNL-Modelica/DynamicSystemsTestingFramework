@@ -10,8 +10,9 @@ this file says when they do.
 
 This release changes the command line and `testing.json`. Nothing old is
 accepted under another name: a removed command or flag is the parser's error,
-and a `testing.json` written for 1.0 is refused with a sentence that says what
-to write instead.
+and a `testing.json` that holds a 1.0 key that moved is a config error that
+names it. [How to convert your testing.json](#how-to-convert-your-testingjson)
+lists each one and where it went.
 
 ### Changed
 
@@ -171,10 +172,20 @@ After (1.1):
 }
 ```
 
-A run that used `--batch-size 4` or `--dymola-interface <path>` writes
-`"batch_size": 4` or `"interface": "<path>"` in the same Dymola block. The
-1.1 tool names every entry still written as a list in one error, each with
-the block to write.
+Each 1.0 key and flag that moved, and where it is in 1.1:
+
+| 1.0 | 1.1 |
+|---|---|
+| a `backends` entry as a list of paths | that entry's `executables` |
+| the top-level key `show_ide` | `backends.Dymola.show_ide` |
+| the flag `--show-ide` | `backends.Dymola.show_ide` |
+| the flag `--batch-size N` | `backends.Dymola.batch_size` |
+| the flag `--dymola-interface PATH` | `backends.Dymola.interface` |
+
+Every other key 1.0 read is read as it was. A `backends` entry still written
+as a list is a config error that names every such entry at once, each with
+the block to write; a top-level `show_ide` is the error any key nothing
+reads is (`unknown field "show_ide"`), and a removed flag the parser's.
 
 ## [1.0.1] - 2026-10-13
 
