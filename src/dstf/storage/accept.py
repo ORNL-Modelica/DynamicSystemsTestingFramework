@@ -8,7 +8,11 @@ from pathlib import Path
 
 from ..backends.common.result_variables import criterion_variables, tracks
 from ..backends.types import TestResult
-from ..comparison.comparator import nothing_scored, refused_base_tolerance
+from ..comparison.comparator import (
+    broken_roles,
+    nothing_scored,
+    refused_base_tolerance,
+)
 from ..discovery.test_registry import TestModel
 from .batch_manifest import unfinished_run_models
 from .ref_index import RefIndex
@@ -116,10 +120,11 @@ def accept_refusal(
     store: ReferenceStore, test: TestModel, result: TestResult | None
 ) -> str | None:
     """Why the comparison REFUSES ``test`` — its base tolerance is no
-    number, or its result holds nothing it tracks — or ``None``: the
-    comparison's own decisions (`refused_base_tolerance`, `nothing_scored`),
-    asked of the test and its stored reference as ``compare_one`` asks
-    them. A test with no successful result is not refused: it has its own
+    number, its result holds nothing it tracks, or its tree is wrong in its
+    file — or ``None``: the comparison's own decisions
+    (`refused_base_tolerance`, `nothing_scored`, `broken_roles`), asked of
+    the test and its stored reference as ``compare_one`` asks them, in its
+    order. A test with no successful result is not refused: it has its own
     reason."""
     if result is None or not result.success:
         return None
@@ -128,7 +133,7 @@ def accept_refusal(
     )
     if refused is not None:
         return refused.error_message
-    return nothing_scored(test, result)
+    return nothing_scored(test, result) or broken_roles(test)
 
 
 def accept_run_results(
@@ -150,8 +155,9 @@ def accept_run_results(
 
     A test the comparison REFUSES (`accept_refusal`) is skipped with the
     refusal's sentence: its result was scored against nothing, and the
-    baseline written would carry — or keep — a base no comparison reads.
-    Its reference file is not touched.
+    baseline written would carry — or keep — a base no comparison reads,
+    or sit under a tree no accept repairs. Its reference file is not
+    touched.
 
     A baseline file just written that is larger than `LARGE_BASELINE_BYTES`
     is said once (`large_baseline_warning`): it IS stored, and counts as

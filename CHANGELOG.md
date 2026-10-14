@@ -117,7 +117,8 @@ lists each one and where it went.
   `warn`; a `weighted` that sums scores of opposite directions — is now
   refused where it is scored, as `dstf spec update` refused it where it was
   written: the test fails with each rule it breaks, where in the tree
-  (`metrics.children[1]: …`), and none of its criteria is scored. A criterion under `warn` against a soft check that is not
+  (`metrics.children[1]: …`), none of its criteria is scored, and an accept
+  skips it with that sentence instead of storing its result. A criterion under `warn` against a soft check that is not
   stored for this backend and OS is not scored and fails no test, as
   before; it says so, `no soft check 'experiment' is stored for
   FMPy/macos`. Where such a tree is written, `dstf spec update` and the
