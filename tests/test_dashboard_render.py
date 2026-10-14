@@ -2324,3 +2324,31 @@ def test_only_a_refused_test_has_its_reason_as_the_message(tmp_path):
         "tests"
     ]
     assert {r.model_id: r.message for r in rows} == {m: f"said {m}" for m in makers}
+
+
+def test_backend_path_is_carried_as_given_not_through_its_link(tmp_path):
+    """`--backend-path` names an interpreter the way a venv does — a link
+    to the real one — and the commands carry the path the user gave, made
+    absolute, never the link's target: a venv's `bin/python` resolved is
+    the base interpreter, which has none of the venv's packages, and the
+    command would run another Python than the run did."""
+    import sys
+
+    from conftest import python_example_copy
+
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(sys.executable)
+    assert link.resolve() != link
+    from dstf.config import Config
+    from dstf.reporting.dashboard_render import build_rerun_flags
+
+    config, _ = python_example_copy(tmp_path)
+    config = Config(
+        config_file=config.config_file,
+        work_dir=config.work_dir,
+        backend_path=str(link),
+    )
+    flags = build_rerun_flags(config)
+    assert f"--backend-path {link} " in flags["run"] + " ", flags
+    assert str(link.resolve()) not in flags["run"]
