@@ -134,11 +134,13 @@ A tree that scores a soft check outside `warn` is refused where it is
 written (`dstf spec update`, the authoring tool), and a hand-written one is
 refused where it is scored: `run` and `compare` fail that test with the
 rule's sentence and score none of its criteria. A soft check is stored for
-one backend and OS; where the test runs with another, its criterion under
-`warn` is not scored, says `no soft check 'openmodelica' is stored for
-Dymola/linux`, and fails nothing. There, `dstf spec update` and the
-authoring tool write such a tree and say `'openmodelica' is not stored for
-Dymola/linux: it is not scored here`.
+one backend and OS, the ones the project ran with when it was added — above,
+the project's own, not OpenModelica's. Where the test runs with another, as
+it does with `--backend OpenModelica`, its criterion under `warn` is not
+scored, says `no soft check 'openmodelica' is stored for OpenModelica/linux`,
+and fails nothing. There, `dstf spec update` and the authoring tool write
+such a tree and say `'openmodelica' is not stored for OpenModelica/linux: it
+is not scored here`.
 
 Accepting a new primary result never touches a soft check.
 
