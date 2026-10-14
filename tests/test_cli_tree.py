@@ -671,6 +671,58 @@ def _actions(option: str):
     ]
 
 
+#: Each command that writes to --output, with what it needs beside it.
+_OUTPUTS = {
+    "run": ["--report-format", "junit"],
+    "compare": ["--report-format", "junit"],
+    "spec schema": [],
+    "baseline export": [],
+}
+
+
+@pytest.mark.parametrize("command", sorted(_OUTPUTS))
+def test_an_output_that_cannot_be_written_is_refused_before_any_work(
+    command, tmp_path, monkeypatch, capsys
+):
+    """`compare --report-format junit -o <dir>` ended in a traceback after
+    scoring, `spec schema -o missing/x.json` in a FileNotFoundError: a run
+    of an hour must not end by failing to write its report."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "adir").mkdir()
+    words = [*command.split(), *_OUTPUTS[command]]
+    text = _parse([*words, "-o", "adir"], capsys)
+    assert isinstance(text, str), f"{command} took a directory"
+    assert "argument -o/--output: adir is a directory: name a file to write" in text, (
+        text
+    )
+    text = _parse([*words, "-o", "missing/x.json"], capsys)
+    assert isinstance(text, str), f"{command} took a file in no directory"
+    assert (
+        "argument -o/--output: missing/x.json: the directory missing does not exist"
+        in text
+    ), text
+    # a new file in a directory that is there
+    args = _parse([*words, "-o", "adir/x.json"], capsys)
+    assert isinstance(args, argparse.Namespace) and args.output == "adir/x.json"
+
+
+def test_soft_check_add_s_source_that_holds_no_object_is_said(tmp_path, capsys):
+    """A source file holding a JSON list ended in an AttributeError
+    traceback. It is the command's data error, exit 1, naming the file."""
+    (tmp_path / "testing.json").write_text(
+        '{"source_type": "python", "backend": "Python"}'
+    )
+    source = tmp_path / "list.json"
+    source.write_text("[1, 2]")
+    rc = main(
+        ["soft-check", "add", "Lib.A", "om", str(source)]
+        + ["--config", str(tmp_path / "testing.json")]
+    )
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert f"Failed to read {source}: it holds a JSON list, not an object" in out
+
+
 def test_output_has_its_short_form_everywhere():
     found = _actions("--output")
     assert [path for path, _ in found] == [

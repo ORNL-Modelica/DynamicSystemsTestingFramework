@@ -1894,6 +1894,7 @@ def test_batch_stays_on_a_backend_that_has_workers(tmp_path):
 class TestExportOutputPath:
     def test_json_export_to_string_path(self, tmp_config_dir, tmp_path):
         out = tmp_path / "exports" / "refs.json"
+        out.parent.mkdir()  # a directory that is not there is refused
         rc = main(
             [
                 "--config",
@@ -1912,6 +1913,7 @@ class TestExportOutputPath:
 
     def test_csv_export_to_string_path(self, tmp_config_dir, tmp_path):
         out = tmp_path / "exports" / "refs.csv"
+        out.parent.mkdir()  # a directory that is not there is refused
         rc = main(
             [
                 "--config",

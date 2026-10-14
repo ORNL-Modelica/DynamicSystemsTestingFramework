@@ -260,6 +260,12 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     except (json_mod.JSONDecodeError, OSError) as e:
         print(f"Failed to read {source}: {e}")
         return 1
+    if not isinstance(data, dict):
+        kind = {list: "list", str: "string", bool: "boolean"}.get(
+            type(data), "null" if data is None else "number"
+        )
+        print(f"Failed to read {source}: it holds a JSON {kind}, not an object")
+        return 1
 
     time = data.get("time") or []
     variables = data.get("variables") or []

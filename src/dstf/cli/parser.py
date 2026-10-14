@@ -26,6 +26,7 @@ import argparse
 import dataclasses
 import textwrap
 from collections.abc import Callable
+from pathlib import Path
 
 from ..config import DEFAULT_COMPARISON_TOLERANCE, Config
 from .author_cmd import DEFAULT_PORT
@@ -403,6 +404,23 @@ def _filter_arg(value: str) -> str:
     return value
 
 
+def _output_file(text: str) -> str:
+    """``--output``, on every command that has it: a file that can be
+    written — not a directory, and in a directory that is there. Said when
+    the command line is read, before any work: a run of an hour ended by
+    failing to write its report (a traceback), and ``spec schema -o
+    missing/x.json`` by a FileNotFoundError."""
+    path = Path(text)
+    if path.is_dir():
+        raise argparse.ArgumentTypeError(f"{text} is a directory: name a file to write")
+    parent = path.parent
+    if not parent.is_dir():
+        raise argparse.ArgumentTypeError(
+            f"{text}: the directory {parent} does not exist"
+        )
+    return text
+
+
 def _review_filter_arg(value: str) -> str:
     """argparse ``type=`` callback for ``-i`` / ``--rerun`` category lists.
 
@@ -588,7 +606,7 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
             "one file), at --output. Default: console, which writes no file.",
         ),
     ),
-    "output": (("-o", "--output"), dict(metavar="FILE")),
+    "output": (("-o", "--output"), dict(type=_output_file, metavar="FILE")),
     "report": (
         ("--report",),
         dict(
