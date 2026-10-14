@@ -157,7 +157,7 @@ def _default_stop_time_notes(tests: list, config) -> list[str]:
     def why(test) -> str:
         if config.source_type != "modelica":
             return "test_spec.json gives no stop time"
-        if test.source_file == Path(""):
+        if test.source_file is None:
             return (
                 "not found under source_path, so its experiment annotation was not read"
             )

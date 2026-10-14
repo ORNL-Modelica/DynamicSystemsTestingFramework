@@ -8,8 +8,6 @@ relabel it) asks this function instead.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from dstf.discovery.test_registry import TestModel
 from dstf.discovery.unit_tests import is_unit_test_variable, unit_test_variables
 
@@ -17,7 +15,7 @@ from dstf.discovery.unit_tests import is_unit_test_variable, unit_test_variables
 def _test(n_vars, x_expressions, instance="unitTests", source="unit_tests", **kw):
     return TestModel(
         model_id="Lib.Examples.M",
-        source_file=Path(""),
+        source_file=None,
         source_package="Lib.Examples",
         short_name="M",
         n_vars=n_vars,

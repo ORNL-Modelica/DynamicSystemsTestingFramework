@@ -2030,8 +2030,6 @@ planning.
   - A Suite view stored in the browser with values of the wrong TYPE (a
     number where a list is read) still empties the table; no page version
     writes one. Clearing the site data restores it.
-  - `dstf add` on a Python-source library writes no `source`, and the test
-    then fails to load; the entry needs its `source` by hand.
   - OpenModelica refuses a library whose root directory is a link of
     ANOTHER name (`Expected the package to have name …`); a link of the
     same name works.

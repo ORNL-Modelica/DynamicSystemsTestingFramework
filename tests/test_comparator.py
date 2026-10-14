@@ -423,7 +423,7 @@ def _make_test(comparison_tolerance=None, variable_overrides=None):
     for it)."""
     return TestModel(
         model_id="Test.Model",
-        source_file=Path(""),
+        source_file=None,
         source_package="Test",
         short_name="Model",
         n_vars=0,
@@ -1519,7 +1519,7 @@ class TestTreeConfigErrorIsALeafFailure:
 
         return TestModel(
             model_id=model_id,
-            source_file=Path(""),
+            source_file=None,
             source_package="Test",
             short_name="Model",
             n_vars=1,
@@ -3024,7 +3024,7 @@ class TestTheFlatPathScoresWhatTheTestTracks:
     def test_a_glob_and_the_unit_tests_names_are_tracked(self):
         test = TestModel(
             model_id="Test.Model",
-            source_file=Path(""),
+            source_file=None,
             source_package="Test",
             short_name="Model",
             n_vars=1,
@@ -3051,7 +3051,7 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         """``pipe.T?`` is ``pipe.T1``, not a prefix of ``pipe.T12``."""
         test = TestModel(
             model_id="Test.Model",
-            source_file=Path(""),
+            source_file=None,
             source_package="Test",
             short_name="Model",
             n_vars=0,

@@ -454,8 +454,8 @@ def resolve_source_file(test: TestModel, config, suffix: str) -> Path | None:
     Module-level rather than backend-only because the persistent Julia worker
     resolves the same file without being a backend.
     """
-    if test.source_file is not None and str(test.source_file):
-        p = Path(test.source_file)
+    if test.source_file is not None:
+        p = test.source_file
         if not p.is_absolute() and config.source_path:
             p = config.source_path / p
         return p

@@ -272,7 +272,7 @@ class TestDiagnosticExtraction:
     def _make_test(self):
         return TestModel(
             model_id="ModelicaTestingLib.Examples.ConstantTest",
-            source_file=Path(""),
+            source_file=None,
             source_package="ModelicaTestingLib.Examples",
             short_name="ConstantTest",
             n_vars=2,

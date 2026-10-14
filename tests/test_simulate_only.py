@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 
 from dstf.backends.types import TestResult, VariableResult
@@ -14,7 +12,7 @@ from dstf.discovery.test_registry import TestModel
 def _make_test(simulate_only: bool) -> TestModel:
     return TestModel(
         model_id="My.Sim.Only",
-        source_file=Path(""),
+        source_file=None,
         source_package="My.Sim",
         short_name="Only",
         n_vars=1,
@@ -79,7 +77,7 @@ class TestSimulateOnly:
         # see no change.
         t = TestModel(
             model_id="X.Y",
-            source_file=Path(""),
+            source_file=None,
             source_package="X",
             short_name="Y",
             n_vars=1,

@@ -697,7 +697,6 @@ class TestPeakSides:
 def _through(leaf, flat, time, values):
     """``leaf`` scored through ``compare_test``: as a metrics leaf, or with
     ``flat`` as the same keys in ``variable_overrides``."""
-    from pathlib import Path
 
     from dstf.backends.types import TestResult, VariableResult
     from dstf.comparison.comparator import compare_test
@@ -706,7 +705,7 @@ def _through(leaf, flat, time, values):
 
     kw = dict(
         model_id="T.M",
-        source_file=Path(""),
+        source_file=None,
         source_package="T",
         short_name="M",
         n_vars=0,

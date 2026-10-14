@@ -642,7 +642,7 @@ def _write_lib(
 def _mk_model(**kw) -> TestModel:
     defaults = dict(
         model_id="MyLib.Foo",
-        source_file=Path(""),
+        source_file=None,
         source_package="MyLib",
         short_name="Foo",
         n_vars=1,

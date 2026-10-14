@@ -171,7 +171,7 @@ def _scored(tree: dict) -> TestComparison:
     values = np.array([1.0, 2.0, 3.0])
     test = TestModel(
         model_id="Lib.Examples.T",
-        source_file=Path(""),
+        source_file=None,
         source_package="Lib.Examples",
         short_name="T",
         n_vars=0,
@@ -207,7 +207,7 @@ def _flat(overrides: dict, *, default_points: bool = False, reference: dict = No
     values = np.array([1.0, 2.0, 3.0])
     test = TestModel(
         model_id="Lib.Examples.T",
-        source_file=Path(""),
+        source_file=None,
         source_package="Lib.Examples",
         short_name="T",
         n_vars=0,
@@ -1278,7 +1278,7 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     time = np.linspace(0.0, 1.0, 5)
     test = TestModel(
         model_id="Test.Model",
-        source_file=Path(""),
+        source_file=None,
         source_package="Test",
         short_name="Model",
         n_vars=1,

@@ -5,8 +5,9 @@ Consumes prebuilt FMUs via the FMPy Python library. Produces the same
 comparator, storage, and reporting layers work unchanged.
 
 Simulation flow per test (``run_single_test``):
-  1. Resolve the FMU path from ``test.source_file`` (spec_parser puts it
-     there when the spec entry has a ``"source"`` field).
+  1. Take the FMU path from ``test.source_file`` (spec_parser puts it
+     there when the spec entry has a ``"source"`` field). No ``source`` is
+     no FMU: nothing names one after the model, as Python and Julia do.
   2. Read the model description to discover scalar variables.
   3. Resolve ``test.variable_patterns`` against the declared names.
   4. Call ``fmpy.simulate_fmu`` with the resolved settings.
@@ -210,8 +211,19 @@ class FmpyBackend(Backend):
     ) -> TestRunResult:
         import fmpy
 
-        fmu_path = _resolve_fmu_path(test)
-        if fmu_path is None or not fmu_path.exists():
+        fmu_path = test.source_file
+        if fmu_path is None:
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                error_message=(
+                    f"{test.model_id}: its test_spec.json entry names no FMU — "
+                    f"an FMPy test runs the .fmu its 'source' names, a path "
+                    f"relative to the spec file."
+                ),
+            )
+        if not fmu_path.exists():
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
@@ -439,16 +451,6 @@ class FmpyBackend(Backend):
 # ---------------------------------------------------------------------------
 # Helpers (free functions for testability)
 # ---------------------------------------------------------------------------
-
-
-def _resolve_fmu_path(test: TestModel) -> Path | None:
-    """Get the FMU binary path for a test.
-
-    spec_parser stores the resolved path in ``test.source_file`` when the
-    spec entry has a ``"source"`` field.
-    """
-    p = test.source_file
-    return p if p and str(p) else None
 
 
 def _list_scalar_variables(md) -> list[str]:

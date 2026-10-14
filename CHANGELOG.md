@@ -103,6 +103,11 @@ lists each one and where it went.
 - `spec add` on a Python, Julia or FMU project wrote an entry that named no
   file, and every run failed it with a Python traceback. `--source FILE`
   names the file the test runs, and is required there.
+- A `test_spec.json` entry of a Python or Julia test with no `source` ran the
+  library's folder (`Cannot load <library dir>`) instead of the file named
+  after its model, `<source_path>/<model>.py` (`.jl`); it runs that file. An
+  FMPy entry with no `source` handed fmpy the folder as its FMU; it fails in
+  one sentence that names the entry.
 - A hand-written `metrics` tree that scored a soft check outside `warn`
   failed its test on `run` and `compare`, where a soft check may only warn.
   A tree that breaks a baseline-role rule — that one; a criterion against a

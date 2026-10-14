@@ -29,7 +29,9 @@ class TestModel:
 
     Attributes:
         model_id: The test's model, by its full name.
-        source_file: The file it was found in, or the entry's ``source``.
+        source_file: The file it was found in, or the entry's ``source``;
+            None when there is neither (a Python or Julia test then runs the
+            file named after its model: ``resolve_source_file``).
         stop_time: Seconds the simulation runs, from 0.
         tolerance: The solver's tolerance.
         method: The solver.
@@ -40,7 +42,7 @@ class TestModel:
     """
 
     model_id: str
-    source_file: Path
+    source_file: Path | None
     source_package: str
     short_name: str
     n_vars: int
@@ -201,7 +203,7 @@ def _build_test_model_from_recognizer_results(
 
     model = TestModel(
         model_id=model_id,
-        source_file=Path(""),
+        source_file=None,
         source_package=source_package,
         short_name=short_name,
         n_vars=0,
@@ -379,7 +381,7 @@ def _fill_from_model(test: TestModel, located: "LocatedClass") -> None:
     simulation field the entry left unset that the model's ``experiment``
     annotation sets — the two-layer contract a scanned test already gets
     (the ``simulation`` keys' descriptions in ``spec_shape``). The entry's own ``simulation.*`` and ``source`` stay."""
-    if test.source_file == Path(""):
+    if test.source_file is None:
         test.source_file = located.mo_file
     experiment = located.experiment
     if experiment is None:

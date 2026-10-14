@@ -3,7 +3,6 @@ simulation + reference data, and the compare_test integration path.
 """
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -75,7 +74,7 @@ def _test_model(metrics_raw: dict) -> TestModel:
     """Build a TestModel with a parsed MetricTree spec."""
     return TestModel(
         model_id="Test.Model",
-        source_file=Path(""),
+        source_file=None,
         source_package="Test",
         short_name="Model",
         n_vars=0,

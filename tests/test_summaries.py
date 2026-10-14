@@ -756,7 +756,6 @@ class TestADeclaredEventNeverFound:
     def test_both_scoring_paths_name_them(self, flat):
         """The tree evaluator stamps a leaf's geometry ids with its path
         (`/metrics/events/window/1`); the flat path leaves them local."""
-        from pathlib import Path
 
         from dstf.backends.types import TestResult, VariableResult
         from dstf.comparison.comparator import compare_test
@@ -774,7 +773,7 @@ class TestADeclaredEventNeverFound:
         )
         test = TestModel(
             model_id="T.M",
-            source_file=Path(""),
+            source_file=None,
             source_package="T",
             short_name="M",
             n_vars=0,

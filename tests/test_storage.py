@@ -184,7 +184,7 @@ class TestReferenceStore:
     def _make_test_model(self, model_id="ModelicaTestingLib.Examples.Test1"):
         return TestModel(
             model_id=model_id,
-            source_file=Path(""),
+            source_file=None,
             source_package="ModelicaTestingLib.Examples",
             short_name=model_id.rsplit(".", 1)[-1],
             n_vars=2,
@@ -741,7 +741,7 @@ class TestLineEndings:
 def _mk_model(model_id="Lib.Test1") -> TestModel:
     return TestModel(
         model_id=model_id,
-        source_file=Path(""),
+        source_file=None,
         source_package="Lib",
         short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,
@@ -1243,7 +1243,7 @@ class TestDuplicateModelIdScan:
 def _mk_test(model_id: str, **kw) -> TestModel:
     return TestModel(
         model_id=model_id,
-        source_file=Path(""),
+        source_file=None,
         source_package=model_id.split(".")[0],
         short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,

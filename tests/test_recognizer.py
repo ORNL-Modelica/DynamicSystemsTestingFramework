@@ -248,7 +248,7 @@ class TestRegistryMerge:
         )
         spec = TestModel(
             model_id="L.M",
-            source_file=Path(""),
+            source_file=None,
             source_package="L",
             short_name="M",
             n_vars=0,

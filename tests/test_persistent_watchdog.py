@@ -37,7 +37,7 @@ def _fake_pids_name_no_process(monkeypatch):
 def _tm(model_id: str = "Lib.A") -> TestModel:
     return TestModel(
         model_id=model_id,
-        source_file=Path(""),
+        source_file=None,
         source_package="Lib",
         short_name=model_id.rsplit(".", 1)[-1],
         n_vars=0,

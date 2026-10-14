@@ -97,7 +97,6 @@ class TestBatchDymolaStampsProvenance:
         the report banner) with ``metadata: null``.
         """
         import json
-        from pathlib import Path
 
         from dstf.backends.dymola.backend import DymolaBackend
         from dstf.config import Config
@@ -118,7 +117,7 @@ class TestBatchDymolaStampsProvenance:
 
         test = TestModel(
             model_id="Lib.A",
-            source_file=Path(""),
+            source_file=None,
             source_package="Lib",
             short_name="A",
             n_vars=0,

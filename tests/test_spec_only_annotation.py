@@ -587,7 +587,7 @@ class TestASpecOnlyEntryTakesItsAnnotation:
         missing = _discovered(rodlib)["RodLib.Missing"]
         assert (missing.stop_time, missing.method) == (1.0, "Dassl")
         assert missing.field_sources["stop_time"] == "default"
-        assert missing.source_file == Path("")
+        assert missing.source_file is None
 
     def test_the_bundled_examples_spec_only_test(self, tmp_path):
         """`NoUnitTest` is annotated `StopTime=5, Tolerance=1e-4`; with its

@@ -336,9 +336,9 @@ def spec_models_from_document(
 
         # Optional "source" field: path (relative to spec file) to the
         # simulation source — .jl for Julia, .py for Python, .fmu for FMPy.
-        # Modelica tests omit this and source_file stays empty (the .mo
+        # Modelica tests omit this and source_file stays None (the .mo
         # lives in the package discovered via source_package).
-        source_file = Path("")
+        source_file: Path | None = None
         source_rel = entry.get("source")
         if source_rel:
             source_path_resolved = (base_dir / source_rel).resolve()

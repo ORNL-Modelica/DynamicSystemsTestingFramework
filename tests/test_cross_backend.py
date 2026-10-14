@@ -66,7 +66,7 @@ def _seed_primary_baseline(store_dir: Path, model_id: str) -> None:
 def _make_chain_test(model_id: str = "BouncingBall") -> TestModel:
     return TestModel(
         model_id=model_id,
-        source_file=Path(""),  # set by chain to the exported FMU
+        source_file=None,  # set by chain to the exported FMU
         source_package="",
         short_name=model_id,
         n_vars=1,

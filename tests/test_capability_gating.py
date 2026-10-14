@@ -298,7 +298,6 @@ class TestFmuExportGate:
         No fmpy needed: the gate returns before the FMPy half is reached.
         """
         import logging
-        from pathlib import Path
         from unittest.mock import MagicMock
 
         from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
@@ -317,7 +316,7 @@ class TestFmuExportGate:
         )
         test = TestModel(
             model_id="BouncingBall",
-            source_file=Path(""),
+            source_file=None,
             source_package="",
             short_name="BouncingBall",
             n_vars=1,

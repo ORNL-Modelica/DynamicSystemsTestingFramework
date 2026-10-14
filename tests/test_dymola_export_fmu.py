@@ -23,7 +23,7 @@ from dstf.discovery.test_registry import TestModel
 def _mock_test() -> TestModel:
     return TestModel(
         model_id="MyLib.Tests.Foo",
-        source_file=Path(""),
+        source_file=None,
         source_package="MyLib.Tests",
         short_name="Foo",
         n_vars=1,

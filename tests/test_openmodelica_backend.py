@@ -111,7 +111,7 @@ class TestOpenModelicaBackendUnit:
         )
         test = TestModel(
             model_id="Lib.Examples.MissingVar",
-            source_file=Path(""),
+            source_file=None,
             source_package="Lib.Examples",
             short_name="MissingVar",
             n_vars=1,
@@ -158,7 +158,7 @@ class TestOpenModelicaBackendUnit:
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Lib.A",
-            source_file=Path(""),
+            source_file=None,
             source_package="Lib",
             short_name="A",
             n_vars=0,
@@ -246,7 +246,7 @@ class TestOpenModelicaBackendUnit:
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Lib.DoesNotExist",
-            source_file=Path(""),
+            source_file=None,
             source_package="Lib",
             short_name="DoesNotExist",
             n_vars=0,
@@ -385,7 +385,7 @@ class TestOpenModelicaIntegration:
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Modelica.Blocks.Examples.PID_Controller",
-            source_file=Path(""),
+            source_file=None,
             source_package="Modelica.Blocks.Examples",
             short_name="PID_Controller",
             n_vars=0,
@@ -432,7 +432,7 @@ class TestOpenModelicaIntegration:
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Modelica.Blocks.Examples.PID_Controller",
-            source_file=Path(""),
+            source_file=None,
             source_package="Modelica.Blocks.Examples",
             short_name="PID_Controller",
             n_vars=0,
@@ -469,7 +469,7 @@ class TestOpenModelicaIntegration:
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Definitely.Not.Here",
-            source_file=Path(""),
+            source_file=None,
             source_package="Definitely.Not",
             short_name="Here",
             n_vars=0,
