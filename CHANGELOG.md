@@ -105,6 +105,9 @@ to write instead.
   record the library: `dstf --config <it>` from another directory found no
   project. It now records `source_path`, and the reference root and spec
   where they are not its defaults.
+- `dstf author`'s Queue, refused when the backend's workers cannot start,
+  told the user to re-run with `--batch`, a flag the tool does not have; it
+  names only what can be done there.
 
 ### How to convert your testing.json
 
