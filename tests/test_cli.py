@@ -2695,3 +2695,35 @@ class TestRunSaysWhenAStopTimeIsTheDefault:
         assert self._said(capsys.readouterr().out) == [
             f"{model}: test_spec.json gives no stop time; it runs to the default, 1 s."
         ]
+
+
+def test_compare_reads_backend_path_for_a_backend_built_from_its_executable(
+    tmp_path, capsys
+):
+    """`compare` starts no simulator, but the Python and Julia backends are
+    not built without their executable: with the configured interpreter
+    gone, `compare` is refused, and `--backend-path` names one that is
+    there. The flag is read on `compare` for them."""
+    import json
+    import shutil
+
+    from conftest import python_example_copy
+
+    config, _ = python_example_copy(tmp_path)
+    cfg = Path(config.config_file)
+    work = ["--work-dir", str(config.work_dir)]
+    assert main(["run", "--config", str(cfg), *work, "--no-browser"]) == 0
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    data["backends"]["Python"] = {"executables": [str(tmp_path / "gone" / "python")]}
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as refused:
+        main(["compare", "--config", str(cfg), *work, "--no-browser"])
+    assert refused.value.code == 1
+    assert "Python binary not found" in capsys.readouterr().err
+    python = shutil.which("python3") or sys.executable
+    rc = main(
+        ["compare", "--config", str(cfg), *work, "--no-browser"]
+        + ["--backend-path", python]
+    )
+    assert rc == 0
