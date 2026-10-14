@@ -632,9 +632,30 @@ class TestASpecOnlyEntryTakesItsAnnotation:
         assert test.simulate_only is False and test.is_simulate_only is True
         # A pattern makes it a scored test again.
         assert (
-            main([*argv, "spec", "add", "RodLib.Parts.Rod", "--variables", "T[1]"]) == 0
+            main([*argv, "spec", "add", "RodLib.Parts.Leaf", "--variables", "x"]) == 0
         )
-        assert _discovered(rodlib)["RodLib.Parts.Rod"].is_simulate_only is False
+        assert _discovered(rodlib)["RodLib.Parts.Leaf"].is_simulate_only is False
+
+    @pytest.mark.parametrize(
+        "model", ["RodLib.NoSuchModel", "RodLib.Parts.NoSuchRod", "Other.Rod"]
+    )
+    def test_dstf_add_of_a_model_that_is_not_there_writes_nothing(
+        self, rodlib, capsys, model
+    ):
+        """`dstf spec add RodLib.NoSuchModel` printed `Added:`, exited 0 and
+        wrote an entry no run could simulate. The library decides
+        (`mo_parser.find_class`): a class it does not hold is one sentence,
+        exit 1, and no file written."""
+        spec = rodlib.with_name("test_spec.json")
+        before = spec.read_bytes()
+        assert main(["--config", str(rodlib), "spec", "add", model]) == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err == (
+            f"{model} is no class of the library RodLib "
+            f"({rodlib.parent.parent / 'RodLib'}): nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
 
     def test_a_non_modelica_source_is_unchanged(self, tmp_path, monkeypatch):
         """No annotation is looked for — the library is not even probed —

@@ -94,6 +94,9 @@ to write instead.
   refused.
 - `run --batch` on FMPy or Python was silently ignored; it is a config error.
 - `companion freeze` of a companion that does not exist exited 0; it exits 1.
+- `spec add` of a model that is no class of a Modelica project's library
+  wrote an entry no run could simulate, and exited 0; it says so, writes
+  nothing and exits 1.
 - A hand-written `metrics` tree that scored a soft check outside `warn`
   failed its test on `run` and `compare`, where a soft check may only warn.
   A tree that breaks a baseline-role rule — that one; a criterion against a

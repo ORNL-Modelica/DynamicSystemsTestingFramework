@@ -15,11 +15,33 @@ SPEC_FILE = "test_spec.json"
 SCHEMAS = {"test_spec": SPEC_FILE, "testing": CONFIG_FILENAME}
 
 
+def _not_added(config, model_id: str) -> str | None:
+    """Why ``spec add`` writes no entry for ``model_id``, as one sentence,
+    or None. A Modelica project's library decides
+    (:func:`~dstf.discovery.mo_parser.find_class`): a class it does not
+    hold is no test any run could simulate."""
+    if config.source_type != "modelica":
+        return None
+    from ..discovery.mo_parser import find_class
+
+    if find_class(config.library_dir, config.library_name, model_id) is None:
+        return (
+            f"{model_id} is no class of the library {config.library_name} "
+            f"({config.library_dir}): nothing was added."
+        )
+    return None
+
+
 def cmd_spec_add(args: argparse.Namespace) -> int:
     """Add a test to test_spec.json."""
     config = _build_config(args)
     model_id = args.model_id
     variables = args.variables if args.variables is not None else []
+
+    refused = _not_added(config, model_id)
+    if refused is not None:
+        print(refused, file=sys.stderr)
+        return 1
 
     from ..discovery.spec_parser import add_to_test_spec
 

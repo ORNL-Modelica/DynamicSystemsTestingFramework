@@ -1737,7 +1737,10 @@ def test_a_command_that_creates_nothing_of_a_project_writes_no_config(
     (`companion freeze` of a companion that is not there, exit 1)."""
     lib = tmp_path / "work" / "Lib"
     lib.mkdir(parents=True)
-    (lib / "package.mo").write_text("within ;\npackage Lib\nend Lib;\n")
+    # Lib.A is a class of the library: `spec add` writes an entry for it
+    (lib / "package.mo").write_text(
+        "within ;\npackage Lib\n  model A\n  end A;\nend Lib;\n"
+    )
     patch = tmp_path / "file.json"
     patch.write_text("{}")
     # No simulator anywhere: `run` is refused before it starts one.

@@ -1455,6 +1455,10 @@ def _add_spec(tree: _Tree, top) -> None:
 
             Without --variables the test is simulate-only: it passes when
             its simulation completes.
+
+            Exit code: 0 when the entry is written, or kept on n; 1 when
+            the model is no class of a Modelica project's library, and
+            nothing is written; 2 for a config error.
             """,
         examples=(
             "dstf spec add MyLib.Examples.Rod --config testing.json --variables 'rod.T*' pump.m_flow",
