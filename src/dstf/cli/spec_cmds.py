@@ -22,10 +22,11 @@ def _not_added(config, model_id: str, source: str | None) -> str | None:
     library holds its class (:func:`~dstf.discovery.mo_parser.find_class`),
     and a test of a backend that runs a file (``Backend.source_suffix``)
     names one that is there — ``--source``, which no other backend reads."""
-    from ..backends import backend_class
+    from ..backends import get_backend_class
 
-    backend = backend_class(config.backend_name)
-    suffix = backend.source_suffix if backend is not None else None
+    # The backend the entry IS, not the entry's name: an entry named
+    # "Python 3.12" is the Python backend's.
+    suffix = get_backend_class(config).source_suffix
     if suffix is None and source is not None:
         return (
             f"--source does not apply: a test of the {config.backend} backend "

@@ -801,6 +801,41 @@ class TestSpecAddWritesAnEntryThatRuns:
         )
         assert spec.read_bytes() == before
 
+    @pytest.mark.parametrize(
+        ("which", "family", "entry", "suffix", "file"),
+        [
+            ("python", "Python", "Python 3.12", ".py", "Examples/SimpleRamp.py"),
+            ("julia", "Julia", "Julia 1.11", ".jl", "Examples/SimpleRamp.jl"),
+        ],
+    )
+    def test_an_entry_named_by_version_is_its_backend_s(
+        self, tmp_path, capsys, which, family, entry, suffix, file
+    ):
+        """A `backends` entry named `"Python 3.12"` is the Python backend:
+        `--source` is required and taken as for one named `"Python"`. The
+        entry's NAME found no backend, and `spec add` refused `--source` as
+        not applying, or wrote an entry with no file that every run failed."""
+        config = _example(tmp_path, which)
+        settings = json.loads(config.read_text("utf-8"))
+        settings["backends"] = {entry: settings["backends"][family]}
+        settings["backend"] = entry
+        config.write_text(json.dumps(settings), "utf-8")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        argv = ["--config", str(config), "spec", "add", "Lib.New"]
+        assert main(argv) == 1
+        assert capsys.readouterr().err == (
+            f"--source is required: a test of the {family} backend runs the "
+            f"{suffix} file its entry names (--source FILE); nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+        source = config.parent.parent.parent / file
+        assert source.is_file()
+        assert main([*argv, "--source", str(source)]) == 0
+        assert "Added: Lib.New" in capsys.readouterr().out
+        added = json.loads(spec.read_text("utf-8"))["tests"][-1]
+        assert added["model"] == "Lib.New" and added["source"].endswith(file)
+
     def test_the_entry_names_its_file_and_runs(self, tmp_path, monkeypatch, capsys):
         config = _example(tmp_path, "python")
         lib = config.parent.parent.parent
