@@ -898,6 +898,44 @@ def test_a_command_s_flag_before_the_command_says_where_it_goes(argv, said, caps
     assert "invalid choice" not in text
 
 
+@pytest.mark.parametrize(
+    ("argv", "said"),
+    [
+        # a flag's value that is a command's name is the value, not the command
+        (
+            ["--filter", "check", "run"],
+            "dstf run: error: --filter goes after the command: dstf run --filter …",
+        ),
+        (
+            ["--work-dir", "check", "run"],
+            "dstf run: error: --work-dir goes after the command: dstf run --work-dir …",
+        ),
+        (
+            ["--work-dir=check", "run"],
+            "dstf run: error: --work-dir goes after the command: dstf run --work-dir …",
+        ),
+        # a word that is no command, or no action of its group, is argparse's
+        (
+            ["spec", "ad", "M", "--config", "C"],
+            "dstf spec: error: argument <action>: invalid choice: 'ad'",
+        ),
+        (
+            ["--backend", "Python", "rn"],
+            "dstf: error: argument <command>: invalid choice: 'rn'",
+        ),
+    ],
+    ids=lambda v: " ".join(v) if isinstance(v, list) else "",
+)
+def test_the_command_word_is_one_that_is_there(argv, said, capsys):
+    """`dstf --filter check run` was `--filter does not apply: dstf check
+    does not read it` — the value `check` taken for the command; `dstf spec
+    ad M --config C` was `--config goes after the command`, where the word
+    the user mistyped is `ad`."""
+    text = _parse(argv, capsys)
+    assert isinstance(text, str), f"{argv} parsed"
+    assert said in text, text
+
+
 @pytest.mark.parametrize("flag", sorted(_PROJECT))
 @pytest.mark.parametrize("spelled", ["{flag} {value}", "{flag}={value}"])
 def test_a_project_flag_with_two_values_is_refused(flag, spelled, capsys):

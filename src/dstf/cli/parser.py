@@ -142,22 +142,39 @@ class _Root(argparse.ArgumentParser):
         offers it. Only a flag some command has is said so; any other is
         argparse's to call unrecognized."""
         commands = _subcommands(self).choices
-        i = _find_word(self, argv, 0, commands)
+        takes = self._values_taken()
+        i = _find_word(takes, argv, 0, commands)
+        if i < len(argv) and argv[i] not in commands:
+            _invalid_choice(self, argv[i])
         path = argv[i] if i < len(argv) else "<command>"
         group = commands.get(path)
         if group is not None and group.is_group:
             actions = _subcommands(group).choices
-            j = _find_word(group, argv, i + 1, actions)
+            j = _find_word(takes, argv, i + 1, actions)
+            if j < len(argv) and argv[j] not in actions:
+                _invalid_choice(group, argv[j])
             path += f" {argv[j]}" if j < len(argv) else " <action>"
             self._say_misplaced(argv[i + 1 : j], path, allowed=group, at=group)
         self._say_misplaced(argv[:i], path, allowed=self, at=group or self)
+
+    def _values_taken(self) -> dict[str, object]:
+        """Every option of the tree that takes a value, with its ``nargs``.
+        A flag written before the command may be any command's, so the
+        word after it is its value by what that command says it takes."""
+        return {
+            s: a.nargs
+            for node in self.nodes.values()
+            for a in node._actions
+            if a.nargs != 0 and not isinstance(a, argparse._SubParsersAction)
+            for s in a.option_strings
+        }
 
     def _given_twice(self, argv: list[str], parsed) -> str | None:
         """A project flag written before the command and after it, with two
         values: the later used to win, said only in the usage guide. Each
         is written once, on either side (the same flag twice on one side is
         argparse's: the last wins)."""
-        end = _find_word(self, argv, 0, _subcommands(self).choices)
+        end = _find_word(self._values_taken(), argv, 0, _subcommands(self).choices)
         before: dict[str, str] = {}
         i = 0
         while i < end:
@@ -250,19 +267,41 @@ def _option_strings(node: argparse.ArgumentParser) -> set[str]:
     return {s for a in node._actions for s in a.option_strings}
 
 
-def _find_word(
-    node: argparse.ArgumentParser, argv: list[str], start: int, names
-) -> int:
-    """The index of the first word from ``start`` on that is one of
-    ``names`` (a command, or a group's action), stepping over ``node``'s own
-    options and their values; ``len(argv)`` when there is none."""
-    takes = {s for a in node._actions if a.nargs != 0 for s in a.option_strings}
+def _invalid_choice(node: argparse.ArgumentParser, word: str) -> None:
+    """``word``, where ``node``'s command or action is written, is none:
+    argparse's own error, said of that word — not of a flag's value it
+    would take for the command (``dstf --backend Python rn``)."""
+    try:
+        node._check_value(_subcommands(node), word)
+    except argparse.ArgumentError as e:
+        node.error(str(e))
+
+
+def _find_word(takes: dict[str, object], argv: list[str], start: int, names) -> int:
+    """The index of the first word from ``start`` on that is not an option
+    or an option's value — the command, or a group's action, when the line
+    names one of ``names`` there; ``len(argv)`` when there is none. An
+    option of ``takes`` that must have a value takes the next word whatever
+    it is (``--filter check run``: the command is ``run``); one whose value
+    is optional takes the words up to a name of ``names`` (``-i failed
+    run``)."""
     i = start
     while i < len(argv) and argv[i] != "--":
-        if argv[i] in names:
-            return i
-        i += 2 if argv[i] in takes else 1
-    return len(argv)
+        word = argv[i]
+        i += 1
+        if not word.startswith("-"):
+            return i - 1
+        if "=" in word or word not in takes:
+            continue
+        nargs = takes[word]
+        if nargs is None or isinstance(nargs, int):
+            i += 1 if nargs is None else nargs
+            continue
+        while i < len(argv) and argv[i] not in names and not argv[i].startswith("-"):
+            i += 1
+            if nargs == "?":
+                break
+    return min(i, len(argv))
 
 
 def command_path(args: argparse.Namespace) -> str:
