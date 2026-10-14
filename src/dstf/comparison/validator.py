@@ -3,18 +3,29 @@
 The comparator's MetricTree distinguishes three baseline roles (D66):
 **primary** = regression anchor; **soft_check** = advisory cross-check;
 **companion** = plot-only overlay. This module enforces that trees
-respect those semantics at spec-load time:
+respect those semantics.
 
-1. Every tree has at least one leaf targeting ``primary`` outside
-   ``warn`` — guarantees a real regression anchor.
-2. Leaves with ``against: "<soft_check>"`` must sit under a ``warn``
-   ancestor — soft_checks never hard-fail.
-3. Leaves must never target companion names — companions are not
-   scorable, only displayable.
-4. Leaves must not target unknown baseline names.
+The rules split by what they read. The FILE's rules read the tree alone,
+so a tree that breaks one is wrong in every ``<Backend>/<os>`` folder:
 
-Callers supply a ``BaselineRegistry`` (a mapping of known names to
-their role) so validation is context-aware per test.
+1. Every tree has at least one criterion against ``primary`` outside
+   ``warn`` — a real regression anchor.
+2. A criterion outside ``warn`` names ``primary``: a soft check sits under
+   a ``warn``, a companion is only drawn, and any other name is neither.
+3. A ``weighted`` node sums scores of one direction.
+
+The FOLDER's rules read which names this folder stores, and so hold in
+one folder and not in another, where the spec is the same:
+
+4. A criterion names no companion, under ``warn`` or not.
+5. A criterion names a stored baseline — the primary or a soft check.
+6. A stored soft check sits under ``warn`` (rule 2, with its own sentence).
+
+:func:`validate_tree` with no lookup checks the file's rules; that is the
+check a test is refused by where it is scored (``comparator.broken_roles``),
+since a soft check is imported into ONE folder and the same spec is scored
+in all of them. With a lookup (``spec update`` and the tool, which write
+the file and hold the store) it checks all six.
 """
 
 from __future__ import annotations
@@ -46,7 +57,7 @@ BaselineRoleLookup = Callable[[str], BaselineRole | None]
 
 def validate_tree(
     tree: SpecNode,
-    role_of: BaselineRoleLookup,
+    role_of: BaselineRoleLookup | None = None,
     _path: str = "metrics",
 ) -> list[ValidationError]:
     """Return a list of validation errors for ``tree`` against D66 role rules.
@@ -56,12 +67,15 @@ def validate_tree(
         role_of: callable returning :class:`BaselineRole` for a known
             baseline name, or ``None`` for an unknown name. Typical
             caller builds this from a :class:`ReferenceStore` query.
+            Omitted, only the rules the file decides by itself are checked
+            (the module's 1-3): no name but ``primary`` is known, and none
+            is held against the tree for being unknown.
     """
     errors: list[ValidationError] = []
     _walk(tree, role_of, _path, in_warn=False, errors=errors)
 
     # Tree-level rule: at least one primary leaf outside warn.
-    if not _has_primary_outside_warn(tree, role_of):
+    if not _has_primary_outside_warn(tree, role_of or _primary_only):
         errors.append(
             ValidationError(
                 _path,
@@ -73,9 +87,13 @@ def validate_tree(
     return errors
 
 
+def _primary_only(name: str) -> BaselineRole | None:
+    return BaselineRole.PRIMARY if name == "primary" else None
+
+
 def _walk(
     node: SpecNode,
-    role_of: BaselineRoleLookup,
+    role_of: BaselineRoleLookup | None,
     path: str,
     in_warn: bool,
     errors: list[ValidationError],
@@ -131,11 +149,25 @@ def _check_weighted_directions(
 
 def _check_leaf(
     leaf: LeafSpec,
-    role_of: BaselineRoleLookup,
+    role_of: BaselineRoleLookup | None,
     path: str,
     in_warn: bool,
     errors: list[ValidationError],
 ) -> None:
+    if role_of is None:
+        # The file alone: outside a warn only the primary is scored, which
+        # every folder holds. Under one, any name may be a soft check of
+        # SOME folder; one this folder lacks is a criterion not scored.
+        if not in_warn and leaf.against != "primary":
+            errors.append(
+                ValidationError(
+                    path,
+                    f"This criterion scores against {leaf.against!r} outside a "
+                    f"'warn', where only the primary baseline is scored: a soft "
+                    f"check sits under a 'warn', and a companion is only drawn.",
+                )
+            )
+        return
     role = role_of(leaf.against)
     if role is None:
         errors.append(

@@ -1061,6 +1061,8 @@ class _NoBaselineStore:
     def get_reference(self, _model_id):
         return None
 
+    folder = "Stub/linux"
+
     def get_soft_checks(self, _model_id):
         return {}
 
@@ -1545,6 +1547,8 @@ class TestTreeConfigErrorIsALeafFailure:
                         }
                     ],
                 }
+
+            folder = "Stub/linux"
 
             def get_soft_checks(self, _model_id):
                 return {}
@@ -2067,6 +2071,8 @@ class TestCompareOne:
             def get_reference(self, model_id):
                 return ref if model_id == "Test.Model" else None
 
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {}
 
@@ -2504,6 +2510,8 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
         from dstf.storage.baseline import Baseline
 
         class _Store:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {
                     "fmpy": Baseline(
@@ -2658,7 +2666,8 @@ class TestTheExpressionRidesOnEveryComparison:
             _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
         )
         vc = self._leaf(comp)
-        assert not vc.passed and "baseline not found" in vc.diagnostics["error"]
+        assert not vc.passed
+        assert vc.diagnostics["error"] == "no soft check 'nope' is stored"
         assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
 
     def test_a_misconfigured_leaf_keeps_the_expression(self):
@@ -2755,6 +2764,8 @@ class TestTheExpressionCheckPairsByName:
         from dstf.storage.baseline import Baseline
 
         class _Store:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {
                     "fmpy": Baseline(
@@ -2820,6 +2831,8 @@ class TestTheExpressionCheckPairsByName:
         from dstf.storage.baseline import Baseline
 
         class _Store:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {
                     "fmpy": Baseline(
@@ -2866,6 +2879,8 @@ class TestTheExpressionCheckPairsByName:
         from dstf.storage.baseline import Baseline
 
         class _Store:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {
                     "fmpy": Baseline(

@@ -840,26 +840,28 @@ def _leaf(**extra) -> dict:
     return {"metric": "nrmse", "variable": "x", "tolerance": 0.01, **extra}
 
 
-#: A tree each role rule refuses (`comparison.validator`), and the start of
-#: the validator's sentence for it.
-_BROKEN_TREES = {
-    "a soft check outside warn": (
+def _warned(*leaves: dict) -> dict:
+    """The primary criterion, and *leaves* under a ``warn`` beside it."""
+    return {
+        "combinator": "and",
+        "children": [_leaf(), {"combinator": "warn", "children": list(leaves)}],
+    }
+
+
+#: A tree wrong in its FILE — wrong whatever a folder of baselines holds —
+#: and the start of the sentence it is refused with where it is scored.
+_WRONG_IN_THE_FILE = {
+    "a stored soft check outside warn": (
         {"combinator": "and", "children": [_leaf(), _leaf(against="other")]},
-        "This criterion scores against the soft check 'other'",
+        "This criterion scores against 'other' outside a 'warn'",
     ),
-    "a companion": (
+    "a stored companion outside warn": (
         {"combinator": "and", "children": [_leaf(), _leaf(against="rig")]},
-        "This criterion scores against the companion 'rig'",
+        "This criterion scores against 'rig' outside a 'warn'",
     ),
-    "a name that is no baseline": (
-        {
-            "combinator": "and",
-            "children": [
-                _leaf(),
-                {"combinator": "warn", "children": [_leaf(against="nosuch")]},
-            ],
-        },
-        "This criterion scores against 'nosuch', which is not a baseline",
+    "a name nothing holds outside warn": (
+        {"combinator": "and", "children": [_leaf(), _leaf(against="nosuch")]},
+        "This criterion scores against 'nosuch' outside a 'warn'",
     ),
     "warnings alone": (
         {"combinator": "warn", "children": [_leaf()]},
@@ -879,14 +881,22 @@ _BROKEN_TREES = {
     ),
 }
 
+#: A tree whose FILE is right, and which a folder may not hold a baseline
+#: of: a criterion under ``warn`` naming what this folder does not store as
+#: a soft check. `spec update` and the tool refuse to WRITE it here; where
+#: it is scored it is an advisory criterion not scored, and the test passes.
+_RIGHT_IN_THE_FILE = {
+    "a name this folder does not hold, under warn": "nosuch",
+    "a companion under warn": "rig",
+}
+
 
 class TestRolesWhereATestIsScored:
-    """The baseline-role rules hold where a test is scored, not only where
-    a tree is written (`spec update`, the tool): a hand-written tree that
-    breaks one is refused — FAILED with the validator's sentence and no
-    criterion scored — as a test with a base tolerance that is no number is.
-    A soft check scored outside `warn` FAILED the test, where the docs say a
-    soft check can warn, never fail."""
+    """Where a test is scored, a tree is refused only for what is wrong in
+    its FILE, never for what this ``<Backend>/<os>`` folder happens to hold:
+    the same spec is scored in every folder, and a soft check is imported
+    into one. A tree that is refused fails with the rule's sentence and no
+    criterion scored."""
 
     @pytest.fixture
     def roles(self, store_with_primary, tmp_path):
@@ -916,28 +926,90 @@ class TestRolesWhereATestIsScored:
         test.metric_tree_spec = parse_metric_tree(tree)
         return compare_one(test, result, store)
 
-    @pytest.mark.parametrize("broken", sorted(_BROKEN_TREES))
-    def test_a_tree_that_breaks_a_role_rule_is_refused(self, roles, broken):
+    @pytest.mark.parametrize("broken", sorted(_WRONG_IN_THE_FILE))
+    def test_a_tree_wrong_in_its_file_is_refused(self, roles, broken):
         from dstf.reporting.status import FAIL, classify, refusal
 
-        tree, sentence = _BROKEN_TREES[broken]
+        tree, sentence = _WRONG_IN_THE_FILE[broken]
         comp = self._compare(roles, tree)
         assert classify(comp) == FAIL
         assert comp.variables == [] and comp.metric_tree is None
         reason = refusal(comp)
         assert reason is not None and reason.startswith(sentence), reason
 
+    @pytest.mark.parametrize("case", sorted(_RIGHT_IN_THE_FILE))
+    def test_a_baseline_this_folder_does_not_hold_is_advisory(self, roles, case):
+        from dstf.reporting.status import PASS, classify, refusal
+
+        store, _, _ = roles
+        name = _RIGHT_IN_THE_FILE[case]
+        comp = self._compare(roles, _warned(_leaf(against=name)))
+        assert classify(comp) == PASS, comp.error_message
+        assert refusal(comp) is None
+        errors = [v.diagnostics.get("error") for v in comp.variables if not v.passed]
+        folder = f"{store.config.backend}/{store.config.os_name}"
+        assert errors == [f"no soft check {name!r} is stored for {folder}"]
+
     def test_a_soft_check_under_warn_warns_and_the_test_passes(self, roles):
         from dstf.reporting.status import refusal
 
-        tree = {
-            "combinator": "and",
-            "children": [
-                _leaf(),
-                {"combinator": "warn", "children": [_leaf(against="other")]},
-            ],
-        }
-        comp = self._compare(roles, tree)
+        comp = self._compare(roles, _warned(_leaf(against="other")))
         assert comp.passed, comp.error_message
         assert refusal(comp) is None
         assert comp.metric_tree is not None
+
+    def test_a_tree_wrong_in_its_file_with_no_baseline_is_refused(
+        self, sample_models_dir, tmp_path
+    ):
+        """No accept can repair a tree wrong in its file, so the refusal
+        wins over NO_REF ("accept it"), as a base tolerance that is no
+        number and a result that holds nothing the test tracks do."""
+        from dstf.comparison.comparator import compare_one
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.reporting.status import FAIL, classify, refusal
+
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "r")
+        )
+        test = copy.copy(_make_test_model())
+        tree, sentence = _WRONG_IN_THE_FILE["warnings alone"]
+        test.metric_tree_spec = parse_metric_tree(tree)
+        comp = compare_one(test, _make_test_result(), store)
+        assert store.get_reference(test.model_id) is None
+        assert classify(comp) == FAIL
+        assert (refusal(comp) or "").startswith(sentence)
+        assert comp.has_reference is False
+
+
+class TestWhatEachRuleReads:
+    """Each baseline-role rule reads the file alone or the folder too. The
+    file's rules are the ones a test is refused by where it is scored; the
+    full check (`spec update`, the tool) adds the folder's."""
+
+    def test_the_file_s_rules_read_no_folder(self):
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.comparison.validator import validate_tree
+
+        for tree, sentence in _WRONG_IN_THE_FILE.values():
+            errors = validate_tree(parse_metric_tree(tree))
+            assert errors and errors[0].message.startswith(sentence), errors
+        for name in _RIGHT_IN_THE_FILE.values():
+            assert validate_tree(parse_metric_tree(_warned(_leaf(against=name)))) == []
+
+    def test_the_full_check_refuses_what_this_folder_does_not_hold(self):
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.comparison.validator import role_lookup_from_names, validate_tree
+
+        held = role_lookup_from_names(soft_checks=["other"], companions=["rig"])
+        nosuch = validate_tree(
+            parse_metric_tree(_warned(_leaf(against="nosuch"))), held
+        )
+        assert [e.message[:40] for e in nosuch] == [
+            "This criterion scores against 'nosuch', "
+        ]
+        rig = validate_tree(parse_metric_tree(_warned(_leaf(against="rig"))), held)
+        assert "the companion 'rig'" in rig[0].message
+        assert (
+            validate_tree(parse_metric_tree(_warned(_leaf(against="other"))), held)
+            == []
+        )

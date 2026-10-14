@@ -178,28 +178,29 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
     )
 
 
-def broken_roles(test: TestModel, store: ReferenceStore) -> str | None:
-    """Why the test's ``metrics`` tree breaks a baseline-role rule, as the
-    validator's sentences (:func:`.validator.validate_tree`), or ``None``:
-    a criterion against the primary outside every ``warn``; a soft check
-    only under one; no companion and no name that is no baseline of the
-    test; a ``weighted`` of one score direction. A test with no tree breaks
-    none — its criteria are the primary's, outside any ``warn``.
+def broken_roles(test: TestModel) -> str | None:
+    """Why the test's ``metrics`` tree is wrong in its FILE, as the
+    validator's sentences (:func:`.validator.validate_tree` with no lookup),
+    or ``None``: no criterion against the primary outside every ``warn``; a
+    criterion outside a ``warn`` that names anything but the primary; a
+    ``weighted`` that sums scores of opposite directions. A test with no
+    tree breaks none — its criteria are the primary's, outside any ``warn``.
 
-    THE one decision where a test is scored. The tool and ``spec update``
-    refuse to write such a tree; a hand-written one reached ``run`` and
-    ``compare``, which scored a soft check outside ``warn`` and FAILED the
-    test on it — a soft check warns, never fails. Now the comparison fails
-    the test with these sentences and scores nothing
-    (``reporting.status.refusal``), as it does a base tolerance that is no
-    number."""
+    THE one decision where a test is scored. It reads the file and never
+    the folder: a soft check is imported into one ``<Backend>/<os>`` folder
+    and the same spec is scored in every one, so a criterion under ``warn``
+    naming a baseline this folder does not hold is an advisory criterion
+    not scored (``tree_eval``), not a broken tree — "a soft check can warn,
+    never fail". ``spec update`` and the tool, which write the file and
+    hold the store, refuse a name the folder does not hold as well. A tree
+    wrong in its file fails the test with these sentences and scores
+    nothing (``reporting.status.refusal``), as a base tolerance that is no
+    number does."""
     if test.metric_tree_spec is None:
         return None
-    from .validator import role_lookup_from_store, validate_tree
+    from .validator import validate_tree
 
-    errors = validate_tree(
-        test.metric_tree_spec, role_lookup_from_store(store, test.model_id)
-    )
+    errors = validate_tree(test.metric_tree_spec)
     # Each message is a sentence that ends in its own full stop.
     return " ".join(e.message for e in errors) or None
 
@@ -696,6 +697,7 @@ def compare_test(
                 diagnostics=result.diagnostics,
             ),
             model_id=test.model_id,
+            held_in=store.folder if store is not None else "",
         )
         unscored = _tracked_but_not_scored(test, result)
         return TestComparison(
@@ -1144,6 +1146,16 @@ def compare_one(
             has_reference=reference is not None,
             error_message=nothing,
         )
+    # Nor when its tree is wrong in its file: no accept repairs that.
+    broken = broken_roles(test)
+    if broken is not None:
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            test_id=(reference or {}).get("test_id"),
+            has_reference=reference is not None,
+            error_message=broken,
+        )
     # simulate_only tests don't need a baseline — their pass criterion
     # is "did it simulate successfully?". Dispatch to compare_test with
     # an empty dict reference so its simulate_only short-circuit runs
@@ -1165,18 +1177,6 @@ def compare_one(
             passed=True,
             has_reference=False,
             error_message="No reference baseline stored",
-        )
-
-    # After the NO_REF guard: a test with no baseline here has no soft check
-    # either, and its first step is the accept that stores one.
-    broken = broken_roles(test, store)
-    if broken is not None:
-        return TestComparison(
-            model_id=test.model_id,
-            passed=False,
-            test_id=(reference or {}).get("test_id"),
-            has_reference=reference is not None,
-            error_message=broken,
         )
 
     comp = compare_test(

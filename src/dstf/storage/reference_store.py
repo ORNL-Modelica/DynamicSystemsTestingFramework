@@ -144,6 +144,12 @@ class ReferenceStore(_RolesMixin):
     def index(self) -> RefIndex:
         return self._index
 
+    @property
+    def folder(self) -> str:
+        """The folder this store reads, as a sentence names it: ``FMPy/macos``
+        for ``<reference_root>/FMPy/macos/``."""
+        return f"{self.config.backend}/{self.config.os_name}"
+
     def _ensure_dir(self):
         self.ref_dir.mkdir(parents=True, exist_ok=True)
 

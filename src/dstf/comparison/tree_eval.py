@@ -86,6 +86,7 @@ def evaluate_spec(
     scalars: ScalarSources | None = None,
     path: str = "/metrics",
     model_id: str = "",
+    held_in: str = "",
     _warned: set[tuple[str, str]] | None = None,
 ) -> MetricResult:
     """Walk a spec tree and produce an evaluated :class:`MetricResult` root.
@@ -113,6 +114,12 @@ def evaluate_spec(
     ``model_id`` only names the test in the migrate-hint log line: a suite
     of tests printing the same nameless sentence says how many baselines
     are un-migrated and not one of the models whose baseline to open.
+
+    ``held_in`` names the folder ``baselines`` were read from
+    (``FMPy/macos``): a leaf naming a baseline that is not among them says
+    which folder does not store it. The same spec is scored in every
+    folder and a soft check is imported into one, so under a ``warn`` that
+    is an advisory criterion not scored, never a reason to refuse the tree.
     """
     sources = scalars if scalars is not None else ScalarSources()
     # The migrate hint is a fact about a VARIABLE's baseline entry, not
@@ -132,6 +139,7 @@ def evaluate_spec(
             sources,
             seen,
             model_id,
+            held_in,
         )
         stamp_leaf_path(result, path)
         return result
@@ -146,6 +154,7 @@ def evaluate_spec(
             sources,
             path=f"{path}/children/{i}",
             model_id=model_id,
+            held_in=held_in,
             _warned=seen,
         )
         for i, c in enumerate(spec.children)
@@ -353,6 +362,7 @@ def _evaluate_leaf(
     scalars: ScalarSources | None = None,
     warned: set[tuple[str, str]] | None = None,
     model_id: str = "",
+    held_in: str = "",
 ) -> MetricResult:
     # Own set when called outside a walk: one leaf, one line, never silence.
     warned = set() if warned is None else warned
@@ -425,7 +435,7 @@ def _evaluate_leaf(
     baseline = baselines.get(leaf.against)
     reads = None if mode.is_baseline_free() else leaf.against
     if baseline is None and not mode.is_baseline_free():
-        return _leaf(_missing_baseline_comparison(leaf))
+        return _leaf(_missing_baseline_comparison(leaf, held_in))
 
     windowed = False
     if scores_stored_scalar and isinstance(quantity, str):
@@ -782,12 +792,20 @@ def _leaf_config_error_comparison(
     )
 
 
-def _missing_baseline_comparison(leaf: LeafSpec) -> VariableComparison:
-    """Build a hard-fail sentinel for a leaf referencing an unknown baseline.
+def _missing_baseline_comparison(leaf: LeafSpec, held_in: str) -> VariableComparison:
+    """Build a hard-fail sentinel for a leaf naming a baseline this folder
+    does not store.
 
     The name stays the variable so the leaf still finds its plot; the
-    missing baseline name rides in ``diagnostics["error"]``.
+    sentence in ``diagnostics["error"]`` names the baseline and the folder
+    (``held_in``) that does not hold it.
     """
+    what = (
+        "no primary baseline"
+        if leaf.against == "primary"
+        else f"no soft check {leaf.against!r}"
+    )
+    where = f" for {held_in}" if held_in else ""
     return VariableComparison(
         index=0,
         name=leaf.variable,
@@ -800,7 +818,7 @@ def _missing_baseline_comparison(leaf: LeafSpec) -> VariableComparison:
         reference_final=float("nan"),
         actual_final=float("nan"),
         mode=leaf.metric,
-        diagnostics={"error": f"against={leaf.against!r}: baseline not found"},
+        diagnostics={"error": f"{what} is stored{where}"},
     )
 
 

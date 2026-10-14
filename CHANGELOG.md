@@ -110,12 +110,15 @@ lists each one and where it went.
   one sentence that names the entry.
 - A hand-written `metrics` tree that scored a soft check outside `warn`
   failed its test on `run` and `compare`, where a soft check may only warn.
-  A tree that breaks a baseline-role rule — that one; a criterion against a
-  companion or a name that is no baseline of the test; no criterion against
-  the primary outside `warn`; a `weighted` that sums scores of opposite
-  directions — is now refused where it is scored, as `dstf spec update`
-  refused it where it was written: the test fails with the rule's sentence
-  and none of its criteria is scored.
+  A tree that is wrong in its file — a criterion outside `warn` against
+  anything but the primary; no criterion against the primary outside
+  `warn`; a `weighted` that sums scores of opposite directions — is now
+  refused where it is scored, as `dstf spec update` refused it where it was
+  written: the test fails with the rule's sentence and none of its criteria
+  is scored. A criterion under `warn` against a soft check that is not
+  stored for this backend and OS is not scored and fails no test, as
+  before; it says so, `no soft check 'experiment' is stored for
+  FMPy/macos`.
 - The dashboard's copyable commands named `testing.json` by a relative path
   and left out the run's other flags: after `run --reference-root ALT`, its
   `compare --accept` overwrote a baseline in `testing.json`'s own reference

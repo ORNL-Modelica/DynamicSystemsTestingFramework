@@ -60,6 +60,8 @@ class _Store:
     def get_reference(self, model_id):
         return self.reference
 
+    folder = "Stub/linux"
+
     def get_soft_checks(self, model_id):
         return {}
 
