@@ -26,7 +26,7 @@ from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.common.result_variables import tracked_results
 from ..backends.pool import ItemState, QueueItem, Refused, StartingWorker
-from ..backends.progress import recorded_backend
+from ..backends.progress import recorded_backend, refuse_unregistered
 from ..backends.types import (
     DatasetType,
     TestResult,
@@ -375,6 +375,7 @@ def resolve_project(
         assert config.work_dir is not None  # resolved in __post_init__
         recorded, warning = recorded_backend(config.work_dir)
         if recorded and recorded != config.backend_name:
+            refuse_unregistered(recorded, config.work_dir)
             config = Config(
                 config_file=config_path, backend_name=recorded, work_dir=work_dir
             )

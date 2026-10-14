@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from ..backends import dataset_kind_for
-from ..backends.progress import recorded_backend
+from ..backends.progress import recorded_backend, refuse_unregistered
 from ..config import DEFAULT_STOP_TIME, ConfigError
 from ..discovery.test_registry import discover_tests
 from ..pipeline import run_pipeline, wipe_stale_state_for_scope, write_id_mapping
@@ -412,23 +412,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
         if warning:
             print(warning, file=sys.stderr)
         if recorded and recorded != config.backend_name:
+            refuse_unregistered(recorded, work_dir)
             args.backend = recorded
             config = _build_config(args)
-            # status.json is data, and data can name a backend this install
-            # can't resolve — a plug-in that isn't loaded here, a snapshot
-            # copied from another machine. get_backend_class raises a bare
-            # ValueError that main() doesn't catch, so translate it before it
-            # becomes a traceback.
-            from ..backends import get_backend_class
-
-            try:
-                get_backend_class(config)
-            except ValueError as exc:
-                raise ConfigError(
-                    f"The last run in {work_dir} recorded backend "
-                    f"'{recorded}', which is not registered here: {exc} "
-                    f"Pass --backend to choose one explicitly."
-                ) from exc
             print(
                 f"Using backend '{recorded}' recorded by the last run in "
                 f"{work_dir} (pass --backend to override)."

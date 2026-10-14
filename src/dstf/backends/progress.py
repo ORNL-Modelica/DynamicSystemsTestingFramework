@@ -365,6 +365,23 @@ def read_status(work_dir: Path) -> dict | None:
     return snapshot if isinstance(snapshot, dict) else None
 
 
+def refuse_unregistered(recorded: str, work_dir: Path) -> None:
+    """Raise :class:`~dstf.config.ConfigError` when the backend the last
+    run in *work_dir* recorded is one nothing here is registered under.
+    ``status.json`` is data, and data can name a backend this install
+    cannot resolve — a plug-in that is not loaded here, a snapshot copied
+    from another machine. Said as that run's, before a ``Config`` built on
+    the name says it as a ``--backend`` nobody wrote."""
+    from ..config import ConfigError
+    from . import backend_class, backend_family
+
+    if backend_class(backend_family(recorded)) is None:
+        raise ConfigError(
+            f"The last run in {work_dir} recorded backend '{recorded}', which "
+            "is not registered here. Pass --backend to choose one explicitly."
+        )
+
+
 def recorded_backend(work_dir: Path) -> tuple[str | None, str | None]:
     """``(label, warning)``: the backend the last run in *work_dir* used, per
     ``status.json``'s metadata, and a warning for the caller to show when the

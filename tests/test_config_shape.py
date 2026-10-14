@@ -228,6 +228,27 @@ class TestABackendThatIsNone:
             "backend's name (Dymola, "
         )
 
+    def test_one_the_last_run_recorded_is_said_as_that(self, tmp_path, capsys):
+        """`compare` takes the backend from the work directory's last run:
+        a name nothing here knows is that run's, not a flag's."""
+        path = _project(tmp_path, {})
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "status.json").write_text(
+            json.dumps({"metadata": {"backend_name": "Gone 3"}, "tests": {}})
+        )
+        assert main(["compare", "--config", str(path), "--work-dir", str(work)]) == 2
+        assert capsys.readouterr().err == (
+            f"Config error: The last run in {work} recorded backend 'Gone 3', "
+            "which is not registered here. Pass --backend to choose one "
+            "explicitly.\n"
+        )
+        pytest.importorskip("nicegui")
+        from dstf.authoring.session import resolve_project
+
+        with pytest.raises(ConfigError, match="recorded backend 'Gone 3', which is"):
+            resolve_project(path, work_dir=work)
+
     @pytest.mark.parametrize("name", ["Python", "Python 3", "Python 3.12", "Dymola"])
     def test_an_entry_a_backend_and_a_name_that_starts_with_one_are_taken(
         self, tmp_path, name
