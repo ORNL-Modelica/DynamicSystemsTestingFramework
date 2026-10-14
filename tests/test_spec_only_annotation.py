@@ -936,6 +936,33 @@ class TestSpecAddWritesAnEntryThatRuns:
         (entry,) = [e for e in spec["tests"] if e["model"] == "Lib.New"]
         assert entry["source"] == "../../Examples/ConstantCsv.py"
 
+    def test_a_question_with_no_answer_writes_nothing(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Where input ends (CI, `< /dev/null`) the overwrite question gets
+        no answer: "Aborted.", exit 1 — not the 0 of a `n` — and the entry
+        is as it was. `spec add --help` says so."""
+        config = _example(tmp_path, "python")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        argv = ["--config", str(config), "spec", "add"]
+        model = json.loads(before)["tests"][0]["model"]
+        source = config.parent.parent.parent / "Examples" / "SimpleRamp.py"
+
+        def no_answer(_prompt):
+            raise EOFError
+
+        monkeypatch.setattr("builtins.input", no_answer)
+        assert main([*argv, model, "--source", str(source)]) == 1
+        assert capsys.readouterr().out.endswith("\nAborted.\n")
+        assert spec.read_bytes() == before
+        with pytest.raises(SystemExit):
+            main(["spec", "add", "--help"])
+        said = " ".join(capsys.readouterr().out.split())
+        assert (
+            'the question gets no answer (its input ends, as in CI: "Aborted.")' in said
+        )
+
     def test_a_modelica_test_names_no_file(self, rodlib, capsys):
         spec = rodlib.with_name("test_spec.json")
         before = spec.read_bytes()

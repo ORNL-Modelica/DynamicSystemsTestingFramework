@@ -1469,8 +1469,9 @@ def _add_spec(tree: _Tree, top) -> None:
             the model is no class of a Modelica project's library or is a
             package of it, or --source is missing where the backend's tests
             run a file, names no file of the backend's suffix (a directory
-            included), or is given where they run none — and nothing is
-            written; 2 for a config error.
+            included), or is given where they run none, or the question
+            gets no answer (its input ends, as in CI: "Aborted.") — and
+            nothing is written; 2 for a config error.
             """,
         examples=(
             "dstf spec add MyLib.Examples.Rod --config testing.json --variables 'rod.T*' pump.m_flow",
