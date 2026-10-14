@@ -85,6 +85,73 @@ class TestUtilityFunctions:
         (tmp_path / "Aaa").mkdir()  # no package.mo: not a library
         assert find_package_dir(tmp_path) == (tmp_path / "Alpha").resolve()
 
+    def test_a_source_path_that_is_no_package_is_not_the_library_beside_it(
+        self, tmp_path
+    ):
+        """`discover --source-path <a Python library>` listed the Modelica
+        tests of the directory BESIDE it."""
+        _make_lib(tmp_path, "MoLib")
+        (tmp_path / "PyLib").mkdir()
+        with pytest.raises(ConfigError, match="Could not find a Modelica package"):
+            Config(source_path=tmp_path / "PyLib", write_default=False)
+
+    def test_nothing_beside_the_way_up_is_looked_at(self, tmp_path, monkeypatch):
+        """Not adopted, and not asked about either: a directory beside one
+        above — a private directory of the system's temporary one, from
+        anywhere below that — may be one the system will not let us look
+        into."""
+        _make_lib(tmp_path / "a", "Other")
+        start = tmp_path / "a" / "b" / "c"
+        (start / "In").mkdir(parents=True)
+        asked: list[Path] = []
+        for name in ("exists", "is_dir", "is_file", "iterdir", "stat"):
+            real = getattr(Path, name)
+
+            def spy(self, *args, _real=real, **kwargs):
+                asked.append(Path(self))
+                return _real(self, *args, **kwargs)
+
+            monkeypatch.setattr(Path, name, spy)
+        with pytest.raises(FileNotFoundError):
+            find_package_dir(start)
+        monkeypatch.undo()
+        way_up = [start.resolve(), *start.resolve().parents]
+        allowed = {
+            *way_up,
+            *(d / "package.mo" for d in way_up),
+            start.resolve() / "In",
+            start.resolve() / "In" / "package.mo",
+        }
+        assert asked and set(asked) <= allowed, sorted(set(asked) - allowed)
+
+    def test_a_directory_above_that_cannot_be_asked_is_skipped(
+        self, tmp_path, monkeypatch
+    ):
+        lib = _make_lib(tmp_path, "Lib")
+        start = lib / "Resources" / "Data"
+        start.mkdir(parents=True)
+        real = Path.exists
+
+        def exists(self, *args, **kwargs):
+            if self == (lib / "Resources" / "package.mo").resolve():
+                raise PermissionError(13, "Permission denied", str(self))
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "exists", exists)
+        assert find_package_dir(start) == lib.resolve()
+
+    def test_a_directory_in_it_that_cannot_be_read_is_skipped(self, tmp_path):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("running as root — chmod 0 does not block reads")
+        locked = tmp_path / "Aaa"
+        locked.mkdir()
+        lib = _make_lib(tmp_path, "Lib")
+        locked.chmod(0)
+        try:
+            assert find_package_dir(tmp_path) == lib.resolve()
+        finally:
+            locked.chmod(0o755)  # let pytest clean tmp_path up
+
     def test_the_library_is_looked_for_from_the_working_directory(
         self, tmp_path, monkeypatch
     ):

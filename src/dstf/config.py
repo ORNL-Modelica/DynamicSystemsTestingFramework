@@ -41,6 +41,16 @@ def detect_os() -> str:
     )
 
 
+def _is_package(directory: Path) -> bool:
+    """Whether ``directory`` holds a package.mo — and False where the
+    system will not say: a directory that may not be looked into is not
+    this project's library, and is no error either."""
+    try:
+        return (directory / "package.mo").exists()
+    except OSError:
+        return False
+
+
 def find_package_dir(start: Path | None = None) -> Path:
     """The Modelica library a directory belongs to: the directory that
     holds its package.mo.
@@ -51,19 +61,23 @@ def find_package_dir(start: Path | None = None) -> Path:
     package IN ``start``, the first by name: ``start`` is then the
     library's parent, where its testing.json is kept.
 
-    Nothing else is looked at. A library beside ``start``, or beside a
-    directory above it, is another project's: taking it made an empty
-    directory read as whichever library happened to be near.
+    Nothing else is looked at — not adopted, and not asked about. A
+    library beside ``start``, or beside a directory above it, is another
+    project's: taking it made an empty directory read as whichever library
+    happened to be near, and `--source-path` of a directory with no
+    package list the tests of the one beside it; and asking ended every
+    command run below the system's temporary directory at a neighbour the
+    system keeps closed (``Permission denied: '.../package.mo'``).
     """
     if start is None:
         start = Path.cwd()
     path = start.resolve()
 
     for directory in (path, *path.parents):
-        if (directory / "package.mo").exists():
+        if _is_package(directory):
             return directory
     for child in sorted(path.iterdir()):
-        if child.is_dir() and (child / "package.mo").exists():
+        if _is_package(child):
             return child
 
     raise FileNotFoundError(
