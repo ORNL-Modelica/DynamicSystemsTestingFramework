@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shlex
 from pathlib import Path
@@ -1068,6 +1069,74 @@ def test_an_output_that_cannot_be_written_is_refused_before_any_work(
     # a new file in a directory that is there
     args = _parse([*words, "-o", "adir/x.json"], capsys)
     assert isinstance(args, argparse.Namespace) and args.output == "adir/x.json"
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="permissions are not enforced for root, nor POSIX modes on Windows",
+)
+@pytest.mark.parametrize("command", sorted(_OUTPUTS))
+def test_an_output_without_write_permission_is_refused_before_any_work(
+    command, tmp_path, monkeypatch, capsys
+):
+    """`run --report-format junit -o <read-only dir>/x.xml` ran every test
+    and ended in a PermissionError traceback, exit 1; a read-only existing
+    file the same."""
+    monkeypatch.chdir(tmp_path)
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    (ro / "old.xml").write_text("")
+    (ro / "old.xml").chmod(0o444)
+    ro.chmod(0o555)
+    writable = tmp_path / "rw.xml"
+    writable.write_text("")
+    (tmp_path / "rofile.xml").write_text("")
+    (tmp_path / "rofile.xml").chmod(0o444)
+    words = [*command.split(), *_OUTPUTS[command]]
+    try:
+        for name, said in (
+            ("ro/x.xml", "ro/x.xml: the directory ro cannot be written"),
+            ("ro/old.xml", "ro/old.xml cannot be written"),
+            ("rofile.xml", "rofile.xml cannot be written"),
+        ):
+            text = _parse([*words, "-o", name], capsys)
+            assert isinstance(text, str), f"{command} took {name}"
+            assert f"argument -o/--output: {said}" in text, text
+        # an existing file that can be written is overwritten
+        args = _parse([*words, "-o", "rw.xml"], capsys)
+        assert isinstance(args, argparse.Namespace)
+    finally:
+        ro.chmod(0o755)
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="permissions are not enforced for root, nor POSIX modes on Windows",
+)
+def test_manifest_dump_into_a_work_dir_it_cannot_write_is_one_sentence(
+    tmp_path, capsys
+):
+    """`manifest dump --work-dir <read-only dir>` ended in a PermissionError
+    traceback."""
+    from conftest import python_example_copy
+
+    config, _ = python_example_copy(tmp_path)
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o555)
+    try:
+        rc = main(
+            ["manifest", "dump", "--config", str(config.config_file)]
+            + ["--work-dir", str(ro)]
+        )
+    finally:
+        ro.chmod(0o755)
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert err.strip() == (
+        f"Config error: {ro / 'reference_manifest.json'} cannot be written: "
+        "Permission denied"
+    ), err
 
 
 def test_soft_check_add_s_source_that_holds_no_object_is_said(tmp_path, capsys):

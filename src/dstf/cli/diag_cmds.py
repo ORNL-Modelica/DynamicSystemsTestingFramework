@@ -146,9 +146,14 @@ def cmd_manifest_dump(args: argparse.Namespace) -> int:
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-    write_id_mapping(store, config)
     assert config.work_dir is not None  # resolved in Config.__post_init__
-    print(f"Written to {config.work_dir / 'reference_manifest.json'}")
+    written = config.work_dir / "reference_manifest.json"
+    try:
+        write_id_mapping(store, config)
+    except OSError as e:
+        # A work dir this user may not write: the sentence, not a traceback.
+        raise ConfigError(f"{written} cannot be written: {e.strerror}") from e
+    print(f"Written to {written}")
     return 0
 
 

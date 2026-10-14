@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import os
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
@@ -519,9 +520,10 @@ def _filter_arg(value: str) -> str:
 
 def _output_file(text: str) -> str:
     """``--output``, on every command that has it: a file that can be
-    written — not a directory, and in a directory that is there. Said when
-    the command line is read, before any work: a run of an hour ended by
-    failing to write its report (a traceback), and ``spec schema -o
+    written — not a directory, in a directory that is there, and one this
+    user may write (the file, when it is there; else its directory). Said
+    when the command line is read, before any work: a run of an hour ended
+    by failing to write its report (a traceback), and ``spec schema -o
     missing/x.json`` by a FileNotFoundError."""
     path = Path(text)
     if path.is_dir():
@@ -530,6 +532,13 @@ def _output_file(text: str) -> str:
     if not parent.is_dir():
         raise argparse.ArgumentTypeError(
             f"{text}: the directory {parent} does not exist"
+        )
+    if path.exists():
+        if not os.access(path, os.W_OK):
+            raise argparse.ArgumentTypeError(f"{text} cannot be written")
+    elif not os.access(parent, os.W_OK | os.X_OK):
+        raise argparse.ArgumentTypeError(
+            f"{text}: the directory {parent} cannot be written"
         )
     return text
 

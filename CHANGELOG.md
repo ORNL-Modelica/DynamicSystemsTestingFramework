@@ -86,8 +86,10 @@ to write instead.
   directory or not executable — `dstf check` and `run` agree.
 - A Modelica library beside a directory above the working directory was taken
   for the project's library.
-- `--output` naming a directory, or a file in a directory that does not
-  exist, ended in a traceback after the work was done; it is refused before.
+- `--output` naming a directory, a file in a directory that does not exist,
+  or a place this user may not write, ended in a traceback after the work was
+  done; it is refused before. `manifest dump` into a work dir that cannot be
+  written says so in one line.
 - A negative base tolerance was accepted and failed every `nrmse` test; it is
   refused.
 - `run --batch` on FMPy or Python was silently ignored; it is a config error.
