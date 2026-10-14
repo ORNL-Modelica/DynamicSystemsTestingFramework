@@ -1920,7 +1920,7 @@ def test_the_readout_says_the_criterion_once():
 
 async def test_a_sentinel_leafs_readout_is_the_criterion_that_says_the_reason(shell):
     """A leaf the scorer could not score carries its reason IN the
-    criterion ("scalar leaf not scored — …"), so the error is not a branch
+    criterion ("scalar criterion not scored — …"), so the error is not a branch
     of its own: reading it there said the reason without the mode. A
     stored-scalar leaf names a statistic, not a series: it is read on the
     tree's row, and x's card has no row of it."""
@@ -1942,7 +1942,7 @@ async def test_a_sentinel_leafs_readout_is_the_criterion_that_says_the_reason(sh
         from dstf.authoring.shell.tree_card import leaf_readout
 
         scored, unscorable = leaves_of(shell.session.tree_view(D))
-        assert leaf_readout(unscorable).startswith("scalar leaf not scored — ")
+        assert leaf_readout(unscorable).startswith("scalar criterion not scored — ")
         assert unscorable["error"] not in ("", None)
         assert leaf_readout(unscorable) == unscorable["criterion"]
         assert leaf_readout(scored) == scored["criterion"]
@@ -10757,7 +10757,7 @@ async def test_a_plot_editor_on_a_test_with_no_tree_says_why(tmp_path):
         (why,) = _inside(user, "why:edit-criteria", f"editor:0:{T0}")
         assert why.text == reason == NO_TREE
         assert texts.count(NO_TREE) == 1
-        assert "this leaf is not in the scored tree" not in texts
+        assert "this criterion is not in the scored tree" not in texts
         assert not [e for e in editor.descendants() if isinstance(e, ui.number)]
 
 
@@ -10869,7 +10869,7 @@ async def test_a_plus_on_a_test_with_no_baseline_opens_a_usable_editor(stats_she
         assert shell.session.tree_view(B) is None
         editor = _one(user, f"stats-editor:{leaf}")
         texts = [getattr(e, "text", "") for e in editor.descendants()]
-        assert "this leaf is not in the scored tree" not in texts
+        assert "this criterion is not in the scored tree" not in texts
         field = _stats_tolerance(user, leaf)
         assert field.value == 0
         field.set_value(2)

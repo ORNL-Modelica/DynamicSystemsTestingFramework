@@ -207,7 +207,7 @@ LEAF: dict[str, Setting] = {
     "metric": Setting(
         {"type": "string"},
         None,
-        "The comparison mode that scores this criterion. A key the leaf "
+        "The comparison mode that scores this criterion. A key the criterion "
         "holds beside metric, variable, against and window is one of that "
         "mode's fields.",
     ),
@@ -216,7 +216,7 @@ LEAF: dict[str, Setting] = {
         None,
         "The variable this criterion scores, by its result-file name. A "
         "variable named here is recorded and stored even when the entry's "
-        "variables do not name it. A scalar leaf whose quantity is a path "
+        "variables do not name it. A scalar criterion whose quantity is a path "
         "may leave it out.",
     ),
     "against": Setting(
@@ -302,7 +302,7 @@ ENTRY: dict[str, Setting] = {
         "The variables to track, record and score, by result-file name; * "
         'and ? are wildcards, and ["*"] tracks every variable the result '
         "holds. A UnitTests "
-        "variable and a variable a metrics leaf names are tracked whether "
+        "variable and a variable a criterion names are tracked whether "
         "or not they are listed here. An entry that tracks nothing and "
         "scores nothing passes when its simulation completes.",
     ),
@@ -329,7 +329,7 @@ ENTRY: dict[str, Setting] = {
     "metrics": Setting(
         {"$ref": "#/$defs/tree_node"},
         None,
-        "The test's criteria as a tree: a leaf scores one variable by one "
+        "The test's criteria as a tree: a criterion scores one variable by one "
         "comparison mode, a group (and, or, k-of-n, warn, weighted) "
         "combines its children. Without it every tracked variable is scored "
         "by its override or by nrmse, and all must pass.",

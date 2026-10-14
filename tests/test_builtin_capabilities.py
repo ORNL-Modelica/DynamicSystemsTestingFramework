@@ -454,7 +454,7 @@ def _criteria_act(session, metric: str, params: dict):
         (
             "scalar",
             {**MAX, "min_value": 2, "max_value": 2.0},
-            "min_value 2 equals max_value 2; a scalar leaf needs min_value < max_value",
+            "min_value 2 equals max_value 2; a scalar criterion needs min_value < max_value",
         ),
     ],
 )
@@ -974,7 +974,7 @@ async def test_edit_criteria_on_a_combinator_says_it_is_no_leaf(tmp_path):
     )
     sel = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics/children/1")
     async with host(s, EditCriteria(), sel) as (user, errors, _):
-        await user.should_see("this leaf is not in the scored tree")
+        await user.should_see("this criterion is not in the scored tree")
 
 
 async def test_against_keeps_a_value_the_store_no_longer_knows(tmp_path):

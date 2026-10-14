@@ -299,7 +299,7 @@ def build_schema() -> dict:
 
     leaf_spec = {
         "type": "object",
-        "title": "Metric tree leaf",
+        "title": "A criterion of the metrics tree",
         # ``variable`` is not unconditionally required: a metric that
         # declares ``accepts_quantity`` may name its data with a string
         # ``quantity`` instead (see _leaf_identity_rule, folded into allOf

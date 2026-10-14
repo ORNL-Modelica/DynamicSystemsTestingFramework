@@ -77,14 +77,14 @@ def implicit_tree_op(entry: dict, *, variables: Sequence[str] | None = None) -> 
         raise PatchError(
             f"cannot materialize an implicit metrics tree for "
             f"{entry.get('model')!r}: the entry declares no tracked variables "
-            "to build leaves from"
+            "to build criteria from"
         )
     globs = [v for v in variables if not is_literal_variable(v)]
     if globs:
         raise PatchError(
             f"cannot materialize an implicit metrics tree for "
-            f"{entry.get('model')!r}: {globs!r} are patterns, and a leaf per "
-            "pattern would score a sentinel where the flat path scored the "
+            f"{entry.get('model')!r}: {globs!r} are patterns, and a criterion "
+            "per pattern would score a sentinel where the flat path scored the "
             "variables the result resolved"
         )
     bad_modes = unknown_override_modes(entry)

@@ -506,7 +506,7 @@ class TestWorstNrmse:
 
         stats = _build_key_stats([_nonfinite_comparison("bad")], {}, {})
         worst = next(s for s in stats if s["label"] == "Worst NRMSE")
-        assert worst["current"] == "n/a (1 unscored leaf)"
+        assert worst["current"] == "n/a (1 unscored criterion)"
 
     def test_the_report_header_reads_the_columns_number(self):
         """One name, one number: the header stat is the dashboard column's."""
@@ -1003,7 +1003,7 @@ class TestEmbeddedFigures:
         assert "tube" in label and "x" in label
         assert next(iter(node.by_class("node-score"))).text() == "not scored"
         criterion = next(iter(node.by_class("node-criterion"))).text()
-        assert "tube leaf not scored" in criterion
+        assert "tube criterion not scored" in criterion
         assert "misconfigured" in criterion
 
 
@@ -1235,7 +1235,7 @@ class TestServerRenderedTree:
         # it), never the leaf tally; the advisory failure rides beside it as
         # a chip rather than colouring anything.
         assert "fail" in summary.classes
-        assert "1 / 3 leaves passed" in " ".join(summary.text().split())
+        assert "1 / 3 criteria passed" in " ".join(summary.text().split())
         assert [el.text() for el in summary.by_class("advisory-chip")] == ["1 advisory"]
 
         pills = doc.by_class("var-status")

@@ -41,7 +41,7 @@ def _untracked(keys: str) -> str:
     return (
         f"variable_overrides key(s) name no variable this test tracks ({keys}) — "
         'an override changes how a tracked variable is scored, and "variables" '
-        '(or a "metrics" leaf) is what tracks one; nothing was scored'
+        '(or a criterion of "metrics") is what tracks one; nothing was scored'
     )
 
 

@@ -1263,7 +1263,7 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     """The flat-override unknown-mode sentinel resolved no mode at all.
 
     ``VariableComparison.mode`` defaults to "nrmse", so this leaf used to
-    read "nrmse leaf not scored — unknown comparison mode 'tubee'" and
+    read "nrmse criterion not scored — unknown comparison mode 'tubee'" and
     named a metric the user never wrote (H4).
     """
     import numpy as np
@@ -1303,8 +1303,8 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     _score, criterion = summary.display, summary.criterion
     # The caption names no metric — only the error text does (and it lists
     # the valid mode names, so "nrmse" legitimately appears further in).
-    assert criterion.startswith("leaf not scored")
-    assert not criterion.startswith("nrmse leaf")
+    assert criterion.startswith("criterion not scored")
+    assert not criterion.startswith("nrmse criterion")
     assert "tubee" in criterion
 
 

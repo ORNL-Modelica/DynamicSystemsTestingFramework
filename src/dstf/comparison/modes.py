@@ -513,11 +513,11 @@ class ScalarConfig:
         metadata={
             "label": "Quantity",
             "help": (
-                'The number scored: a reduction of the leaf\'s variable, {"reduce": '
+                'The number scored: a reduction of the criterion\'s variable, {"reduce": '
                 '"max"} or "min", "mean" (weighted by time), "sample_mean" (of the '
                 'samples, so it moves with the output grid), "final" or "integral"; '
                 "or the dotted path of a statistic of the run, such as "
-                '"CPUtime.final". A leaf with a path needs no variable.'
+                '"CPUtime.final". A criterion with a path needs no variable.'
             ),
         },
     )

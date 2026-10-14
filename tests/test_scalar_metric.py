@@ -895,7 +895,7 @@ class TestScalarReporterSurfaces:
         summary = summarize(vc)
         assert summary.display == "not scored"
         assert error in summary.criterion
-        assert summary.criterion.strip() != "Scalar leaf not scored — x"
+        assert summary.criterion.strip() != "Scalar criterion not scored — x"
 
     def test_a_non_finite_reference_reduction_names_the_reference(self):
         from dstf.comparison.registry import summarize

@@ -222,7 +222,7 @@ def summarize(vc: VariableComparison) -> ScoreSummary:
     """
     error = (vc.diagnostics or {}).get("error")
     if error:
-        label = f"{vc.mode} leaf" if vc.mode else "leaf"
+        label = f"{vc.mode} criterion" if vc.mode else "criterion"
         return ScoreSummary(
             display="not scored", criterion=f"{label} not scored — {error}"
         )

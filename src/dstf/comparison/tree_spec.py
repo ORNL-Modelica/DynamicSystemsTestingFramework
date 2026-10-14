@@ -478,7 +478,7 @@ def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
     if not has_combinator and not has_metric:
         raise MetricSpecError(
             _path,
-            "node must have either 'combinator' (internal) or 'metric' (leaf)",
+            "node must have either 'combinator' (a group) or 'metric' (a criterion)",
         )
 
     if has_combinator:

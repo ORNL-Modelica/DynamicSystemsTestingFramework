@@ -232,7 +232,7 @@ def _refuse_other_baseline(edit: HandleEdit, leaf: dict, what: str) -> None:
     if against != "primary":
         raise _refuse(
             edit,
-            f"this leaf scores against {against!r}; the plot's reference is "
+            f"this criterion scores against {against!r}; the plot's reference is "
             f"the primary baseline, so {what} cannot be dragged",
         )
 
@@ -280,7 +280,7 @@ def _windowed(
     if end is not None:
         mask &= ref_time <= end
     if not mask.any():
-        raise _refuse(edit, "the leaf's window holds no reference sample")
+        raise _refuse(edit, "the criterion's window holds no reference sample")
     return ref_time[mask], np.asarray(reference[1], dtype=float)[mask]
 
 
@@ -606,7 +606,7 @@ def _edit_bounds(edit: HandleEdit, *, strict: bool) -> dict:
             raise _refuse(
                 edit,
                 f"min_value {_num(lo)} would equal max_value {_num(hi)}; "
-                "a scalar leaf needs min_value < max_value",
+                "a scalar criterion needs min_value < max_value",
             )
     return leaf
 

@@ -2005,7 +2005,7 @@ def _compare_dominant_frequency(
             mode="dominant-frequency",
             diagnostics={
                 "reason": (
-                    "no peaks declared — declare them in the leaf's "
+                    "no peaks declared — declare them in the criterion's "
                     "`peaks` list; the reference's detected peaks are in "
                     "the diagnostics as `detected_reference_peaks_hz`."
                 ),

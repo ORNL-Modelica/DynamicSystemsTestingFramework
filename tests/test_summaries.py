@@ -42,7 +42,7 @@ def test_every_registered_metric_summarizes_a_sentinel_without_raising():
 def test_an_error_sentinel_is_mode_agnostic():
     s = summarize(_vc(mode="tube", diagnostics={"error": "empty window"}))
     assert s.display == "not scored"
-    assert s.criterion == "tube leaf not scored — empty window"
+    assert s.criterion == "tube criterion not scored — empty window"
 
 
 def test_tube_summary_reads_the_inside_fraction():

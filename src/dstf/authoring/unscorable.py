@@ -137,5 +137,5 @@ def refuse_bounds(metric: str, params: Mapping[str, object]) -> None:
     if lo == hi and metric in STRICT_BOUNDS:
         raise Refused(
             f"min_value {_num(lo)} equals max_value {_num(hi)}; "
-            f"a {metric} leaf needs min_value < max_value"
+            f"a {metric} criterion needs min_value < max_value"
         )

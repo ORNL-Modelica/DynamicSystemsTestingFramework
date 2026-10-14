@@ -578,9 +578,9 @@ def _build_key_stats(
         ""
         if not n_unscored
         else (
-            " (1 leaf unscored)"
+            " (1 criterion unscored)"
             if n_unscored == 1
-            else f" ({n_unscored} leaves unscored)"
+            else f" ({n_unscored} criteria unscored)"
         )
     )
     if worst_score is not None:
@@ -596,9 +596,9 @@ def _build_key_stats(
             {
                 "label": "Worst NRMSE",
                 "current": (
-                    "n/a (1 unscored leaf)"
+                    "n/a (1 unscored criterion)"
                     if n_unscored == 1
-                    else f"n/a ({n_unscored} unscored leaves)"
+                    else f"n/a ({n_unscored} unscored criteria)"
                 ),
                 "reference": "",
             }
@@ -765,7 +765,7 @@ def build_tree_view(
     ]
     if missing:
         logger.warning(
-            "%s: %d spec leaf path(s) have no evaluated comparison and render "
+            "%s: %d criteria of the spec have no evaluated comparison and render "
             "without scores: %s",
             getattr(test_model, "model_id", "?"),
             len(missing),

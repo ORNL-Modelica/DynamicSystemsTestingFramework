@@ -169,8 +169,8 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
         return (
             "variable_overrides key(s) name no variable this test tracks "
             f"({_named_few(list(test.variable_overrides))}) — an override changes "
-            'how a tracked variable is scored, and "variables" (or a "metrics" '
-            "leaf) is what tracks one; nothing was scored"
+            'how a tracked variable is scored, and "variables" (or a criterion '
+            'of "metrics") is what tracks one; nothing was scored'
         )
     return (
         "the result holds none of the variables this test tracks "
