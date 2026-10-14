@@ -1168,7 +1168,9 @@ def _add_discover(tree: _Tree, top) -> None:
             List the project's tests: every model a recognizer finds in the
             library's source and every entry of test_spec.json, each with
             what it tracks, its stop time, its solver and where it was
-            declared. Nothing is simulated and nothing is written.
+            declared. A test whose metrics tree run and compare will refuse
+            is named after the table, with the reason. Nothing is simulated
+            and nothing is written.
 
             Exit code: 0, or 1 when no test is found.
             """,

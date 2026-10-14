@@ -1036,3 +1036,42 @@ class TestWhatEachRuleReads:
             validate_tree(parse_metric_tree(_warned(_leaf(against="other"))), held)
             == []
         )
+
+
+def test_discover_names_each_test_whose_tree_is_wrong_in_its_file(tmp_path, capsys):
+    """`discover` lists a test that run, compare and the tool will refuse;
+    it says so, in the sentence they refuse it with, one line per test, and
+    exits as it did. A tree right in its file says nothing, whatever this
+    folder stores."""
+    from dstf.cli import main
+
+    (tmp_path / "testing.json").write_text(
+        json.dumps(
+            {
+                "source_type": "python",
+                "source_path": ".",
+                "library_name": "Lib",
+                "test_spec": "test_spec.json",
+                "reference_root": "refs",
+            }
+        )
+    )
+    broken, _ = _WRONG_IN_THE_FILE["a stored soft check outside warn"]
+    entries = [
+        {"model": "Lib.Broken", "variables": ["x"], "metrics": broken},
+        {
+            "model": "Lib.Fine",
+            "variables": ["x"],
+            "metrics": _warned(_leaf(against="nosuch")),
+        },
+    ]
+    (tmp_path / "test_spec.json").write_text(json.dumps({"tests": entries}))
+    assert main(["--config", str(tmp_path / "testing.json"), "discover"]) == 0
+    out = capsys.readouterr().out
+    said = [line for line in out.splitlines() if "will not be scored" in line]
+    assert said == [
+        "Lib.Broken will not be scored: metrics.children[1]: This criterion "
+        "scores against 'other' outside a 'warn', where only the primary "
+        "baseline is scored: a soft check sits under a 'warn', and a companion "
+        "is only drawn."
+    ]

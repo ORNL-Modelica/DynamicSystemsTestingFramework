@@ -76,6 +76,17 @@ def cmd_discover(args: argparse.Namespace) -> int:
     for source, count in sorted(by_source.items()):
         print(f"  Source '{source}': {count}")
 
+    # A test whose tree is wrong in its FILE is listed, and refused where it
+    # is scored (`broken_roles`): say so here, in the refusal's own words,
+    # before a run finds out. The exit code says only that tests were found.
+    from ..comparison.comparator import broken_roles
+
+    refused = [(t.model_id, b) for t in tests if (b := broken_roles(t)) is not None]
+    if refused:
+        print()
+    for model_id, sentence in refused:
+        print(f"{model_id} will not be scored: {sentence}")
+
     return 0
 
 
