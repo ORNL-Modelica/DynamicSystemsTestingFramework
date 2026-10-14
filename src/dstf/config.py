@@ -228,21 +228,29 @@ def _backend_blocks(
     one it means: relative to ``base_dir``, the file's directory.
 
     The map held a list of executable paths per entry before a backend had
-    settings of its own; a list is refused with the new form in the
-    sentence."""
+    settings of its own. Every entry still written so is refused in ONE
+    sentence, with the block to write for each — a file of four is
+    converted in one round."""
     from .backends import backend_class, backend_family, backend_names
     from .comparison.sides import _as_json
 
     if not isinstance(raw, dict):
         raise ConfigError(f"{label}: backends: must be an object, got {_as_json(raw)}")
+    lists = {name: block for name, block in raw.items() if isinstance(block, list)}
+    if lists:
+        written = ", ".join(
+            f"{json.dumps(name)}: "
+            f"{json.dumps({'executables': paths} if paths else {}, default=str)}"
+            for name, paths in lists.items()
+        )
+        raise ConfigError(
+            f"{label}: {', '.join(f'backends.{name}' for name in lists)} must "
+            f"{'each ' if len(lists) > 1 else ''}be an object (was a list of "
+            f"paths) — write {written}"
+        )
     blocks: dict[str, dict[str, Any]] = {}
     for name, block in raw.items():
         where = f"backends.{name}"
-        if isinstance(block, list):
-            raise ConfigError(
-                f'{label}: {where} must be an object — {{"executables": [...]}} '
-                "(was a list of paths)"
-            )
         if not isinstance(block, dict):
             raise ConfigError(
                 f"{label}: {where}: must be an object, got {_as_json(block)}"

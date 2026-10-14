@@ -80,8 +80,9 @@ output, which lists every key with its type, default and description.
 
 So the former spellings `simulator`, `simulators` and `simulator_setup` are
 refused, as is a `backends` entry written as a list of paths (`backends.Dymola
-must be an object — {"executables": [...]} (was a list of paths)`) and the
-top-level `show_ide`. There is no alias and no migration path: an old key
+must be an object (was a list of paths) — write "Dymola": {"executables":
+["dymola"]}`; every such entry of the file is named in that one error, each
+with the block to write) and the top-level `show_ide`. There is no alias and no migration path: an old key
 never works again, it just says so.
 
 ### Test definitions

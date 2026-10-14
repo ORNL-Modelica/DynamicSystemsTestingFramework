@@ -381,8 +381,36 @@ class TestBackendBlocks:
         with pytest.raises(ConfigError) as exc:
             Config(config_file=path)
         assert str(exc.value) == (
-            f'{path}: backends.Dymola must be an object — {{"executables": [...]}} '
-            "(was a list of paths)"
+            f"{path}: backends.Dymola must be an object (was a list of paths) — "
+            'write "Dymola": {"executables": ["/usr/local/bin/dymola"]}'
+        )
+
+    def test_every_list_form_entry_is_said_at_once_with_its_replacement(self, tmp_path):
+        """One entry per run made a four-entry file four rounds."""
+        path = _project(
+            tmp_path,
+            {
+                "backends": {
+                    "Dymola 2025": [
+                        "C:\\Program Files\\Dymola 2025x\\bin64\\Dymola.exe"
+                    ],
+                    "Dymola": ["dymola"],
+                    "OpenModelica": {"executables": ["omc"]},
+                    "Julia": [],
+                    "Python": ["python3", "python"],
+                }
+            },
+        )
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=path)
+        assert str(exc.value) == (
+            f"{path}: backends.Dymola 2025, backends.Dymola, backends.Julia, "
+            "backends.Python must each be an object (was a list of paths) — write "
+            '"Dymola 2025": {"executables": '
+            '["C:\\\\Program Files\\\\Dymola 2025x\\\\bin64\\\\Dymola.exe"]}, '
+            '"Dymola": {"executables": ["dymola"]}, '
+            '"Julia": {}, '
+            '"Python": {"executables": ["python3", "python"]}'
         )
 
     @pytest.mark.parametrize(
