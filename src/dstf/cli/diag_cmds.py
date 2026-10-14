@@ -303,6 +303,16 @@ def cmd_check(args: argparse.Namespace) -> int:
     from ..config import _pick_backend
     from ..config_shape import default
 
+    # The reference root is read here only to look for testing.json in it
+    # (and not at all beside --config: `cli.parser.UNREAD`). One that is
+    # not there holds none, and the search would go on as if it had not
+    # been given.
+    root = args.reference_root
+    if root is not None and not Path(root).is_dir():
+        raise ConfigError(
+            f"--reference-root {root}: no such directory (check reads it "
+            "only to look for testing.json in it)"
+        )
     try:
         config: Config | None = _build_config(args)
     except NoProject:

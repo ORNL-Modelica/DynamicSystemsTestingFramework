@@ -176,6 +176,21 @@ class TestWithNoTestingJson:
         )
         assert list(empty.iterdir()) == []
 
+    def test_a_reference_root_that_is_not_there_is_a_config_error(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        """`check` reads --reference-root only to look for testing.json in
+        it: a directory that is not there holds none, and the search went
+        on as if the flag had not been given."""
+        monkeypatch.chdir(_no_project(tmp_path))
+        missing = tmp_path / "nowhere"
+        assert main(["check", "--reference-root", str(missing)]) == 2
+        err = capsys.readouterr().err
+        assert err == (
+            f"Config error: --reference-root {missing}: no such directory "
+            "(check reads it only to look for testing.json in it)\n"
+        )
+
     def test_a_library_beside_the_directory_is_not_this_project(
         self, no_installs, tmp_path, capsys, monkeypatch
     ):
