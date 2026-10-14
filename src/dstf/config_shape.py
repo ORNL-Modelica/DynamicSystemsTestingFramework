@@ -55,10 +55,10 @@ EXECUTABLES = Setting(
     _STRINGS,
     [],
     "Where this backend's program is, in order of preference: full paths, "
-    "or program names looked up on PATH. The first that exists is used. If "
-    "any entry is a full path and none of them exists, the backend is not "
-    "found — no other install is searched for. Default: none; the backend "
-    "is searched for.",
+    "or program names looked up on PATH. The first that is a file that can "
+    "be executed is used. If any entry is a full path and none of them is "
+    "one, the backend is not found — no other install is searched for. "
+    "Default: none; the backend is searched for.",
 )
 
 #: Every key of ``testing.json``, in the order a reference page lists them.

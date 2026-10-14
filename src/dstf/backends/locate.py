@@ -174,6 +174,22 @@ def pins(settings: Mapping[str, Any]) -> bool:
     return rule.kind == COMMAND_LINE or any(looks_like_path(e) for e in entries)
 
 
+def unrunnable(path: Path) -> str | None:
+    """Why ``path`` is no program to start — ``is a directory`` — or None:
+    it is a file that can be executed. What exists is not enough: an
+    install's folder named for its program was "found", and the run then
+    could not start it."""
+    if not path.exists():
+        return "does not exist"
+    if path.is_dir():
+        return "is a directory"
+    if not path.is_file():
+        return "is not a file"
+    if not os.access(path, os.X_OK):
+        return "is not executable"
+    return None
+
+
 def find_executable(
     settings: Mapping[str, Any],
     binaries: Sequence[str],
@@ -185,7 +201,8 @@ def find_executable(
     """A backend's executable, by the rules of this module.
 
     1. What ``settings`` names (:func:`configured`), in order: the first
-       that exists on disk or resolves on ``PATH``. Settings that PIN the
+       path that is a program to start (:func:`unrunnable`), or name that
+       resolves on ``PATH``. Settings that PIN the
        executable (:func:`pins`) and name none that is there are NOT
        FOUND, and nothing below is tried: a list of OS-specific absolute
        paths (``C:\\Program Files\\...\\Dymola.exe``) says the user wants
@@ -195,7 +212,7 @@ def find_executable(
        ``PATH`` that is a different version). ``--backend-path`` pins
        whatever it is spelled like.
     2. ``environment``: ``(VARIABLE, candidates)`` pairs — the first set
-       variable one of whose candidate paths exists.
+       variable one of whose candidate paths is a program to start.
     3. ``binaries`` on ``PATH``, then ``folders``: the backend's standard
        install folders as ``(folder, glob below it)`` pairs, the matches of
        all of them sorted by ``best_first`` (the newest version first).
@@ -203,13 +220,15 @@ def find_executable(
     entries, rule = configured(settings)
     refused: list[str] = []
     for entry in entries:
-        path = Path(entry)
-        if path.is_absolute() and path.exists():
-            return Found(EXECUTABLE, str(path), rule)
-        on_path = shutil.which(entry)
-        if on_path:
-            return Found(EXECUTABLE, on_path, rule)
-        why = "does not exist" if looks_like_path(entry) else "is not on PATH"
+        if looks_like_path(entry):
+            why = unrunnable(Path(entry))
+            if why is None:
+                return Found(EXECUTABLE, entry, rule)
+        else:
+            on_path = shutil.which(entry)
+            if on_path:
+                return Found(EXECUTABLE, on_path, rule)
+            why = "is not on PATH"
         refused.append(f"{entry} {why}")
     if pins(settings):
         named = (
@@ -223,7 +242,7 @@ def find_executable(
         if not value:
             continue
         for candidate in candidates(value):
-            if candidate.exists():
+            if unrunnable(candidate) is None:
                 return Found(EXECUTABLE, str(candidate), Rule(ENVIRONMENT, variable))
     for binary in binaries:
         on_path = shutil.which(binary)
@@ -234,6 +253,7 @@ def find_executable(
         for base, pattern in folders
         if base.is_dir()
         for match in base.glob(pattern)
+        if unrunnable(match) is None
     ]
     if best_first is not None:
         matches.sort(key=lambda pair: best_first(pair[0]))

@@ -675,6 +675,7 @@ class TestTimeoutExpiredBytesHandling:
         (tmp_path / "package.mo").write_text("package Lib end Lib;")
         omc = tmp_path / "omc"
         omc.write_text("#!/bin/sh\n")
+        omc.chmod(0o755)
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",

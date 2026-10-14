@@ -147,6 +147,7 @@ class TestOpenModelicaBackendUnit:
         # at "omc not found" before anything is written.
         omc = tmp_path / "omc"
         omc.write_text("#!/bin/sh\n")
+        omc.chmod(0o755)
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",

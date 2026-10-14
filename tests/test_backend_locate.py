@@ -146,6 +146,37 @@ class TestFindExecutable:
             "    found by: the command line: --backend-path"
         )
 
+    def test_a_directory_is_no_executable(self, no_installs, tmp_path):
+        """The install's folder for its program: `check` called it ready,
+        and the run then could not start it."""
+        install = tmp_path / "opt" / "tool-2026"
+        install.mkdir(parents=True)
+        found = find_executable({"executables": [str(install)]}, ("tool",))
+        assert found.path is None
+        assert found.detail == f"the configured executables: {install} is a directory"
+
+    @pytest.mark.skipif(
+        sys.platform.startswith("win"), reason="Windows has no executable bit"
+    )
+    def test_a_file_that_cannot_be_executed_is_no_executable(
+        self, no_installs, tmp_path, monkeypatch
+    ):
+        notes = tmp_path / "opt" / "tool"
+        notes.parent.mkdir()
+        notes.write_text("not a program")
+        found = find_executable({"executables": [str(notes)]}, ("tool",))
+        assert found.path is None
+        assert found.detail == f"the configured executables: {notes} is not executable"
+        # The same holds wherever a path comes from: a variable, a folder.
+        monkeypatch.setenv("TOOL_HOME", str(tmp_path / "opt"))
+        found = find_executable(
+            {},
+            ("tool",),
+            environment=[("TOOL_HOME", lambda home: [Path(home) / "tool"])],
+            folders=[(tmp_path, "opt/tool")],
+        )
+        assert found.path is None
+
     def test_names_that_do_not_resolve_fall_through_to_the_search(self, no_installs):
         on_path = _program(no_installs / "tool")
         found = find_executable({"executables": ["tool-9"]}, ("tool",))
@@ -825,3 +856,73 @@ class TestARunRefusesUpFront:
             select_backend(config, persistent=False, to_run=True)
         with pytest.raises(BackendUnavailableError, match="^Twomode not found: "):
             select_backend(config, persistent=True, to_run=True)
+
+
+def _entry(kind: str, tmp_path: Path, bin_dir: Path) -> tuple[list[str], str | None]:
+    """An `executables` list of one ``kind``, and what is said of it where
+    it is no program to run (None: it is one)."""
+    if kind == "a program":
+        return [str(_program(tmp_path / "opt" / "sim"))], None
+    if kind == "a name on PATH":
+        _program(bin_dir / "sim-2")
+        return ["sim-2"], None
+    if kind == "a directory":
+        (tmp_path / "opt" / "sim-dir").mkdir(parents=True)
+        return [str(tmp_path / "opt" / "sim-dir")], "is a directory"
+    if kind == "a file that is not executable":
+        (tmp_path / "opt").mkdir()
+        (tmp_path / "opt" / "notes.txt").write_text("")
+        return [str(tmp_path / "opt" / "notes.txt")], "is not executable"
+    if kind == "a path that is gone":
+        return [str(tmp_path / "opt" / "gone")], "does not exist"
+    assert kind == "a name that is nowhere"
+    return ["sim-9"], "looked for sim-9 / twomodesim on PATH"
+
+
+class TestCheckAndRunAgree:
+    """`check` says a backend is ready iff a run of it starts: both read
+    one `locate`. A directory used to be "ready" to `check` and a
+    PermissionError to the run."""
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "a program",
+            "a name on PATH",
+            "a directory",
+            pytest.param(
+                "a file that is not executable",
+                marks=pytest.mark.skipif(
+                    sys.platform.startswith("win"),
+                    reason="Windows has no executable bit",
+                ),
+            ),
+            "a path that is gone",
+            "a name that is nowhere",
+        ],
+    )
+    def test_on_every_entry(self, no_installs, workers_or_batch, capsys, kind):
+        from dstf.cli import main
+
+        path, runs = workers_or_batch
+        entries, why = _entry(kind, path.parent, no_installs)
+        config = json.loads(path.read_text())
+        config["backends"] = {"Twomode": {"executables": entries}}
+        path.write_text(json.dumps(config))
+
+        check = main(["check", "--config", str(path)])
+        said = capsys.readouterr().out
+        try:
+            main(["run", "--config", str(path), "--no-browser", "--batch"])
+            refused = None
+        except SystemExit as exc:
+            assert exc.code == 1
+            refused = capsys.readouterr().err
+
+        if why is None:
+            assert check == 0 and refused is None and runs == ["TwomodeBackend"]
+            assert "\nOK — Twomode is ready.\n" in said
+        else:
+            assert check == 1 and runs == []
+            assert why in said and why in (refused or "")
+            assert (refused or "").startswith("Twomode not found: executable not ")
