@@ -1,6 +1,6 @@
 [project]
 name = "dynamic-systems-testing-framework"
-version = "1.0.1"
+version = "1.1.0"
 description = "Dynamic Systems Testing Framework — regression & unit testing for time-dependent system behavior, with plug-in backends: Modelica (Dymola, OpenModelica), FMU (FMPy), Julia (ModelingToolkit) and Python to start"
 # What the package index shows: the README as the project page (its one image
 # is an absolute URL for that), the license by its SPDX name with the file
@@ -14,6 +14,7 @@ keywords = [
     "modelingtoolkit", "simulation", "regression-testing", "testing",
 ]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -68,8 +69,9 @@ docs = ["sphinx>=8.1", "myst-parser>=4.0", "furo>=2024.8.6"]
 [project.urls]
 Homepage = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework"
 Repository = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework"
-Documentation = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/docs/usage.md"
+Documentation = "https://dstf.readthedocs.io/"
 Issues = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/issues"
+Changelog = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/CHANGELOG.md"
 
 [project.scripts]
 dstf = "dstf.cli:main_entry"
