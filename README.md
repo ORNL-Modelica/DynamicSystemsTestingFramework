@@ -193,6 +193,7 @@ uv run dstf spec schema --output schema.json   # test_spec.json's; `spec schema 
 # Which backends are installed, where each was found and by which rule, and whether this project's is ready
 uv run dstf --config testing.json check
 uv run dstf check Dymola        # one backend's full diagnosis (Dymola: the executable AND its Python interface)
+uv run dstf --config testing.json check "Dymola 2025"   # one entry of testing.json's backends, by its name
 ```
 
 `uv run dstf --help` lists every command; `uv run dstf <command> --help` (`dstf manifest cleanup --help`) says what one does and writes, and every flag it reads, with examples. A command offers exactly the flags it reads: one that does not apply is an error, never ignored.

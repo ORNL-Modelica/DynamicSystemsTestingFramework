@@ -208,10 +208,13 @@ def _review_filter_arg(value: str) -> str:
 
 
 class _BackendNames:
-    """``check``'s choices: the registered backends' names, asked for when
-    an argument is checked against them and not when the parser is built —
-    a plug-in registers its backend as the plug-ins load, which `--help`
-    and `--version` must not wait for (nor fail on).
+    """``check``'s choices: the registered backends' names and every name
+    that starts with one — an entry of ``backends`` is named so, and which
+    entries a project has is its ``testing.json``'s to say, not the
+    parser's (``cmd_check``). They are asked for when an argument is
+    checked against them and not when the parser is built — a plug-in
+    registers its backend as the plug-ins load, which `--help` and
+    `--version` must not wait for (nor fail on).
 
     Only the check itself loads them. argparse also ITERATES the choices —
     to print the command's help, which names none of them, and to list them
@@ -219,10 +222,11 @@ class _BackendNames:
     lists what is registered by then and loads nothing."""
 
     def __contains__(self, name: object) -> bool:
+        from ..backends import backend_family
         from ..plugins import load_plugins
 
         load_plugins()
-        return name in list(self)
+        return isinstance(name, str) and backend_family(name) in list(self)
 
     def __iter__(self):
         from ..backends import backend_names
@@ -1417,8 +1421,8 @@ def _add_check(tree: _Tree, top) -> None:
         summary="Find the backends installed here; diagnose one",
         description="""
             Say where each backend is on this machine and by which rule it
-            was found, then diagnose one of them part by part: the backend
-            named, or the one the project runs with. Nothing is simulated
+            was found, then diagnose one of them part by part: the entry or
+            backend named, or the one the project runs with. Nothing is simulated
             and nothing is written; with no project here, the search alone
             is reported.
 
@@ -1429,6 +1433,7 @@ def _add_check(tree: _Tree, top) -> None:
             "dstf check",
             "dstf check --config testing.json",
             "dstf check OpenModelica",
+            "dstf check 'Dymola 2025'",
         ),
         project=_STORE,
         no_config=_NO_CONFIG_READS,
@@ -1441,8 +1446,11 @@ def _add_check(tree: _Tree, top) -> None:
         default=None,
         choices=_BackendNames(),
         metavar="backend",
-        help=f"Diagnose this backend alone: {_BACKENDS}. Default: list every "
-        "backend, then diagnose the one the project runs with.",
+        help="Diagnose this one alone: an entry of testing.json's backends, by "
+        f"its name, or a backend — {_BACKENDS}. A backend's name diagnoses "
+        "its entry the project runs with, else its first. Default: list "
+        "every entry and every other backend, then diagnose the one the "
+        "project runs with.",
     )
 
 

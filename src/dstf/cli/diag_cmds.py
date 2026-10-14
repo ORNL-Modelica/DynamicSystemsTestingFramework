@@ -4,7 +4,7 @@
 import argparse
 from pathlib import Path
 
-from ..config import Config, NoProject
+from ..config import Config, ConfigError, NoProject
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
 from ..pipeline import write_id_mapping
@@ -275,10 +275,32 @@ def _check_entries(config: Config | None) -> list[tuple[str, dict]]:
     return entries
 
 
+def _check_target(named: str, entries: list[tuple[str, dict]], selected: str) -> str:
+    """The one of ``entries`` that `dstf check <named>` diagnoses: the
+    entry of that name; else, for a backend's name, its entry the project
+    runs with, or its first written. A name that is neither — it starts
+    with a backend's, or the parser had refused it — is a config error
+    that lists both."""
+    from ..backends import backend_family, backend_names
+
+    names = [name for name, _ in entries]
+    if named in names:
+        return named
+    of_backend = [name for name in names if backend_family(name) == named]
+    if named in backend_names() and of_backend:
+        return selected if selected in of_backend else of_backend[0]
+    written = [name for name in names if name not in backend_names()]
+    listed = f" ({', '.join(written)})" if written else ""
+    raise ConfigError(
+        f'check: "{named}" is no entry of backends{listed} and no backend\'s '
+        f"name ({', '.join(backend_names())})"
+    )
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Say where each backend is on this machine and by which rule it was
-    found, then diagnose one: the backend named, else the one the project
-    selects. Exit 0 iff that one is usable."""
+    found, then diagnose one: the entry or backend named, else the one the
+    project selects. Exit 0 iff that one is usable."""
     from ..backends import backend_class, backend_family
     from ..config import _pick_backend
     from ..config_shape import default
@@ -305,28 +327,36 @@ def cmd_check(args: argparse.Namespace) -> int:
     entries = _check_entries(config)
     # An entry of the project's map says its settings; any other is searched for.
     in_config = set(config.backends) if config is not None else set()
-    located = {
-        name: cls.locate(block) if cls is not None else None
-        for name, block in entries
-        for cls in [backend_class(backend_family(name))]
+    # Every name listed is a backend's or starts with one (`Config`).
+    classes = {
+        name: cls
+        for name, _ in entries
+        if (cls := backend_class(backend_family(name))) is not None
     }
+    located = {name: classes[name].locate(block) for name, block in entries}
 
-    named = args.check_backend
-    if named is None:
+    if args.check_backend is None:
         print(f"Backends ({project})")
-        width = max(len(name) for name, _ in entries)
+        # An entry by its name, with the backend it is of where that is
+        # not its name: `Dymola 2025 [Dymola]`.
+        labels = {
+            name: name
+            if backend_family(name) == name
+            else f"{name} [{backend_family(name)}]"
+            for name, _ in entries
+        }
+        width = max(len(label) for label in labels.values())
         for name, _ in entries:
             found = located[name]
-            if found is None:
-                state = "not found  no backend is registered under this name"
-            elif not found.found:
+            if not found.found:
                 state = f"not found  {found.parts[0].detail}"
             else:
                 first = found.parts[0]
                 assert first.rule is not None  # a found part names its rule
                 rule = first.rule.said(name if name in in_config else "")
                 state = f"found      {first.path}  ({rule})"
-            print(f"  {'*' if name == selected else ' '} {name:<{width}}  {state}")
+            mark = "*" if name == selected else " "
+            print(f"  {mark} {labels[name]:<{width}}  {state}")
         print(
             "  * the backend this project runs with"
             if config is not None
@@ -335,18 +365,10 @@ def cmd_check(args: argparse.Namespace) -> int:
         print()
         target = selected
     else:
-        # The entry of that backend: the selected one if it is one, else
-        # the first written; a backend with no entry is searched for.
-        of_family = [name for name, _ in entries if backend_family(name) == named]
-        target = selected if selected in of_family else (of_family or [named])[0]
+        target = _check_target(args.check_backend, entries, selected)
 
-    cls = backend_class(backend_family(target))
-    found = located.get(target)
-    if cls is None or found is None:
-        print(f"{target}: no backend is registered under this name.")
-        return 1
-    diagnosis = cls.diagnose(
-        found, entry=target if target in in_config else "", config=config
+    diagnosis = classes[target].diagnose(
+        located[target], entry=target if target in in_config else "", config=config
     )
     print(target)
     for line in diagnosis.lines:

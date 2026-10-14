@@ -99,7 +99,7 @@ class TestTheList:
         path = _python_project(tmp_path / "proj", backends={"Python 3.12": {}})
         assert main(["--config", str(path), "check"]) == 0
         out = capsys.readouterr().out
-        assert "  * Python 3.12   found" in out
+        assert "  * Python 3.12 [Python]  found" in out
         # No second line for the backend that entry is of.
         assert out.count("the running interpreter") == 2  # the list, the diagnosis
         assert "\nPython 3.12\n  executable:" in out
@@ -233,6 +233,80 @@ class TestOneBackend:
         )
         assert "Backends (" not in out
         assert "FAIL — Julia is not ready. Fix one of:\n  1. Install Julia from " in out
+
+    def _two_pythons(self, no_installs, tmp_path) -> tuple[Path, Path, Path]:
+        older = _program(no_installs / "python3.11")
+        newer = _program(no_installs / "python3.12")
+        path = _python_project(
+            tmp_path / "proj",
+            backends={
+                "Python 3.11": {"executables": ["python3.11"]},
+                "Python 3.12": {"executables": ["python3.12"]},
+            },
+        )
+        return path, older, newer
+
+    def test_an_entry_is_diagnosed_by_its_name(self, no_installs, tmp_path, capsys):
+        """`check "Python 3.12"` was argparse's invalid choice, and `check
+        Python` diagnosed the first entry: the second could not be."""
+        path, _, newer = self._two_pythons(no_installs, tmp_path)
+        assert main(["--config", str(path), "check", "Python 3.12"]) == 0
+        assert capsys.readouterr().out == (
+            f"Python 3.12\n  executable: {newer}\n"
+            "    found by: testing.json: backends.Python 3.12.executables\n"
+            "\nOK — Python 3.12 is ready.\n"
+        )
+
+    def test_a_backend_s_name_is_the_entry_the_project_runs_else_its_first(
+        self, no_installs, tmp_path, capsys
+    ):
+        path, older, newer = self._two_pythons(no_installs, tmp_path)
+        assert main(["--config", str(path), "check", "Python"]) == 0
+        assert capsys.readouterr().out.startswith(
+            f"Python 3.11\n  executable: {older}\n"
+        )
+        config = json.loads(path.read_text())
+        config["backend"] = "Python 3.12"
+        path.write_text(json.dumps(config))
+        assert main(["--config", str(path), "check", "Python"]) == 0
+        assert capsys.readouterr().out.startswith(
+            f"Python 3.12\n  executable: {newer}\n"
+        )
+
+    def test_the_list_names_each_entry_and_its_backend(
+        self, no_installs, tmp_path, capsys
+    ):
+        path, older, newer = self._two_pythons(no_installs, tmp_path)
+        assert main(["--config", str(path), "check"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[1] == (
+            f"  * Python 3.11 [Python]  found      {older}  "
+            "(testing.json: backends.Python 3.11.executables)"
+        )
+        assert out[2] == (
+            f"    Python 3.12 [Python]  found      {newer}  "
+            "(testing.json: backends.Python 3.12.executables)"
+        )
+        # Then the backends with no entry, by their own names.
+        assert [line.split()[0] for line in out[3:7]] == [
+            "Dymola",
+            "OpenModelica",
+            "FMPy",
+            "Julia",
+        ]
+
+    def test_a_name_that_is_no_entry_is_refused_with_the_entries(
+        self, no_installs, tmp_path, capsys
+    ):
+        """It starts with a backend's name, so the parser lets it by: the
+        project then says it has no such entry."""
+        path, _, _ = self._two_pythons(no_installs, tmp_path)
+        assert main(["--config", str(path), "check", "Python 3.13"]) == 2
+        assert capsys.readouterr().err == (
+            'Config error: check: "Python 3.13" is no entry of backends '
+            "(Python 3.11, Python 3.12) and no backend's name (Dymola, "
+            "OpenModelica, FMPy, Julia, Python)\n"
+        )
 
     def test_an_unknown_name_is_argparse_s_invalid_choice(self, capsys):
         with pytest.raises(SystemExit) as exc:

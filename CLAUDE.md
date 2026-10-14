@@ -238,7 +238,8 @@ uv run dstf --config testing.json run --batch --parallel 4 --report
 # environment variable, the search), the one this project runs with marked and diagnosed in full;
 # exit 0 iff that one is usable. Works with no testing.json (the search alone) and writes none.
 uv run dstf --config testing.json check
-uv run dstf check Dymola           # one backend's full diagnosis
+uv run dstf check Dymola           # one backend's full diagnosis (its entry the project runs with, else its first)
+uv run dstf --config testing.json check "Dymola 2025"   # one entry of `backends`, by its name; the list shows each entry as `Dymola 2025 [Dymola]`
 
 # The schema of testing.json itself: every key with its type, default and description
 uv run dstf spec schema testing --output testing.schema.json
