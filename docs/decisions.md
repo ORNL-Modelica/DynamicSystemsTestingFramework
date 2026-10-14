@@ -8935,6 +8935,30 @@ to be tolerated — loaded in 1.0 and is a config error now. There is no
 alias and no lenient mode; the error names the key and, where one is a
 slip away, its spelling.
 
+**2026-10-14.** Corrections after an executing review. (a) `testing.json` and `test_spec.json` are decoded by one decoder
+(`config.json_from_bytes`): a UTF-16 file, a number of thousands of digits,
+brackets nested by the ten thousand and a 401-digit `worker_startup_timeout`
+were tracebacks out of every command, the first three in the spec too; each is
+`Config error: <file>: not JSON (…)` / `not UTF-8 text (…)`, a path that is a
+symlink loop names itself, and a key written twice keeps its last value, as it
+did. (b) An entry of `recognizers` is read by a table of its own
+(`config_shape.RECOGNIZER`), and the keys of its `match` and `fields` by what
+their interpreters read: `recognizers[2]: unknown field "feilds" — did you mean
+"fields"?`; the schema describes the entry. (c) A whole number is written as
+one (`3`, not `3.0`) in `testing.json` and a backend's block — `test_spec.json`
+still reads `500.0`; `os` and `source_type` are closed lists, the second the
+registered backends' `source_types` (a plug-in adds one with its backend), and
+the schema carries the enums; the four keys with a rule of their own name the
+file by its path where they said `testing.json …`. (d) A default is written
+once: no description repeats it, the worker's start bound and the two backend
+configs read it from the table, and `Config` reads the table when it is built.
+(e) §4 is one rule now: a command writes a default `testing.json` only if it
+declares, in the command tree, that it may create a file of the project
+(`creates=True`: `run`, `compare`, `spec add`, `spec update`, `soft-check add`,
+`companion add`, `companion freeze`); every other reads on defaults and writes
+none, `Config.write_default` defaults to false, and each `--help` says which
+the command is.
+
 ## D158 — A settings block per backend; each backend finds itself (2026-10-13)
 
 **Context.** `"backends"` mapped a name to a list of executable paths, and
@@ -9009,6 +9033,35 @@ paths)`, top-level `show_ide` is an unknown field, the three flags are
 argparse errors, and an entry named after no registered backend is
 refused where it used to be carried along.
 
+**2026-10-14.** Corrections after an executing review. (a) `--backend-path` is
+the most pinned path there is and goes through §4's rule: it is the one entry
+`locate` looks at (`locate.with_backend_path`), one that is not there is not
+found — `run --backend-path /nope/omc` used to start the omc on `PATH` — and
+the rule that found it reads `the command line: --backend-path`. (b) A run of a
+backend that was not found starts nothing on EITHER run mode:
+`Backend.require_found` is the one check, asked by `select_backend(…,
+to_run=True)`; the backends' own checks are gone, and `--batch` no longer runs
+on to one failed simulation per test. (c) An executable is a file that can be
+executed: a directory, or a file that is not executable, is "not found" with
+the reason, and `check` and `run` agree on every entry. (d) A path in a block
+is relative to `testing.json` (`Setting.path`; `~` is the home directory; an
+entry with a separator is a path and pins; an empty string is a type error).
+(e) §5 is stricter: once the executable's install is known, the interface is
+looked for THERE and nowhere else, and only where the install cannot be
+determined do the standard folders apply — with one line saying so, which
+`check` prints and a run logs. The launcher is read as the shell reads it
+(last assignment, trailing comment, `;`, `${DYMOLA:-…}`, any length), and a
+line that is not read means "cannot be determined", never an install guessed.
+(f) Dymola's interface class is its archive's: one `dymola` package per
+process, so a second install's interface (the tool's Change backend…) is
+refused with a sentence that says to restart, where it was served the first's.
+(g) A `backend` that is no entry of `backends` and starts with no backend's
+name is a config error that lists both, from every command. (h) Every entry
+still written as a list is named in ONE error, each with the block to write.
+(i) OpenModelica's Program Files folders sort by version, and the schema's
+block patterns take the longest backend name an entry starts with, as the
+loader does.
+
 ## D159 — One `check` command (2026-10-13)
 
 **Context.** `check-dymola`, `check-openmodelica` and `check-julia` were
@@ -9045,6 +9098,20 @@ as `README.md` did.
 
 **What it breaks, on purpose.** The three `check-*` commands are gone, a
 deliberate break of the 1.0 command line with no alias.
+
+**2026-10-14.** Corrections after an executing review. `dstf check <name>` takes
+an ENTRY of `backends` by its name as well as a backend's (`check "Dymola
+2026"` was argparse's invalid choice, so a second Dymola entry could not be
+diagnosed); a backend's name is its entry the project runs with, else its
+first; the list shows each entry with the backend it is of where the two
+differ (`Dymola 2025 [Dymola]`); and a name that starts with a backend's and
+is no entry is a config error listing the entries. "No project here" is
+decided by a narrower search: the library is the working directory, a
+directory above it that is a package, or a package in it — never one beside,
+which had made `check` in an empty directory print `Lib on defaults` and, run
+below the system's temporary directory, end at a neighbour it may not read.
+FMPy not found says to install the `fmpy` extra, where it said to set an
+`executables` FMPy does not take.
 
 ## D160 — The command line is a tree, and a flag is offered only where it is read (2026-10-13)
 
