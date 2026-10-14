@@ -9210,3 +9210,22 @@ longer applies is `unrecognized arguments` or `does not apply`, and
 `export-schema --file testing.json` is `spec schema testing`. A script that
 drives `dstf run`, `dstf compare` or `dstf discover` with flags those
 commands read is unaffected.
+
+**2026-10-14 — what an executing review of the tree corrected.** (1) The
+rule, as it is now true: a flag asks for something; if the command, the
+action or the other flags on the line mean it will not happen, the command
+stops and says so — `--report-format junit does not apply with --accept:
+an accept stores the results and writes no report`. One table,
+`cli.parser.UNREAD`, says per command which flags are not read beside
+which, or only beside which, and drives both the refusal and the deciding
+flag's help; `run --accept --report-format junit -o a.xml`, `-i … --report`
+and `compare --accept --parallel` had exited 0 and done nothing they named.
+The exception: a flag that asks for something NOT to happen
+(`--no-browser`) is always accepted. What a command offers is itself one
+table, `cli.parser.READS`, that the tree is built from, and a test scans
+each handler for a read of every flag it offers. (2) Abbreviations are off
+at every node: `compare --a` was `--accept`. (3) One value per flag: a
+project flag given before and after the command with two values is an
+error naming both; the later used to win. (4) Empty values are refused: one
+argparse type over every flag that takes a value and every positional;
+`--filter ""` had selected every test.

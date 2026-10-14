@@ -4,8 +4,10 @@
   a description, an example that parses, help on every option and
   positional, in words a user reads.
 * A command offers exactly the flags it reads. The four that say where the
-  project is work on either side of the command; a flag a command does not
-  read is an error on both sides, never dropped.
+  project is work on either side of the command, once; a flag a command
+  does not read is an error on both sides, and so is one the other flags on
+  the line mean will not be read (`--report` beside `--accept`) — but a
+  flag that asks for something NOT to happen (`--no-browser`).
 * A value that cannot be meant is the parser's error, saying what is allowed.
 """
 

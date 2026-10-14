@@ -848,8 +848,32 @@ They work on **either side of the command** — `dstf --config x run` and
 the same flag before and after the command with two values is an error that
 names both.
 
-**A command offers the flags it reads, and a flag that does not apply is an
-error**, on either side of the command — never dropped. `author` takes
+**A command offers the flags it reads. A flag asks for something: if the
+command, the action or the other flags on the line mean it will not happen,
+the command stops and says so**, on either side of the command: `dstf run
+--accept --report-format junit -o a.xml` ends in `--report-format junit
+does not apply with --accept: an accept stores the results and writes no
+report` (exit 2). The one exception is a flag that asks for something not to happen
+(`--no-browser`): it is always accepted. What is refused beside what is
+said in each flag's help (`--accept`'s lists the flags it is not read with,
+`--merge`'s the ones it needs): on `run`, `--accept` with `--report`,
+`--report-format`, `--output`, `--merge`, and `--tolerance` /
+`--default-points` unless `--rerun` (which scores the last run to choose its
+tests); `-i` with `--report`, `--report-format`, `--output`; `--merge`
+without `--filter`, `--package` or `--rerun`. On `compare`, `--accept` with
+`--tolerance`, `--default-points`, `--report`, `--report-format`,
+`--output`, `--parallel`, and `--parallel` without `--report`. `--output`
+without a `--report-format` that writes a file; `baseline export
+--work-dir` with `--output`; `manifest cleanup --test-spec` / `--work-dir`
+without `--orphans`; `check --reference-root` with `--config`.
+
+A flag is written whole: no prefix of one is taken for it (`--rep` is not
+`--report`). A flag or positional given an empty value (`--filter ""`) is an
+error, and so is a `--filter`, `-i` or `--rerun` list of nothing but
+commas. A flag of a command written before the command says where it goes
+(`--backend goes after the command: dstf run --backend …`). An `--output`
+that is a directory, or in a directory that is not there, is refused before
+anything runs. `author` takes
 `--config` alone of the four (it saves the spec `testing.json` names);
 `check`, `baseline export`, and the `soft-check`, `companion` and `manifest
 show` / `dump` actions take no `--test-spec`; `spec schema` reads no project
@@ -858,8 +882,7 @@ a reference partition (all but `discover`, `check`, `spec add` and `spec
 schema`), `--work-dir` on those that read or write the work directory (`run`,
 `compare`, `author`, `baseline export`, `manifest dump` / `cleanup`); both go
 after the command. `--timeout`, `--parallel` and `--port` take a whole number
-of 1 or more, and `--output` beside the console report format — which writes
-no file — is an error.
+of 1 or more.
 
 If `testing.json` includes `source_path`, you only need `--config` or `--reference-root`.
 

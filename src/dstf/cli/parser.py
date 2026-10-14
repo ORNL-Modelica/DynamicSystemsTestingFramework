@@ -6,12 +6,18 @@ Three rules hold here, and ``tests/test_cli_tree.py`` fails when one decays:
 * **Groups are real sub-parsers** (``dstf spec add``, ``dstf manifest
   cleanup``): every action has its own ``--help``, its own positionals
   (required by the parser) and only its own flags.
-* **A command offers exactly the flags it reads.** A flag that does not
-  apply is an error, never silently dropped — the command line's version of
-  "a key nothing reads is an error". The four flags that say where the
-  project is may be written before the command as well as after it; one
-  written before a command that does not read it is refused by
+* **A command offers exactly the flags it reads** (:data:`READS`, which
+  the tree is built from). A flag asks for something: if the command, the
+  action or the other flags on the line mean it will not happen, the
+  command stops and says so (:data:`UNREAD`) — the command line's version
+  of "a key nothing reads is an error". The one exception is a flag that
+  asks for something NOT to happen (``--no-browser``): it is always
+  accepted. The four flags that say where the project is may be written
+  before the command as well as after it, once; one written before a
+  command that does not read it is refused by
   :meth:`_Root.parse_known_args`, which is the only place that can see it.
+  No node takes a prefix of a flag for the flag, and no flag or positional
+  takes an empty value.
 * **Every node explains itself**: a description, an example that parses,
   and help on every option and positional, with its default where it has
   one.

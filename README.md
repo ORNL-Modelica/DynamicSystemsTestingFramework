@@ -196,7 +196,7 @@ uv run dstf check Dymola        # one backend's full diagnosis (Dymola: the exec
 uv run dstf --config testing.json check "Dymola 2025"   # one entry of testing.json's backends, by its name
 ```
 
-`uv run dstf --help` lists every command; `uv run dstf <command> --help` (`dstf manifest cleanup --help`) says what one does and writes, and every flag it reads, with examples. A command offers exactly the flags it reads: one that does not apply is an error, never ignored.
+`uv run dstf --help` lists every command; `uv run dstf <command> --help` (`dstf manifest cleanup --help`) says what one does and writes, and every flag it reads, with examples. A command offers exactly the flags it reads. A flag asks for something: if the command, the action or the other flags on the line mean it will not happen, the command stops and says so (`--report-format junit does not apply with --accept: an accept stores the results and writes no report`). The one exception is a flag that asks for something not to happen (`--no-browser`): it is always accepted.
 
 ## Where things live
 

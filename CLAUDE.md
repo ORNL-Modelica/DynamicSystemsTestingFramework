@@ -106,8 +106,12 @@ The package ships a console script (`[project.scripts]` in `pyproject.toml`). Th
 uv run dstf --config path/to/testing.json run
 
 # The four flags that say where the project is (--config, --source-path, --reference-root, --test-spec)
-# work on either side of the command (dstf run --config x == dstf --config x run). A command offers
-# exactly the flags it reads; one that does not apply is an error on either side, never dropped (D160).
+# work on either side of the command (dstf run --config x == dstf --config x run), once. A command offers
+# exactly the flags it reads. A flag asks for something: if the command, the action or the other flags on
+# the line mean it will not happen, the command stops and says so (cli.parser.UNREAD: --report beside
+# --accept, --work-dir on `manifest cleanup` without --orphans, …); only a flag that asks for something
+# NOT to happen (--no-browser) is always accepted. No prefix of a flag is taken for it, and no flag or
+# positional takes an empty value (D160).
 # `dstf <command> --help` (`dstf manifest cleanup --help`) says what each does, with examples.
 
 # Or with explicit flags
