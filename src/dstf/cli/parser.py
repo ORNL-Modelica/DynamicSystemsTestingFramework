@@ -42,9 +42,15 @@ from .spec_cmds import SCHEMAS
 class _Node(argparse.ArgumentParser):
     """A command or a group of the tree. A group given no action (``dstf
     spec``), or one it has not, prints the group's whole help before the
-    error: the actions are what the user needs to see."""
+    error: the actions are what the user needs to see.
+
+    No node takes a prefix of a flag for the flag (``allow_abbrev``):
+    ``compare --a`` was ``--accept``, and stored the baselines."""
 
     is_group = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **{**kwargs, "allow_abbrev": False})
 
     def error(self, message: str):
         if self.is_group:
@@ -61,10 +67,11 @@ class _Root(argparse.ArgumentParser):
     ``commands`` (the ones that run) — and checks, once the command line is
     parsed, what no sub-parser can: a flag written BEFORE a command that
     does not read it. What a command did not recognise is that command's
-    error too, with its usage."""
+    error too, with its usage. As every node, it takes no prefix of a flag
+    for the flag (:class:`_Node`)."""
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **{**kwargs, "allow_abbrev": False})
         self.nodes: dict[str, argparse.ArgumentParser] = {"": self}
         self.commands: dict[str, argparse.ArgumentParser] = {}
         #: Per command: the project flags (by dest) it offers.

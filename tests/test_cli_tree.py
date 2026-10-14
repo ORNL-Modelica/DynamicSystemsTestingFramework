@@ -334,10 +334,39 @@ def test_the_help_lists_exactly_the_flags_it_reads(command, capsys):
 
 
 def test_a_flag_before_the_command_wins_nothing_it_is_not_read_for(capsys):
-    """An abbreviation is a flag too."""
-    text = _parse(["--test", "spec.json", "author", "--config", "t.json"], capsys)
+    text = _parse(["--test-spec", "spec.json", "author", "--config", "t.json"], capsys)
     assert isinstance(text, str) and "--test-spec does not apply" in text
     assert "it reads --config" in text
+
+
+@pytest.mark.parametrize("path", sorted(NODES))
+def test_no_flag_is_taken_by_a_prefix_of_its_name(path, capsys):
+    """argparse's abbreviations are off at every node: `compare --a` was
+    `--accept` (and stored the baselines), `manifest cleanup --o --a` was
+    `--orphans --apply`. Every prefix of every long flag is an unknown
+    flag, unless it is a flag of that node itself (`--report` of
+    `--report-format`)."""
+    node = NODES[path]
+    own = {s for a in node._actions for s in a.option_strings}
+    words = path.split() + ARGV.get(path, [])
+    longs = sorted(s for s in own if s.startswith("--") and s != "--help")
+    assert longs or path in GROUPS
+    for flag in longs:
+        for end in range(3, len(flag)):
+            prefix = flag[:end]
+            if prefix in own:
+                continue
+            # `=VALUE` so that the prefix of a flag taking no value is not
+            # refused for its value instead; the root takes its own before
+            # a command
+            argv = (
+                [f"{prefix}=VALUE", "discover"]
+                if not path
+                else [*words, f"{prefix}=VALUE"]
+            )
+            text = _parse(argv, capsys)
+            assert isinstance(text, str), f"`dstf {path}` took {prefix} for {flag}"
+            assert f"unrecognized arguments: {prefix}=VALUE" in text, text
 
 
 def test_a_refused_flag_builds_no_config(tmp_path, monkeypatch, capsys):
