@@ -1304,25 +1304,26 @@ def _takes_a_value(action: argparse.Action) -> bool:
 def test_an_empty_value_is_refused_for_every_flag_and_positional(path, capsys):
     """`compare --accept --filter ""` stored every baseline (an empty filter
     selected everything); `--backend ""` was read as not given, `--work-dir
-    ""` as the current directory, `--config ""` as <cwd>/testing.json."""
+    ""` as the current directory, `--config ""` as <cwd>/testing.json. A
+    value of blanks only (`--filter "  "`) is the same empty value."""
     node = NODES[path]
     positionals = [a for a in node._actions if not a.option_strings]
     words = path.split() + ARGV.get(path, [])
     taking = [a for a in node._actions if _takes_a_value(a)]
     assert taking
-    for action in taking:
+    for action, blank in [(a, b) for a in taking for b in ("", "  ")]:
         if action.option_strings:
-            argv = [*words, action.option_strings[-1], ""]
+            argv = [*words, action.option_strings[-1], blank]
             name = "/".join(action.option_strings)
         else:
             # this positional empty, the others as ARGV gives them
             given = list(ARGV.get(path, []))
             index = positionals.index(action)
-            given[index : index + 1] = [""]
+            given[index : index + 1] = [blank]
             argv = [*path.split(), *given]
             name = action.metavar or action.dest
         text = _parse(argv, capsys)
-        assert isinstance(text, str), f"`dstf {path}` took an empty {name}"
+        assert isinstance(text, str), f"`dstf {path}` took {blank!r} for {name}"
         assert f"argument {name}: an empty value names nothing" in text, text
 
 
@@ -1425,6 +1426,46 @@ def _given(command: str, dest: str, *, bare: bool = False) -> list[str]:
             return ["-o", "out.xml"]
         return [*_GIVEN["report_format"], "-o", "out.xml"]
     return _GIVEN[dest]
+
+
+#: Command lines refused because a flag on them will not be read beside
+#: another — written here by hand, NOT generated from `UNREAD`, so a row or
+#: a flag dropped from that table fails this list (the generated tests
+#: follow the table wherever it goes).
+_REFUSED_BY_HAND = [
+    ["run", "--accept", "--report-format", "junit"],
+    ["run", "--accept", "--report"],
+    ["run", "--accept", "--report-format", "junit", "-o", "x.xml"],
+    ["run", "--accept", "--merge", "--filter", "Lib.*"],
+    ["run", "--accept", "--tolerance", "0.1"],
+    ["run", "--accept", "--default-points"],
+    ["run", "-i", "failed", "--report"],
+    ["run", "-i", "failed", "--report-format", "html"],
+    ["run", "--merge"],
+    ["run", "-o", "x.xml"],
+    ["compare", "--accept", "--report"],
+    ["compare", "--accept", "--report-format", "junit"],
+    ["compare", "--accept", "--tolerance", "0.1"],
+    ["compare", "--accept", "--parallel", "2"],
+    ["compare", "--parallel", "2"],
+    ["compare", "-o", "x.xml"],
+    ["baseline", "export", "-o", "x.json", "--work-dir", "w"],
+    ["manifest", "cleanup", "--work-dir", "w"],
+    ["check", "--config", "testing.json", "--reference-root", "refs"],
+]
+
+
+@pytest.mark.parametrize("argv", _REFUSED_BY_HAND, ids=" ".join)
+def test_each_line_shown_refused_is_refused(argv, capsys):
+    text = _parse(argv, capsys)
+    assert isinstance(text, str), f"dstf {' '.join(argv)} parsed"
+    assert " does not apply " in text, text
+
+
+def test_with_rerun_an_accept_reads_the_tolerance(capsys):
+    """The one `unless` of the table: --rerun's choice of tests is scored."""
+    argv = ["run", "--accept", "--rerun", "failed", "--tolerance", "0.1"]
+    assert isinstance(_parse(argv, capsys), argparse.Namespace)
 
 
 def _unread_cases():
