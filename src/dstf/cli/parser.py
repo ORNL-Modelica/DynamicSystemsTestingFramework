@@ -397,8 +397,7 @@ UNREAD: tuple[Unread, ...] = (
             command,
             ("output",),
             ("report_format",),
-            "it names the file junit or html writes, and the console format "
-            "(the default) writes none",
+            "the console report is printed",
             with_=False,
         )
         for command in ("run", "compare")
@@ -478,10 +477,19 @@ def _unread_beside(path: str, node: argparse.ArgumentParser, args) -> str | None
             where = (
                 f"with {_name(node, beside[0])}"
                 if row.with_
-                else f"without {_names(node, row.beside, 'or')}"
+                else _without(node, row.beside)
             )
             return f"{given} does not apply {where}: {row.why}"
     return None
+
+
+def _without(node: argparse.ArgumentParser, dests: tuple[str, ...]) -> str:
+    """Where a flag read only beside ``dests`` is not: "without" them — or,
+    for one flag that always has a value (``--report-format``, whose
+    default is ``console``), "with" that value, whether written or not."""
+    if len(dests) == 1 and isinstance(_flag(node, dests[0]).default, str):
+        return f"with {_name(node, dests[0])} {_flag(node, dests[0]).default}"
+    return f"without {_names(node, dests, 'or')}"
 
 
 def _say_unread(nodes: dict[str, argparse.ArgumentParser]) -> None:
@@ -496,7 +504,12 @@ def _say_unread(nodes: dict[str, argparse.ArgumentParser]) -> None:
             for dest in row.beside:
                 _flag(node, dest).help += " " + text
         else:
-            text = f"Only with {_names(node, row.beside, 'or')}: {row.why}."
+            where = _without(node, row.beside)
+            text = (
+                f"Not {where}: {row.why}."
+                if where.startswith("with ")
+                else f"Only with {_names(node, row.beside, 'or')}: {row.why}."
+            )
             for dest in row.flags:
                 _flag(node, dest).help += " " + text
 
@@ -793,7 +806,8 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
 
 _NO_CONFIG_WRITES = (
     "When none is found, this command writes a default one beside the "
-    "library (in the reference root when --reference-root is given)."
+    "library (in the reference root when --reference-root is given), once "
+    "it is past its own checks."
 )
 _NO_CONFIG_READS = (
     "When none is found, the project is read on defaults and none is written."

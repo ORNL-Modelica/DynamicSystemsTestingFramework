@@ -114,6 +114,11 @@ to write instead.
 - A project that names no backend ran the next entry of `backends` without a
   word when an earlier one was not found here; `run` and `check` now say which
   entry was passed over and why.
+- A `--source-path` (or `source_path`) that is not there was said as an
+  OSError run into the hint after it; it is one sentence naming the path.
+- A command that writes a default `testing.json` where it finds none wrote it
+  even when it then failed its own checks (`companion freeze` of a companion
+  that is not there); the file is written only once the command is past them.
 
 ### How to convert your testing.json
 

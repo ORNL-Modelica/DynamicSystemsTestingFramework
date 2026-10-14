@@ -440,8 +440,11 @@ def test_every_command_the_dashboard_builds_reads_the_run_s_project(
     cwd, flags = _STARTED[started]
     monkeypatch.chdir(project / cwd)
     config = _build_config(build_arg_parser().parse_args(["run", *flags]))
+    # as `run` does once past its checks, before its dashboard
+    config.write_default_file()
     capsys.readouterr()
     assert config.config_found is not None, "a run always has a testing.json"
+    assert config.config_found.is_file()
     built = build_rerun_flags(config)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -1373,8 +1376,15 @@ def test_the_port_s_default_is_the_one_the_help_states():
 def test_output_beside_the_console_format_is_an_error(command, capsys):
     """It names the file junit and html write; the console format writes
     none, and the flag was read by nothing."""
-    text = _parse([command, "-o", "out.xml"], capsys)
-    assert isinstance(text, str) and f"dstf {command}: error: --output" in text
+    said = (
+        f"dstf {command}: error: --output out.xml does not apply with "
+        "--report-format console: the console report is printed"
+    )
+    # the console format given, or taken as the default: the same sentence
+    # (it said "without --report-format" of a line that had one)
+    for given in ([], ["--report-format", "console"]):
+        text = _parse([command, *given, "-o", "out.xml"], capsys)
+        assert isinstance(text, str) and said in text, text
     for fmt in ("junit", "html"):
         args = _parse([command, "--report-format", fmt, "-o", "out"], capsys)
         assert isinstance(args, argparse.Namespace) and args.output == "out"
@@ -1442,10 +1452,22 @@ def test_a_flag_that_will_not_be_read_beside_another_is_refused(
     text = _parse(argv, capsys)
     assert isinstance(text, str), f"dstf {' '.join(argv)} parsed"
     node = NODES[row.command]
-    name = lambda d: [a for a in node._actions if a.dest == d][0].option_strings[-1]  # noqa: E731
+    flag = lambda d: [a for a in node._actions if a.dest == d][0]  # noqa: E731
+    name = lambda d: flag(d).option_strings[-1]  # noqa: E731
+    # a flag read only beside one that always has a value (--report-format,
+    # console by default) is not read WITH that value
+    default = (
+        flag(row.beside[0]).default
+        if not beside
+        and len(row.beside) == 1
+        and isinstance(flag(row.beside[0]).default, str)
+        else None
+    )
     where = (
         f"with {name(beside)}"
         if beside
+        else f"with {name(row.beside[0])} {default}"
+        if default
         else "without "
         + ", ".join(name(d) for d in row.beside[:-1])
         + (" or " if len(row.beside) > 1 else "")
@@ -1546,6 +1568,15 @@ IN_A_LIBRARY = {
 }
 
 
+#: Of CREATES, the commands that get past their own checks in that
+#: directory: only these write the default testing.json. The others are
+#: refused there — `run` finds no simulator, `spec update`'s patch and
+#: `soft-check add`'s source hold nothing, `companion add` has no baseline
+#: and `companion freeze` no companion — and a command that fails at its
+#: own checks leaves no file behind.
+PAST_ITS_CHECKS = {"compare", "spec add"}
+
+
 def test_every_command_says_whether_it_may_create_the_project_s_files():
     assert sorted({*IN_A_LIBRARY, "author", "spec schema"}) == COMMANDS
     assert PARSER.creates == CREATES
@@ -1557,7 +1588,9 @@ def test_a_command_that_creates_nothing_of_a_project_writes_no_config(
 ):
     """`manifest show`, `baseline export`, `companion list`, `soft-check
     list` and the commands that remove left a default testing.json beside
-    the library, as a side effect of looking for one."""
+    the library, as a side effect of looking for one; a command that may
+    create the project's files wrote it before its own checks failed it
+    (`companion freeze` of a companion that is not there, exit 1)."""
     lib = tmp_path / "work" / "Lib"
     lib.mkdir(parents=True)
     (lib / "package.mo").write_text("within ;\npackage Lib\nend Lib;\n")
@@ -1575,7 +1608,7 @@ def test_a_command_that_creates_nothing_of_a_project_writes_no_config(
         pass
     capsys.readouterr()
     created = (tmp_path / "work" / "testing.json").is_file()
-    assert created is (path in CREATES)
+    assert created is (path in PAST_ITS_CHECKS), path
     assert not list(tmp_path.rglob("Lib/testing.json"))
 
 

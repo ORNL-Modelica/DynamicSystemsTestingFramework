@@ -28,6 +28,7 @@ def cmd_spec_add(args: argparse.Namespace) -> int:
 
     added = add_to_test_spec(spec_path, model_id, variables)
     if added:
+        config.write_default_file()
         var_desc = ", ".join(variables) if variables else "(simulate only)"
         print(f"Added: {model_id}")
         print(f"  Variables: {var_desc}")
@@ -46,6 +47,7 @@ def cmd_spec_add(args: argparse.Namespace) -> int:
             return 1
         if choice == "y":
             add_to_test_spec(spec_path, model_id, variables, overwrite=True)
+            config.write_default_file()
             print(f"Updated: {model_id}")
             return 0
         else:
@@ -89,6 +91,7 @@ def cmd_spec_update(args: argparse.Namespace) -> int:
     except PatchError as e:
         print(f"Patch failed: {e}")
         return 1
+    config.write_default_file()
     _print_applied(applied, requested, spec_path)
     return 0
 

@@ -242,6 +242,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             # empty user --filter below. Still refresh the merged report so
             # the dashboard reflects the (unchanged) full-suite state.
             print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
+            config.write_default_file()
             config.work_dir.mkdir(parents=True, exist_ok=True)
             from ..reporting.dashboard_render import build_rerun_flags, render_final
 
@@ -262,6 +263,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not tests:
         print("No tests matched the filter.")
         return 1
+    # Past the run's checks: the project's testing.json, if this run is
+    # the one that starts it, before the dashboard that names it.
+    config.write_default_file()
 
     for line in _default_stop_time_notes(tests, config):
         print(line)
@@ -447,6 +451,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
         from ..comparison.comparator import refuse_stored_overrides
 
         refuse_stored_overrides(tests, store)
+    # Past compare's checks, before the files that name the project.
+    config.write_default_file()
     write_id_mapping(store, config)
 
     # Pre-compute ref_id_map so the wipe + downstream report rendering can

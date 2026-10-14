@@ -139,6 +139,8 @@ def cmd_companion_add(args: argparse.Namespace) -> int:
     except (_MapError, ValueError, FileNotFoundError) as e:
         print(f"Error: {e}")
         return 1
+    if ok:
+        store.config.write_default_file()
     print(
         f"Registered companion {args.name!r} → {args.path}"
         if ok
@@ -184,6 +186,7 @@ def cmd_companion_freeze(args: argparse.Namespace) -> int:
         print(f"Error: {e}")
         return 1
     if ok:
+        store.config.write_default_file()
         print(f"Frozen companion {args.name!r} for {args.model_id}")
     else:
         print(f"Companion {args.name!r} of {args.model_id} is already frozen")
@@ -295,5 +298,6 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
         print(f"Error: {e}")
         return 1
     if ok:
+        store.config.write_default_file()
         print(f"Imported {source} → soft_check {args.name!r} on {args.model_id}")
     return 0 if ok else 1

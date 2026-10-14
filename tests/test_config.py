@@ -694,6 +694,8 @@ class TestFinding19AutoCreate:
         lib = _make_lib(tmp_path / "src")
         ref_root = tmp_path / "fresh" / "refs"  # does not exist
         config = Config(source_path=lib, reference_root=ref_root, write_default=True)
+        assert not (ref_root / "testing.json").exists()  # until the command says
+        config.write_default_file()
         assert (ref_root / "testing.json").is_file()
         assert config.reference_root == ref_root.resolve()
 
@@ -720,7 +722,7 @@ class TestFinding19AutoCreate:
             source_path=lib,
             reference_root=tmp_path / "fresh" / "refs",
             write_default=True,
-        )
+        ).write_default_file()
 
         assert seen["testing.json"] == "\n"
 
@@ -782,6 +784,7 @@ class TestTheDefaultFileNamesTheProject:
         if spec is not None:
             kwargs["test_spec_file"] = Path(spec)
         run = Config(**kwargs)
+        run.write_default_file()
         assert "Created default testing.json" in capsys.readouterr().out
         assert run.config_found is not None and run.config_found.is_file()
         (tmp_path / "elsewhere").mkdir()
@@ -796,7 +799,9 @@ class TestTheDefaultFileNamesTheProject:
         lib = _make_lib(tmp_path / "src")
         monkeypatch.chdir(tmp_path)
         refs = lib / "Resources" / "ReferenceResults"
-        Config(source_path=lib, reference_root=refs, write_default=True)
+        Config(
+            source_path=lib, reference_root=refs, write_default=True
+        ).write_default_file()
         written = json.loads((refs / "testing.json").read_text(encoding="utf-8"))
         assert written == {"backends": {}, "dependencies": [], "source_path": "../.."}
 

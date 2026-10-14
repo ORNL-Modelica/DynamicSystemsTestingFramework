@@ -201,17 +201,18 @@ def load_config_file(path: Path) -> dict:
     return data
 
 
+def _default_file(project: dict) -> dict:
+    """A default testing.json's contents: no backend named and none listed,
+    so each machine runs with the one it has, and the ``project`` keys that
+    name the project the command was given (`Config._project_keys`) —
+    `--config <it>` is that project from any directory."""
+    return {"backends": {}, "dependencies": [], **project}
+
+
 def _create_default_config(config_dir: Path, project: dict) -> dict:
-    """Create a default testing.json and return its contents: no backend
-    named and none listed, so each machine runs with the one it has, and
-    the ``project`` keys that name the project the command was given
-    (`Config._project_keys`) — `--config <it>` is that project from any
-    directory."""
-    config: dict = {
-        "backends": {},
-        "dependencies": [],
-        **project,
-    }
+    """Write a default testing.json (:func:`_default_file`) in
+    ``config_dir`` and return its contents."""
+    config = _default_file(project)
     config_path = config_dir / CONFIG_FILENAME
     # review 2026-07-06 finding 19: the target dir may not exist yet (e.g.
     # first run with a fresh --reference-root) — create it before writing.
@@ -379,6 +380,13 @@ def _dependency_looks_like_path(entry: str, base_dir: Path) -> bool:
         return False
 
 
+def _must_exist(path: Path, named: str) -> None:
+    """A library path that is not there is said as that, in one sentence —
+    not as the OSError the package search would meet."""
+    if not path.exists():
+        raise ConfigError(f"{named} {path}: no such directory")
+
+
 #: The Config fields that place the project and that a caller may give
 #: over its testing.json (`Config.overrides`).
 _OVERRIDABLE = (
@@ -540,6 +548,8 @@ class Config:
     # written. Not unless the caller says so: a command says it in the
     # command tree (`cli.parser`, `creates=True`) when it may create a file
     # of the project; one that reads, lists, exports or removes does not.
+    # The Config reads it as written at once; the file is written by
+    # `write_default_file`, when the command is past its own checks.
     write_default: bool = False
 
     # Resolved (set during __post_init__)
@@ -557,6 +567,10 @@ class Config:
     # project from another directory names each beside `--config` — the
     # dashboard's commands (`reporting.dashboard_render.build_rerun_flags`).
     overrides: frozenset[str] = field(init=False, default=frozenset())
+
+    # The default testing.json this Config reads but has not written yet:
+    # its directory and its project keys (`write_default_file`).
+    _unwritten: tuple[Path, dict] | None = field(init=False, default=None, repr=False)
 
     # The entries of `backends` before the selected one that were not found
     # here, and why, as one line (`_pick_backend`) — None where the project
@@ -628,11 +642,13 @@ class Config:
             try:
                 if self.source_path is not None:
                     self.source_path = _resolved(Path(self.source_path))
+                    _must_exist(self.source_path, "--source-path")
                     if not (self.source_path / "package.mo").exists():
                         self.source_path = find_package_dir(self.source_path)
                 elif "source_path" in file_config:
                     base_dir = config_found_dir or Path.cwd()
                     self.source_path = _resolved(base_dir / file_config["source_path"])
+                    _must_exist(self.source_path, f"{config_found}: source_path")
                     if not (self.source_path / "package.mo").exists():
                         self.source_path = find_package_dir(self.source_path)
                 else:
@@ -686,13 +702,16 @@ class Config:
         # Auto-create testing.json ONLY if no config file was found anywhere
         # (review 2026-07-06 findings 11/19: a found config — even one that
         # parses to {} — must never be overwritten with defaults).
+        # It is written by `write_default_file`, which the command calls once
+        # it is past its own checks: a command that fails at them leaves no
+        # file behind. Until then the Config reads it as written.
         if config_found_dir is None and self.write_default:
             config_dir = _resolved(
                 self.reference_root if self.reference_root else repo_root
             )
-            file_config = _create_default_config(
-                config_dir, self._project_keys(config_dir)
-            )
+            project = self._project_keys(config_dir)
+            self._unwritten = (config_dir, project)
+            file_config = _default_file(project)
             # From here on the file is read as any found one is: what it
             # says is what `--config <it>` says from any directory.
             config_found_dir = config_dir
@@ -932,6 +951,17 @@ class Config:
         else:
             self.work_dir = _resolved(Path(self.work_dir))
         self.overrides = frozenset(overrides)
+
+    def write_default_file(self) -> None:
+        """Write the default testing.json this Config was built to write
+        (``write_default``, none found); nothing when there is none to
+        write or it was written. A command calls it once it is past its own
+        checks — before the first file it writes that names the project
+        (the dashboard's commands name it), or once its work is done."""
+        if self._unwritten is not None:
+            config_dir, project = self._unwritten
+            _create_default_config(config_dir, project)
+            self._unwritten = None
 
     def _project_keys(self, config_dir: Path) -> dict:
         """What a default testing.json written in ``config_dir`` records so

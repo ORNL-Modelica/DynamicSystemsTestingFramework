@@ -237,7 +237,7 @@ class TestWithNoTestingJson:
         assert not list(tmp_path.rglob("testing.json"))
         # …which is what a command that may create the project's files
         # tells it (`test_cli_tree`: run, spec add, companion add, …).
-        Config(source_path=lib, write_default=True)
+        Config(source_path=lib, write_default=True).write_default_file()
         assert "Created default testing.json" in capsys.readouterr().out
         assert (tmp_path / "work" / "testing.json").is_file()
 
@@ -588,3 +588,27 @@ class TestAnEntryPassedOverIsSaid:
         assert main(["check", "--config", str(cfg)]) == 0
         out = capsys.readouterr().out
         assert out.count(line) == 1, out
+
+
+@pytest.mark.parametrize("command", ["check", "discover"])
+def test_a_source_path_that_is_not_there_is_one_sentence(
+    command, tmp_path, monkeypatch, capsys
+):
+    """`check --source-path /nonexistent` ran an OSError's text into the
+    hint after it: `[Errno 2] No such file or directory: '/nonexistent' Set
+    'source_path' in testing.json, …`."""
+    monkeypatch.chdir(tmp_path)
+    missing = tmp_path / "nonexistent"
+    assert main([command, "--source-path", str(missing)]) == 2
+    err = capsys.readouterr().err
+    assert err.strip() == f"Config error: --source-path {missing}: no such directory"
+
+
+def test_a_testing_json_source_path_that_is_not_there_names_the_file(tmp_path, capsys):
+    cfg = tmp_path / "testing.json"
+    cfg.write_text('{"source_path": "gone"}')
+    assert main(["discover", "--config", str(cfg)]) == 2
+    err = capsys.readouterr().err
+    assert err.strip() == (
+        f"Config error: {cfg}: source_path {tmp_path / 'gone'}: no such directory"
+    )

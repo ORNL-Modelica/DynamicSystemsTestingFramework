@@ -934,7 +934,9 @@ class TestTheRepoSFiles:
         lib.mkdir()
         (lib / "package.mo").write_text("package Lib end Lib;")
         monkeypatch.chdir(tmp_path)
-        Config(source_path=lib, reference_root=tmp_path / "refs", write_default=True)
+        Config(
+            source_path=lib, reference_root=tmp_path / "refs", write_default=True
+        ).write_default_file()
         capsys.readouterr()
         written = json.loads((tmp_path / "refs" / "testing.json").read_text())
         assert written == {
