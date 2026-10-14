@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config import Config
-from ...config_shape import Setting
+from ...config_shape import FILE, Setting
 from ...discovery.library_state import dependency_file
 from ...discovery.test_registry import TestModel
 from ...storage.batch_manifest import BatchManifest
@@ -110,14 +110,16 @@ class DymolaBackend(Backend):
             "of a worker in one session.",
         ),
         "interface": Setting(
-            {"type": "string"},
+            {"type": "string", "minLength": 1},
             None,
             "Dymola's Python interface: the archive (dymola-*.whl or "
-            "dymola.egg) or the folder that holds it, as a full path. "
+            "dymola.egg) or the folder that holds it. A relative path is "
+            "relative to this file, and ~ is your home directory. "
             "Default: the DYMOLA_INTERFACE_PATH environment variable, else "
             "Modelica/Library/python_interface of the Dymola that "
             "executables found, else that of the newest Dymola in the "
             "standard install folders.",
+            path=FILE,
         ),
     }
     source_types = frozenset({"modelica"})

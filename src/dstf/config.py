@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .config_shape import TESTING_JSON, refused
+from .config_shape import PROGRAM, TESTING_JSON, Setting, refused
 from .config_shape import default as _default
 
 if TYPE_CHECKING:
@@ -167,11 +167,16 @@ def _create_default_config(config_dir: Path, library_name: str) -> dict:
     return config
 
 
-def _backend_blocks(raw: object, label: str) -> dict[str, dict[str, Any]]:
+def _backend_blocks(
+    raw: object, label: str, base_dir: Path
+) -> dict[str, dict[str, Any]]:
     """The ``backends`` map as ``Config`` keeps it: a settings block per
     entry, each checked against the table of the backend its entry names
     (``Backend.settings`` — an entry called ``"Dymola 2025"`` is a Dymola).
     ``label`` says where the map is written, for the :class:`ConfigError`.
+
+    A setting that is a path (``Setting.path``) is kept as the absolute
+    one it means: relative to ``base_dir``, the file's directory.
 
     The map held a list of executable paths per entry before a backend had
     settings of its own; a list is refused with the new form in the
@@ -202,8 +207,28 @@ def _backend_blocks(raw: object, label: str) -> dict[str, dict[str, Any]]:
         problem = refused(where, block, cls.settings)
         if problem is not None:
             raise ConfigError(f"{label}: {problem}")
-        blocks[name] = dict(block)
+        blocks[name] = {
+            key: _anchored(value, cls.settings[key], base_dir)
+            for key, value in block.items()
+        }
     return blocks
+
+
+def _anchored(value: Any, setting: Setting, base_dir: Path) -> Any:
+    """A block's value as ``Config`` keeps it: a path setting's
+    (``Setting.path``) made absolute against ``base_dir``, a program's name
+    left for ``PATH``; any other value as it is."""
+    from .backends.locate import anchored, looks_like_path
+
+    if not setting.path or value is None:
+        return value
+
+    def one(entry: str) -> str:
+        if setting.path == PROGRAM and not looks_like_path(entry):
+            return entry
+        return anchored(entry if looks_like_path(entry) else f"./{entry}", base_dir)
+
+    return [one(entry) for entry in value] if isinstance(value, list) else one(value)
 
 
 def _pick_backend(backends: dict[str, dict[str, Any]], source_type: str) -> str:
@@ -547,11 +572,12 @@ class Config:
         # The `backends` map, each block checked against its backend's own
         # settings. A map given to the constructor stands for the file's.
         from .backends import backend_class
-        from .backends.locate import with_backend_path
+        from .backends.locate import anchored, with_backend_path
 
         self.backends = _backend_blocks(
             self.backends or file_config.get("backends", {}),
             str(config_found) if config_found and not self.backends else "Config",
+            config_found_dir or Path.cwd(),
         )
 
         # Backend selection. Resolution order, first match wins:
@@ -576,7 +602,9 @@ class Config:
                 # The one executable looked at, by the rule a block's
                 # pinned entry goes by: one that is not there is not found,
                 # and no other install is taken in its place.
-                block = with_backend_path(block, self.backend_path)
+                block = with_backend_path(
+                    block, anchored(self.backend_path, Path.cwd())
+                )
             self.located = backend_cls.locate(block)
             self.backend_path = self.located.executable
 

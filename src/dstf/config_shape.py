@@ -38,6 +38,19 @@ class Setting:
     #: sentence of its own — a base tolerance, a theme's name. The type
     #: check here leaves it to that one.
     own_rule: bool = False
+    #: A backend setting whose value — a string, or each string of a list —
+    #: is a path: :data:`FILE` or :data:`PROGRAM`. ``Config`` hands the
+    #: backend an absolute one (``backends.locate.anchored``).
+    path: str = ""
+
+
+#: :attr:`Setting.path`: a path. A relative one is relative to the
+#: directory of the ``testing.json`` it is written in, as ``source_path``
+#: is, and ``~`` is the home directory.
+FILE = "file"
+#: :attr:`Setting.path`: a path as :data:`FILE` — or, with no separator in
+#: it, a program's name, which is looked up on ``PATH``.
+PROGRAM = "program"
 
 
 def _note(key: str) -> Setting:
@@ -52,13 +65,16 @@ _STRINGS = {"type": "array", "items": {"type": "string"}}
 
 #: What every backend's settings block may hold, whatever the backend.
 EXECUTABLES = Setting(
-    _STRINGS,
+    {"type": "array", "items": {"type": "string", "minLength": 1}},
     [],
-    "Where this backend's program is, in order of preference: full paths, "
-    "or program names looked up on PATH. The first that is a file that can "
-    "be executed is used. If any entry is a full path and none of them is "
-    "one, the backend is not found — no other install is searched for. "
-    "Default: none; the backend is searched for.",
+    "Where this backend's program is, in order of preference: paths, or "
+    "program names looked up on PATH. An entry with a / or a \\ in it is a "
+    "path: a relative one is relative to this file, and ~ is your home "
+    "directory; any other entry is a program name. The first that is a "
+    "file that can be executed is used. If any entry is a path and none "
+    "of them is one, the backend is not found — no other install is "
+    "searched for. Default: none; the backend is searched for.",
+    path=PROGRAM,
 )
 
 #: Every key of ``testing.json``, in the order a reference page lists them.

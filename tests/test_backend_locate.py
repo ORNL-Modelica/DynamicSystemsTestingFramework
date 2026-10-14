@@ -637,6 +637,113 @@ class TestWhichBackendRuns:
 
 
 # ---------------------------------------------------------------------------
+# A path in testing.json is relative to testing.json
+# ---------------------------------------------------------------------------
+
+
+class TestPathsInTestingJson:
+    """As `source_path` is: a relative path in a block is relative to the
+    file's directory, wherever the command is run, and `~` is the home
+    directory. They used to be read against the working directory, and —
+    not being "full paths" — fell through to the search when not found."""
+
+    @pytest.fixture
+    def elsewhere(self, no_installs, tmp_path, monkeypatch):
+        """Run from a directory that is not the project's, with an omc on
+        PATH that no test here means."""
+        _program(no_installs / "omc")
+        (tmp_path / "elsewhere").mkdir()
+        monkeypatch.chdir(tmp_path / "elsewhere")
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        return tmp_path
+
+    def _config(self, tmp_path: Path, block: dict, name="OpenModelica") -> Config:
+        return Config(config_file=_project(tmp_path, {"backends": {name: block}}))
+
+    def test_a_relative_executable_is_beside_the_file(self, elsewhere):
+        mine = _program(elsewhere / "tools" / "omc")
+        config = self._config(elsewhere, {"executables": ["./tools/omc"]})
+        assert config.backend_path == str(mine)
+        assert config.located.parts[0].rule == Rule(SETTING, "executables")
+        assert config.backends["OpenModelica"]["executables"] == [str(mine)]
+        # No leading dot is needed: a separator makes it a path.
+        assert self._config(
+            elsewhere, {"executables": ["tools/omc"]}
+        ).backend_path == str(mine)
+
+    def test_a_relative_executable_that_is_not_there_is_not_found(self, elsewhere):
+        config = self._config(elsewhere, {"executables": ["./tools/omc"]})
+        assert config.backend_path is None
+        assert config.located.parts[0].detail == (
+            f"the configured executables: {elsewhere / 'tools' / 'omc'} does not exist"
+        )
+
+    def test_a_tilde_is_the_home_directory(self, elsewhere):
+        mine = _program(elsewhere / "home" / "om" / "bin" / "omc")
+        config = self._config(elsewhere, {"executables": ["~/om/bin/omc"]})
+        assert config.backend_path == str(mine)
+        gone = self._config(elsewhere, {"executables": ["~/nope/omc"]})
+        assert gone.backend_path is None
+        assert f"{elsewhere / 'home' / 'nope' / 'omc'} does not exist" in (
+            gone.located.missing()
+        )
+
+    def test_a_name_with_no_separator_is_looked_up_on_path(self, elsewhere):
+        config = self._config(elsewhere, {"executables": ["omc"]})
+        assert config.backend_path == str(elsewhere / "bin" / "omc")
+        assert config.backends["OpenModelica"]["executables"] == ["omc"]
+
+    def test_a_path_of_another_system_is_left_as_written(self, elsewhere):
+        pinned = "C:\\Program Files\\OpenModelica\\bin\\omc.exe"
+        config = self._config(elsewhere, {"executables": [pinned]})
+        assert config.backends["OpenModelica"]["executables"] == [pinned]
+        assert config.backend_path is None
+
+    @pytest.mark.parametrize(
+        ("block", "said"),
+        [
+            (
+                {"executables": [""]},
+                'backends.Dymola.executables: must be a list of non-empty strings, got [""]',
+            ),
+            (
+                {"interface": ""},
+                'backends.Dymola.interface: must be a non-empty string, got ""',
+            ),
+        ],
+    )
+    def test_an_empty_string_is_no_path(self, elsewhere, block, said):
+        with pytest.raises(ConfigError) as exc:
+            self._config(elsewhere, block, name="Dymola")
+        assert str(exc.value) == f"{elsewhere / 'testing.json'}: {said}"
+
+    def test_dymola_s_interface_is_beside_the_file(self, elsewhere):
+        wheel = _wheel(elsewhere / "iface", "2025.0")
+        config = self._config(elsewhere, {"interface": "iface"}, name="Dymola")
+        assert config.located.path(INTERFACE) == str(wheel)
+        assert config.backends["Dymola"]["interface"] == str(elsewhere / "iface")
+        home = _wheel(elsewhere / "home" / "dy", "2026.0")
+        config = self._config(elsewhere, {"interface": "~/dy"}, name="Dymola")
+        assert config.located.path(INTERFACE) == str(home)
+
+    def test_backend_path_is_relative_to_where_the_command_is_run(self, elsewhere):
+        here = _program(elsewhere / "elsewhere" / "omc")
+        config = Config(
+            config_file=_project(elsewhere, {"backends": {"OpenModelica": {}}}),
+            backend_path="./omc",
+        )
+        assert config.backend_path == str(here)
+
+    def test_each_key_s_description_says_the_rule(self):
+        from dstf.config_shape import EXECUTABLES
+
+        assert "relative to this file" in EXECUTABLES.description
+        assert (
+            "relative to this file" in DymolaBackend.settings["interface"].description
+        )
+
+
+# ---------------------------------------------------------------------------
 # A plug-in backend brings its own table and its own locate
 # ---------------------------------------------------------------------------
 

@@ -63,9 +63,12 @@ def said(schema: Mapping[str, Any]) -> str | None:
     if not isinstance(kind, str):
         return None
     text = SAID[kind]
+    if kind == "string" and schema.get("minLength"):
+        text = "a non-empty string"
     items = schema.get("items")
     if kind == "array" and isinstance(items, dict) and items.get("type") in _SAID_MANY:
-        text += f" of {_SAID_MANY[items['type']]}"
+        many = _SAID_MANY[items["type"]]
+        text += f" of non-empty {many}" if items.get("minLength") else f" of {many}"
     if "minimum" in schema:
         text += f" of {schema['minimum']} or more"
     return text
@@ -73,12 +76,15 @@ def said(schema: Mapping[str, Any]) -> str | None:
 
 def holds(schema: Mapping[str, Any], value: object) -> bool:
     """Whether ``value`` is what ``schema`` takes: its ``type``, a list's
-    ``items`` and a number's ``minimum`` — the words :func:`said` says. A
-    fragment with no one ``type`` holds anything here."""
+    ``items``, a number's ``minimum`` and a string's ``minLength`` — the
+    words :func:`said` says. A fragment with no one ``type`` holds anything
+    here."""
     kind = schema.get("type")
     if not isinstance(kind, str):
         return True
     if not HOLDS[kind](value):
+        return False
+    if kind == "string" and len(value) < schema.get("minLength", 0):  # type: ignore[arg-type]
         return False
     items = schema.get("items")
     if kind == "array" and isinstance(items, dict):

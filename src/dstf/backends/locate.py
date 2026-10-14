@@ -137,17 +137,29 @@ _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def looks_like_path(entry: str) -> bool:
-    """True if ``entry`` is an OS-specific path (not just a bare binary name).
-
-    POSIX-absolute (``/usr/bin/omc``) or Windows-drive-rooted
-    (``C:\\Program Files\\...``) count as pinned paths; bare names like
-    ``"omc"`` or ``"dymola.exe"`` do not. A regex and not pathlib's
-    ``is_absolute``: that returns False for ``C:\\...`` on Linux (PosixPath
-    does not recognize Windows drive letters).
+    """True if ``entry`` names a path, not a program to look up on
+    ``PATH``: it holds a separator — either system's, so
+    ``C:\\Program Files\\...`` is a path on Linux too — or starts at the
+    home directory (``~``). ``/usr/bin/omc``, ``./omc`` and ``tools/omc``
+    are paths; ``omc`` and ``dymola.exe`` are names.
     """
-    if entry.startswith("/"):
-        return True
-    return bool(_WINDOWS_DRIVE_RE.match(entry))
+    return "/" in entry or "\\" in entry or entry.startswith("~")
+
+
+def anchored(entry: str, base: Path) -> str:
+    """A path as it was written — in ``testing.json`` (``base``: that
+    file's directory) or on the command line (the working directory) — as
+    the absolute one it means: ``~`` expanded, a relative path under
+    ``base``. A program name is returned as it is, for ``PATH``; so is a
+    path rooted on either system (``/opt/...``, ``C:\\...``), which means
+    one place whatever system reads it — and on the other one is not there.
+    """
+    if not looks_like_path(entry):
+        return entry
+    if entry.startswith("/") or _WINDOWS_DRIVE_RE.match(entry):
+        return entry
+    path = Path(entry).expanduser()
+    return os.path.normpath(path if path.is_absolute() else base / path)
 
 
 def with_backend_path(settings: Mapping[str, Any], path: str) -> dict[str, Any]:
@@ -204,7 +216,7 @@ def find_executable(
        path that is a program to start (:func:`unrunnable`), or name that
        resolves on ``PATH``. Settings that PIN the
        executable (:func:`pins`) and name none that is there are NOT
-       FOUND, and nothing below is tried: a list of OS-specific absolute
+       FOUND, and nothing below is tried: a list of OS-specific
        paths (``C:\\Program Files\\...\\Dymola.exe``) says the user wants
        *that* install, and treating some same-named binary on ``PATH`` as
        its equal would silently run another simulator on a mixed-OS setup

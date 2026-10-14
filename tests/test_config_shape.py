@@ -273,11 +273,12 @@ class TestBackendBlocks:
             ),
             (
                 {"executables": "dymola"},
-                'backends.Dymola.executables: must be a list of strings, got "dymola"',
+                "backends.Dymola.executables: must be a list of non-empty strings, "
+                'got "dymola"',
             ),
             (
                 {"interface": None},
-                "backends.Dymola.interface: must be a string, got null",
+                "backends.Dymola.interface: must be a non-empty string, got null",
             ),
         ],
     )
@@ -426,7 +427,7 @@ class TestTheRepoSFiles:
         from dstf.config import _backend_blocks
 
         data = load_config_file(REPO / path)
-        blocks = _backend_blocks(data.get("backends", {}), path)
+        blocks = _backend_blocks(data.get("backends", {}), path, (REPO / path).parent)
         assert all(isinstance(block, dict) for block in blocks.values())
 
     @pytest.mark.parametrize("example", ["modelica", "julia", "python"])
