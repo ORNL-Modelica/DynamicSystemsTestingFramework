@@ -31,6 +31,7 @@ __all__ = [
     "backend_family",
     "backend_names",
     "select_backend",
+    "source_types",
     "dataset_kind_for",
 ]
 
@@ -177,6 +178,20 @@ def backend_names() -> list[str]:
     ``dstf check`` lists them in, and the one a project that names no
     backend is searched in (``Backend.source_types``)."""
     return [*_BUILTINS, *(name for name in _REGISTRY if name not in _BUILTINS)]
+
+
+def source_types() -> list[str]:
+    """Every ``source_type`` a project may say: the ones a registered
+    backend runs (``Backend.source_types``), in the backends' order — the
+    built-ins' ``modelica``, ``fmu``, ``julia``, ``python``, then a
+    plug-in's. ``Config`` refuses any other, and the published schema
+    lists these."""
+    found: dict[str, None] = {}
+    for name in backend_names():
+        cls = backend_class(name)
+        if cls is not None:
+            found.update(dict.fromkeys(sorted(cls.source_types)))
+    return list(found)
 
 
 def backend_family(backend_name: str) -> str:

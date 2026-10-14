@@ -552,16 +552,34 @@ class TestWhichBackendRuns:
         path.write_text(json.dumps({"source_type": "fmu"}))
         assert Config(config_file=path).backend_name == "FMPy"
 
-    def test_a_source_type_no_backend_runs_asks_for_a_name(self, no_installs, tmp_path):
+    def test_a_source_type_no_backend_runs_is_not_one(self, no_installs, tmp_path):
+        """In a file, whatever backend is named beside it: it used to be
+        read as "not Modelica", and the library's tests were not looked
+        for. A plug-in adds a source type by its backend's `source_types`
+        (`TestAPlugInBackend`)."""
         path = tmp_path / "testing.json"
-        path.write_text(json.dumps({"source_type": "simulink"}))
+        for config in (
+            {"source_type": "simulink"},
+            {"source_type": "simulink", "backend": "Python"},
+        ):
+            path.write_text(json.dumps(config))
+            with pytest.raises(ConfigError) as exc:
+                Config(config_file=path)
+            assert str(exc.value) == (
+                f'{path}: source_type: must be one of "modelica", "fmu", "julia", '
+                '"python", got "simulink"'
+            )
+
+    def test_a_source_type_given_in_code_that_no_backend_runs_asks_for_a_name(
+        self, no_installs
+    ):
+        from dstf.config import _pick_backend
+
         with pytest.raises(ConfigError) as exc:
-            Config(config_file=path)
+            _pick_backend({}, "simulink")
         assert str(exc.value).startswith(
             'no backend runs source_type "simulink": name one with "backend"'
         )
-        path.write_text(json.dumps({"source_type": "simulink", "backend": "Python"}))
-        assert Config(config_file=path).backend_name == "Python"
 
     def test_backends_in_the_order_written(self, no_installs, tmp_path):
         _program(no_installs / "omc")
@@ -827,6 +845,14 @@ class TestAPlugInBackend:
         assert isinstance(located, Located)
         assert located.path(EXECUTABLE) == str(exe)
         assert located.parts[0].rule == Rule(SETTING, "executables")
+
+    def test_its_source_type_is_one_a_project_may_say(self, acme):
+        from dstf.backends import source_types
+        from dstf.reporting.schema_export import build_config_schema
+
+        assert source_types() == ["modelica", "fmu", "julia", "python", "acme"]
+        schema = build_config_schema()
+        assert schema["properties"]["source_type"]["enum"] == source_types()
 
     def test_it_is_listed_after_the_built_ins(self, acme):
         names = backend_names()

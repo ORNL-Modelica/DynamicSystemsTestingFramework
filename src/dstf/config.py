@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config_shape import PROGRAM, TESTING_JSON, Setting, refused
 from .config_shape import default as _default
-from .json_types import is_number
+from .json_types import holds, is_number, said
 
 if TYPE_CHECKING:
     from .backends.locate import Located
@@ -192,6 +192,18 @@ def load_config_file(path: Path) -> dict:
     problem = refused("", data, TESTING_JSON)
     if problem is not None:
         raise ConfigError(f"{path}: {problem}")
+    if "source_type" in data:
+        # One a backend runs — a plug-in's included. Any other used to be
+        # read as "not Modelica": the .mo scan went off without a word.
+        from .backends import source_types
+        from .comparison.sides import _as_json
+
+        choices = {"enum": source_types()}
+        if not holds(choices, data["source_type"]):
+            raise ConfigError(
+                f"{path}: source_type: must be {said(choices)}, "
+                f"got {_as_json(data['source_type'])}"
+            )
     return data
 
 
@@ -694,7 +706,10 @@ class Config:
         from .comparison.sides import base_tolerance_refused, is_base_tolerance
 
         if self.tolerance is None:
-            tolerance, named = file_config.get("tolerance"), "testing.json tolerance"
+            tolerance, named = (
+                file_config.get("tolerance"),
+                f"{config_found}: tolerance",
+            )
         else:
             tolerance, named = self.tolerance, "--tolerance"
         if tolerance is None:
@@ -709,7 +724,7 @@ class Config:
         if startup is not None:
             if not is_number(startup) or not startup > 0:
                 raise ConfigError(
-                    f"testing.json worker_startup_timeout must be a positive "
+                    f"{config_found}: worker_startup_timeout must be a positive "
                     f"number of seconds, got {startup!r}"
                 )
             self.worker_startup_timeout = float(startup)
@@ -723,7 +738,7 @@ class Config:
         # only way to leave it unset.
         if "baseline_points" in file_config:
             self.baseline_points = file_config["baseline_points"]
-            named = "testing.json baseline_points"
+            named = f"{config_found}: baseline_points"
         else:
             named = "baseline_points"
         problem = baseline_points_refused(named, self.baseline_points)
@@ -734,7 +749,7 @@ class Config:
         from .reporting.theme import THEMES
 
         if "theme" in file_config:
-            self.theme, named = file_config["theme"], "testing.json theme"
+            self.theme, named = file_config["theme"], f"{config_found}: theme"
         else:
             named = "theme"
         if not isinstance(self.theme, str) or self.theme not in THEMES:

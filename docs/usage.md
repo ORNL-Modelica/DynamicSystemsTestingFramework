@@ -35,7 +35,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `source_path` | No | Path to library source location (Modelica package.mo directory, FMU directory, etc.). Relative to `testing.json` location. Can be provided via `--source-path` instead. |
-| `source_type` | No | `"modelica"` (the default: `source_path` holds a `package.mo` and its `.mo` files are scanned for tests), or `"fmu"` / `"julia"` / `"python"`, whose tests come from `test_spec.json` alone. |
+| `source_type` | No | `"modelica"` (the default: `source_path` holds a `package.mo` and its `.mo` files are scanned for tests), or `"fmu"` / `"julia"` / `"python"`, whose tests come from `test_spec.json` alone. Any other value is a config error that lists them; a plug-in adds one with its backend (`Backend.source_types`). |
 | `library_name` | No | The library's name for a non-Modelica source (default: the name of the directory holding `testing.json`); a Modelica library's is read from its `package.mo`. |
 | `backend` | No | Backend name. Use named entries like `"Dymola 2025"` to target specific versions (an entry is the backend its name starts with). A name that is no entry of `backends` and starts with no backend's name is a config error that lists both. Omitted: the first `backends` entry that is found on this machine, else the first entry; with no `backends`, the first installed backend that runs this `source_type` (for a Modelica library: Dymola, then OpenModelica). |
 | `backends` | No | Map of backend names to a settings block each: `{"executables": [...]}` plus that backend's own settings (see "Backend settings" below). `executables` lists candidate paths or program names (the first that is a file that can be executed wins): an entry with a `/` or a `\` in it is a path — a relative one is relative to `testing.json`, and `~` is the home directory — and any other is a program name, looked up on `PATH`; an empty string is a type error. An empty block `{}` — or no block — means the backend is searched for: `PATH`, then its standard install folders. A block whose `executables` holds a path, none of which is such a file — one that does not exist, a directory, a file that is not executable — is NOT found: no other install is taken in its place, and `check` and `run` say which entry and why. |
@@ -51,7 +51,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `worker_startup_timeout` | No | Seconds a persistent worker (Dymola, OpenModelica, Julia) may take to start before the run fails with the backend's message. One positive number; default 600 on every backend. The bound is for a tool that hangs — a tool that died fails the start at once — so raise it only for a library whose load takes longer (a large library is minutes of `loadFile` in OpenModelica); the message of a start that ran out names this key and the step the tool was in. |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 | `work_dir` | No | Where runs write their output, relative to `testing.json` location (default: `testing_output/<library>/<backend>/<os>/` under the current directory). `--work-dir` overrides it. |
-| `os` | No | The OS partition of the references (default: detected — `windows`, `linux` or `macos`). |
+| `os` | No | The OS partition of the references: `windows`, `linux` or `macos` (default: detected); any other value is a config error. |
 | `theme` | No | The bundled theme the pages are drawn in: `"default"` (the default) or `"dark"`. The dashboard and the per-test report pages are generated in it — set it and re-run or `compare` to regenerate them — and `dstf author` opens in it. A name only: any other value, a path included, is a config error that lists the two. There is no flag for it. |
 
 All relative paths resolve from where `testing.json` is located.
@@ -74,7 +74,9 @@ resolves to on this machine, and by which rule.
 mean "tolerance"?` (exit 2) from every command that reads the file, and
 `backends.Dymola: unknown field …` for a key of a block. A value of another
 type than its key takes is the same error (`max_embedded_samples: must be a
-whole number, got "abc"`). `description` / `info` / `metadata` are for notes,
+whole number, got "abc"` — and `got 1000.0`: a whole number is written as
+one, here and in `test_spec.json`), and every config error names the file by
+its path. `description` / `info` / `metadata` are for notes,
 and `$schema` may point an editor at `dstf spec schema testing`'s
 output, which lists every key with its type, default and description.
 
@@ -512,7 +514,7 @@ that is not is refused, never read loosely and never skipped for the next
 one down:
 
 - **The project's** is a config error: one line, `Config error: the base
-  tolerance must be a number (testing.json tolerance is "0.01")`, and exit
+  tolerance must be a number (…/testing.json: tolerance is "0.01")`, and exit
   code 2 before anything runs; `dstf author` does not open the project.
   `null` is unset.
 - **A test's** — its spec entry's or its baseline's, whichever is in effect
@@ -647,7 +649,7 @@ say `"all"` in a project that gives a number. It is written by hand:
 on an entry it rewrites.
 
 Anything else — `true`, `2000.0`, `0`, `1`, a negative, `"ALL"`, `null` — is a
-config error in either file: one line, `Config error: testing.json
+config error in either file: one line, `Config error: …/testing.json:
 baseline_points is 1: the points a baseline keeps are "all" or a whole number
 of 2 or more` (for an entry, `<test_spec.json>:
 tests[MyLib.Examples.LongTransient].baseline_points is 1: …`), and exit code 2

@@ -95,11 +95,15 @@ TESTING_JSON: dict[str, Setting] = {
         "command is run in; any other source is this file's directory.",
     ),
     "source_type": Setting(
+        # The choices are the registered backends' (`backends.source_types`,
+        # a plug-in's among them): `Config` holds the value to them, and
+        # the published schema lists them.
         {"type": "string"},
         "modelica",
         'What source_path holds: "modelica", "fmu", "julia" or "python". '
         "Only a Modelica library is scanned for tests (its .mo files); the "
         'others take every test from test_spec.json. Default: "modelica".',
+        own_rule=True,
     ),
     "library_name": Setting(
         {"type": "string"},
@@ -163,7 +167,7 @@ TESTING_JSON: dict[str, Setting] = {
         "command is run in.",
     ),
     "os": Setting(
-        {"type": "string"},
+        {"type": "string", "enum": ["linux", "windows", "macos"]},
         None,
         "The operating-system part of the baselines' folder, "
         '<reference_root>/<Backend>/<os>/: "linux", "windows" or "macos". '
@@ -210,7 +214,8 @@ TESTING_JSON: dict[str, Setting] = {
         'but not compared. Default: ["CPUtime", "EventCounter"].',
     ),
     "theme": Setting(
-        {"type": "string"},
+        # `reporting.theme.THEMES`, which `Config` holds the value to.
+        {"type": "string", "enum": ["default", "dark"]},
         "default",
         "The colour theme of the dashboard and the report pages, and the "
         'one `dstf author` opens in: "default" or "dark". Default: '

@@ -426,9 +426,11 @@ def build_config_schema() -> dict:
     As strict as ``Config``: a key that is in neither table is refused
     there, and is ``additionalProperties: false`` here.
     """
-    from ..backends import backend_class, backend_names
+    from ..backends import backend_class, backend_names, source_types
 
     properties = schema_properties(TESTING_JSON)
+    # What `Config` holds the value to: one a registered backend runs.
+    properties["source_type"]["enum"] = source_types()
     blocks: dict[str, Any] = {}
     for name in backend_names():
         cls = backend_class(name)

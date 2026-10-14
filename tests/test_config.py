@@ -816,7 +816,7 @@ class TestTheProjectToleranceIsOneFiniteNumber:
         path = self._write(tmp_path, raw)
         with pytest.raises(ConfigError) as exc:
             Config(config_file=str(path))
-        assert str(exc.value) == self._said("testing.json tolerance", json.loads(raw))
+        assert str(exc.value) == self._said(f"{path}: tolerance", json.loads(raw))
 
     @pytest.mark.parametrize("raw,value", [("null", 1e-4), ("0", 0.0), ("-1", -1.0)])
     def test_null_is_the_default_and_a_number_is_itself(self, tmp_path, raw, value):
@@ -833,7 +833,7 @@ class TestTheProjectToleranceIsOneFiniteNumber:
     @pytest.mark.parametrize(
         "file_raw,flag,said",
         [
-            ('"0.5"', [], 'testing.json tolerance is "0.5"'),
+            ('"0.5"', [], '{path}: tolerance is "0.5"'),
             ("0.5", ["--tolerance", "nan"], "--tolerance is NaN"),
         ],
     )
@@ -850,14 +850,14 @@ class TestTheProjectToleranceIsOneFiniteNumber:
             == 2
         )
         err = capsys.readouterr().err
-        assert f"Config error: {self.RULE} ({said})" in err
+        assert f"Config error: {self.RULE} ({said.format(path=path)})" in err
         assert "Traceback" not in err
 
     def test_the_tool_refuses_to_open_it(self, tmp_path):
         from dstf.authoring.session import Session
 
         path = self._write(tmp_path, "[1]")
-        with pytest.raises(ConfigError, match=r"testing\.json tolerance is \[1\]"):
+        with pytest.raises(ConfigError, match=r"testing\.json: tolerance is \[1\]"):
             Session().open(path, work_dir=tmp_path / "work")
 
 
@@ -1112,10 +1112,11 @@ class TestTheme:
     def test_anything_else_is_a_config_error_naming_the_bundled_ones(
         self, tmp_path, raw
     ):
+        path = self._config(tmp_path, raw)
         with pytest.raises(ConfigError) as exc:
-            Config(config_file=self._config(tmp_path, raw))
+            Config(config_file=path)
         assert str(exc.value) == (
-            f"testing.json theme is {raw}: the bundled themes are default, dark"
+            f"{path}: theme is {raw}: the bundled themes are default, dark"
         )
 
     def test_one_set_in_code_is_judged_too(self, tmp_path):
@@ -1132,7 +1133,7 @@ class TestTheme:
         work = tmp_path / "work"
         assert main(["--config", str(path), "compare", "--work-dir", str(work)]) == 2
         err = capsys.readouterr().err
-        assert 'Config error: testing.json theme is "solarized"' in err
+        assert f'Config error: {path}: theme is "solarized"' in err
         assert "Traceback" not in err
 
     def test_there_is_no_flag_for_it(self):

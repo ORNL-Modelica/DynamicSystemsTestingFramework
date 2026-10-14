@@ -212,8 +212,9 @@ def test_testing_json_takes_all_or_a_whole_number_from_two(tmp_path, value):
 def test_testing_json_refuses_anything_else_with_one_sentence(tmp_path, value):
     with pytest.raises(ConfigError) as refused:
         _config(tmp_path, baseline_points=value)
+    path = tmp_path / "project" / "testing.json"
     assert str(refused.value) == (
-        f"testing.json baseline_points is {json.dumps(value)}: {FORMS}"
+        f"{path}: baseline_points is {json.dumps(value)}: {FORMS}"
     )
 
 
@@ -223,7 +224,7 @@ def test_a_refused_testing_json_is_one_line_and_exit_two(tmp_path, capsys):
     config_file = tmp_path / "project" / "testing.json"
     assert main(["--config", str(config_file), "discover"]) == 2
     assert capsys.readouterr().err == (
-        f"Config error: testing.json baseline_points is 1: {FORMS}\n"
+        f"Config error: {config_file}: baseline_points is 1: {FORMS}\n"
     )
 
 

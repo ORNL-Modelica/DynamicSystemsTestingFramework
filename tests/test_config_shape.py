@@ -151,10 +151,8 @@ class TestAFileThatIsNotThatFile:
         path.write_bytes(raw)
         assert main(["--config", str(path), *command]) == 2
         err = capsys.readouterr().err
-        assert err.startswith("Config error: ") and said in err, err
+        assert err.startswith(f"Config error: {path}: {said}"), err
         assert err.count("\n") == 1 and "Traceback" not in err
-        if "worker_startup_timeout" not in case:
-            assert err.startswith(f"Config error: {path}: {said}")
 
     def test_a_byte_order_mark_is_read_as_the_spec_s_is(self, tmp_path):
         path = _project(tmp_path, {})
@@ -238,6 +236,106 @@ class TestABackendThatIsNone:
         assert Config(config_file=path).backend_name == name
 
 
+class TestValuesTheCodeCannotUse:
+    """What the table let by and the code then could not use."""
+
+    @pytest.mark.parametrize("value", [3.0, True, 1e3])
+    def test_a_whole_number_is_an_int(self, tmp_path, value):
+        """`"batch_size": 3.0` passed, and `run --batch` died slicing a
+        list with it. One rule (`json_types`), for every whole-number key —
+        of testing.json, of a backend's block, of test_spec.json."""
+        from dstf.json_types import holds
+
+        assert not holds({"type": "integer"}, value)
+        got = json.dumps(value)
+        for config, said in (
+            (
+                {"backends": {"Dymola": {"batch_size": value}}},
+                "backends.Dymola.batch_size: must be a whole number of 1 or more",
+            ),
+            (
+                {"max_embedded_samples": value},
+                "max_embedded_samples: must be a whole number",
+            ),
+        ):
+            path = _project(tmp_path, config)
+            with pytest.raises(ConfigError) as exc:
+                Config(config_file=path)
+            assert str(exc.value) == f"{path}: {said}, got {got}"
+
+    def test_a_whole_number_in_the_spec_is_an_int_too(self, tmp_path):
+        from dstf.discovery.test_registry import discover_tests
+
+        path = _project(tmp_path, {"test_spec": "test_spec.json"})
+        (tmp_path / "test_spec.json").write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {"model": "A", "simulation": {"number_of_intervals": 500.0}}
+                    ]
+                }
+            )
+        )
+        with pytest.raises(ConfigError, match="must be a whole number, got 500.0"):
+            discover_tests(Config(config_file=path))
+
+    def test_os_is_one_of_three(self, tmp_path):
+        path = _project(tmp_path, {"os": "bogus"})
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=path)
+        assert str(exc.value) == (
+            f'{path}: os: must be one of "linux", "windows", "macos", got "bogus"'
+        )
+        for name in ("linux", "windows", "macos"):
+            assert Config(config_file=_project(tmp_path, {"os": name})).os_name == name
+        assert TESTING_JSON["os"].schema["enum"] == ["linux", "windows", "macos"]
+
+    @pytest.mark.parametrize("value", ["bogus", "Modelica", "", 3, None])
+    def test_source_type_is_one_a_backend_runs(self, tmp_path, value):
+        """`"source_type": "bogus"` silently turned the .mo scan off."""
+        path = tmp_path / "testing.json"
+        path.write_text(json.dumps({"source_type": value}))
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=path)
+        assert str(exc.value) == (
+            f'{path}: source_type: must be one of "modelica", "fmu", "julia", '
+            f'"python", got {json.dumps(value)}'
+        )
+
+    def test_the_schema_s_choices_are_the_loader_s(self):
+        from dstf.backends import source_types
+        from dstf.reporting.theme import THEMES
+
+        properties = build_config_schema()["properties"]
+        assert source_types() == ["modelica", "fmu", "julia", "python"]
+        assert properties["source_type"]["enum"] == source_types()
+        assert properties["os"]["enum"] == ["linux", "windows", "macos"]
+        assert properties["theme"]["enum"] == list(THEMES)
+
+    @pytest.mark.parametrize(
+        ("key", "value", "said"),
+        [
+            ("tolerance", "0.5", 'tolerance is "0.5")'),
+            ("baseline_points", 1, "baseline_points is 1: "),
+            ("worker_startup_timeout", -1, "worker_startup_timeout must be a positive"),
+            ("theme", "neon", 'theme is "neon": '),
+        ],
+    )
+    def test_a_key_s_own_rule_names_the_file_by_its_path(
+        self, tmp_path, key, value, said
+    ):
+        """Under `--config other/project.json` each said `testing.json …`."""
+        path = tmp_path / "other" / "project.json"
+        path.parent.mkdir()
+        path.write_text(
+            json.dumps({"source_type": "python", "backend": "Python", key: value})
+        )
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=path)
+        assert f"{path}: {said}" in str(exc.value)
+        assert "testing.json" not in str(exc.value)
+
+
 class TestWrongTypes:
     @pytest.mark.parametrize(
         ("key", "value", "said"),
@@ -282,6 +380,8 @@ class TestWrongTypes:
             "baseline_points",
             "theme",
             "worker_startup_timeout",
+            # The registered backends' — a plug-in's among them.
+            "source_type",
         }
 
 
