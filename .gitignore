@@ -46,6 +46,9 @@ testing_output/
 # Generated reports (dashboard.html, interactive plots, comparison_data.json)
 reports/
 
+# The documentation site, built (sphinx-build docs docs/_build/html)
+docs/_build/
+
 # Reference-FMUs binaries (fetched by scripts/fetch_reference_fmus.py)
 examples/fmu/reference-fmus-binaries/
 

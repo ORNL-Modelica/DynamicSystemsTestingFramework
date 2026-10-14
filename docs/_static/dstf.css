@@ -1,0 +1,54 @@
+/* The reference tables (docs/_ext/dstf_reference.py). */
+table.dstf-reference td {
+  vertical-align: top;
+}
+code.dstf-nowrap {
+  white-space: nowrap;
+}
+
+/* On a narrow screen a row's cells stack: the name, then its type and its
+   default, each led by what it is, then the description. */
+@media (max-width: 40em) {
+  table.dstf-reference,
+  table.dstf-reference tbody,
+  table.dstf-reference tr,
+  table.dstf-reference td {
+    display: block;
+    width: 100%;
+  }
+  table.dstf-reference colgroup,
+  table.dstf-reference thead {
+    display: none;
+  }
+  table.dstf-reference tr {
+    border-top: 1px solid var(--color-table-border);
+    padding: 0.4em 0;
+  }
+  table.dstf-reference td,
+  table.dstf-reference th {
+    border: none;
+    padding: 0.1em 0.5em;
+  }
+  table.dstf-reference td p {
+    margin: 0;
+  }
+  table.dstf-reference td.dstf-type p,
+  table.dstf-reference td.dstf-default p {
+    display: inline;
+  }
+  /* A default of none says nothing a stacked row needs. */
+  table.dstf-reference td.dstf-default.dstf-empty {
+    display: none;
+  }
+  table.dstf-reference td.dstf-name {
+    font-weight: 600;
+  }
+  table.dstf-reference td.dstf-type::before {
+    content: "Type: ";
+    color: var(--color-foreground-secondary);
+  }
+  table.dstf-reference td.dstf-default::before {
+    content: "Default: ";
+    color: var(--color-foreground-secondary);
+  }
+}

@@ -55,3 +55,23 @@ jobs:
           uv run pytest -q
           -m "not playwright and not dymola and not fmpy and not ompython and not julia and not reference_fmus"
           --cov=dstf --cov-report=term-missing
+
+  # The documentation site, built as Read the Docs builds it: every warning
+  # is an error (a reference page that names a type it cannot link to, a
+  # page in no table of contents). A job of its own, beside the tests, so
+  # it adds nothing to their time.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --extra docs --locked
+
+      - name: Build the site
+        run: uv run sphinx-build -W --keep-going -b html docs docs/_build/html
