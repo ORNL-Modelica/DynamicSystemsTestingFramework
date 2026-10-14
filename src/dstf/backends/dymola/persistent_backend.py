@@ -884,7 +884,11 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         #   * _patch_dymola_for_parallel_startup — narrows DymolaInterface's
         #     module-level startup lock so workers can launch concurrently
         #     (~7s × N serialized → all workers in ~7s wall).
-        self._di_cls = load_dymola_interface(self.interface_of(self.config))
+        found = self.interface_of(self.config)
+        if found.path is not None and found.detail:
+            # Not the interface of the executable's own install: say whose.
+            logger.warning("Dymola's Python interface was %s", found.detail)
+        self._di_cls = load_dymola_interface(found)
         _install_dymola_log_filter()
         _patch_dymola_for_parallel_startup()
 

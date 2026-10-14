@@ -350,17 +350,171 @@ class TestDymolaInterface:
         assert located.path(INTERFACE) == str(older_wheel)
         assert located.part(INTERFACE).rule == Rule(SEARCH, "beside the executable")
 
-    def test_the_standard_folders_are_the_last_resort_newest_first(
+    def test_the_standard_folders_are_for_an_install_that_cannot_be_told(
         self, no_installs, tmp_path, monkeypatch
     ):
-        """An executable whose install holds no interface (here: one that is
-        no Dymola install at all) leaves the newest one of the folders."""
+        """An executable that says nothing of its install (here: one that is
+        no Dymola's at all) leaves the newest one of the folders — and the
+        part says so, in one line `check` prints and a run logs."""
         _, (_, newer_wheel) = self._two_installs(tmp_path, monkeypatch)
         stray = _program(tmp_path / "stray" / "dymola")
-        part = DymolaBackend.locate({"executables": [str(stray)]}).part(INTERFACE)
+        located = DymolaBackend.locate({"executables": [str(stray)]})
+        part = located.part(INTERFACE)
         assert part.path == str(newer_wheel)
         assert part.rule == Rule(
             SEARCH, f"the standard folder {tmp_path / 'Program Files'}"
+        )
+        assert part.detail == (
+            f"taken from {newer_wheel.parents[3]}: the install of {stray} could "
+            "not be determined (its launcher sets no DYMOLA)"
+        )
+        assert f"    {part.detail}" in located.lines("Dymola")
+
+    def test_an_install_that_is_known_and_holds_no_archive_is_not_found(
+        self, no_installs, tmp_path, monkeypatch
+    ):
+        """It used to take the NEWEST standard-folder interface in silence:
+        the defect the rule exists to end. Once the executable's install is
+        known, the interface is looked for THERE and nowhere else."""
+        (older_exe, older_wheel), _ = self._two_installs(tmp_path, monkeypatch)
+        older_wheel.unlink()
+        part = DymolaBackend.locate({"executables": [str(older_exe)]}).part(INTERFACE)
+        assert part.path is None and part.rule is None
+        assert part.detail == (
+            f"no dymola-*.whl or dymola.egg in {older_wheel.parent} "
+            f"(the install of {older_exe})"
+        )
+
+    def _launcher(self, tmp_path, monkeypatch, text: str, env: str | None = None):
+        """A launcher outside the installs, holding ``text`` with ``{older}``
+        and ``{newer}`` as the two installs. Returns what was located and
+        the two wheels."""
+        # As Linux has them, no space in a path: an unquoted one ends at it.
+        base = tmp_path / "opt"
+        older_exe, older_wheel = _dymola_install(base, "dymola-2025x-x86_64", "2025.0")
+        newer_exe, newer_wheel = _dymola_install(base, "dymola-2026x-x86_64", "2026.0")
+        monkeypatch.setattr(interface_loader, "platform_glob_bases", lambda: [base])
+        older, newer = older_exe.parent.parent, newer_exe.parent.parent
+        if env is None:
+            monkeypatch.delenv("DYMOLA", raising=False)
+        else:
+            monkeypatch.setenv("DYMOLA", env.format(older=older, newer=newer))
+        launcher = _program(
+            tmp_path / "bin" / "dymola", text.format(older=older, newer=newer)
+        )
+        located = DymolaBackend.locate({"executables": [str(launcher)]})
+        return located.part(INTERFACE), older_wheel, newer_wheel, launcher
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "#!/bin/sh\nexport DYMOLA={older} # the install\nexec $DYMOLA/bin64/dymola\n",
+            '#!/bin/sh\nexport DYMOLA={older}; exec $DYMOLA/bin64/dymola "$@"\n',
+            "#!/bin/sh\nDYMOLA='{older}' && export DYMOLA\nexec $DYMOLA/bin64/dymola\n",
+            "#!/bin/sh\nexport DYMOLA=${{DYMOLA:-{older}}}\nexec $DYMOLA/bin64/dymola\n",
+            # The last assignment wins, as it does to the shell.
+            "#!/bin/sh\nDYMOLA={newer}\nDYMOLA={older}\nexport DYMOLA\nexec x\n",
+            # Past 4096 bytes: a launcher with a licence text above it.
+            "#!/bin/sh\n" + "# notes\n" * 700 + 'export DYMOLA="{older}"\nexec x\n',
+            "#!/bin/sh\r\nexport DYMOLA={older}\r\nexec $DYMOLA/bin64/dymola\r\n",
+        ],
+        ids=["comment", "semicolon", "and", "default", "two", "big", "crlf"],
+    )
+    def test_a_launcher_is_read_as_the_shell_reads_it(
+        self, no_installs, tmp_path, monkeypatch, text
+    ):
+        """Each of these silently took the newest standard-folder interface."""
+        part, older_wheel, _, _ = self._launcher(tmp_path, monkeypatch, text)
+        assert part.path == str(older_wheel)
+        assert part.rule == Rule(SEARCH, "beside the executable")
+        assert part.detail == ""
+
+    def test_a_default_install_yields_to_the_environment_as_in_the_shell(
+        self, no_installs, tmp_path, monkeypatch
+    ):
+        part, _, newer_wheel, _ = self._launcher(
+            tmp_path,
+            monkeypatch,
+            "#!/bin/sh\nexport DYMOLA=${{DYMOLA:-{older}}}\nexec x\n",
+            env="{newer}",
+        )
+        assert part.path == str(newer_wheel)
+        assert part.rule == Rule(SEARCH, "beside the executable")
+
+    def test_a_launcher_whose_install_is_gone_is_looked_for_there_alone(
+        self, no_installs, tmp_path, monkeypatch
+    ):
+        gone = tmp_path / "opt" / "dymola-gone"
+        part, _, _, launcher = self._launcher(
+            tmp_path, monkeypatch, f"#!/bin/sh\nexport DYMOLA={gone}\nexec x\n"
+        )
+        assert part.path is None
+        assert part.detail == (
+            "no dymola-*.whl or dymola.egg in "
+            f"{gone / 'Modelica' / 'Library' / 'python_interface'} "
+            f"(the install of {launcher})"
+        )
+
+    @pytest.mark.parametrize(
+        ("line", "why"),
+        [
+            ("export DYMOLA=$HOME/dymola", "export DYMOLA=$HOME/dymola"),
+            ('DYMOLA="$(dirname "$0")/.."', 'DYMOLA="$(dirname "$0")/.."'),
+            ("export DYMOLA='unclosed", "export DYMOLA='unclosed"),
+        ],
+    )
+    def test_a_line_that_cannot_be_read_is_never_a_wrong_install(
+        self, no_installs, tmp_path, monkeypatch, line, why
+    ):
+        """It is "cannot be determined": the standard folders, and the line."""
+        part, _, newer_wheel, launcher = self._launcher(
+            tmp_path,
+            monkeypatch,
+            "#!/bin/sh\nDYMOLA={older}\n"
+            + line.replace("{", "{{").replace("}", "}}")
+            + "\nexec x\n",
+        )
+        assert part.path == str(newer_wheel)
+        assert part.detail == (
+            f"taken from {newer_wheel.parents[3]}: the install of {launcher} could "
+            f"not be determined (its launcher sets DYMOLA by a line that is not "
+            f"read here: {why})"
+        )
+
+    def test_a_run_logs_where_the_interface_was_taken_from(
+        self, no_installs, tmp_path, monkeypatch, caplog
+    ):
+        from dstf.backends.dymola import persistent_backend
+
+        _, (_, newer_wheel) = self._two_installs(tmp_path, monkeypatch)
+        stray = _program(tmp_path / "stray" / "dymola")
+        lib = tmp_path / "Lib"
+        lib.mkdir()
+        (lib / "package.mo").write_text("package Lib end Lib;")
+        (tmp_path / "testing.json").write_text(
+            json.dumps(
+                {
+                    "source_path": "Lib",
+                    "backends": {"Dymola": {"executables": [str(stray)]}},
+                }
+            )
+        )
+        config = Config(config_file=tmp_path / "testing.json")
+        monkeypatch.setattr(
+            persistent_backend, "load_dymola_interface", lambda found: object
+        )
+        monkeypatch.setattr(persistent_backend, "_install_dymola_log_filter", list)
+        monkeypatch.setattr(
+            persistent_backend, "_patch_dymola_for_parallel_startup", list
+        )
+        backend = persistent_backend.PersistentDymolaBackend(config)
+        with caplog.at_level("WARNING"):
+            backend.setup_before_workers()
+        (record,) = [r for r in caplog.records if "taken from" in r.getMessage()]
+        assert record.getMessage() == (
+            f"Dymola's Python interface was taken from {newer_wheel.parents[3]}: "
+            f"the install of {stray} could not be determined (its launcher sets "
+            "no DYMOLA)"
         )
 
     def test_no_executable_named_the_newest_install_is_found(
@@ -374,8 +528,9 @@ class TestDymolaInterface:
     def test_nothing_anywhere(self, no_installs):
         located = DymolaBackend.locate({})
         assert not located.found and not located.complete
-        assert located.part(INTERFACE).detail.startswith(
-            "no Modelica/Library/python_interface beside the executable"
+        assert located.part(INTERFACE).detail == (
+            "no Dymola executable was found, and there is no "
+            "Modelica/Library/python_interface under the standard folders ((none))"
         )
 
     def test_linux_install_names_sort_by_version(self):

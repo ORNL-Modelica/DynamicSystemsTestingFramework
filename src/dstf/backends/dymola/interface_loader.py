@@ -13,18 +13,22 @@ Where the archive is looked for (:func:`find_interface`, a part of
 ``DymolaBackend.locate``), the first that names a place winning:
   1. the Dymola block's `interface` setting in testing.json
   2. the `DYMOLA_INTERFACE_PATH` environment variable
-  3. beside the Dymola executable that was found
-  4. the standard install folders, the newest Dymola first
+  3. the install of the Dymola executable that was found (:func:`install_of`)
+  4. ONLY where that install cannot be determined: the standard install
+     folders, the newest Dymola first — and the part then says so, in a
+     line `dstf check` prints and a run logs
 
 A setting or a variable may name either the archive itself or the directory
-containing it (we look inside). One that holds no archive is NOT FOUND:
-another Dymola's interface is not taken in its place.
+containing it (we look inside). One that holds no archive is NOT FOUND, and
+so is an install that is known and holds none: another Dymola's interface is
+not taken in its place.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import sys
 import zipfile
@@ -116,40 +120,84 @@ def _archive_at(named: Path) -> Path | None:
     return None
 
 
-#: The line of a launcher script that says where its Dymola is installed.
-_LAUNCHER_INSTALL_RE = re.compile(
-    r"""^\s*(?:export\s+)?DYMOLA=(?:"([^"]+)"|'([^']+)'|(\S+))\s*$""", re.MULTILINE
-)
+#: The most of a launcher that is read: a few lines of shell, however long
+#: the comment above them. What is larger is no launcher.
+_LAUNCHER_BYTES = 1 << 20
+
+#: ``DYMOLA=<value>``, as one word of a launcher's line.
+_ASSIGNMENT_RE = re.compile(r"^DYMOLA=(.*)$", re.DOTALL)
+#: ``${DYMOLA:-<path>}`` / ``${DYMOLA-<path>}``: the environment's, else a default.
+_DEFAULT_RE = re.compile(r"^\$\{DYMOLA(:?)-([^${}`]*)\}$")
 
 
-def install_of(executable: Path) -> Path | None:
-    """The Dymola install an executable belongs to, or None.
+def _launcher_install(text: str) -> tuple[Path | None, str]:
+    """The install a launcher's text sets ``DYMOLA`` to, read as the shell
+    reads it — the LAST assignment, a comment after it dropped, a command
+    after ``;`` or ``&&`` not part of it, ``${DYMOLA:-<path>}`` the
+    environment's value else the path — or ``(None, why)``: it sets none,
+    or by a line that is not read here (another variable, a command
+    substitution, a quote left open). Such a line is never guessed at: a
+    wrong install's interface drives the wrong Dymola."""
+    install: Path | None = None
+    why = "its launcher sets no DYMOLA"
+    for line in text.splitlines():
+        if "DYMOLA=" not in line:
+            continue
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            words = list(lexer)
+        except ValueError:
+            words = None
+        for word in words or [None]:
+            m = _ASSIGNMENT_RE.match(word) if word is not None else None
+            if word is not None and m is None:
+                continue
+            value = m.group(1) if m is not None else "$"
+            default = _DEFAULT_RE.match(value)
+            if default is not None:
+                colon, fallback = default.groups()
+                said = os.environ.get("DYMOLA")
+                value = fallback if said is None or (colon and not said) else said
+            if not value or "$" in value or "`" in value:
+                install = None
+                why = (
+                    "its launcher sets DYMOLA by a line that is not read "
+                    f"here: {line.strip()}"
+                )
+            else:
+                install, why = Path(value), ""
+    return install, why
+
+
+def install_of(executable: Path) -> tuple[Path | None, str]:
+    """The Dymola install an executable belongs to — or ``(None, why)``
+    where that cannot be determined.
 
     Two shapes are known. The program inside the install
     (`<install>/bin64/Dymola.exe`, `<install>/bin64/dymola.sh`), reached
     through any symlinks: the install is the directory above that holds
     `Modelica/Library`. And Linux's launcher outside it
     (`/usr/local/bin/dymola` → `dymola-<version>`): a few lines of shell
-    that say `export DYMOLA=<install>` before they start the program.
+    that say `export DYMOLA=<install>` before they start the program
+    (:func:`_launcher_install`). What a launcher names IS the install,
+    whatever is there: it is where that launcher's Dymola runs from.
     """
     try:
         real = executable.resolve()
-    except OSError:
-        return None
+    except (OSError, RuntimeError):
+        return None, "its path cannot be followed"
     for parent in list(real.parents)[:3]:
         if (parent / "Modelica" / "Library").is_dir():
-            return parent
+            return parent, ""
     try:
-        if not real.is_file() or real.stat().st_size > 4096:
-            return None
-        text = real.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    m = _LAUNCHER_INSTALL_RE.search(text)
-    if m is None:
-        return None
-    install = Path(next(group for group in m.groups() if group is not None))
-    return install if (install / "Modelica" / "Library").is_dir() else None
+        with real.open("rb") as f:
+            raw = f.read(_LAUNCHER_BYTES + 1)
+    except OSError as e:
+        return None, f"it cannot be read: {e}"
+    if not raw.startswith(b"#!") or len(raw) > _LAUNCHER_BYTES:
+        return None, "it is neither inside an install nor a launcher script"
+    return _launcher_install(raw.decode("utf-8", errors="replace"))
 
 
 def find_interface(settings: Mapping[str, Any], executable: str | None) -> Found:
@@ -174,28 +222,42 @@ def find_interface(settings: Mapping[str, Any], executable: str | None) -> Found
             )
         return Found(INTERFACE, str(archive), Rule(ENVIRONMENT, INTERFACE_VARIABLE))
     if executable:
-        install = install_of(Path(executable))
+        install, why = install_of(Path(executable))
         if install is not None:
-            archive = _archive_in_dir(
-                install / "Modelica" / "Library" / "python_interface"
-            )
-            if archive is not None:
+            # The install is known: its interface, or none. Another
+            # Dymola's is not taken in its place.
+            folder = install / "Modelica" / "Library" / "python_interface"
+            archive = _archive_in_dir(folder) if folder.is_dir() else None
+            if archive is None:
                 return Found(
-                    INTERFACE, str(archive), Rule(SEARCH, "beside the executable")
+                    INTERFACE,
+                    detail=(
+                        f"no dymola-*.whl or dymola.egg in {folder} "
+                        f"(the install of {executable})"
+                    ),
                 )
+            return Found(INTERFACE, str(archive), Rule(SEARCH, "beside the executable"))
+        unknown = f"the install of {executable} could not be determined ({why})"
+    else:
+        unknown = "no Dymola executable was found"
     for d in _find_python_interface_dirs():
         archive = _archive_in_dir(d)
         if archive is not None:
             base = next(b for b in platform_glob_bases() if b in d.parents)
             return Found(
-                INTERFACE, str(archive), Rule(SEARCH, f"the standard folder {base}")
+                INTERFACE,
+                str(archive),
+                Rule(SEARCH, f"the standard folder {base}"),
+                # Said by `check` and logged by a run: this interface is the
+                # newest installed Dymola's, which may not be the one driven.
+                f"taken from {d.parents[2]}: {unknown}",
             )
     bases = ", ".join(str(b) for b in platform_glob_bases()) or "(none)"
     return Found(
         INTERFACE,
         detail=(
-            "no Modelica/Library/python_interface beside the executable or under "
-            f"the standard folders ({bases})"
+            f"{unknown}, and there is no Modelica/Library/python_interface "
+            f"under the standard folders ({bases})"
         ),
     )
 

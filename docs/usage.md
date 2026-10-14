@@ -63,7 +63,7 @@ rest are the backend's own:
 |---------|---------|-------------|
 | Dymola | `show_ide` | `true` shows the Dymola GUI instead of running headless (default: `false`). |
 | Dymola | `batch_size` | With `run --batch`: tests per Dymola session (default: every test of a worker in one session). Small values (3-5) give better load balancing and crash isolation but reload the library more often. |
-| Dymola | `interface` | Dymola's Python interface: the archive (`dymola-*.whl` / `dymola.egg`) or its directory; a relative path is relative to `testing.json`, and `~` is the home directory. Default: the `DYMOLA_INTERFACE_PATH` environment variable, else `Modelica/Library/python_interface` of the Dymola that `executables` found, else the newest Dymola's in the standard install folders. |
+| Dymola | `interface` | Dymola's Python interface: the archive (`dymola-*.whl` / `dymola.egg`) or its directory; a relative path is relative to `testing.json`, and `~` is the home directory. Default: the `DYMOLA_INTERFACE_PATH` environment variable, else `Modelica/Library/python_interface` of the install of the Dymola that was found — and no other's: an install that holds no archive is "not found", with where it was looked for. Only where the executable's install cannot be determined (a launcher that sets no `DYMOLA`, or sets it by a line the tool does not read) is the newest Dymola's in the standard install folders taken, and `dstf check` and the run then say so in one line: `taken from /opt/dymola-2026x-x86_64: the install of … could not be determined (…)`. |
 
 OpenModelica, Julia and Python take `executables` alone; FMPy, a Python
 library, takes no setting. `dstf check` prints what each backend's block

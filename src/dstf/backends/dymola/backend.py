@@ -121,9 +121,11 @@ class DymolaBackend(Backend):
             "dymola.egg) or the folder that holds it. A relative path is "
             "relative to this file, and ~ is your home directory. "
             "Default: the DYMOLA_INTERFACE_PATH environment variable, else "
-            "Modelica/Library/python_interface of the Dymola that "
-            "executables found, else that of the newest Dymola in the "
-            "standard install folders.",
+            "Modelica/Library/python_interface of the install of the "
+            "Dymola that was found, and no other's. Only where that "
+            "install cannot be determined, that of the newest Dymola in "
+            "the standard install folders — which `dstf check` and the run "
+            "then say.",
             path=FILE,
         ),
     }
@@ -151,7 +153,7 @@ class DymolaBackend(Backend):
     @classmethod
     def locate(cls, settings: Mapping[str, Any]) -> Located:
         """The Dymola executable, then its Python interface — looked for
-        beside THAT executable before anywhere else, so a project that
+        in THAT executable's install and no other, so a project that
         names an older Dymola is not driven through a newer one's
         interface (``interface_loader.find_interface``)."""
         executable = find_executable(
