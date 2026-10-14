@@ -106,7 +106,9 @@ lists each one and where it went.
   file, and every run failed it with a Python traceback. `--source FILE`
   names the file the test runs, and is required there; a directory, or a
   file of another suffix than the backend runs (a `.csv` for a Python
-  test), is refused.
+  test), is refused. A suffix is compared without its case, and a Python
+  test runs a `Ramp.PY` as it runs a `Ramp.py` (it failed with `Cannot
+  load`).
 - A `test_spec.json` entry of a Python or Julia test with no `source` ran the
   library's folder (`Cannot load <library dir>`) instead of the file named
   after its model, `<source_path>/<model>.py` (`.jl`); it runs that file, and

@@ -2352,3 +2352,26 @@ def test_backend_path_is_carried_as_given_not_through_its_link(tmp_path):
     flags = build_rerun_flags(config)
     assert f"--backend-path {link} " in flags["run"] + " ", flags
     assert str(link.resolve()) not in flags["run"]
+
+
+def test_a_run_given_pair_of_a_flag_no_command_writes_is_not_read(tmp_path):
+    """`status.json`'s ``run_given`` is read back by a later `compare`; a
+    pair whose dest no built command writes — a status file another
+    version wrote, or edited by hand — is left out, not carried onto the
+    page's commands, where ordering the flags would also stop on it."""
+    import json
+
+    from conftest import python_example_copy
+    from dstf.reporting.dashboard_render import compare_rerun_flags
+
+    config, _ = python_example_copy(tmp_path)
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    (config.work_dir / "status.json").write_text(
+        json.dumps(
+            {"run_given": [["no_such_flag", ["x"]], ["timeout", ["7"]]], "tests": []}
+        ),
+        encoding="utf-8",
+    )
+    flags = compare_rerun_flags(config)
+    assert "--timeout 7" in flags["run"], flags
+    assert not any("no-such-flag" in line for line in flags.values()), flags

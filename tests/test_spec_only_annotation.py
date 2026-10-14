@@ -881,6 +881,28 @@ class TestSpecAddWritesAnEntryThatRuns:
         status = json.loads((work / "status.json").read_text("utf-8"))
         assert [t["verdict"] for t in status["tests"]] == ["PASS"]
 
+    def test_a_suffix_in_capitals_is_the_backend_s_and_runs(self, tmp_path, capsys):
+        """A suffix is compared without its case — `Ramp.PY` is a Python
+        file, as a Windows folder lists it — and the driver runs the file it
+        was given whatever its suffix's case: a `.PY` that `spec add` took
+        and every run then failed with `Cannot load` would be the entry
+        that runs nothing this command refuses to write."""
+        config = _example(tmp_path, "python")
+        lib = config.parent.parent.parent
+        capital = lib / "Examples" / "Ramp.PY"
+        capital.write_bytes((lib / "Examples" / "SimpleRamp.py").read_bytes())
+        model = "PythonTestingLib.Examples.Capital"
+        argv = ["--config", str(config)]
+        assert main([*argv, "spec", "add", model, "--source", str(capital)]) == 0
+        work = tmp_path / "work"
+        code = main(
+            ["run", *argv, "--filter", model, "--work-dir", str(work), "--no-browser"]
+        )
+        capsys.readouterr()
+        status = json.loads((work / "status.json").read_text("utf-8"))
+        # simulate-only (no --variables): it passes iff its file ran
+        assert code == 0 and [t["verdict"] for t in status["tests"]] == ["PASS"]
+
     def test_a_source_that_is_not_there_is_refused(self, tmp_path, capsys):
         config = _example(tmp_path, "python")
         spec = Config(config_file=config).spec_path
