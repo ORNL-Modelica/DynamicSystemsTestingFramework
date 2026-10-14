@@ -33,12 +33,20 @@ from dstf.cli import build_arg_parser
 
 REPO = Path(__file__).resolve().parents[1]
 
+#: Downloaded by ``scripts/fetch_reference_fmus.py`` where it was run: another
+#: project's pages, not ours.
+_FETCHED = REPO / "examples" / "fmu" / "reference-fmus-binaries"
+
 PAGES = [
     REPO / "README.md",
     REPO / "docs" / "usage.md",
     REPO / "CLAUDE.md",
     REPO / "docs" / "releasing.md",
-    *sorted((REPO / "examples").rglob("README.md")),
+    *sorted(
+        page
+        for page in (REPO / "examples").rglob("README.md")
+        if _FETCHED not in page.parents
+    ),
 ]
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
