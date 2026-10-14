@@ -92,8 +92,13 @@ to write instead.
   refused.
 - `run --batch` on FMPy or Python was silently ignored; it is a config error.
 - `companion freeze` of a companion that does not exist exited 0; it exits 1.
-- The dashboard's copyable commands named `testing.json` by a relative path,
-  or by flags `dstf author` does not read; they name it by its absolute path.
+- The dashboard's copyable commands named `testing.json` by a relative path
+  and left out the run's other project flags: after `run --reference-root
+  ALT`, its `compare --accept` overwrote a baseline in `testing.json`'s own
+  reference root and left ALT alone. A command now carries every flag the
+  run was given, and the default work dir, by absolute paths, so it does
+  what the run did from any directory; `author` is offered only when it reads
+  them all.
 
 ### How to convert your testing.json
 

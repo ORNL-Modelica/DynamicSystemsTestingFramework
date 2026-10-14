@@ -259,9 +259,9 @@ def run_pipeline(
     # live progress as tests register. The first ProgressReporter.register
     # call overwrites this initial empty page. Idempotent: the CLI renders
     # it a moment earlier too, before opening a browser tab on it.
-    from .reporting.dashboard_render import build_rerun_prefix, render_live
+    from .reporting.dashboard_render import build_rerun_flags, render_live
 
-    render_live(work_dir, rerun_prefix=build_rerun_prefix(config), theme=config.theme)
+    render_live(work_dir, rerun_flags=build_rerun_flags(config), theme=config.theme)
 
     manifests = backend.run_tests(tests)
 
@@ -365,7 +365,7 @@ class ItemRun:
         ran (removed, or failed before a worker started) have no row. The
         caller renders the final page (``render_final``) as after a run."""
         from .backends.progress import DONE_PHASE, ProgressReporter, TestStatus
-        from .reporting.dashboard_render import build_rerun_prefix
+        from .reporting.dashboard_render import build_rerun_flags
 
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
@@ -404,7 +404,7 @@ class ItemRun:
         progress = ProgressReporter(
             work_dir,
             len(rows),
-            rerun_prefix=build_rerun_prefix(self.config),
+            rerun_flags=build_rerun_flags(self.config),
             metadata=self.backend._build_run_metadata(**self.backend.run_versions()),
             theme=self.config.theme,
         )

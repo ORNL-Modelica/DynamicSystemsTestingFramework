@@ -900,7 +900,7 @@ class TestTheDashboardGetsTheComparisons:
         # The results ride along: the page's Sim (s) takes a CPU time
         # from them where no wall time was kept.
         def final(
-            work_dir, rerun_prefix=None, comparisons=(), results=None, theme="default"
+            work_dir, rerun_flags=None, comparisons=(), results=None, theme="default"
         ):
             seen["final"] = [c.model_id for c in comparisons]
             seen["final_results"] = sorted(results or {})
@@ -908,7 +908,7 @@ class TestTheDashboardGetsTheComparisons:
         def final_to(
             work_dir,
             output_path,
-            rerun_prefix=None,
+            rerun_flags=None,
             comparisons=(),
             results=None,
             theme="default",

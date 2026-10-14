@@ -212,7 +212,7 @@
 ### Index-page batch actions feed the CLI filter
 - Index template (`reporting/templates/dashboard.html`) has a checkbox column + a selection footer. All selection state lives client-side in the DOM
 - The count pills and the column filters narrow the rows; the header checkbox selects the rows they show
-- Two exports: a downloaded `selected.txt` (one model_id per line — directly consumable by `--filter @file`), and a copyable command string that auto-switches between inline `"A,B,C"` (≤3 models) and `@selected.txt` (more). A Command menu picks what the string asks for: `run` (with `--merge --report`), `compare`, `compare --accept`, `run --rerun failed,sim-failed` or `author`
+- Two exports: a downloaded `selected.txt` (one model_id per line — directly consumable by `--filter @file`), and a copyable command string that auto-switches between inline `"A,B,C"` (≤3 models) and `@selected.txt` (more). A Command menu picks what the string asks for: `run` (with `--merge --report`), `compare`, `compare --accept`, `run --rerun failed,sim-failed` or `author`. The run's project flags follow the command — `--config` and every place the run did not take from it (`Config.overrides`), absolute — so the command does what the run did from any directory; `author` is offered only when it reads every one
 - Live command preview in a read-only field so users see exactly what they'll get before clicking Copy
 - No server, no API — composes with the static HTML report design (works over `file://`)
 

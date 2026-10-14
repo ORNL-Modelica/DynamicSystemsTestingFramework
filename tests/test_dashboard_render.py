@@ -273,8 +273,8 @@ def test_render_final_strips_refresh(tmp_path):
     assert "DASHBOARD_MODE = 'final'" in out
 
 
-def test_rerun_prefix_flows_to_template(tmp_path):
-    """rerun_prefix from the snapshot (or kwarg override) must end up in the
+def test_rerun_flags_flows_to_template(tmp_path):
+    """rerun_flags from the snapshot (or kwarg override) must end up in the
     rendered HTML so the dashboard's JS rerun-command builder can use it."""
     snapshot = {
         "total": 0,
@@ -283,38 +283,44 @@ def test_rerun_prefix_flows_to_template(tmp_path):
         "counts": {},
         "tests": [],
         "updated_at": 0.0,
-        "rerun_prefix": 'dstf --config "/some/path/testing.json"',
+        "rerun_flags": '--config "/some/path/testing.json"',
     }
     _write_status_json(tmp_path, snapshot)
     render_live(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert "RERUN_PREFIX" in out
+    assert "RERUN_FLAGS" in out
     assert "/some/path/testing.json" in out
 
 
-def test_rerun_prefix_carries_no_subcommand():
-    """The prefix is global flags only — the dashboard's command menu owns
-    the subcommand. A prefix that still ended in ``run`` would build
-    ``dstf ... run compare --filter ...``.
+def test_rerun_flags_carry_no_command():
+    """The flags are the project's only — the dashboard's command menu owns
+    the command, which the page writes before them (`dstf <kind> <flags>`).
+    Flags that still held ``run`` would build ``dstf compare run --filter
+    ...``.
     """
     from types import SimpleNamespace
 
-    from dstf.reporting.dashboard_render import build_rerun_prefix
+    from dstf.reporting.dashboard_render import build_rerun_flags
 
-    with_config = build_rerun_prefix(
-        SimpleNamespace(config_found="/some/path/testing.json")
+    with_config = build_rerun_flags(
+        SimpleNamespace(config_found="/some/path/testing.json", overrides=frozenset())
     )
-    with_paths = build_rerun_prefix(
-        SimpleNamespace(config_found=None, source_path="/lib", reference_root="/refs")
+    with_paths = build_rerun_flags(
+        SimpleNamespace(
+            config_found=None,
+            overrides=frozenset(),
+            source_path="/no/lib",
+            reference_root="/no/refs",
+        )
     )
-    for prefix in (with_config, with_paths):
-        assert prefix.startswith("dstf ")
-        assert prefix.split()[-1] not in {"run", "compare", "discover"}
-        assert " run" not in prefix
+    assert with_config == "--config /some/path/testing.json"
+    assert with_paths == "--source-path /no/lib --reference-root /no/refs"
+    for flags in (with_config, with_paths):
+        assert not set(flags.split()) & {"dstf", "run", "compare", "discover"}
 
 
-def test_rerun_prefix_kwarg_overrides_snapshot(tmp_path):
-    """Explicit rerun_prefix kwarg wins over status.json's value."""
+def test_rerun_flags_kwarg_overrides_snapshot(tmp_path):
+    """Explicit rerun_flags kwarg wins over status.json's value."""
     snapshot = {
         "total": 0,
         "elapsed": 0.0,
@@ -322,10 +328,10 @@ def test_rerun_prefix_kwarg_overrides_snapshot(tmp_path):
         "counts": {},
         "tests": [],
         "updated_at": 0.0,
-        "rerun_prefix": "dstf STALE",
+        "rerun_flags": "--config STALE",
     }
     _write_status_json(tmp_path, snapshot)
-    render_live(tmp_path, rerun_prefix="dstf FRESH")
+    render_live(tmp_path, rerun_flags="--config FRESH")
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "FRESH" in out
     assert "STALE" not in out

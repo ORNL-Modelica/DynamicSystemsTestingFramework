@@ -35,7 +35,7 @@ def _snapshot(start_wall: float) -> dict:
         "eta_seconds": None,
         "start_wall": start_wall,
         "updated_at": start_wall + 5.0,
-        "rerun_prefix": "dstf --config testing.json",
+        "rerun_flags": "--config testing.json",
         "counts": {"passed": len(_MODELS)},
         "tests": [
             {
@@ -146,8 +146,9 @@ def test_report_key_changes_between_runs(tmp_path):
 
 def test_command_menu_switches_the_built_command(tmp_path, playwright_browser):
     """The menu offers every command the CLI has for a selection, and the
-    prefix carries no subcommand of its own — a prefix ending in ``run``
-    would produce ``dstf ... run compare --filter ...``.
+    run's flags carry no command of their own — flags holding ``run``
+    would produce ``dstf compare run --filter ...``. The command comes
+    first, the flags after it, where --work-dir and --backend are offered.
 
     ``--merge --report`` belongs to a plain ``run``: ``compare`` never
     re-simulates and ``--rerun`` picks its own scope.
@@ -188,7 +189,7 @@ def test_command_menu_switches_the_built_command(tmp_path, playwright_browser):
     ]
     for kind, (shown, copied) in built.items():
         assert shown == copied, kind
-        assert shown.startswith("dstf --config testing.json " + kind + " "), kind
+        assert shown.startswith("dstf " + kind + " --config testing.json "), kind
         assert "Lib.A" in shown, kind
         assert "run compare" not in shown and "run run" not in shown, kind
     assert built["run"][0].endswith(" --merge --report")

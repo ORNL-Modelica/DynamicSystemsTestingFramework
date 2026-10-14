@@ -310,8 +310,10 @@ def _dashboard_kinds() -> list[str]:
     return kinds
 
 
-#: Each way a run can be started: the directory it starts in (under the
-#: test's project) and the flags that say where the project is.
+#: Each way a Modelica project's run can be started: the directory it
+#: starts in (under the test's project) and the flags that say where the
+#: project is. None simulates here: the run's Config is built as `run`
+#: builds it.
 _STARTED = {
     "--config": (".", ["--config", "testing.json"]),
     "--config, a directory": (".", ["--config", "."]),
@@ -326,25 +328,103 @@ _STARTED = {
     # the run writes a default one beside the library
     "--source-path, no testing.json anywhere": ("bare", ["--source-path", "Lib"]),
     "the current directory": (".", []),
+    # testing.json names no library: the package is found from the cwd
+    "the library is the current directory": ("nosrc/Lib", ["--config", ".."]),
 }
+
+#: Where a Config says the project is: everything a command that is to do
+#: the same thing to the same project must read the same.
+_WHERE = (
+    "config_found",
+    "source_path",
+    "reference_root",
+    "spec_path",
+    "work_dir",
+    "backend_name",
+)
+
+
+def _where(config) -> dict:
+    return {name: getattr(config, name) for name in _WHERE}
+
+
+@pytest.fixture
+def built_configs(monkeypatch):
+    """Every Config built from here on, in order."""
+    from dstf.config import Config
+
+    built: list = []
+    post_init = Config.__post_init__
+
+    def spy(self):
+        post_init(self)
+        built.append(self)
+
+    monkeypatch.setattr(Config, "__post_init__", spy)
+    return built
+
+
+def _page_flags(page: Path) -> str:
+    """The flags the dashboard puts after each command, as its page holds
+    them."""
+    import json
+
+    html = page.read_text(encoding="utf-8")
+    found = re.search(r"const RERUN_FLAGS = (.*);", html)
+    assert found, "the page names no flags for its commands"
+    return json.loads(found.group(1))
+
+
+def _check_the_built_commands(
+    flags: str,
+    offered: bool,
+    run_config,
+    elsewhere: Path,
+    built,
+    capsys,
+    monkeypatch,
+    models: str = "Lib.A,Lib.B",
+) -> None:
+    """Each command of the Command menu, built as the page builds it
+    (`dashboard.js`: ``dstf <kind> <flags> --filter …``, and ` --merge
+    --report` after a plain `run`), parses; `compare`, executed from
+    another directory, reads the project the run read."""
+    monkeypatch.chdir(elsewhere)
+    lines = {}
+    for kind in _dashboard_kinds():
+        if kind == "author" and not offered:
+            continue
+        tail = " --merge --report" if kind == "run" else ""
+        line = f'dstf {kind} {flags} --filter "{models}"{tail}'
+        argv = shlex.split(line)
+        args = _parse(argv[1:], capsys)
+        assert isinstance(args, argparse.Namespace), f"{line}\n{args}"
+        assert args.filter == models
+        lines[kind] = argv
+    for flag, value in zip(shlex.split(flags), shlex.split(flags)[1:]):
+        if flag in PROJECT_FLAGS.values() or flag == "--work-dir":
+            assert Path(value).is_absolute(), f"{flag} {value}"
+    built.clear()
+    main(lines["compare"][1:])
+    capsys.readouterr()
+    assert built, "compare built no Config"
+    assert _where(built[-1]) == _where(run_config), " ".join(lines["compare"])
 
 
 @pytest.mark.parametrize("started", sorted(_STARTED))
-def test_every_command_the_dashboard_builds_parses(
-    started, tmp_path, monkeypatch, capsys
+def test_every_command_the_dashboard_builds_reads_the_run_s_project(
+    started, tmp_path, monkeypatch, capsys, built_configs
 ):
-    """The dashboard's selection footer builds `<prefix> <kind> --filter …`
-    from its Command menu (and ` --merge --report` after a plain `run`).
-    After a run started any way at all, each is a command line of this tree
-    that names the run's testing.json by its absolute path — the line is
-    pasted into a terminal anywhere — and `author`, which reads `--config`
-    alone, parses too. A run made with --source-path and --reference-root
-    built `dstf --source-path … author`, which exits 2."""
+    """After a run started any way at all, the commands the dashboard
+    builds for it parse, and `compare` — pasted into a terminal in another
+    directory — reads the testing.json, library, reference root, spec and
+    work dir the run read. A run made with --source-path and
+    --reference-root built `dstf --source-path … author`, which exits 2."""
     from dstf.cli.common import _build_config
-    from dstf.reporting.dashboard_render import build_rerun_prefix
+    from dstf.reporting.dashboard_render import build_rerun_flags, offers_author
 
     project = tmp_path / "project"
-    for lib in ("Lib", "A/Lib", "bare/Lib"):
+    for lib in ("Lib", "A/Lib", "bare/Lib", "nosrc/Lib"):
         (project / lib).mkdir(parents=True)
         (project / lib / "package.mo").write_text("within ;\npackage Lib\nend Lib;\n")
     (project / "refs").mkdir()
@@ -355,34 +435,138 @@ def test_every_command_the_dashboard_builds_parses(
     (project / "A" / "cfgrefs" / "testing.json").write_text(
         '{"source_path": "../Lib", "backend": "OpenModelica"}'
     )
+    (project / "nosrc" / "testing.json").write_text('{"backend": "OpenModelica"}')
     cwd, flags = _STARTED[started]
     monkeypatch.chdir(project / cwd)
     config = _build_config(build_arg_parser().parse_args(["run", *flags]))
     capsys.readouterr()
     assert config.config_found is not None, "a run always has a testing.json"
-    prefix = build_rerun_prefix(config)
+    built = build_rerun_flags(config)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    monkeypatch.chdir(elsewhere)
-    for kind in _dashboard_kinds():
-        tail = " --merge --report" if kind == "run" else ""
-        line = f'{prefix} {kind} --filter "Lib.A,Lib.B"{tail}'
-        argv = shlex.split(line)
-        assert argv[0] == "dstf"
-        args = _parse(argv[1:], capsys)
-        assert isinstance(args, argparse.Namespace), f"{line}\n{args}"
-        assert args.filter == "Lib.A,Lib.B"
-        assert args.config == str(config.config_found), line
-        assert Path(args.config).is_absolute() and Path(args.config).is_file()
+    _check_the_built_commands(
+        built,
+        offers_author(built),
+        config,
+        elsewhere,
+        built_configs,
+        capsys,
+        monkeypatch,
+    )
+
+
+_CONSTANT_CSV = "PythonTestingLib.Examples.ConstantCsv"
+
+#: Each override a run of the Python example can be given beside its
+#: testing.json, relative to the directory the run starts in — and whether
+#: `author`, which reads --config, --backend and --work-dir alone, can be
+#: offered on the same project.
+_OVERRIDES = {
+    "none": ([], True),
+    "--reference-root": (["--reference-root", "alt"], False),
+    "--test-spec": (["--test-spec", "lib/Resources/Alt/test_spec.json"], False),
+    "--source-path": (["--source-path", "lib"], False),
+    "--work-dir": (["--work-dir", "work"], True),
+    # an entry of `backends` whose name has a space: its work dir differs
+    "--backend": (["--backend", "Python alt"], True),
+    "every one": (
+        [
+            "--reference-root",
+            "alt",
+            "--test-spec",
+            "lib/Resources/Alt/test_spec.json",
+            "--source-path",
+            "lib",
+            "--work-dir",
+            "work",
+            "--backend",
+            "Python alt",
+        ],
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("given", sorted(_OVERRIDES))
+@pytest.mark.parametrize("config_given", [True, False], ids=["--config", "found"])
+def test_a_run_s_dashboard_commands_do_what_the_run_did_from_anywhere(
+    given, config_given, tmp_path, monkeypatch, capsys, built_configs
+):
+    """A run of the Python example with overrides beside its testing.json:
+    the dashboard it writes builds commands that carry every one, absolute,
+    and `compare`, executed from another directory, reads the project the
+    run read. A run with `--reference-root ALT` built `dstf --config C
+    compare --accept`, which wrote into C's own root and left ALT alone;
+    `author` is not offered where it cannot read an override, and the page
+    says why."""
+    import json
+    import shutil
+
+    from conftest import PROJECT_ROOT
+
+    project = tmp_path / "project"
+    lib = project / "lib"
+    shutil.copytree(
+        PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
+        lib,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    refs = lib / "Resources" / "ReferenceResults"
+    cfg = json.loads((refs / "testing.json").read_text(encoding="utf-8"))
+    cfg["backends"]["Python alt"] = cfg["backends"]["Python"]
+    (refs / "testing.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (lib / "Resources" / "Alt").mkdir()
+    shutil.copy(refs / "test_spec.json", lib / "Resources" / "Alt" / "test_spec.json")
+    (project / "alt").mkdir()
+
+    overrides, author = _OVERRIDES[given]
+    if config_given:
+        monkeypatch.chdir(project)
+        argv = ["--config", "lib/Resources/ReferenceResults/testing.json"]
+    else:
+        # found by the search, in the directory the run starts in
+        monkeypatch.chdir(refs)
+        argv = []
+        overrides = [
+            str(Path("../../..") / v) if v.startswith(("alt", "lib", "work")) else v
+            for v in overrides
+        ]
+    built_configs.clear()
+    main(["run", *argv, *overrides, "--filter", _CONSTANT_CSV, "--no-browser"])
+    capsys.readouterr()
+    run_config = next(c for c in built_configs if c.config_found is not None)
+    assert run_config.config_found == refs / "testing.json"
+    page = run_config.work_dir / "dashboard.html"
+    flags = _page_flags(page)
+    html = page.read_text(encoding="utf-8")
+    assert ('<option value="author">' in html) is author, flags
+    note = "Open in dstf author: run with a testing.json that names these paths"
+    assert (note in html) is not author
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _check_the_built_commands(
+        flags,
+        author,
+        run_config,
+        elsewhere,
+        built_configs,
+        capsys,
+        monkeypatch,
+        models=_CONSTANT_CSV,
+    )
+    # what it executed: the run's results scored again, in the run's work dir
+    verdicts = json.loads((run_config.work_dir / "verdicts.json").read_text())
+    assert [t["model_id"] for t in verdicts["tests"]] == [_CONSTANT_CSV]
 
 
 def test_with_no_testing_json_the_dashboard_offers_no_author(tmp_path, monkeypatch):
     """A Config built with no testing.json found and none written (the run
-    as a library call, `run_pipeline`): the commands name the library and
-    the reference root, absolute, and `author` — which needs a testing.json
-    — is not offered."""
+    as a library call, `run_pipeline`): the commands name the library, the
+    reference root and the work dir, absolute, and `author` — which needs a
+    testing.json — is not offered; the page says why."""
     from dstf.config import Config
-    from dstf.reporting.dashboard_render import build_rerun_prefix, render_live
+    from dstf.reporting.dashboard_render import build_rerun_flags, render_live
 
     lib = tmp_path / "Lib"
     lib.mkdir()
@@ -390,18 +574,22 @@ def test_with_no_testing_json_the_dashboard_offers_no_author(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     config = Config(source_path=Path("Lib"), backend_name="OpenModelica")
     assert config.config_found is None
-    prefix = build_rerun_prefix(config)
-    assert shlex.split(prefix) == [
-        "dstf",
+    flags = build_rerun_flags(config)
+    assert shlex.split(flags) == [
         "--source-path",
         str(lib),
         "--reference-root",
         str(config.reference_root),
+        "--work-dir",
+        str(config.work_dir),
+        "--backend",
+        "OpenModelica",
     ]
-    render_live(tmp_path / "w", rerun_prefix=prefix)
+    render_live(tmp_path / "w", rerun_flags=flags)
     page = (tmp_path / "w" / "dashboard.html").read_text(encoding="utf-8")
     assert '<option value="author">' not in page
     assert '<option value="run">' in page
+    assert "Open in dstf author: run with a testing.json that names these paths" in page
 
 
 # ---------------------------------------------------------------------------

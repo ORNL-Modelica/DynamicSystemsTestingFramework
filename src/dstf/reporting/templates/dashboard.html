@@ -153,6 +153,7 @@ a:hover { text-decoration: underline; }
 .sel-footer button.btn-primary:hover { background: var(--dstf-accent-hover); }
 .sel-footer .cmd-out { flex: 1; min-width: 16em; font-family: var(--dstf-mono); font-size: 0.8em; padding: 0.3em 0.5em; border: 1px solid var(--dstf-border); border-radius: 3px; background: var(--dstf-page); }
 .sel-footer .cmd-kind-label { font-size: 0.85em; color: var(--dstf-text-secondary); display: inline-flex; align-items: center; gap: 0.35em; }
+.sel-footer .cmd-note { font-size: 0.8em; color: var(--dstf-text-secondary); }
 .sel-footer .cmd-kind-label select { font-family: var(--dstf-mono); font-size: 0.85em; padding: 0.25em 0.3em; border: 1px solid var(--dstf-border); border-radius: 3px; background: var(--dstf-surface); }
 .sel-footer .save-status { color: var(--dstf-pass-fill); font-size: 0.82em; display: none; }
 .sel-footer .save-status.shown { display: inline; }
@@ -251,6 +252,7 @@ body.has-selection { padding-bottom: 5em; }
       {% if offers_author %}<option value="author">author</option>{% endif %}
     </select>
   </label>
+  {% if not offers_author %}<span class="cmd-note">Open in dstf author: run with a testing.json that names these paths</span>{% endif %}
   <button class="btn-primary" id="btn-copy-cmd" onclick="copyCommand()">Copy rerun command</button>
   <span class="save-status" id="save-status">Copied!</span>
   <input class="cmd-out" id="cmd-out" readonly placeholder="Selection produces a rerun command here…">
@@ -260,7 +262,7 @@ body.has-selection { padding-bottom: 5em; }
 <script>
 const DASHBOARD_MODE = '{{ mode }}';
 const DASHBOARD_TOTAL = {{ total }};
-const RERUN_PREFIX = {{ rerun_prefix | tojson }};
+const RERUN_FLAGS = {{ rerun_flags | tojson }};
 // Identity of THIS report (work dir + run start). The persisted UI state
 // is keyed by location.pathname, which successive runs into the same
 // work_dir share — the selection is scoped to this key so one report's

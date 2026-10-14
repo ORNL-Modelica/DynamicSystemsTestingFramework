@@ -229,11 +229,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             # the dashboard reflects the (unchanged) full-suite state.
             print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
             config.work_dir.mkdir(parents=True, exist_ok=True)
-            from ..reporting.dashboard_render import build_rerun_prefix, render_final
+            from ..reporting.dashboard_render import build_rerun_flags, render_final
 
             render_final(
                 config.work_dir,
-                rerun_prefix=build_rerun_prefix(config),
+                rerun_flags=build_rerun_flags(config),
                 theme=config.theme,
                 comparisons=prior_comps,
                 results=prior_results,
@@ -261,7 +261,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     # The page has to exist before the tab opens on it — run_pipeline paints
     # it again a moment later, which is idempotent.
     from ..reporting.dashboard_render import (
-        build_rerun_prefix,
+        build_rerun_flags,
         render_final,
         render_live,
     )
@@ -269,7 +269,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     config.work_dir.mkdir(parents=True, exist_ok=True)
     render_live(
-        config.work_dir, rerun_prefix=build_rerun_prefix(config), theme=config.theme
+        config.work_dir, rerun_flags=build_rerun_flags(config), theme=config.theme
     )
     # A path that scores renders the final page itself, with its
     # comparisons, before the work that follows (the review, the report
@@ -333,7 +333,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             render_final(
                 config.work_dir,
-                rerun_prefix=build_rerun_prefix(config),
+                rerun_flags=build_rerun_flags(config),
                 theme=config.theme,
                 comparisons=comparisons,
                 results=results,
@@ -368,7 +368,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             # is the sidecar's, and stays empty.
             render_final(
                 config.work_dir,
-                rerun_prefix=build_rerun_prefix(config),
+                rerun_flags=build_rerun_flags(config),
                 theme=config.theme,
                 comparisons=comparisons,
                 results=results,
@@ -384,7 +384,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             try:
                 render_final(
                     config.work_dir,
-                    rerun_prefix=build_rerun_prefix(config),
+                    rerun_flags=build_rerun_flags(config),
                     theme=config.theme,
                     comparisons=comparisons or (),
                     results=results,
@@ -492,11 +492,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # NRMSE, Variables and Warnings come from its comparison, the walls
     # from the run's run_stats.json, a CPU time where it kept none from its
     # result; the Reference link is the sidecar's, and stays empty.
-    from ..reporting.dashboard_render import build_rerun_prefix, render_final
+    from ..reporting.dashboard_render import build_rerun_flags, render_final
 
     render_final(
         config.work_dir,
-        rerun_prefix=build_rerun_prefix(config),
+        rerun_flags=build_rerun_flags(config),
         theme=config.theme,
         comparisons=comparisons,
         results=results,
@@ -546,13 +546,13 @@ def _generate_report_suite(
     work_dir/reports/. dashboard_render.render_final then reads
     those sidecars and produces the top-level work_dir/dashboard.html.
     """
-    from ..reporting.dashboard_render import build_rerun_prefix, render_final
+    from ..reporting.dashboard_render import build_rerun_flags, render_final
     from ..reporting.report_suite import generate_report_suite, open_in_browser
 
     generate_report_suite(comparisons, results, tests, store, config)
     render_final(
         config.work_dir,
-        rerun_prefix=build_rerun_prefix(config),
+        rerun_flags=build_rerun_flags(config),
         theme=config.theme,
         comparisons=comparisons,
         results=results,
@@ -587,13 +587,13 @@ def _write_report_file(
         # One HTML surface, not three: --report-format html writes the same
         # dashboard page render_final produces (both callers have already
         # refreshed it), just to the requested path.
-        from ..reporting.dashboard_render import build_rerun_prefix, render_final_to
+        from ..reporting.dashboard_render import build_rerun_flags, render_final_to
 
         out = Path(_report_output(args, fmt))
         render_final_to(
             config.work_dir,
             out,
-            rerun_prefix=build_rerun_prefix(config),
+            rerun_flags=build_rerun_flags(config),
             theme=config.theme,
             comparisons=comparisons,
             results=results,

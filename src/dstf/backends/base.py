@@ -971,7 +971,7 @@ class Backend(ABC):
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         total = len(tests)
 
-        from ..reporting.dashboard_render import build_rerun_prefix
+        from ..reporting.dashboard_render import build_rerun_flags
         from .progress import ProgressReporter
 
         # Cheap version probes run here, eagerly (subprocess --version);
@@ -981,7 +981,7 @@ class Backend(ABC):
         progress = ProgressReporter(
             self.config.work_dir,
             total,
-            rerun_prefix=build_rerun_prefix(self.config),
+            rerun_flags=build_rerun_flags(self.config),
             metadata=run_metadata,
             theme=self.config.theme,
         )

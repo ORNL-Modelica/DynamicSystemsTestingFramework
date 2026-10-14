@@ -357,6 +357,17 @@ def _dependency_looks_like_path(entry: str, base_dir: Path) -> bool:
         return False
 
 
+#: The Config fields that place the project and that a caller may give
+#: over its testing.json (`Config.overrides`).
+_OVERRIDABLE = (
+    "source_path",
+    "reference_root",
+    "test_spec_file",
+    "work_dir",
+    "backend_name",
+)
+
+
 @dataclass
 class Config:
     """A project's configuration: its ``testing.json``, the command line's
@@ -517,6 +528,14 @@ class Config:
     # none, and the project runs on defaults.
     config_found: Path | None = field(init=False, default=None)
 
+    # Which of the project's places this Config did NOT take from its
+    # testing.json: the fields of _OVERRIDABLE the caller gave, and the ones
+    # derived from the current directory (a package found from it, the
+    # default work dir under it). A command that is to read the same
+    # project from another directory names each beside `--config` — the
+    # dashboard's commands (`reporting.dashboard_render.build_rerun_flags`).
+    overrides: frozenset[str] = field(init=False, default=frozenset())
+
     # The selected backend's block of `backends`, as written (empty: it has
     # none). `Backend.settings_of` lays it over the backend's defaults.
     backend_settings: dict[str, Any] = field(init=False, default_factory=dict)
@@ -526,6 +545,7 @@ class Config:
     located: "Located | None" = field(init=False, default=None)
 
     def __post_init__(self):
+        overrides = {name for name in _OVERRIDABLE if getattr(self, name) is not None}
         # Resolve reference root early — needed for config file search
         if self.reference_root is not None:
             self.reference_root = _resolved(Path(self.reference_root))
@@ -590,6 +610,7 @@ class Config:
                         self.source_path = find_package_dir(self.source_path)
                 else:
                     self.source_path = find_package_dir()
+                    overrides.add("source_path")
             except OSError as e:
                 # Nothing was named and nothing was found: no project here.
                 nothing = config_found_dir is None and self.source_path is None
@@ -871,8 +892,10 @@ class Config:
                     / backend_dir
                     / self.os_name
                 )
+                overrides.add("work_dir")
         else:
             self.work_dir = _resolved(Path(self.work_dir))
+        self.overrides = frozenset(overrides)
 
     @property
     def backend(self) -> str:

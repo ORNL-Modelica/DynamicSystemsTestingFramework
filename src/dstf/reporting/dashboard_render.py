@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import time
 import uuid
 from collections.abc import Iterable, Mapping
@@ -84,46 +85,61 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
         return None
 
 
-#: How a built command names the project when it names its testing.json —
-#: the only way `author` takes one.
-_CONFIG_PREFIX = "dstf --config "
+#: The flag each of `Config.overrides` is given back by, in the order a
+#: built command writes them.
+_OVERRIDE_FLAGS = (
+    ("source_path", "--source-path"),
+    ("reference_root", "--reference-root"),
+    ("test_spec_file", "--test-spec"),
+    ("work_dir", "--work-dir"),
+    ("backend_name", "--backend"),
+)
+
+#: The flags `dstf author` reads: it opens the project a testing.json names,
+#: with the work dir and backend it is given, and nothing else.
+_AUTHOR_READS = frozenset({"--config", "--work-dir", "--backend"})
 
 
-def build_rerun_prefix(config) -> str:
-    """The CLI prefix the dashboard's command builder starts each command
-    with: the flags that say where the project is, NO subcommand — the
-    dashboard's Command menu picks it (`run`, `compare`, `compare --accept`,
-    `run --rerun failed,sim-failed`, `author`) and appends ` --filter ...`.
+def build_rerun_flags(config) -> str:
+    """The flags the dashboard's command builder writes after each command
+    — `dstf <kind> <flags> --filter ...`, where the Command menu picks the
+    kind (`run`, `compare`, `compare --accept`, `run --rerun
+    failed,sim-failed`, `author`) — so that the command does the same thing
+    to the same project the run did, pasted into a terminal in any
+    directory.
 
-    It names the testing.json the run read or wrote, by its absolute path,
-    so the command runs from any directory: ``dstf --config
-    "/abs/testing.json"``. A run always has one (`run` and `compare` write a
-    default where none is found); a Config built with none (`run_pipeline`
-    called as a library) is named by its library and reference root
-    instead, absolute too, and the dashboard then offers no `author`, which
-    reads `--config` alone (:func:`offers_author`)."""
+    They name the testing.json the run read or wrote, and every place of
+    the project the run did not take from it (`Config.overrides`: a flag it
+    was given, or a default the current directory decided), each path
+    absolute. They go after the command because `--work-dir` and
+    `--backend` are offered there only. A Config built with no testing.json
+    (`run_pipeline` called as a library) is named by its library and
+    reference root instead, and then the dashboard offers no `author`
+    (:func:`offers_author`)."""
 
-    def q(p) -> str:
-        s = str(p)
+    def q(value) -> str:
+        s = str(value)
         return f'"{s}"' if " " in s else s
 
-    found = getattr(config, "config_found", None)
-    if found is not None:
-        return _CONFIG_PREFIX + q(Path(found).resolve())
-    parts = ["dstf"]
-    for flag, value in (
-        ("--source-path", getattr(config, "source_path", None)),
-        ("--reference-root", getattr(config, "reference_root", None)),
-    ):
-        if value is not None:
-            parts += [flag, q(Path(value).resolve())]
+    names = set(config.overrides)
+    parts = []
+    if config.config_found is not None:
+        parts += ["--config", q(Path(config.config_found).resolve())]
+    else:
+        names |= {"source_path", "reference_root"}
+    for name, flag in _OVERRIDE_FLAGS:
+        if name not in names:
+            continue
+        value = getattr(config, name)
+        parts += [flag, q(value if name == "backend_name" else Path(value).resolve())]
     return " ".join(parts)
 
 
-def offers_author(prefix: str) -> bool:
-    """Whether the dashboard can build an `author` command on ``prefix``:
-    the tool opens the project a testing.json names, and nothing else."""
-    return prefix.startswith(_CONFIG_PREFIX)
+def offers_author(flags: str) -> bool:
+    """Whether the dashboard can build an `author` command with ``flags``:
+    they name a testing.json and nothing `author` does not read."""
+    named = {t for t in shlex.split(flags, posix=False) if t.startswith("--")}
+    return "--config" in named and named <= _AUTHOR_READS
 
 
 def format_run_metadata(meta: dict | None) -> dict | None:
@@ -287,7 +303,7 @@ def _manifest_rows(work_dir: Path) -> dict[str, tuple[TestRow, float | None]]:
 def build_dashboard_context(
     work_dir: Path,
     mode: str,
-    rerun_prefix: str | None = None,
+    rerun_flags: str | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
 ) -> dict:
@@ -394,11 +410,11 @@ def build_dashboard_context(
             row = replace(row, sim_cpu=cpu)
         rows.append(row)
 
-    # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf"
-    # fallback. The kwarg path lets the CLI override the snapshot prefix even
-    # when status.json was written by a prior run with a different config
-    # (e.g. dstf compare reading work_dir from a different invocation).
-    prefix = rerun_prefix or snapshot.get("rerun_prefix") or "dstf"
+    # rerun_flags precedence: explicit kwarg > snapshot's flags > none.
+    # The kwarg path lets the CLI override the snapshot's flags even when
+    # status.json was written by a prior run with a different config (e.g.
+    # dstf compare reading work_dir from a different invocation).
+    flags = rerun_flags or snapshot.get("rerun_flags") or ""
 
     return {
         "mode": mode,
@@ -419,8 +435,8 @@ def build_dashboard_context(
         # word a person reads]. The class is the pill's key and the row's
         # data-status.
         "statuses": [[STATUS_CLASSES[s], STATUS_LABELS[s]] for s in PILL_STATUSES],
-        "rerun_prefix": prefix,
-        "offers_author": offers_author(prefix),
+        "rerun_flags": flags,
+        "offers_author": offers_author(flags),
         "updated_at": snapshot.get("updated_at", time.time()),
         # Wall-clock anchor for the dashboard's live elapsed clock. JS reads
         # SNAPSHOT_WALL (= updated_at, when the snapshot was written) and
@@ -474,7 +490,7 @@ def _atomic_write(path: Path, text: str) -> None:
 def _render(
     work_dir: Path,
     mode: str,
-    rerun_prefix: str | None = None,
+    rerun_flags: str | None = None,
     output_path: Path | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
@@ -483,7 +499,7 @@ def _render(
     ctx = build_dashboard_context(
         work_dir,
         mode=mode,
-        rerun_prefix=rerun_prefix,
+        rerun_flags=rerun_flags,
         comparisons=comparisons,
         results=results,
     )
@@ -498,15 +514,15 @@ def _render(
 
 
 def render_live(
-    work_dir: Path, rerun_prefix: str | None = None, theme: str = "default"
+    work_dir: Path, rerun_flags: str | None = None, theme: str = "default"
 ) -> None:
     """Render dashboard.html in live mode (auto-refreshes via meta tag)."""
-    _render(work_dir, mode="live", rerun_prefix=rerun_prefix, theme=theme)
+    _render(work_dir, mode="live", rerun_flags=rerun_flags, theme=theme)
 
 
 def render_final(
     work_dir: Path,
-    rerun_prefix: str | None = None,
+    rerun_flags: str | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",
@@ -517,7 +533,7 @@ def render_final(
     _render(
         work_dir,
         mode="final",
-        rerun_prefix=rerun_prefix,
+        rerun_flags=rerun_flags,
         comparisons=comparisons,
         results=results,
         theme=theme,
@@ -527,7 +543,7 @@ def render_final(
 def render_final_to(
     work_dir: Path,
     output_path: Path,
-    rerun_prefix: str | None = None,
+    rerun_flags: str | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",
@@ -542,7 +558,7 @@ def render_final_to(
     _render(
         work_dir,
         mode="final",
-        rerun_prefix=rerun_prefix,
+        rerun_flags=rerun_flags,
         output_path=output_path,
         comparisons=comparisons,
         results=results,
