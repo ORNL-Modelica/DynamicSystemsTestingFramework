@@ -112,7 +112,7 @@ class _Root(argparse.ArgumentParser):
             # The command's own error and usage, not the top level's — whose
             # usage would offer the very flag being refused.
             leaf.error(f"unrecognized arguments: {' '.join(extras)}")
-        refusal = _refuse_output_without_a_file(parsed)
+        refusal = _unread_beside(path, leaf, parsed)
         if refusal:
             leaf.error(refusal)
         return parsed, extras
@@ -160,18 +160,187 @@ def command_path(args: argparse.Namespace) -> str:
     )
 
 
-def _refuse_output_without_a_file(args: argparse.Namespace) -> str | None:
-    """``--output`` beside the console report format, which writes no file:
-    the flag was read by nothing and said nothing."""
-    if (
-        getattr(args, "report_format", None) == "console"
-        and getattr(args, "output", None) is not None
-    ):
-        return (
-            "--output does not apply: it names the file --report-format junit "
-            "or html writes, and the console format (the default) writes none"
+@dataclasses.dataclass(frozen=True)
+class Unread:
+    """Flags a command offers and reads only beside another flag — or
+    never beside one. ``with_`` rows: ``flags`` are not read when any of
+    ``beside`` is on the line (unless one of ``unless`` is too). Without
+    rows (``with_=False``): ``flags`` are read only when one of ``beside``
+    is. ``why`` is the reason, as the refusal and the help say it."""
+
+    command: str
+    flags: tuple[str, ...]
+    beside: tuple[str, ...]
+    why: str
+    with_: bool = True
+    unless: tuple[str, ...] = ()
+
+
+#: A flag asks for something. When the command, the action or the other
+#: flags on the line mean it will not happen, the command line is refused
+#: (:func:`_unread_beside`), and the help says so (:func:`_say_unread`).
+#: A flag that asks for something NOT to happen (``--no-browser``) is
+#: never in it: it is always accepted.
+UNREAD: tuple[Unread, ...] = (
+    Unread(
+        "run",
+        ("report", "report_format", "output"),
+        ("accept",),
+        "an accept stores the results and writes no report",
+    ),
+    Unread(
+        "run",
+        ("merge",),
+        ("accept",),
+        "an accept stores the results of the tests this run simulated, and no others",
+    ),
+    Unread(
+        "run",
+        ("tolerance", "default_points"),
+        ("accept",),
+        "an accept scores nothing (with --rerun they choose the tests to run again)",
+        unless=("rerun",),
+    ),
+    Unread(
+        "run",
+        ("report", "report_format", "output"),
+        ("interactive",),
+        "a review writes no report",
+    ),
+    Unread(
+        "run",
+        ("merge",),
+        ("filter", "package", "rerun"),
+        "without them every test runs, and there is nothing to merge in",
+        with_=False,
+    ),
+    Unread(
+        "compare",
+        ("tolerance", "default_points", "report", "report_format", "output"),
+        ("accept",),
+        "an accept stores the results, scores nothing and writes no report",
+    ),
+    Unread(
+        "compare",
+        ("parallel",),
+        ("accept",),
+        "it is the number of threads that render --report's pages, and an "
+        "accept writes none",
+    ),
+    Unread(
+        "compare",
+        ("parallel",),
+        ("report",),
+        "it is the number of threads that render --report's pages",
+        with_=False,
+    ),
+    *(
+        Unread(
+            command,
+            ("output",),
+            ("report_format",),
+            "it names the file junit or html writes, and the console format "
+            "(the default) writes none",
+            with_=False,
         )
+        for command in ("run", "compare")
+    ),
+    Unread(
+        "baseline export",
+        ("work_dir",),
+        ("output",),
+        "the work directory is where the file goes when --output names none",
+    ),
+    Unread(
+        "manifest cleanup",
+        ("test_spec", "work_dir"),
+        ("orphans",),
+        "only --orphans reads the tests and cleans the work directory",
+        with_=False,
+    ),
+    Unread(
+        "check",
+        ("reference_root",),
+        ("config",),
+        "check reads it only to look for testing.json in it",
+    ),
+)
+
+
+def _flag(node: argparse.ArgumentParser, dest: str) -> argparse.Action:
+    (action,) = [a for a in node._actions if a.dest == dest and a.option_strings]
+    return action
+
+
+def _name(node: argparse.ArgumentParser, dest: str) -> str:
+    """A flag as the help and the refusals name it: its long spelling."""
+    return _flag(node, dest).option_strings[-1]
+
+
+def _names(node: argparse.ArgumentParser, dests: tuple[str, ...], word: str) -> str:
+    names = [_name(node, d) for d in dests]
+    return (
+        names[0] if len(names) == 1 else f"{', '.join(names[:-1])} {word} {names[-1]}"
+    )
+
+
+def _on_the_line(node: argparse.ArgumentParser, args, dest: str) -> bool:
+    """Whether the command line gave ``dest`` — a value other than the one
+    the parser fills in (``--report-format console`` is the default)."""
+    value = getattr(args, dest, None)
+    default = _flag(node, dest).default
+    return (
+        value is not None
+        and value is not False
+        and (default is argparse.SUPPRESS or value != default)
+    )
+
+
+def _unread_beside(path: str, node: argparse.ArgumentParser, args) -> str | None:
+    """The first flag on the line that :data:`UNREAD` says will not be read
+    beside the others, as one sentence naming both; None when there is
+    none."""
+    for row in UNREAD:
+        if row.command != path:
+            continue
+        beside = [d for d in row.beside if _on_the_line(node, args, d)]
+        if row.with_ and (
+            not beside or any(_on_the_line(node, args, d) for d in row.unless)
+        ):
+            continue
+        if not row.with_ and beside:
+            continue
+        for dest in row.flags:
+            if not _on_the_line(node, args, dest):
+                continue
+            flag = _flag(node, dest)
+            given = _name(node, dest)
+            if flag.nargs != 0:
+                given += f" {getattr(args, dest)}"
+            where = (
+                f"with {_name(node, beside[0])}"
+                if row.with_
+                else f"without {_names(node, row.beside, 'or')}"
+            )
+            return f"{given} does not apply {where}: {row.why}"
     return None
+
+
+def _say_unread(nodes: dict[str, argparse.ArgumentParser]) -> None:
+    """Each :data:`UNREAD` row in the help: on the flag that decides, the
+    flags it is not read with (``--accept``: "Not with --report, …"); on a
+    flag read only beside another, which ("Only with --orphans")."""
+    for row in UNREAD:
+        node = nodes[row.command]
+        if row.with_:
+            unless = f" (unless {_names(node, row.unless, 'or')})" if row.unless else ""
+            text = f"Not with {_names(node, row.flags, 'or')}{unless}: {row.why}."
+            for dest in row.beside:
+                _flag(node, dest).help += " " + text
+        else:
+            text = f"Only with {_names(node, row.beside, 'or')}: {row.why}."
+            for dest in row.flags:
+                _flag(node, dest).help += " " + text
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +644,16 @@ def _text(text: str) -> str:
     )
 
 
+class _Formatter(argparse.RawDescriptionHelpFormatter):
+    """argparse's formatter, keeping a description and an epilog as written
+    and filling an option's help so that a name with a hyphen in it
+    (``--report-format``, ``case-sensitive``) stays whole, as :func:`_text`
+    does for a description."""
+
+    def _split_lines(self, text: str, width: int) -> list[str]:
+        return textwrap.wrap(" ".join(text.split()), width, break_on_hyphens=False)
+
+
 class _Tree:
     """The tree as it is built: adds a command or a group under a parent,
     with the same formatter and the same bookkeeping for each."""
@@ -491,7 +670,7 @@ class _Tree:
             help=summary,
             description=_text(description),
             epilog=_examples(*examples),
-            formatter_class=argparse.RawDescriptionHelpFormatter,
+            formatter_class=_Formatter,
         )
         self.root.nodes[path] = node
         return node
@@ -667,7 +846,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "dstf compare --config testing.json --report-format junit -o results.xml",
             "dstf spec add MyLib.Examples.Rod --config testing.json --variables 'rod.T*'",
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=_Formatter,
     )
     root.add_argument(
         "-V",
@@ -703,6 +882,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     _add_soft_check(tree, top)
     _add_companion(tree, top)
     _add_manifest(tree, top)
+    _say_unread(root.commands)
     for path, node in root.commands.items():
         offered = {a.dest for a in node._actions if a.option_strings} - {"help"}
         if offered != set(READS[path]):
@@ -750,8 +930,7 @@ def _offer_reports(node: argparse.ArgumentParser) -> None:
         "output",
         default=None,
         help="The file --report-format junit or html writes. Default: "
-        f"{files}, in the current directory. An error beside the console "
-        "format, which writes no file.",
+        f"{files}, in the current directory.",
     )
     _offer(node, "report")
     _offer(node, "no_browser", fill={"page": "the dashboard or a report page"})
@@ -881,9 +1060,9 @@ def _add_run(tree: _Tree, top) -> None:
     node.add_argument(
         "--merge",
         action="store_true",
-        help="With --filter: simulate the filtered tests only, but score and "
-        "report every test, the others on the results their last run left in "
-        "the work directory.",
+        help="Simulate the selected tests only, but score and report every "
+        "test, the others on the results their last run left in the work "
+        "directory.",
     )
     node.add_argument(
         "--rerun",

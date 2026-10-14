@@ -225,9 +225,11 @@ def test_a_flag_s_default_in_its_help_is_the_code_s(flag, field, monkeypatch):
                 assert "Default: 617." in action.help, (path, action.help)
 
 
-def test_a_description_keeps_a_hyphenated_name_whole():
-    """The descriptions are filled by `_text`; a name with a hyphen in it
-    (`soft-check`, `--reference-root`) is never cut at the hyphen."""
+def test_a_description_keeps_a_hyphenated_name_whole(monkeypatch):
+    """The descriptions are filled by `_text`, an option's help by the
+    tree's formatter; a name with a hyphen in it (`soft-check`,
+    `--report-format`) is never cut at the hyphen."""
+    monkeypatch.setenv("COLUMNS", "80")
     from dstf.cli.parser import _text
 
     names = "--reference-root soft-check dynamic-systems-testing-framework"
@@ -236,7 +238,8 @@ def test_a_description_keeps_a_hyphenated_name_whole():
         words = text.split()
         assert words[1:] == names.split(), text
     for path, node in NODES.items():
-        for line in (node.description or "").splitlines():
+        # the description and every option's help, as printed
+        for line in build_arg_parser().nodes[path].format_help().splitlines():
             assert not re.search(r"\w-$", line), f"`dstf {path}`: {line!r}"
 
 
@@ -366,6 +369,8 @@ ARGV: dict[str, list[str]] = {
     "companion add": ["Lib.M", "rig", "rig.csv"],
     "companion freeze": ["Lib.M", "rig"],
     "companion remove": ["Lib.M", "rig"],
+    # --test-spec and --work-dir are read with --orphans only
+    "manifest cleanup": ["--orphans"],
 }
 
 _FLAGS = sorted(_PROJECT | _AFTER_ONLY)
@@ -825,6 +830,129 @@ def test_output_beside_the_console_format_is_an_error(command, capsys):
         assert isinstance(args, argparse.Namespace) and args.output == "out"
     # another command's --output is its own
     assert _parse(["spec", "schema", "-o", "s.json"], capsys).output == "s.json"
+
+
+# ---------------------------------------------------------------------------
+# A flag that will not be read beside the others on the line is refused
+# ---------------------------------------------------------------------------
+
+#: How each flag of the rows is written on a command line.
+_GIVEN = {
+    "accept": ["--accept"],
+    "interactive": ["-i", "failed"],
+    "rerun": ["--rerun", "failed"],
+    "filter": ["--filter", "Lib.*"],
+    "package": ["--package", "Lib"],
+    "report": ["--report"],
+    "report_format": ["--report-format", "junit"],
+    "tolerance": ["--tolerance", "0.5"],
+    "default_points": ["--default-points"],
+    "merge": ["--merge"],
+    "parallel": ["--parallel", "2"],
+    "orphans": ["--orphans"],
+    "work_dir": ["--work-dir", "w"],
+    "test_spec": ["--test-spec", "s.json"],
+    "reference_root": ["--reference-root", "r"],
+    "config": ["--config", "t.json"],
+}
+
+
+def _given(command: str, dest: str, *, bare: bool = False) -> list[str]:
+    """``dest`` on a command line; an ``--output`` with a format that writes
+    a file, unless ``bare``."""
+    if dest == "output":
+        if bare or command == "baseline export":
+            return ["-o", "out.xml"]
+        return [*_GIVEN["report_format"], "-o", "out.xml"]
+    return _GIVEN[dest]
+
+
+def _unread_cases():
+    from dstf.cli.parser import UNREAD
+
+    for row in UNREAD:
+        for dest in row.flags:
+            for beside in row.beside if row.with_ else [None]:
+                yield row, dest, beside
+
+
+@pytest.mark.parametrize(
+    ("row", "dest", "beside"),
+    list(_unread_cases()),
+    ids=lambda v: v if isinstance(v, str) else (v.command if v else "-"),
+)
+def test_a_flag_that_will_not_be_read_beside_another_is_refused(
+    row, dest, beside, capsys
+):
+    # the positionals the command needs, and none of ARGV's flags
+    positionals = [w for w in ARGV.get(row.command, []) if not w.startswith("-")]
+    words = row.command.split() + positionals
+    with_ = _given(row.command, beside) if beside else []
+    argv = [*words, *with_, *_given(row.command, dest, bare=not row.with_)]
+    text = _parse(argv, capsys)
+    assert isinstance(text, str), f"dstf {' '.join(argv)} parsed"
+    node = NODES[row.command]
+    name = lambda d: [a for a in node._actions if a.dest == d][0].option_strings[-1]  # noqa: E731
+    where = (
+        f"with {name(beside)}"
+        if beside
+        else "without "
+        + ", ".join(name(d) for d in row.beside[:-1])
+        + (" or " if len(row.beside) > 1 else "")
+        + name(row.beside[-1])
+    )
+    assert f" does not apply {where}: {row.why}" in text, text
+    assert f"dstf {row.command}: error: --" in text
+    # the help says it where the user reads the flag
+    help_text = " ".join(node.format_help().split())
+    assert f"{row.why}." in help_text
+
+
+def test_the_sentence_names_both_flags_and_the_value(capsys):
+    text = _parse(
+        ["run", "--accept", "--report-format", "junit", "-o", "a.xml"], capsys
+    )
+    assert (
+        "dstf run: error: --report-format junit does not apply with --accept: "
+        "an accept stores the results and writes no report"
+    ) in text
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        # --rerun scores the last run to choose its tests: the tolerance is read
+        ["run", "--accept", "--rerun", "failed", "--tolerance", "0.5"],
+        ["run", "--accept", "--rerun", "--default-points"],
+        ["run", "--merge", "--filter", "Lib.*"],
+        ["run", "--merge", "--package", "Lib"],
+        ["run", "--merge", "--rerun"],
+        ["run", "-i", "--merge", "--filter", "Lib.*", "--tolerance", "0.5"],
+        ["compare", "--parallel", "2", "--report"],
+        ["compare", "--accept", "--filter", "Lib.*"],
+        ["manifest", "cleanup", "--orphans", "--work-dir", "w"],
+        ["--test-spec", "s.json", "manifest", "cleanup", "--orphans"],
+        ["baseline", "export", "--work-dir", "w"],
+        ["check", "--reference-root", "r"],
+        ["--config", "t.json", "check", "--source-path", "L"],
+        # a flag that asks for something NOT to happen is always accepted
+        ["run", "--accept", "--no-browser"],
+        ["run", "-i", "--no-browser"],
+        ["compare", "--accept", "--no-browser"],
+        ["compare", "--no-browser"],
+    ],
+    ids=" ".join,
+)
+def test_a_flag_that_is_read_beside_the_others_parses(argv, capsys):
+    args = _parse(argv, capsys)
+    assert isinstance(args, argparse.Namespace), args
+
+
+def test_a_flag_written_before_the_command_counts_too(capsys):
+    text = _parse(["--test-spec", "s.json", "manifest", "cleanup"], capsys)
+    assert "--test-spec s.json does not apply without --orphans" in text
+    text = _parse(["--config", "t.json", "check", "--reference-root", "r"], capsys)
+    assert "--reference-root r does not apply with --config" in text
 
 
 # ---------------------------------------------------------------------------

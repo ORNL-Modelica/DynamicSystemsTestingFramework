@@ -1273,8 +1273,10 @@ class TestAcceptExitCodeAndScope:
         assert _stored_model_ids(run_env) == set()
 
     def test_accept_with_merge_stores_only_this_runs_tests(self, run_env, capsys):
-        """--merge expands the report scope, but stale on-disk results for
-        out-of-scope tests must never become baselines."""
+        """A merge expands the report scope, but stale on-disk results for
+        out-of-scope tests must never become baselines. `--merge` beside
+        `--accept` is the parser's error; `--rerun` implies a merge, so the
+        accept is held to its own tests all the same."""
         t1, t2 = _mk_test("Lib.T1"), _mk_test("Lib.T2")
         run_env.make(
             [t1, t2],
@@ -1287,7 +1289,9 @@ class TestAcceptExitCodeAndScope:
                 "test_0002": {"model_id": "Lib.T2", "ref_id": None},
             },
         )
-        rc = cmd_run(_run_args(run_env, "--filter", "Lib.T1", "--merge", "--accept"))
+        args = _run_args(run_env, "--filter", "Lib.T1", "--accept")
+        args.merge = True  # as `--rerun` sets it
+        rc = cmd_run(args)
         assert rc == 0
         assert _stored_model_ids(run_env) == {"Lib.T1"}
 
@@ -2585,12 +2589,11 @@ class TestRemovedReportPagesAreSaid:
     def test_an_accept_writes_no_pages_and_says_so_too(
         self, scored, run_env, capsys, command
     ):
-        """`--accept` returns before any report: with `--report` beside it
-        the pages are still gone, and the line still says so — naming
-        `compare --report`, not the `--report` just given."""
+        """`--accept` writes no report (`--report` beside it is the parser's
+        error): the pages are gone, and the line says so."""
         scored("run", "--report")
         capsys.readouterr()
-        scored(command, "--accept", "--report")
+        scored(command, "--accept")
         assert _pages(run_env) == 0
         assert _removed_lines(capsys.readouterr().out) == [
             _REMOVED.format(n=2, s="s", them="them")
@@ -2602,7 +2605,7 @@ class TestRemovedReportPagesAreSaid:
         scored("run", "--report")
         capsys.readouterr()
         monkeypatch.setattr("builtins.input", lambda prompt="": "s")
-        scored("run", "-i", "all", "--report")
+        scored("run", "-i", "all")
         assert _pages(run_env) == 0
         assert _removed_lines(capsys.readouterr().out) == [
             _REMOVED.format(n=2, s="s", them="them")

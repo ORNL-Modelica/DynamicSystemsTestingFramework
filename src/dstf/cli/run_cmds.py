@@ -119,10 +119,7 @@ def _say_removed_pages(n: int) -> None:
     """One line for the per-test report pages a run or compare removed and
     is not writing again. The removal is intended — a stale page must not
     survive the run that outdated it — but silent, it read as lost work.
-    `compare --report` is what writes them again from EVERY caller: under
-    `--accept --report` and `-i … --report` the line used to say "--report
-    writes them again", of the flag that had just been given and wrote
-    none."""
+    `compare --report` is what writes them again from every caller."""
     if n:
         pages, them = ("page", "it") if n == 1 else ("pages", "them")
         print(
@@ -305,9 +302,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         for line in outcome.notices:
             print(line)
         results, scope_tests = outcome.results, outcome.scope_tests
-        # Only the scoring route below writes pages; --accept and -i return
-        # without, whatever --report says.
-        if not (args.report and not args.accept and args.interactive is None):
+        # Only the scoring route below writes pages (--report is refused
+        # beside --accept and -i: `cli.parser.UNREAD`).
+        if not args.report:
             _say_removed_pages(outcome.report_pages_removed)
 
         if args.accept:
@@ -451,8 +448,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
         backend.ref_id_map,
         wipe_sim_dirs=False,
     )
-    # --accept returns without a report, whatever --report says.
-    if getattr(args, "accept", False) or not getattr(args, "report", False):
+    # --report is refused beside --accept (`cli.parser.UNREAD`).
+    if not args.report:
         _say_removed_pages(pages_removed)
     # The verdicts status.json holds for these tests are of an earlier
     # compare: cleared here, and stamped again below by a route that scores
