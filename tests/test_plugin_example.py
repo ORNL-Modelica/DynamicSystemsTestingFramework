@@ -96,3 +96,70 @@ def test_the_setting_is_read(installed, tmp_path):
     result = next((project / "testing_output").rglob("result.json"))
     data = json.loads(result.read_text(encoding="utf-8"))
     assert data["y"][-1] == pytest.approx(math.exp(-0.5 * 4))
+
+
+def _documented() -> set[str]:
+    """Every object the API page documents, by its dotted name: each
+    ``auto…::`` directive's target."""
+    import re
+
+    page = Path(__file__).resolve().parents[1] / "docs" / "reference" / "api.md"
+    text = page.read_text(encoding="utf-8")
+    return set(re.findall(r"^\.\. auto\w+:: (dstf[\w.]*)$", text, re.MULTILINE))
+
+
+def _imported(source: Path) -> list[tuple[str, object]]:
+    """Every ``dstf`` name ``source`` imports, by the dotted name it is
+    imported as, with the object it is."""
+    import ast
+    import importlib
+
+    names = []
+    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("dstf"):
+            module = importlib.import_module(node.module)
+            for alias in node.names:
+                names.append(
+                    (f"{node.module}.{alias.name}", getattr(module, alias.name))
+                )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("dstf"):
+                    names.append((alias.name, importlib.import_module(alias.name)))
+    return names
+
+
+def _undocumented(source: Path) -> list[str]:
+    """The ``dstf`` names ``source`` imports that the API page does not
+    document: neither by the name they are imported as nor, for a class or a
+    function imported where it is re-exported, by where it is defined."""
+    documented = _documented()
+    missing = []
+    for name, obj in _imported(source):
+        where = f"{getattr(obj, '__module__', '')}.{getattr(obj, '__qualname__', '')}"
+        if name not in documented and where not in documented:
+            missing.append(name)
+    return missing
+
+
+def test_the_example_imports_only_what_the_api_page_documents():
+    """Everything else is internal and may change at any time (the page's
+    own warning), so the example a plug-in is written from must use none of
+    it. It imported ``dstf.backends.locate.EXECUTABLE`` and ``SEARCH`` and
+    ``dstf.backends.types.resolve_variable_patterns``, none of them on the
+    page."""
+    source = EXAMPLE / "dstf_decay.py"
+    assert len(_imported(source)) >= 10, "the AST walk found the imports"
+    assert _undocumented(source) == []
+
+
+def test_an_internal_name_the_example_imported_would_be_named(tmp_path):
+    """The check bites: one more import, of a name the page does not
+    document, is named."""
+    source = tmp_path / "dstf_decay.py"
+    source.write_text(
+        (EXAMPLE / "dstf_decay.py").read_text(encoding="utf-8")
+        + "\nfrom dstf.backends.types import is_glob_pattern\n",
+        encoding="utf-8",
+    )
+    assert _undocumented(source) == ["dstf.backends.types.is_glob_pattern"]

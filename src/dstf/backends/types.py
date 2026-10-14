@@ -337,19 +337,25 @@ def resolve_variable_patterns(
     patterns: list[str],
     available_vars: list[str],
 ) -> list[str]:
-    """Resolve variable patterns against available variable names from simulation.
+    """The names of a result file that a test's ``variables`` patterns
+    select.
 
-    Pattern types:
-    - Explicit name: "pipe.T[1]" — must exist exactly
-    - Glob: "medium.T*" — fnmatch against available names
-    - Wildcard: "*" — all non-internal variables
-    - Empty list: [] — no variables (simulate-only mode)
+    Sorted, ``x[10]`` came before ``x[2]``: a test with no tree drew its
+    plots alphabetically, and an accept wrote its ``variables`` that way.
 
-    Returns the resolved names in PATTERN order: explicit names as written,
-    each glob's matches in ``available_vars``' (the result file's) order, a
-    name matched twice where it was first. Sorted, ``x[10]`` came before
-    ``x[2]``: a test with no tree drew its plots alphabetically, and an
-    accept wrote its ``variables`` that way.
+    Args:
+        patterns: A test's ``variables``: each an explicit name
+            (``"pipe.T[1]"``, which must be one of ``available_vars``), a
+            glob (``"medium.T*"``), or ``"*"`` for every name but the
+            simulator's internal ones. An empty list selects none (a
+            simulate-only test).
+        available_vars: The result file's names, in its order.
+
+    Returns:
+        The names selected, in pattern order — an explicit name where it is
+        written, each glob's matches in ``available_vars``' order, a name
+        matched twice where it was first. A pattern that selects nothing is
+        logged as a warning.
     """
     if not patterns:
         return []

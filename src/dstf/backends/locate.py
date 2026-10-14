@@ -26,13 +26,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-#: The kinds of rule a thing is found by.
+#: :attr:`Rule.kind`: the command line named it (``--backend-path``).
 COMMAND_LINE = "command line"
+#: :attr:`Rule.kind`: the backend's block of ``testing.json`` named it.
 SETTING = "setting"
+#: :attr:`Rule.kind`: an environment variable named it.
 ENVIRONMENT = "environment"
+#: :attr:`Rule.kind`: a search found it — ``PATH``, a standard install
+#: folder, the running interpreter.
 SEARCH = "search"
 
-#: What a backend's program is called in a :class:`Found`.
+#: :attr:`Found.what` of a backend's program: the part whose path
+#: ``Located.executable`` is.
 EXECUTABLE = "executable"
 
 #: The flag that names the executable on the command line, and the key

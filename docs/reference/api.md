@@ -61,6 +61,29 @@ it writes, such as `verdicts.json`, not from Python objects.
 ```
 
 ```{eval-rst}
+.. autodata:: dstf.backends.locate.EXECUTABLE
+```
+
+The kinds of {class}`~dstf.backends.locate.Rule`, in the order a backend's
+install is looked for:
+
+```{eval-rst}
+.. autodata:: dstf.backends.locate.COMMAND_LINE
+```
+
+```{eval-rst}
+.. autodata:: dstf.backends.locate.SETTING
+```
+
+```{eval-rst}
+.. autodata:: dstf.backends.locate.ENVIRONMENT
+```
+
+```{eval-rst}
+.. autodata:: dstf.backends.locate.SEARCH
+```
+
+```{eval-rst}
 .. autoclass:: dstf.backends.base.Diagnosis
 ```
 
@@ -74,6 +97,10 @@ it writes, such as `verdicts.json`, not from Python objects.
 
 ```{eval-rst}
 .. autoclass:: dstf.backends.types.VariableResult
+```
+
+```{eval-rst}
+.. autofunction:: dstf.backends.types.resolve_variable_patterns
 ```
 
 ```{eval-rst}
