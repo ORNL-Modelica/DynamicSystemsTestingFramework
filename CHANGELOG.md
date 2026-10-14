@@ -97,6 +97,9 @@ to write instead.
 - `spec add` of a model that is no class of a Modelica project's library
   wrote an entry no run could simulate, and exited 0; it says so, writes
   nothing and exits 1.
+- `spec add` on a Python, Julia or FMU project wrote an entry that named no
+  file, and every run failed it with a Python traceback. `--source FILE`
+  names the file the test runs, and is required there.
 - A hand-written `metrics` tree that scored a soft check outside `warn`
   failed its test on `run` and `compare`, where a soft check may only warn.
   A tree that breaks a baseline-role rule — that one; a criterion against a

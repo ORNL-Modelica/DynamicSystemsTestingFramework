@@ -923,6 +923,12 @@ def test_a_flag_before_the_command_wins_nothing_it_is_not_read_for(capsys):
     assert "it reads --config" in text
 
 
+#: Every option string of the tree, whichever command has it.
+_EVERY_FLAG = {
+    s for node in NODES.values() for a in node._actions for s in a.option_strings
+}
+
+
 @pytest.mark.parametrize("path", sorted(NODES))
 def test_no_flag_is_taken_by_a_prefix_of_its_name(path, capsys):
     """argparse's abbreviations are off at every node: `compare --a` was
@@ -950,7 +956,12 @@ def test_no_flag_is_taken_by_a_prefix_of_its_name(path, capsys):
             )
             text = _parse(argv, capsys)
             assert isinstance(text, str), f"`dstf {path}` took {prefix} for {flag}"
-            assert f"unrecognized arguments: {prefix}=VALUE" in text, text
+            unknown = f"unrecognized arguments: {prefix}=VALUE" in text
+            # before the command, another command's flag (`--source` of
+            # `spec add`, a prefix of `--source-path`) is said as the flag
+            # it is
+            elsewhere = prefix in _EVERY_FLAG and f"{prefix} does not apply" in text
+            assert unknown or elsewhere, text
 
 
 @pytest.mark.parametrize(

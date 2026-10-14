@@ -1022,7 +1022,7 @@ READS: dict[str, tuple[str, ...]] = {
     ),
     "author": ("config", *_SELECT, "port", "no_browser", "work_dir", "backend"),
     "check": _STORE,
-    "spec add": (*_ALL, "variables"),
+    "spec add": (*_ALL, "variables", "source"),
     "spec update": (*_ALL, "backend"),
     "spec schema": ("output",),
     "baseline export": (*_STORE, "format", "output", "backend", "work_dir"),
@@ -1456,13 +1456,19 @@ def _add_spec(tree: _Tree, top) -> None:
             Without --variables the test is simulate-only: it passes when
             its simulation completes.
 
+            A Modelica test's model is a class of the library. A Python,
+            Julia or FMU test runs a file, which --source names.
+
             Exit code: 0 when the entry is written, or kept on n; 1 when
-            the model is no class of a Modelica project's library, and
-            nothing is written; 2 for a config error.
+            the model is no class of a Modelica project's library, or
+            --source is missing where the backend's tests run a file, names
+            no file, or is given where they run none — and nothing is
+            written; 2 for a config error.
             """,
         examples=(
             "dstf spec add MyLib.Examples.Rod --config testing.json --variables 'rod.T*' pump.m_flow",
             "dstf spec add MyLib.Examples.Smoke --config testing.json",
+            "dstf spec add PyLib.Examples.Ramp --config testing.json --source Examples/Ramp.py --variables x",
         ),
         creates=True,
         spec_use="this command writes",
@@ -1471,8 +1477,8 @@ def _add_spec(tree: _Tree, top) -> None:
         "model_id",
         metavar="model",
         help="The test's model, by the id the backend runs it under: a "
-        "Modelica class (MyLib.Examples.Rod), an FMU's name, a Julia or "
-        "Python test's name.",
+        "Modelica class of the library (MyLib.Examples.Rod), or the name of "
+        "an FMU, Julia or Python test, whose file --source names.",
     )
     node.add_argument(
         "--variables",
@@ -1483,6 +1489,14 @@ def _add_spec(tree: _Tree, top) -> None:
         "argument each, after the model ('rod.T*' pump.m_flow). Quote a "
         "pattern holding * or [ so the shell leaves it alone. Default: none, "
         "a simulate-only test.",
+    )
+    node.add_argument(
+        "--source",
+        metavar="FILE",
+        help="The file the test runs: its .py, .jl or .fmu, written into the "
+        "entry relative to test_spec.json. Required where the backend's "
+        "tests run a file (Python, Julia, FMPy); not with a Modelica "
+        "backend, whose test is a class of the library.",
     )
 
     node = tree.command(

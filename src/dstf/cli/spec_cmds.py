@@ -3,6 +3,7 @@
 `testing.json`)."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -15,11 +16,29 @@ SPEC_FILE = "test_spec.json"
 SCHEMAS = {"test_spec": SPEC_FILE, "testing": CONFIG_FILENAME}
 
 
-def _not_added(config, model_id: str) -> str | None:
+def _not_added(config, model_id: str, source: str | None) -> str | None:
     """Why ``spec add`` writes no entry for ``model_id``, as one sentence,
-    or None. A Modelica project's library decides
-    (:func:`~dstf.discovery.mo_parser.find_class`): a class it does not
-    hold is no test any run could simulate."""
+    or None. The entry must be one a run can simulate: a Modelica project's
+    library holds its class (:func:`~dstf.discovery.mo_parser.find_class`),
+    and a test of a backend that runs a file (``Backend.source_suffix``)
+    names one that is there — ``--source``, which no other backend reads."""
+    from ..backends import backend_class
+
+    backend = backend_class(config.backend_name)
+    suffix = backend.source_suffix if backend is not None else None
+    if suffix is None and source is not None:
+        return (
+            f"--source does not apply: a test of the {config.backend} backend "
+            f"runs no file its entry names; nothing was added."
+        )
+    if suffix is not None and source is None:
+        return (
+            f"--source is required: a test of the {config.backend} backend runs "
+            f"the {suffix} file its entry names (--source FILE); nothing was "
+            f"added."
+        )
+    if source is not None and not Path(source).is_file():
+        return f"--source {source}: no such file; nothing was added."
     if config.source_type != "modelica":
         return None
     from ..discovery.mo_parser import find_class
@@ -38,7 +57,7 @@ def cmd_spec_add(args: argparse.Namespace) -> int:
     model_id = args.model_id
     variables = args.variables if args.variables is not None else []
 
-    refused = _not_added(config, model_id)
+    refused = _not_added(config, model_id, args.source)
     if refused is not None:
         print(refused, file=sys.stderr)
         return 1
@@ -47,8 +66,17 @@ def cmd_spec_add(args: argparse.Namespace) -> int:
 
     # Determine spec file location
     spec_path = config.spec_path
+    # `source` is relative to the spec file's directory, as the parser
+    # reads it (`spec_parser`), with `/` on every system.
+    source = (
+        None
+        if args.source is None
+        else Path(
+            os.path.relpath(os.path.abspath(args.source), spec_path.parent)
+        ).as_posix()
+    )
 
-    added = add_to_test_spec(spec_path, model_id, variables)
+    added = add_to_test_spec(spec_path, model_id, variables, source=source)
     if added:
         config.write_default_file()
         var_desc = ", ".join(variables) if variables else "(simulate only)"
@@ -68,7 +96,9 @@ def cmd_spec_add(args: argparse.Namespace) -> int:
             print("\nAborted.")
             return 1
         if choice == "y":
-            add_to_test_spec(spec_path, model_id, variables, overwrite=True)
+            add_to_test_spec(
+                spec_path, model_id, variables, overwrite=True, source=source
+            )
             config.write_default_file()
             print(f"Updated: {model_id}")
             return 0

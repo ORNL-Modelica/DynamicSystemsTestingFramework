@@ -454,8 +454,11 @@ def add_to_test_spec(
     model_id: str,
     variables: list[str],
     overwrite: bool = False,
+    source: str | None = None,
 ) -> bool:
-    """Add or update a test entry in test_spec.json.
+    """Add or update a test entry in test_spec.json. ``source``, given, is
+    the entry's ``source`` (the file the test runs, relative to the spec
+    file); an update sets it too.
 
     Returns True if the entry was added/updated, False if it already existed
     and overwrite was not set.
@@ -475,8 +478,13 @@ def add_to_test_spec(
         entry = data["tests"][matches[0]]
         entry["model"] = model_id
         entry["variables"] = variables
+        if source is not None:
+            entry["source"] = source
     else:
-        data["tests"].append({"model": model_id, "variables": variables})
+        entry = {"model": model_id, "variables": variables}
+        if source is not None:
+            entry["source"] = source
+        data["tests"].append(entry)
 
     _write_spec(spec_path, data)
     return True

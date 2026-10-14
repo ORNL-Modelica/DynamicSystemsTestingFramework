@@ -113,6 +113,7 @@ class FmpyBackend(Backend):
     #: None: FMPy is a Python library, with no program to name.
     settings: Mapping[str, Setting] = {}
     source_types = frozenset({"fmu"})
+    source_suffix = ".fmu"
     artifact_files = (("result.npz", "Result file"),)
 
     #: Filename used for the on-disk structured-array cache per test.

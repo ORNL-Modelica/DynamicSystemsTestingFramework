@@ -744,3 +744,110 @@ def test_the_tool_fills_a_spec_only_test_and_reads_its_model_once(
     assert rod.comparison_tolerance == 0.25  # re-merged, twice
     assert (rod.stop_time, rod.tolerance) == (200, 1e-6)  # still the model's
     assert asked == ["RodLib.Rod"]
+
+
+# ---------------------------------------------------------------------------
+# `spec add` on a project whose tests name their file: `--source`
+# ---------------------------------------------------------------------------
+
+
+def _example(tmp_path: Path, which: str) -> Path:
+    """A copy of a bundled example's project; its testing.json."""
+    import shutil
+
+    examples = Path(__file__).parent.parent / "examples"
+    where = {
+        "python": ("python/PythonTestingLib", "Resources/ReferenceResults"),
+        "julia": ("julia/JuliaMtkTestingLib", "Resources/ReferenceResults"),
+        "fmu": ("fmu", ""),
+    }[which]
+    copy = tmp_path / which
+    shutil.copytree(
+        examples / where[0],
+        copy,
+        ignore=shutil.ignore_patterns(
+            "__pycache__", "reference-fmus-binaries", "testing_output"
+        ),
+    )
+    return copy / where[1] / "testing.json"
+
+
+class TestSpecAddWritesAnEntryThatRuns:
+    """`spec add` on a Python, Julia or FMU project wrote an entry with no
+    `source`, and `run` then failed it with a raw ImportError in
+    status.json: such a test runs the file its entry names. `--source`
+    names it; without it the command is refused."""
+
+    @pytest.mark.parametrize(
+        ("which", "backend", "suffix"),
+        [
+            ("python", "Python", ".py"),
+            ("julia", "Julia", ".jl"),
+            ("fmu", "FMPy", ".fmu"),
+        ],
+    )
+    def test_without_source_nothing_is_added(
+        self, tmp_path, capsys, which, backend, suffix
+    ):
+        config = _example(tmp_path, which)
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        assert main(["--config", str(config), "spec", "add", "Lib.New"]) == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err == (
+            f"--source is required: a test of the {backend} backend runs the "
+            f"{suffix} file its entry names (--source FILE); nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    def test_the_entry_names_its_file_and_runs(self, tmp_path, monkeypatch, capsys):
+        config = _example(tmp_path, "python")
+        lib = config.parent.parent.parent
+        model = "PythonTestingLib.Examples.Copy"
+        monkeypatch.chdir(tmp_path)
+        source = Path("python") / "Examples" / "ConstantCsv.py"
+        argv = ["--config", str(config)]
+        assert main([*argv, "spec", "add", model, "--source", str(source)]) == 0
+        assert "Added: PythonTestingLib.Examples.Copy" in capsys.readouterr().out
+        spec = json.loads(Config(config_file=config).spec_path.read_text("utf-8"))
+        # relative to the spec file, as every `source` is
+        assert spec["tests"][-1] == {
+            "model": model,
+            "variables": [],
+            "source": "../../Examples/ConstantCsv.py",
+        }
+        assert (config.parent / spec["tests"][-1]["source"]).resolve() == (
+            lib / "Examples" / "ConstantCsv.py"
+        )
+        work = tmp_path / "work"
+        code = main(
+            ["run", *argv, "--filter", model, "--work-dir", str(work), "--no-browser"]
+        )
+        capsys.readouterr()
+        assert code == 0
+        status = json.loads((work / "status.json").read_text("utf-8"))
+        assert [t["verdict"] for t in status["tests"]] == ["PASS"]
+
+    def test_a_source_that_is_not_there_is_refused(self, tmp_path, capsys):
+        config = _example(tmp_path, "python")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        missing = tmp_path / "nope.py"
+        argv = ["--config", str(config), "spec", "add", "Lib.New", "--source"]
+        assert main([*argv, str(missing)]) == 1
+        assert capsys.readouterr().err == (
+            f"--source {missing}: no such file; nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    def test_a_modelica_test_names_no_file(self, rodlib, capsys):
+        spec = rodlib.with_name("test_spec.json")
+        before = spec.read_bytes()
+        argv = ["--config", str(rodlib), "spec", "add", "RodLib.Rod", "--source"]
+        assert main([*argv, str(rodlib)]) == 1
+        assert capsys.readouterr().err == (
+            "--source does not apply: a test of the OpenModelica backend runs "
+            "no file its entry names; nothing was added.\n"
+        )
+        assert spec.read_bytes() == before

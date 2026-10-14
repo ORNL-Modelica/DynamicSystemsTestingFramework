@@ -95,7 +95,7 @@ class JsonDriverBackend(Backend):
     #: generic non-zero-return message ("julia", "python").
     stdio_prefix: ClassVar[str]
     #: Extension of the user's source file, incl. the dot (".jl", ".py").
-    source_suffix: ClassVar[str]
+    source_suffix: str
     #: Name the driver writes its JSON result under, inside the test dir.
     result_filename: ClassVar[str] = "result.json"
 

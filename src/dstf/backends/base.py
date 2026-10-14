@@ -559,6 +559,11 @@ class Backend(ABC):
             its source type.
         binaries: The names the backend's program goes by on ``PATH``, for the
             default :meth:`locate`.
+        source_suffix: The suffix of the file a test of this backend runs,
+            which its ``test_spec.json`` entry names under ``source``
+            (``".py"``); None for a backend whose tests name none — a
+            Modelica class is found in the library. ``dstf spec add``
+            requires ``--source`` where it is set and refuses it where not.
         artifact_files: Files a run leaves in a test's directory that its
             report page links, as ``(file name, label)`` pairs; one that is not
             there is left out.
@@ -597,6 +602,9 @@ class Backend(ABC):
     source_types: frozenset[str] = frozenset()
     #: The names this backend's program goes by on ``PATH``.
     binaries: tuple[str, ...] = ()
+    #: The suffix of the file a test runs, named by its entry's ``source``;
+    #: None: a test names no file.
+    source_suffix: str | None = None
 
     def __init__(self, config: Config):
         """Keep the project's configuration.

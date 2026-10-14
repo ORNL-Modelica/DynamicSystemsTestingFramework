@@ -122,6 +122,15 @@ simulating:
 $ dstf spec add MyLib.Examples.Smoke --config testing.json
 ```
 
+A Modelica model must be a class of the library: a name it does not hold is
+refused, and nothing is written. A test of an FMU, a Julia model or a Python
+function names the file it runs with `--source`, which the command requires
+there and writes relative to `test_spec.json`:
+
+```console
+$ dstf spec add PythonTestingLib.Examples.SimpleRamp --config testing.json --source ../../Examples/SimpleRamp.py --variables x
+```
+
 ## Its first baseline
 
 A new test has no baseline: unless its criteria need none, it reads `NO_REF`.

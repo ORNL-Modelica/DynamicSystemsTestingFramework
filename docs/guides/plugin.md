@@ -54,6 +54,9 @@ What each part does:
 - **`source_types`** are the `source_type` values the backend runs. A project
   that names no backend runs with the first installed one that runs its
   source type.
+- **`source_suffix`**, left at None here, is for a backend whose test runs a
+  file its entry names under `source` (Python's `".py"`): `dstf spec add`
+  then requires `--source`.
 - **`settings`** are the keys of the backend's block in `testing.json`'s
   `backends`, each a `Setting` with its JSON schema, default and description.
   Extend `Backend.settings`, which holds `executables`. A key the block holds
