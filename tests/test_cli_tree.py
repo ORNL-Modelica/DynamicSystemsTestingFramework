@@ -1181,6 +1181,29 @@ def test_manifest_dump_into_a_work_dir_it_cannot_write_is_one_sentence(
     ), err
 
 
+@pytest.mark.parametrize(
+    ("flag", "said"),
+    [("--test-spec", "no such file"), ("--work-dir", "no such directory")],
+)
+def test_manifest_cleanup_orphans_of_a_path_that_is_not_there_is_refused(
+    flag, said, tmp_path, capsys
+):
+    """`manifest cleanup --orphans --work-dir <missing>` said `No orphan
+    manifest entries.`, exit 0 — of a work dir it never read."""
+    from conftest import python_example_copy
+
+    config, _ = python_example_copy(tmp_path)
+    missing = tmp_path / "missing" / ("spec.json" if flag == "--test-spec" else "w")
+    rc = main(
+        ["manifest", "cleanup", "--orphans", "--config", str(config.config_file)]
+        + [flag, str(missing)]
+    )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert captured.err.strip() == f"Config error: {flag} {missing}: {said}"
+    assert "No orphan" not in captured.out
+
+
 def test_soft_check_add_s_source_that_holds_no_object_is_said(tmp_path, capsys):
     """A source file holding a JSON list ended in an AttributeError
     traceback. It is the command's data error, exit 1, naming the file."""

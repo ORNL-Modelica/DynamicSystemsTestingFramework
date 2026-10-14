@@ -108,6 +108,9 @@ to write instead.
 - `dstf author`'s Queue, refused when the backend's workers cannot start,
   told the user to re-run with `--batch`, a flag the tool does not have; it
   names only what can be done there.
+- `manifest cleanup --orphans` with a `--test-spec` or `--work-dir` that is
+  not there said `No orphan manifest entries.`; it is a config error naming
+  the path.
 
 ### How to convert your testing.json
 

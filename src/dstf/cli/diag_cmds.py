@@ -167,6 +167,13 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     """
     config = _build_config(args)
     if args.orphans:
+        # What --orphans reads, named on the line: one that is not there
+        # would read as "no orphans" of a spec or work dir never looked at.
+        spec, work = config.test_spec_file, config.work_dir
+        if args.test_spec is not None and spec is not None and not spec.is_file():
+            raise ConfigError(f"--test-spec {spec}: no such file")
+        if args.work_dir is not None and work is not None and not work.is_dir():
+            raise ConfigError(f"--work-dir {work}: no such directory")
         return _cleanup_orphans(config, apply=args.apply)
     from ..storage.reference_store import ReferenceStore
 
