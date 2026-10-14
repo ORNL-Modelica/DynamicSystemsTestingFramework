@@ -323,6 +323,48 @@ class TestFmpyBackendFixes:
         assert rr.success is False
         assert "disk full" in (rr.error_message or "")
 
+    def test_two_tests_at_once_read_their_model_descriptions_one_at_a_time(
+        self, tmp_path, monkeypatch
+    ):
+        """`run --parallel 2` on FMUs: every test SIM_FAIL with fmpy's
+        `XMLSchemaParseError`. Reading a model description builds an XML
+        schema, which libxml2 cannot do from two threads at once; the
+        simulations themselves still run side by side."""
+        import threading
+
+        backend = self._make_backend(tmp_path, monkeypatch, lambda **kw: None)
+        inside, most, simulating = [], [], []
+        both_simulate = threading.Barrier(2, timeout=10)
+
+        def read_model_description(path):
+            inside.append(path)
+            most.append(len(inside))
+            time.sleep(0.05)
+            inside.remove(path)
+            return SimpleNamespace(modelVariables=[SimpleNamespace(name="h")])
+
+        def simulate_fmu(**kw):
+            both_simulate.wait()  # passes only with both in here together
+            simulating.append(kw["filename"])
+
+        monkeypatch.setattr(
+            sys.modules["fmpy"], "read_model_description", read_model_description
+        )
+        monkeypatch.setattr(sys.modules["fmpy"], "simulate_fmu", simulate_fmu)
+        test = self._make_fmu_test(tmp_path)
+        threads = [
+            threading.Thread(
+                target=backend.run_single_test, args=(test, f"test_000{i}", i, 2)
+            )
+            for i in (1, 2)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+        assert most and max(most) == 1
+        assert len(simulating) == 2
+
 
 # ---------------------------------------------------------------------------
 # The missing-dependency signal is the Backend contract's RuntimeError

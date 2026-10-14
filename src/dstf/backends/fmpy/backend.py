@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -80,6 +81,15 @@ _SOLVER_MAP = {
 
 #: What FMPy's one part is called in a ``Located``.
 PACKAGE = "fmpy package"
+
+
+#: Held while a model description is read. fmpy validates it against the
+#: FMI schema, which it builds anew for each read (`lxml.etree.XMLSchema`),
+#: and libxml2 cannot build a schema from two threads at once: under `run
+#: --parallel 2` every test failed with `XMLSchemaParseError` ("the given
+#: type is not a built-in type", "Document is not valid XML Schema"). The
+#: read is milliseconds; the simulations stay side by side.
+_MODEL_DESCRIPTION_LOCK = threading.Lock()
 
 
 @register("FMPy")
@@ -227,7 +237,8 @@ class FmpyBackend(Backend):
         try:
             if self.progress:
                 self.progress.on_phase(test_key, "loading")
-            md = fmpy.read_model_description(str(fmu_path))
+            with _MODEL_DESCRIPTION_LOCK:
+                md = fmpy.read_model_description(str(fmu_path))
             available = _list_scalar_variables(md)
             requested = _tracked(
                 test,
