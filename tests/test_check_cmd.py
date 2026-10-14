@@ -135,15 +135,11 @@ class TestTheList:
 
 
 def _no_project(tmp_path: Path) -> Path:
-    """A directory with no project anywhere above it. Deeper than
-    ``find_package_dir``'s 10-level walk up: that walk looks at the CHILDREN
-    of every directory it passes, so from a directory just under
-    ``tmp_path`` it reaches pytest's base directory and finds the
-    ``package.mo`` another test left in its own (``test_backends`` writes
-    one) — and `check` then reads that library on defaults."""
-    deep = tmp_path.joinpath(*[f"d{i}" for i in range(12)])
-    deep.mkdir(parents=True)
-    return deep
+    """A directory with no project: empty, and no directory above it is a
+    library."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    return empty
 
 
 class TestWithNoTestingJson:
@@ -178,6 +174,19 @@ class TestWithNoTestingJson:
             == "  * the backend a Modelica project with no testing.json runs with"
         )
         assert list(empty.iterdir()) == []
+
+    def test_a_library_beside_the_directory_is_not_this_project(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        """`check` in an empty directory used to print `Lib on defaults`:
+        it adopted a library it found beside a directory above."""
+        lib = tmp_path / "Lib"
+        lib.mkdir()
+        (lib / "package.mo").write_text("package Lib end Lib;")
+        monkeypatch.chdir(_no_project(tmp_path))
+        main(["check"])
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == "Backends (no testing.json here: the search alone)"
 
     def test_nothing_installed_is_exit_1_with_the_fix(
         self, no_installs, tmp_path, capsys, monkeypatch

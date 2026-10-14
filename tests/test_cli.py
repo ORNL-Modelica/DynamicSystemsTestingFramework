@@ -2006,13 +2006,10 @@ def test_missing_filter_file_is_a_config_error(tmp_path, capsys):
 def test_missing_modelica_package_is_a_config_error(tmp_path, capsys):
     """A source path with no package.mo anywhere used to surface
     find_package_dir's FileNotFoundError as a traceback."""
-    # Nest deeper than find_package_dir's 10-level walk so the search is
-    # guaranteed to exhaust inside tmp_path — otherwise an unrelated
-    # package.mo somewhere above the pytest tmp root could rescue it.
-    deep = tmp_path.joinpath(*[f"d{i}" for i in range(12)])
-    deep.mkdir(parents=True)
+    empty = tmp_path / "empty"
+    empty.mkdir()
     (tmp_path / "testing.json").write_text(
-        json.dumps({"source_path": str(deep)}), encoding="utf-8"
+        json.dumps({"source_path": str(empty)}), encoding="utf-8"
     )
     rc = main(["discover", "--config", str(tmp_path / "testing.json")])
     assert rc == 2

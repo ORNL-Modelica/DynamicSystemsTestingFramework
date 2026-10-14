@@ -41,30 +41,34 @@ def detect_os() -> str:
 
 
 def find_package_dir(start: Path | None = None) -> Path:
-    """Find a Modelica package directory containing package.mo.
+    """The Modelica library a directory belongs to: the directory that
+    holds its package.mo.
 
-    If start is a directory containing package.mo, returns it directly.
-    Otherwise walks up looking for a directory that contains a subdirectory
-    with package.mo.
+    ``start`` (the working directory by default) if it is a package, else
+    the nearest directory above it that is one — a command run from a
+    library's ``Resources`` folder is run in that library. Failing both, a
+    package IN ``start``, the first by name: ``start`` is then the
+    library's parent, where its testing.json is kept.
+
+    Nothing else is looked at. A library beside ``start``, or beside a
+    directory above it, is another project's: taking it made an empty
+    directory read as whichever library happened to be near.
     """
     if start is None:
         start = Path.cwd()
     path = start.resolve()
 
-    # Check if start itself is a package dir
-    if (path / "package.mo").exists():
-        return path
-
-    # Walk up looking for a child dir with package.mo
-    for _ in range(10):
-        for child in path.iterdir():
-            if child.is_dir() and (child / "package.mo").exists():
-                return child
-        path = path.parent
+    for directory in (path, *path.parents):
+        if (directory / "package.mo").exists():
+            return directory
+    for child in sorted(path.iterdir()):
+        if child.is_dir() and (child / "package.mo").exists():
+            return child
 
     raise FileNotFoundError(
         f"Could not find a Modelica package from {start}. "
-        "Expected a directory containing package.mo."
+        "Expected package.mo in it, in a directory above it, or in a "
+        "directory it holds."
     )
 
 

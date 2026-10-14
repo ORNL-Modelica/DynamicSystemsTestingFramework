@@ -54,6 +54,46 @@ class TestUtilityFunctions:
         result = find_package_dir(parent)
         assert (result / "package.mo").exists()
 
+    def test_a_library_beside_an_ancestor_is_not_adopted(self, tmp_path):
+        """Not a sibling, and not a child of an ancestor: from `a/b/c`, the
+        library `a/Other` is somebody else's."""
+        _make_lib(tmp_path / "a", "Other")
+        start = tmp_path / "a" / "b" / "c"
+        start.mkdir(parents=True)
+        with pytest.raises(FileNotFoundError, match="Could not find a Modelica"):
+            find_package_dir(start)
+        # Nor from the directory beside it.
+        with pytest.raises(FileNotFoundError):
+            find_package_dir(tmp_path / "a" / "b")
+
+    def test_from_inside_a_library_it_is_the_ancestor_that_is_a_package(self, tmp_path):
+        """From `Lib/Resources/Data` the library is `Lib` — not `Lib/Sub`,
+        the sub-package that is a child of that ancestor."""
+        lib = _make_lib(tmp_path, "Lib")
+        (lib / "Sub").mkdir()
+        (lib / "Sub" / "package.mo").write_text("within Lib;\npackage Sub end Sub;")
+        start = lib / "Resources" / "Data"
+        start.mkdir(parents=True)
+        assert find_package_dir(start) == lib.resolve()
+
+    def test_the_library_s_parent_finds_the_library_in_it(self, tmp_path):
+        """The one case a child is taken: the start directory is the
+        library's parent, where its testing.json is kept. Of two, the first
+        by name — not whichever the directory listing gives first."""
+        for name in ("Zeta", "Alpha", "Mid"):
+            _make_lib(tmp_path, name)
+        (tmp_path / "Aaa").mkdir()  # no package.mo: not a library
+        assert find_package_dir(tmp_path) == (tmp_path / "Alpha").resolve()
+
+    def test_the_library_is_looked_for_from_the_working_directory(
+        self, tmp_path, monkeypatch
+    ):
+        _make_lib(tmp_path / "a", "Other")
+        (tmp_path / "a" / "empty").mkdir()
+        monkeypatch.chdir(tmp_path / "a" / "empty")
+        with pytest.raises(ConfigError, match="Could not find a Modelica package"):
+            Config(write_default=False)
+
     def test_load_config_file(self, fixtures_dir):
         """Load testing.json from fixtures."""
         config = load_config_file(fixtures_dir)

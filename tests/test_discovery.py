@@ -569,9 +569,7 @@ def test_field_sources_records_spec_override():
     }
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        # Stub package.mo so Config.__post_init__ short-circuits the
-        # find_package_dir parent-walk (which on WSL trips on unreadable
-        # Windows-mount artifacts at the filesystem root).
+        # Stub package.mo so the library is this directory.
         (td / "package.mo").write_text("package MyLib end MyLib;")
         spec_path = td / "test_spec.json"
         spec_path.write_text(json.dumps(spec))
