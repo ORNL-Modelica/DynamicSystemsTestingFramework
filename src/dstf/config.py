@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .config_shape import PROGRAM, TESTING_JSON, Setting, refused
+from .config_shape import ALL_POINTS, PROGRAM, TESTING_JSON, Setting, refused
 from .config_shape import default as _default
 from .json_types import holds, is_number, said
 
@@ -25,9 +25,6 @@ DEFAULT_NUMBER_OF_INTERVALS = 500
 
 # Comparison defaults: testing.json's `tolerance`, where it is not set.
 DEFAULT_COMPARISON_TOLERANCE = _default("tolerance")
-
-# `baseline_points` for every point the run wrote — the default (D153).
-ALL_POINTS = _default("baseline_points")
 
 # Config filename looked for near the package or in working directory
 CONFIG_FILENAME = "testing.json"
@@ -374,13 +371,14 @@ class Config:
 
     A field that mirrors a ``testing.json`` key takes its default from that
     key's row of ``config_shape.TESTING_JSON`` — the one place a default is
-    written down, and the one a person reads it from.
+    written down, and the one a person reads it from — when the ``Config``
+    is built, so nothing holds a copy of it.
     """
 
     # Source type: "modelica" (default, `source_path` points at a package.mo dir),
     # "fmu" (Phase 2), "julia" / "simulink" / "data-file" (future). See docs/vision.md.
     # Discovery + backend selection gate on this.
-    source_type: str = _default("source_type")
+    source_type: str = field(default_factory=lambda: _default("source_type"))
 
     # Path to the source location for the library being tested.
     # For source_type == "modelica": the directory containing package.mo.
@@ -424,8 +422,8 @@ class Config:
     default_points: bool = False
     timeout: int = 60
     # Seconds a persistent worker's start may take (testing.json
-    # `worker_startup_timeout`). None means "not set": each backend's own
-    # default applies (`Worker.startup_timeout`: 600 s on every backend).
+    # `worker_startup_timeout`). None means "not set": the worker's own
+    # bound applies (`Worker.startup_timeout`, which is that key's default).
     worker_startup_timeout: float | None = None
 
     # The run's results will be read WHILE it is in progress (the authoring
@@ -455,7 +453,9 @@ class Config:
     # a 50-var × 5000-sample test under the ~5 MB budget given today's
     # per-variable time-array duplication; the follow-up dedup (idea #47)
     # will let this rise to 2000 at the same budget.
-    max_embedded_samples: int = _default("max_embedded_samples")
+    max_embedded_samples: int = field(
+        default_factory=lambda: _default("max_embedded_samples")
+    )
 
     # The points a stored baseline keeps of its run (D153, testing.json
     # `baseline_points`): "all" — every row the simulator wrote — or a whole
@@ -464,12 +464,14 @@ class Config:
     # (`TestModel.baseline_points`).
     # Scoring reads the run AT the baseline's time points, so this is also
     # the resolution at which a regression can be seen.
-    baseline_points: int | str = _default("baseline_points")
+    baseline_points: int | str = field(
+        default_factory=lambda: _default("baseline_points")
+    )
 
     # The bundled theme (D148) the dashboard and the report pages are
     # generated in and `dstf author` opens with: a NAME of
     # reporting.theme.THEMES — no path, no inline colours, no CLI flag.
-    theme: str = _default("theme")
+    theme: str = field(default_factory=lambda: _default("theme"))
 
     # User-provided recognizers (PTA.3) — parsed from testing.json's
     # "recognizers" list via discovery.json_recognizer.parse_recognizer_spec.
@@ -713,7 +715,7 @@ class Config:
         else:
             tolerance, named = self.tolerance, "--tolerance"
         if tolerance is None:
-            self.tolerance = DEFAULT_COMPARISON_TOLERANCE
+            self.tolerance = _default("tolerance")
         elif is_base_tolerance(tolerance):
             self.tolerance = float(tolerance)
         else:

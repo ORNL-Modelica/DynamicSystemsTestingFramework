@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import Config
+from ..config_shape import default
 from ..discovery.library_state import LibraryChanges, LibraryState
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import BatchManifest
@@ -150,12 +151,13 @@ class Worker(ABC):
     #: shutdown runs, looking for children spawned inside that window.
     _ORPHAN_POLL_SECONDS: float = 0.25
     #: Seconds a start gets when ``testing.json`` sets no
-    #: ``worker_startup_timeout``. The bound is for a tool that hangs: one
+    #: ``worker_startup_timeout``: that key's default, from its table. The
+    #: bound is for a tool that hangs: one
     #: that DIED is failed at once, whatever this says (:meth:`start_within`
     #: watches the process). So it is generous — a large library is minutes
     #: of ``loadFile`` in a live omc, and a bound below that fails a run that
     #: only had to wait. A backend with a reason for another sets its own.
-    startup_timeout: float = 600.0
+    startup_timeout: float = float(default("worker_startup_timeout"))
     #: How often :meth:`start_within` looks at a start in flight.
     _START_POLL_SECONDS: float = 0.25
     #: A start given up with NO process on record may be inside its launch

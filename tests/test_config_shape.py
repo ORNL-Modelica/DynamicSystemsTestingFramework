@@ -409,6 +409,12 @@ class TestDefaults:
                 if field.default_factory is not dataclasses.MISSING
                 else field.default
             )
+            if key == "worker_startup_timeout":
+                # None on Config where the file sets none: the bound is then
+                # the worker's, which is this default
+                # (`test_the_backends_copies_are_the_table_s`).
+                assert declared is None and config.worker_startup_timeout is None
+                continue
             # `tolerance` is None until it is resolved: unset is told from 0.
             if key != "tolerance":
                 assert declared == setting.default, key
@@ -438,8 +444,77 @@ class TestDefaults:
             assert not re.search(r"\bD\d{2,3}\b", setting.description), (
                 key
             )  # no decision ids
-            if setting.default is not None:
-                assert "Default" in setting.description, key
+
+    def test_no_description_repeats_its_default(self):
+        """A default is written ONCE, in its row's `default`: the schema
+        and the reference page show it from there. Prose that repeated it
+        ("Default: 1000.") was a second copy to keep true."""
+        from dstf.backends import backend_class, backend_names
+
+        tables = {"testing.json": TESTING_JSON} | {
+            name: backend_class(name).settings for name in backend_names()
+        }
+        for table, settings in tables.items():
+            for key, setting in settings.items():
+                if setting.default is not None:
+                    assert "Default" not in setting.description, (table, key)
+
+    CHANGED = {
+        "source_type": "python",
+        "backend_setup": ["Advanced.Debug := true;"],
+        "dependencies": ["Modelica"],
+        "tolerance": 0.5,
+        "baseline_points": 2000,
+        "max_embedded_samples": 2000,
+        "diagnostic_variables": ["CPUtime"],
+        "theme": "dark",
+    }
+
+    @pytest.mark.parametrize("key", sorted(CHANGED))
+    def test_a_changed_table_default_changes_config_and_the_schema(
+        self, tmp_path, monkeypatch, key
+    ):
+        """With no other edit: nothing else holds a copy to change."""
+        changed = self.CHANGED[key]
+        assert changed != TESTING_JSON[key].default
+        monkeypatch.setitem(
+            TESTING_JSON, key, dataclasses.replace(TESTING_JSON[key], default=changed)
+        )
+        path = tmp_path / "testing.json"
+        said = {"source_type": "python", "backend": "Python"}
+        said.pop(key, None)
+        path.write_text(json.dumps(said), encoding="utf-8")
+        assert getattr(Config(config_file=path), key) == changed
+        assert build_config_schema()["properties"][key]["default"] == changed
+
+    def test_the_backends_copies_are_the_table_s(self, monkeypatch):
+        """What a backend's own config repeats of testing.json's keys, and
+        of its own block's, is read from the tables."""
+        from dstf.backends.openmodelica.backend import OpenModelicaConfig
+        from dstf.backends.persistent import Worker
+
+        assert Worker.startup_timeout == default("worker_startup_timeout") == 600
+        monkeypatch.setitem(
+            TESTING_JSON,
+            "diagnostic_variables",
+            dataclasses.replace(TESTING_JSON["diagnostic_variables"], default=["a"]),
+        )
+        monkeypatch.setitem(
+            DymolaBackend.settings,
+            "show_ide",
+            dataclasses.replace(DymolaBackend.settings["show_ide"], default=True),
+        )
+        assert DymolaConfig().diagnostic_variables == ["a"]
+        assert DymolaConfig().show_ide is True
+        assert OpenModelicaConfig(omc_path=None).diagnostic_variables == ("a",)
+
+    def test_the_report_s_budget_is_the_table_s(self, monkeypatch):
+        import inspect
+
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        parameters = inspect.signature(generate_comparison_plots).parameters
+        assert parameters["max_embedded_samples"].default is None
 
 
 # ---------------------------------------------------------------------------

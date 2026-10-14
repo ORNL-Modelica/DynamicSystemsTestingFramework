@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ..comparison.comparator import VariableComparison
 from ..comparison.types import TestComparison
+from ..config_shape import default
 from .context_builder import _build_template_context
 from .rows import summary_fields
 from .status import classify_with_class, refusal
@@ -452,9 +453,9 @@ def generate_comparison_plots(
     last_run_at: float | None = None,
     metric_tree=None,
     artifact_files: tuple[tuple[str, str], ...] = (),
-    # Must track Config.max_embedded_samples — both production callers pass
-    # it explicitly, so this default only fires for direct callers (tests).
-    max_embedded_samples: int = 1000,
+    # Config.max_embedded_samples: both production callers pass it. None —
+    # a direct caller that says none — is testing.json's default.
+    max_embedded_samples: int | None = None,
     # Config.theme, said by both production callers as the budget is: the
     # bundled theme the page is generated in (D148).
     theme: str = "default",
@@ -514,6 +515,9 @@ def generate_comparison_plots(
         # them: the plot still names them ("Not in this result: z").
         plot_series=[n for p in plots for n in p.series],
     )
+
+    if max_embedded_samples is None:
+        max_embedded_samples = default("max_embedded_samples")
 
     # The page's plot keys, from the full-resolution context. Only the
     # LAYOUT — names, no arrays — joins the sidecar; the figures are popped

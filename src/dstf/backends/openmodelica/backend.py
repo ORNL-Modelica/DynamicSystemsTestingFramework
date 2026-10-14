@@ -24,11 +24,12 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ...config import Config
+from ...config_shape import default
 from ...discovery.test_registry import TestModel
 from .. import register
 from ..base import Backend, Diagnosis
@@ -64,7 +65,9 @@ class OpenModelicaConfig:
     #: (``OpenModelicaBackend.locate``).
     omc_path: str | None
     backend_setup: tuple[str, ...] = ()
-    diagnostic_variables: tuple[str, ...] = ("CPUtime", "EventCounter")
+    diagnostic_variables: tuple[str, ...] = field(
+        default_factory=lambda: tuple(default("diagnostic_variables"))
+    )
     std_version: str = "latest"
     #: Write each output row to the result file as it is produced
     #: (``Config.live_results``).

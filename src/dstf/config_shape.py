@@ -29,7 +29,11 @@ class Setting:
     """One key: the JSON-Schema fragment its value must be (draft 2020-12),
     its default — ``None`` where there is none to write down: the key is
     optional and the description says what happens without it — and a
-    description written for the person who sets it."""
+    description written for the person who sets it.
+
+    A default is written HERE and nowhere else: code that needs it asks
+    :func:`default`, the schema and the reference page print it from this
+    field, and the description does not say it again."""
 
     schema: Mapping[str, Any]
     default: Any
@@ -73,9 +77,12 @@ EXECUTABLES = Setting(
     "directory; any other entry is a program name. The first that is a "
     "file that can be executed is used. If any entry is a path and none "
     "of them is one, the backend is not found — no other install is "
-    "searched for. Default: none; the backend is searched for.",
+    "searched for. With no entry, the backend is searched for.",
     path=PROGRAM,
 )
+
+#: ``baseline_points`` for every point the run wrote (D153).
+ALL_POINTS = "all"
 
 #: Every key of ``testing.json``, in the order a reference page lists them.
 TESTING_JSON: dict[str, Setting] = {
@@ -102,7 +109,7 @@ TESTING_JSON: dict[str, Setting] = {
         "modelica",
         'What source_path holds: "modelica", "fmu", "julia" or "python". '
         "Only a Modelica library is scanned for tests (its .mo files); the "
-        'others take every test from test_spec.json. Default: "modelica".',
+        "others take every test from test_spec.json.",
         own_rule=True,
     ),
     "library_name": Setting(
@@ -127,22 +134,20 @@ TESTING_JSON: dict[str, Setting] = {
         "The simulators this project runs with, in order of preference: one "
         'settings block per entry, {"<name>": {"executables": [...]}}. Each '
         "block takes executables and that backend's own settings; an empty "
-        "block {} means the backend is searched for. Default: none.",
+        "block {} means the backend is searched for.",
     ),
     "backend_setup": Setting(
         _STRINGS,
         [],
         "Commands run in the simulator once its libraries are loaded and "
-        "before any test, in the simulator's own scripting language. "
-        "Default: none.",
+        "before any test, in the simulator's own scripting language.",
     ),
     "dependencies": Setting(
         _STRINGS,
         [],
         "Libraries loaded before the library under test: a library's name "
         '("Modelica") or a path relative to this file — a library\'s '
-        "directory, its package.mo, or a one-file library Name.mo. "
-        "Default: none.",
+        "directory, its package.mo, or a one-file library Name.mo.",
     ),
     "reference_root": Setting(
         {"type": "string"},
@@ -178,26 +183,26 @@ TESTING_JSON: dict[str, Setting] = {
         1e-4,
         "The base comparison tolerance: what a variable is compared with "
         "when neither its test nor its stored baseline sets one. One finite "
-        "number. Default: 0.0001.",
+        "number.",
         own_rule=True,
     ),
     "baseline_points": Setting(
-        {"oneOf": [{"const": "all"}, {"type": "integer", "minimum": 2}]},
-        "all",
+        {"oneOf": [{"const": ALL_POINTS}, {"type": "integer", "minimum": 2}]},
+        ALL_POINTS,
         "The points a stored baseline keeps of its run: "
         '"all" — every point the simulator wrote — or a whole number of 2 '
         "or more, which thins a longer run to at most that many. A test is "
         "compared at its baseline's points, so this is also the resolution "
         "of the comparison. A test_spec.json entry's own baseline_points "
-        'wins for that test. Default: "all".',
+        "wins for that test.",
         own_rule=True,
     ),
     "worker_startup_timeout": Setting(
         {"type": ["number", "null"], "exclusiveMinimum": 0},
-        None,
+        600,
         "Seconds a simulator that stays open between tests may take to "
         "start before the run fails. The bound is for a simulator that "
-        "hangs; one that cannot start fails at once. Default: 600.",
+        "hangs; one that cannot start fails at once.",
         own_rule=True,
     ),
     "max_embedded_samples": Setting(
@@ -205,21 +210,20 @@ TESTING_JSON: dict[str, Setting] = {
         1000,
         "The most points per variable a report page's plot holds; a longer "
         "trajectory is thinned for the plot only — scoring and the stored "
-        "baselines are untouched. Below 3, nothing is thinned. Default: 1000.",
+        "baselines are untouched. Below 3, nothing is thinned.",
     ),
     "diagnostic_variables": Setting(
         _STRINGS,
         ["CPUtime", "EventCounter"],
         "Variables recorded from every simulation and shown in the reports, "
-        'but not compared. Default: ["CPUtime", "EventCounter"].',
+        "but not compared.",
     ),
     "theme": Setting(
         # `reporting.theme.THEMES`, which `Config` holds the value to.
         {"type": "string", "enum": ["default", "dark"]},
         "default",
         "The colour theme of the dashboard and the report pages, and the "
-        'one `dstf author` opens in: "default" or "dark". Default: '
-        '"default".',
+        'one `dstf author` opens in: "default" or "dark".',
         own_rule=True,
     ),
     "recognizers": Setting(
@@ -227,13 +231,13 @@ TESTING_JSON: dict[str, Setting] = {
         [],
         "Rules of your own that find tests in the library's source files, "
         "added to the bundled ones: each an object with name, applies_to, "
-        "match and fields. Default: none.",
+        "match and fields.",
     ),
     "disable_bundled": Setting(
         _STRINGS,
         [],
         "Names of bundled recognizers to switch off, for example "
-        '"modelica:bundled-unit-tests". Default: none.',
+        '"modelica:bundled-unit-tests".',
     ),
     **{key: _note(key) for key in NOTES},
 }

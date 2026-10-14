@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config import Config
-from ...config_shape import FILE, Setting
+from ...config_shape import FILE, Setting, default
 from ...discovery.library_state import dependency_file
 from ...discovery.test_registry import TestModel
 from ...storage.batch_manifest import BatchManifest
@@ -44,13 +44,19 @@ logger = logging.getLogger(__name__)
 class DymolaConfig:
     """Dymola-specific settings extracted from the universal Config."""
 
-    show_ide: bool = False
+    # Each default is its key's, read from the table it is written in:
+    # this backend's `settings`, and testing.json's.
+    show_ide: bool = field(
+        default_factory=lambda: default("show_ide", DymolaBackend.settings)
+    )
     #: Tests per Dymola session on the batch path; None: every test of a
     #: worker in one session.
-    batch_size: int | None = None
-    backend_setup: list[str] = field(default_factory=list)
+    batch_size: int | None = field(
+        default_factory=lambda: default("batch_size", DymolaBackend.settings)
+    )
+    backend_setup: list[str] = field(default_factory=lambda: default("backend_setup"))
     diagnostic_variables: list[str] = field(
-        default_factory=lambda: ["CPUtime", "EventCounter"],
+        default_factory=lambda: default("diagnostic_variables")
     )
 
     @classmethod
@@ -97,8 +103,7 @@ class DymolaBackend(Backend):
         "show_ide": Setting(
             {"type": "boolean"},
             False,
-            "Show Dymola's window while it runs, instead of running it "
-            "hidden. Default: false.",
+            "Show Dymola's window while it runs, instead of running it hidden.",
         ),
         "batch_size": Setting(
             {"type": "integer", "minimum": 1},
