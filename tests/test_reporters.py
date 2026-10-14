@@ -1144,6 +1144,8 @@ def _fake_config(work_dir: Path):
     return types.SimpleNamespace(
         work_dir=work_dir,
         config_file=None,
+        config_found=None,
+        overrides=frozenset(),
         source_path=None,
         reference_root=None,
         theme="default",

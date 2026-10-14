@@ -131,6 +131,8 @@ def build_rerun_flags(config) -> str:
         if name not in names:
             continue
         value = getattr(config, name)
+        if value is None:  # a source the Config could not place
+            continue
         parts += [flag, q(value if name == "backend_name" else Path(value).resolve())]
     return " ".join(parts)
 
