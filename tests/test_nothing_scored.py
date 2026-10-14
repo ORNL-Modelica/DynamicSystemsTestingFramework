@@ -63,6 +63,9 @@ class _Store:
     def get_soft_checks(self, model_id):
         return {}
 
+    def get_companions(self, model_id):
+        return {}
+
     def reference_path(self, model_id):
         return None
 
@@ -338,14 +341,25 @@ def test_a_loss_with_no_baseline_is_no_ref_as_before():
 
 
 def test_a_warn_over_a_lost_variable_is_an_advisory_failure():
-    """A tree that is only a `warn`: the test passes, and the criterion
-    that was not scored is counted where advisory failures are."""
+    """A `warn` over the lost variable, beside a criterion that holds (a
+    tree of warnings alone is refused: `broken_roles`): the test passes, and
+    the criterion that was not scored is counted where advisory failures
+    are."""
     from dstf.reporting.status import advisory_failures
 
     tree = parse_metric_tree(
-        {"combinator": "warn", "children": [{"metric": "nrmse", "variable": "y"}]}
+        {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {
+                    "combinator": "warn",
+                    "children": [{"metric": "nrmse", "variable": "y"}],
+                },
+            ],
+        }
     )
-    test = make_test_model(variable_patterns=["y"], metric_tree_spec=tree)
+    test = make_test_model(variable_patterns=["x", "y"], metric_tree_spec=tree)
     comp = compare_one(test, _result("x"), _Store(BOTH))
     assert classify(comp) == PASS
     (leaf,) = advisory_failures(comp)

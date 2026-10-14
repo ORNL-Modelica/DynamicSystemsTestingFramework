@@ -130,6 +130,11 @@ a soft check can warn about a drift, never fail the test.
 }
 ```
 
+A tree that scores a soft check outside `warn` is refused where it is
+written (`dstf spec update`, the authoring tool), and a hand-written one is
+refused where it is scored: `run` and `compare` fail that test with the
+rule's sentence and score none of its criteria.
+
 Accepting a new primary result never touches a soft check.
 
 ## Companions

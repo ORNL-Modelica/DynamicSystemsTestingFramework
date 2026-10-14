@@ -128,21 +128,20 @@ def test_a_scalar_with_bounds_and_a_tube_show_no_tolerance(tmp_path):
 
 
 def test_a_leaf_that_was_not_scored_never_says_zero_in_effect(tmp_path):
-    """A leaf that returned before it scored — a variable the result lacks,
-    a baseline the test does not have — shows the tolerance it WOULD have
-    applied, never the comparison's 0.0 default."""
+    """A leaf that returned before it scored — a variable the result lacks
+    — shows the tolerance it WOULD have applied, never the comparison's 0.0
+    default. (A leaf against a baseline the test does not have is no longer
+    scored at all: the comparison refuses its tree, `broken_roles`.)"""
     tree = {
         "combinator": "and",
         "children": [
             {"metric": "nrmse", "variable": "x"},
             {"metric": "nrmse", "variable": "w_not_in_result"},
-            {"metric": "nrmse", "variable": "y", "against": "nope"},
         ],
     }
     s = _session(tmp_path, test_tol=0.01, metrics=tree)
-    _, missing, no_baseline = _leaves(s.tree_view(A))
-    for leaf in (missing, no_baseline):
-        assert leaf["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
+    _, missing = _leaves(s.tree_view(A))
+    assert missing["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
 
 
 def test_a_tracked_variable_the_baseline_lacks_on_the_flat_path(tmp_path):

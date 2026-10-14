@@ -829,3 +829,115 @@ class TestCompanionMapCLI:
         capsys.readouterr()
         assert self._run(store, test, "list") == 0
         assert "x -> sensor_a" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# The roles where a test is scored: run, compare, the tool's rescore
+# ---------------------------------------------------------------------------
+
+
+def _leaf(**extra) -> dict:
+    return {"metric": "nrmse", "variable": "x", "tolerance": 0.01, **extra}
+
+
+#: A tree each role rule refuses (`comparison.validator`), and the start of
+#: the validator's sentence for it.
+_BROKEN_TREES = {
+    "a soft check outside warn": (
+        {"combinator": "and", "children": [_leaf(), _leaf(against="other")]},
+        "This criterion scores against the soft check 'other'",
+    ),
+    "a companion": (
+        {"combinator": "and", "children": [_leaf(), _leaf(against="rig")]},
+        "This criterion scores against the companion 'rig'",
+    ),
+    "a name that is no baseline": (
+        {
+            "combinator": "and",
+            "children": [
+                _leaf(),
+                {"combinator": "warn", "children": [_leaf(against="nosuch")]},
+            ],
+        },
+        "This criterion scores against 'nosuch', which is not a baseline",
+    ),
+    "warnings alone": (
+        {"combinator": "warn", "children": [_leaf()]},
+        "Every tree needs at least one criterion scored against the primary",
+    ),
+    "a weighted sum of opposite directions": (
+        {
+            "combinator": "weighted",
+            "threshold": 1.0,
+            "weights": [1.0, 1.0],
+            "children": [
+                _leaf(),
+                {"metric": "tube", "variable": "x", "tube_width_mode": "rel"},
+            ],
+        },
+        "A 'weighted' node cannot mix lower-is-better and higher-is-better",
+    ),
+}
+
+
+class TestRolesWhereATestIsScored:
+    """The baseline-role rules hold where a test is scored, not only where
+    a tree is written (`spec update`, the tool): a hand-written tree that
+    breaks one is refused — FAILED with the validator's sentence and no
+    criterion scored — as a test with a base tolerance that is no number is.
+    A soft check scored outside `warn` FAILED the test, where the docs say a
+    soft check can warn, never fail."""
+
+    @pytest.fixture
+    def roles(self, store_with_primary, tmp_path):
+        from dstf.backends.types import TestResult
+
+        store, test = store_with_primary
+        time = np.linspace(0, 10, 11)
+        store.add_soft_check(
+            test.model_id,
+            "other",
+            time=list(time),
+            variables=[{"index": 1, "name": "x", "values": list(1.5 * np.sin(time))}],
+        )
+        rig = tmp_path / "rig.csv"
+        rig.write_text("time,x\n0,0\n10,1\n")
+        store.add_companion(test.model_id, "rig", str(rig))
+        result = _make_test_result()
+        assert isinstance(result, TestResult)
+        return store, test, result
+
+    def _compare(self, roles, tree: dict):
+        from dstf.comparison.comparator import compare_one
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        store, test, result = roles
+        test = copy.copy(test)
+        test.metric_tree_spec = parse_metric_tree(tree)
+        return compare_one(test, result, store)
+
+    @pytest.mark.parametrize("broken", sorted(_BROKEN_TREES))
+    def test_a_tree_that_breaks_a_role_rule_is_refused(self, roles, broken):
+        from dstf.reporting.status import FAIL, classify, refusal
+
+        tree, sentence = _BROKEN_TREES[broken]
+        comp = self._compare(roles, tree)
+        assert classify(comp) == FAIL
+        assert comp.variables == [] and comp.metric_tree is None
+        reason = refusal(comp)
+        assert reason is not None and reason.startswith(sentence), reason
+
+    def test_a_soft_check_under_warn_warns_and_the_test_passes(self, roles):
+        from dstf.reporting.status import refusal
+
+        tree = {
+            "combinator": "and",
+            "children": [
+                _leaf(),
+                {"combinator": "warn", "children": [_leaf(against="other")]},
+            ],
+        }
+        comp = self._compare(roles, tree)
+        assert comp.passed, comp.error_message
+        assert refusal(comp) is None
+        assert comp.metric_tree is not None

@@ -178,6 +178,32 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
     )
 
 
+def broken_roles(test: TestModel, store: ReferenceStore) -> str | None:
+    """Why the test's ``metrics`` tree breaks a baseline-role rule, as the
+    validator's sentences (:func:`.validator.validate_tree`), or ``None``:
+    a criterion against the primary outside every ``warn``; a soft check
+    only under one; no companion and no name that is no baseline of the
+    test; a ``weighted`` of one score direction. A test with no tree breaks
+    none — its criteria are the primary's, outside any ``warn``.
+
+    THE one decision where a test is scored. The tool and ``spec update``
+    refuse to write such a tree; a hand-written one reached ``run`` and
+    ``compare``, which scored a soft check outside ``warn`` and FAILED the
+    test on it — a soft check warns, never fails. Now the comparison fails
+    the test with these sentences and scores nothing
+    (``reporting.status.refusal``), as it does a base tolerance that is no
+    number."""
+    if test.metric_tree_spec is None:
+        return None
+    from .validator import role_lookup_from_store, validate_tree
+
+    errors = validate_tree(
+        test.metric_tree_spec, role_lookup_from_store(store, test.model_id)
+    )
+    # Each message is a sentence that ends in its own full stop.
+    return " ".join(e.message for e in errors) or None
+
+
 def stored_override_problem(
     reference: dict, store: ReferenceStore, model_id: str
 ) -> str | None:
@@ -1139,6 +1165,18 @@ def compare_one(
             passed=True,
             has_reference=False,
             error_message="No reference baseline stored",
+        )
+
+    # After the NO_REF guard: a test with no baseline here has no soft check
+    # either, and its first step is the accept that stores one.
+    broken = broken_roles(test, store)
+    if broken is not None:
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            test_id=(reference or {}).get("test_id"),
+            has_reference=reference is not None,
+            error_message=broken,
         )
 
     comp = compare_test(
