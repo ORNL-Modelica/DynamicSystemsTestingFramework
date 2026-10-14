@@ -120,3 +120,158 @@ def test_reextracts_when_cache_marker_uses_old_path_only_format(
     assert extracted.read_bytes().startswith(b"# generation 1"), (
         "stub from a pre-fix cache should be replaced by a real extraction"
     )
+
+
+# ---------------------------------------------------------------------------
+# One interface per process: the class is its archive's, never another's
+# ---------------------------------------------------------------------------
+
+
+def _interface_wheel(directory: Path, version: str) -> Path:
+    """A `python_interface` folder's wheel whose `DymolaInterface` says
+    which Dymola it is of."""
+    directory.mkdir(parents=True)
+    wheel = directory / f"dymola-{version}-py3-none-any.whl"
+    _write_minimal_wheel(
+        wheel, f"class DymolaInterface:\n    VERSION = {version!r}\n".encode()
+    )
+    return wheel
+
+
+@pytest.fixture
+def il(monkeypatch, tmp_path):
+    """The loader as a fresh process has it: nothing loaded, no `dymola`
+    imported, its cache under `tmp_path` — and this process as it was,
+    afterwards."""
+    import sys
+
+    from dstf.backends.dymola import interface_loader
+
+    monkeypatch.setattr(interface_loader, "_cache_root", lambda: tmp_path / "cache")
+    monkeypatch.setattr(interface_loader, "_loaded", None)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    held = {name: sys.modules.pop(name) for name in list(sys.modules) if _is_ours(name)}
+    try:
+        yield interface_loader
+    finally:
+        for name in [name for name in sys.modules if _is_ours(name)]:
+            del sys.modules[name]
+        sys.modules.update(held)
+
+
+def _is_ours(name: str) -> bool:
+    return name == "dymola" or name.startswith("dymola.")
+
+
+def _found(wheel: Path):
+    from dstf.backends.dymola.interface_loader import INTERFACE
+    from dstf.backends.locate import SETTING, Found, Rule
+
+    return Found(INTERFACE, str(wheel), Rule(SETTING, "interface"))
+
+
+def test_the_class_is_the_one_of_the_archive_that_was_found(il, tmp_path):
+    older = _interface_wheel(tmp_path / "2024", "2024.0")
+    cls = il.load_dymola_interface(_found(older))
+    assert cls.VERSION == "2024.0"
+    # The same archive again is the same class: nothing is imported twice.
+    assert il.load_dymola_interface(_found(older)) is cls
+
+
+def test_a_second_install_s_interface_is_refused_not_served_the_first(il, tmp_path):
+    """A second Dymola entry opened in one process (the tool's Change
+    backend…) was handed the FIRST entry's class: the cache was the
+    process's, not the archive's. Both archives are the Python package
+    `dymola`, and a process imports one."""
+    older = _interface_wheel(tmp_path / "2024", "2024.0")
+    newer = _interface_wheel(tmp_path / "2026", "2026.0")
+    assert il.load_dymola_interface(_found(older)).VERSION == "2024.0"
+    with pytest.raises(RuntimeError) as exc:
+        il.load_dymola_interface(_found(newer))
+    assert str(exc.value) == (
+        f"This process has already loaded Dymola's Python interface from {older}. "
+        f"The one at {newer} cannot be loaded beside it: both are the Python "
+        "package `dymola`, and a process holds one. Restart dstf to run with "
+        "this Dymola."
+    )
+    # …and `check` does not call the second one importable either.
+    info = il.describe_dymola_interface(_found(newer))
+    assert info["import_ok"] is False
+    assert "has already loaded" in info["error"]
+    assert il.describe_dymola_interface(_found(older))["import_ok"] is True
+
+
+def test_no_archive_is_not_found_whatever_was_loaded_before(il, tmp_path):
+    from dstf.backends.dymola.interface_loader import INTERFACE
+    from dstf.backends.locate import Found
+
+    il.load_dymola_interface(_found(_interface_wheel(tmp_path / "2024", "2024.0")))
+    with pytest.raises(RuntimeError, match="Could not find Dymola's Python interface"):
+        il.load_dymola_interface(Found(INTERFACE, detail="nowhere"))
+
+
+def test_a_dymola_package_from_elsewhere_is_not_the_archive_s(il, tmp_path):
+    """`import dymola` answered by a package that is not the archive's —
+    one already imported — is not this install's interface."""
+    import sys
+    import types
+
+    stray = types.ModuleType("dymola")
+    stray.__path__ = [str(tmp_path / "elsewhere")]
+    interface = types.ModuleType("dymola.dymola_interface")
+    interface.__file__ = str(tmp_path / "elsewhere" / "dymola_interface.py")
+    interface.DymolaInterface = type(
+        "DymolaInterface", (), {"__module__": "dymola.dymola_interface"}
+    )
+    sys.modules["dymola"] = stray
+    sys.modules["dymola.dymola_interface"] = interface
+    wheel = _interface_wheel(tmp_path / "2024", "2024.0")
+    with pytest.raises(RuntimeError, match="is not the archive's"):
+        il.load_dymola_interface(_found(wheel))
+
+
+def test_a_session_that_changes_backend_is_refused_the_second_dymola(
+    il, tmp_path, monkeypatch
+):
+    """Through the tool: the project opened on "Dymola 2024", its queue's
+    backend built; then reopened on "Dymola 2026" (Change backend…). The
+    queue of the second is refused with the sentence — it used to drive
+    Dymola 2026 through 2024's interface."""
+    pytest.importorskip("nicegui")
+    import json
+
+    from dstf.authoring.session import QueueError, Session
+    from dstf.backends import select_backend
+
+    lib = tmp_path / "Lib"
+    lib.mkdir()
+    (lib / "package.mo").write_text("within ;\npackage Lib\nend Lib;\n")
+    backends = {}
+    for year in ("2024", "2026"):
+        install = tmp_path / f"dymola-{year}x"
+        program = install / "bin64" / "dymola.sh"
+        program.parent.mkdir(parents=True)
+        program.write_text("#!/bin/sh\n")
+        program.chmod(0o755)
+        _interface_wheel(
+            install / "Modelica" / "Library" / "python_interface", f"{year}.0"
+        )
+        backends[f"Dymola {year}"] = {"executables": [str(program)]}
+    cfg = tmp_path / "testing.json"
+    cfg.write_text(json.dumps({"source_path": "Lib", "backends": backends}))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("DYMOLA_INTERFACE_PATH", raising=False)
+
+    session = Session()
+    session.open(cfg, backend="Dymola 2024", work_dir=tmp_path / "work")
+    first = select_backend(session.project.config, persistent=True, to_run=True)
+    assert il._loaded is not None and il._loaded[2].VERSION == "2024.0"
+    assert first.interface_of(first.config).path.endswith(
+        "dymola-2024.0-py3-none-any.whl"
+    )
+
+    session.open(cfg, backend="Dymola 2026", work_dir=tmp_path / "work")
+    assert session.project.config.backend_name == "Dymola 2026"
+    with pytest.raises(QueueError, match="has already loaded Dymola's Python"):
+        session._open_pool()
+    assert "Restart dstf to run with this Dymola." in session.queue_refusal

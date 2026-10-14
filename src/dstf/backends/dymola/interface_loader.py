@@ -260,20 +260,34 @@ Fix one of:
 """
 
 
-_cached_class = None
-_cached_path: Path | None = None
+#: The archive this process imported ``dymola`` from, the ``sys.path`` entry
+#: it was imported through and the class it gave — or None: none yet. ONE
+#: per process, because every Dymola's interface is the Python package
+#: ``dymola``: a second archive's ``import dymola`` is answered from
+#: ``sys.modules`` by the first's, and clearing that would leave the
+#: first's class importing the second's modules as it runs.
+_loaded: tuple[Path, Path, Any] | None = None
+
+_SECOND_MESSAGE = (
+    "This process has already loaded Dymola's Python interface from {first}. "
+    "The one at {archive} cannot be loaded beside it: both are the Python "
+    "package `dymola`, and a process holds one. Restart dstf to run with "
+    "this Dymola."
+)
 
 
-def load_dymola_interface(found: Found):
-    """Load and return the DymolaInterface class from the archive
-    ``DymolaBackend.locate`` found. Cached after first call."""
-    global _cached_class, _cached_path
-    if _cached_class is not None:
-        return _cached_class
-    if found.path is None:
-        raise RuntimeError(_NOT_FOUND_MESSAGE.format(why=found.detail))
-    archive = Path(found.path)
-    _cached_path = _prepare_sys_path(archive)
+def _interface_class(archive: Path) -> tuple[Path, Any]:
+    """``archive``'s ``DymolaInterface`` class and the ``sys.path`` entry
+    it is imported through. Raises ``RuntimeError`` where the class this
+    process can give is not that archive's: it already loaded another
+    install's, or ``import dymola`` is answered by some other package."""
+    global _loaded
+    if _loaded is not None:
+        first, entry, cls = _loaded
+        if first == archive:
+            return entry, cls
+        raise RuntimeError(_SECOND_MESSAGE.format(first=first, archive=archive))
+    entry = _prepare_sys_path(archive)
     try:
         from dymola.dymola_interface import (
             DymolaInterface,  # type: ignore[import-not-found]
@@ -284,8 +298,24 @@ def load_dymola_interface(found: Found):
             f"The archive may be incomplete or incompatible with this Python "
             f"({sys.version.split()[0]})."
         ) from e
-    _cached_class = DymolaInterface
-    return DymolaInterface
+    origin = getattr(sys.modules.get(DymolaInterface.__module__), "__file__", None)
+    if origin is None or entry not in Path(origin).parents:
+        raise RuntimeError(
+            f"`import dymola` gave {origin or 'a package with no file'}, which "
+            f"is not the archive's ({archive}): another `dymola` package is "
+            "installed in this Python or was imported before. Remove it, or "
+            "restart dstf."
+        )
+    _loaded = (archive, entry, DymolaInterface)
+    return entry, DymolaInterface
+
+
+def load_dymola_interface(found: Found):
+    """The ``DymolaInterface`` class of the archive ``DymolaBackend.locate``
+    found — that archive's, or a ``RuntimeError`` saying why not."""
+    if found.path is None:
+        raise RuntimeError(_NOT_FOUND_MESSAGE.format(why=found.detail))
+    return _interface_class(Path(found.path))[1]
 
 
 def describe_dymola_interface(found: Found) -> dict:
@@ -303,13 +333,10 @@ def describe_dymola_interface(found: Found) -> dict:
         info["error"] = "No archive found"
         return info
     try:
-        info["sys_path_entry"] = str(_prepare_sys_path(archive))
-        from dymola.dymola_interface import (
-            DymolaInterface,  # type: ignore[import-not-found]
-        )
-
+        entry, cls = _interface_class(archive)
+        info["sys_path_entry"] = str(entry)
         info["import_ok"] = True
-        info["dymola_interface_module"] = DymolaInterface.__module__
+        info["dymola_interface_module"] = cls.__module__
     except Exception as e:  # pragma: no cover — diagnostic helper
         info["error"] = f"{type(e).__name__}: {e}"
     return info
