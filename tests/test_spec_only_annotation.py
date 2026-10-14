@@ -973,3 +973,138 @@ class TestSpecAddWritesAnEntryThatRuns:
             "no file its entry names; nothing was added.\n"
         )
         assert spec.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# spec add says what a class that is no model IS
+# ---------------------------------------------------------------------------
+
+KINDS = """\
+within RodLib;
+package Kinds "classes of every kind a run cannot simulate, among models"
+  function Fn
+    input Real a;
+    output Real b;
+  algorithm
+    b := a;
+    annotation (Inline=true);
+  end Fn;
+  record Rec
+    Real r;
+  end Rec;
+  connector Port
+    Real p;
+  end Port;
+  connector RealIn = input Real "a short connector";
+  partial model Base
+    Real x;
+  end Base;
+  model WithFn "its own annotation comes after its nested function's"
+    function inner
+      input Real a;
+      output Real b;
+    algorithm
+      b := a;
+      annotation (experiment(StopTime=666));
+    end inner;
+    Real y = inner(1);
+    annotation (experiment(StopTime=31));
+  end WithFn;
+  model AfterCall "a function partial application declares no class"
+    Real y = solve(function Fn(a=1), 0, 1);
+    annotation (experiment(StopTime=32));
+  end AfterCall;
+  model Last
+    Real x;
+    annotation (experiment(StopTime=33));
+  end Last;
+end Kinds;
+"""
+
+OWN_FUNCTION = """\
+within RodLib;
+function Own "a function in its own file"
+  input Real a;
+  output Real b;
+algorithm
+  b := 2*a;
+end Own;
+"""
+
+
+@pytest.fixture
+def kindlib(rodlib) -> Path:
+    lib = rodlib.parent.parent / "RodLib"
+    (lib / "Kinds.mo").write_text(KINDS, encoding="utf-8")
+    (lib / "Own.mo").write_text(OWN_FUNCTION, encoding="utf-8")
+    return rodlib
+
+
+class TestSpecAddSaysWhatAClassIs:
+    """`spec add` of a class that is no model said "is no class of the
+    library", which was false: it says what the class is. A partial model
+    is refused too — no run can simulate it."""
+
+    @pytest.mark.parametrize(
+        ("model_id", "said"),
+        [
+            (
+                "RodLib",
+                "RodLib is the library itself, not a model: name one of its "
+                "models; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.Fn",
+                "RodLib.Kinds.Fn is a function, not a model: no run can "
+                "simulate it; nothing was added.",
+            ),
+            (
+                "RodLib.Own",
+                "RodLib.Own is a function, not a model: no run can simulate "
+                "it; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.Rec",
+                "RodLib.Kinds.Rec is a record, not a model: no run can "
+                "simulate it; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.Port",
+                "RodLib.Kinds.Port is a connector, not a model: no run can "
+                "simulate it; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.RealIn",
+                "RodLib.Kinds.RealIn is a connector, not a model: no run can "
+                "simulate it; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.Base",
+                "RodLib.Kinds.Base is a partial model: no run can simulate "
+                "it; nothing was added.",
+            ),
+        ],
+    )
+    def test_it_is_refused_with_what_it_is(self, kindlib, capsys, model_id, said):
+        spec = kindlib.with_name("test_spec.json")
+        before = spec.read_bytes()
+        assert main(["--config", str(kindlib), "spec", "add", model_id]) == 1
+        out, err = capsys.readouterr()
+        assert (out, err) == ("", said + "\n")
+        assert spec.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        ("model_id", "stop_time"),
+        [
+            ("RodLib.Kinds.WithFn", 31),
+            ("RodLib.Kinds.AfterCall", 32),
+            ("RodLib.Kinds.Last", 33),
+        ],
+    )
+    def test_a_model_among_them_is_found_with_its_own_annotation(
+        self, kindlib, model_id, stop_time
+    ):
+        found = find_class(kindlib.parent.parent / "RodLib", "RodLib", model_id)
+        assert found is not None and found.kind == "model" and not found.partial
+        assert found.experiment.stop_time == stop_time
+        assert main(["--config", str(kindlib), "spec", "add", model_id]) == 0

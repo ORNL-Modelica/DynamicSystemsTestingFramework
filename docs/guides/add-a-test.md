@@ -122,8 +122,10 @@ simulating:
 $ dstf spec add MyLib.Examples.Smoke --config testing.json
 ```
 
-A Modelica model must be a model of the library: a name it does not hold, or
-one of its packages, is refused, and nothing is written. A test of an FMU, a
+A Modelica model must be a model of the library: a name it does not hold,
+the library itself, one of its packages, a function, a record, a connector or
+a partial model is refused, with what it is, and nothing is written. A test
+of an FMU, a
 Julia model or a Python function names the file it runs with `--source` — a
 `.fmu`, `.jl` or `.py` file — which the command requires there and writes
 relative to `test_spec.json`:

@@ -20,7 +20,8 @@ def _not_added(config, model_id: str, source: str | None) -> str | None:
     """Why ``spec add`` writes no entry for ``model_id``, as one sentence,
     or None. The entry must be one a run can simulate: a Modelica project's
     library holds its class (:func:`~dstf.discovery.mo_parser.find_class`),
-    a model and not a package, and a test of a backend that runs a file
+    a model — not the library, a package, a function, a record or a
+    connector, and not partial — and a test of a backend that runs a file
     (``Backend.source_suffix``) names one of that suffix that is there —
     ``--source``, which no other backend reads."""
     from ..backends import get_backend_class
@@ -56,6 +57,11 @@ def _not_added(config, model_id: str, source: str | None) -> str | None:
         return None
     from ..discovery.mo_parser import find_class
 
+    if model_id == config.library_name:
+        return (
+            f"{model_id} is the library itself, not a model: name one of its "
+            f"models; nothing was added."
+        )
     found = find_class(config.library_dir, config.library_name, model_id)
     if found is None:
         return (
@@ -67,6 +73,16 @@ def _not_added(config, model_id: str, source: str | None) -> str | None:
             f"{model_id} is a package of the library {config.library_name}, "
             f"which holds models and is none: name one of its models; nothing "
             f"was added."
+        )
+    if found.kind not in ("model", "block", "class"):
+        return (
+            f"{model_id} is a {found.kind}, not a model: no run can simulate "
+            f"it; nothing was added."
+        )
+    if found.partial:
+        return (
+            f"{model_id} is a partial {found.kind}: no run can simulate it; "
+            f"nothing was added."
         )
     return None
 

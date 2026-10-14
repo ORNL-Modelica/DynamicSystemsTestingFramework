@@ -98,8 +98,10 @@ lists each one and where it went.
 - `run --batch` on FMPy or Python was silently ignored; it is a config error.
 - `companion freeze` of a companion that does not exist exited 0; it exits 1.
 - `spec add` of a model that is no class of a Modelica project's library,
-  or of one of its packages, wrote an entry no run could simulate, and
-  exited 0; it says so, writes nothing and exits 1.
+  of one of its packages, of the library itself, of a function, a record or
+  a connector, or of a partial model wrote an entry no run could simulate,
+  and exited 0; it says what the name is (`… is a function, not a model`),
+  writes nothing and exits 1.
 - `spec add` on a Python, Julia or FMU project wrote an entry that named no
   file, and every run failed it with a Python traceback. `--source FILE`
   names the file the test runs, and is required there; a directory, or a
