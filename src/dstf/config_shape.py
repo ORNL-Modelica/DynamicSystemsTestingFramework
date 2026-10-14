@@ -278,8 +278,11 @@ TESTING_JSON: dict[str, Setting] = {
         '"all" — every point the simulator wrote — or a whole number of 2 '
         "or more, which thins a longer run to at most that many. A test is "
         "compared at its baseline's points, so this is also the resolution "
-        "of the comparison. A test_spec.json entry's own baseline_points "
-        "wins for that test.",
+        "of the comparison. Thinning keeps the first and the last point and "
+        "the two samples of each event while they fit, and spreads the rest "
+        "evenly by row, not by time. A stored baseline keeps its points until "
+        "its test is accepted again. A test_spec.json entry's own "
+        "baseline_points wins for that test.",
         own_rule=True,
     ),
     "worker_startup_timeout": Setting(
