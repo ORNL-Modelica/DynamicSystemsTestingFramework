@@ -165,7 +165,7 @@ A Backend must:
    - `settings` — the keys of its block in `testing.json`'s `backends` map, as `config_shape.Setting`s (JSON-Schema fragment, default, description). The default is `{"executables": ...}`; add to it with `{**Backend.settings, "my_key": Setting(...)}`. `Config` checks a block against the table of the backend its entry names (an entry called `"Acme 3"` is an `Acme`), and a key that is not in it is a config error that names it. `Backend.settings_of(config)` is the block over the table's defaults.
    - `source_types` — the `source_type` values it runs. Read only where a project names no backend and lists none: the installed backends that run its source type are searched in registration order.
    - `binaries` — the names its program goes by on `PATH`.
-   - `locate(settings) -> Located` — the ONLY place its install is looked for. The default finds one executable by `backends/locate.py`'s rules, in order: the block's `executables` (a block that pins full paths, none of which exists, is NOT found — nothing else is searched); an environment variable where the backend has one; `PATH`, then its standard install folders. Each part of the result (`Found`) says its path and the rule that found it. Override it for an environment variable, standard folders or a second part (Dymola's Python interface).
+   - `locate(settings) -> Located` — the ONLY place its install is looked for. The default finds one executable by `backends/locate.py`'s rules, in order: the executable `--backend-path` names, else the block's `executables` (settings that pin the executable — `--backend-path`, or a block that holds a full path — and name none that is there are NOT found: nothing else is searched); an environment variable where the backend has one; `PATH`, then its standard install folders. Each part of the result (`Found`) says its path and the rule that found it. Override it for an environment variable, standard folders or a second part (Dymola's Python interface).
    - `diagnose(located, *, entry, config) -> Diagnosis` — what `dstf check` prints of it and whether it is usable. The default is the `locate` lines.
 
 Optionally, two **classmethods** let both tiers plot a variable the test does
@@ -408,7 +408,7 @@ You fill in:
 | `backend_label` (class attr) | `""` | Always — used in headers and thread names ("via persistent **<label>** workers"). |
 | `make_worker(worker_id)` | `worker_cls(worker_id, self.config)` | Your worker constructor needs extra args beyond `(worker_id, config)`. Read state stashed by `setup_before_workers`. |
 | `setup_before_workers()` | no-op | Backend has runtime patches that must apply before any worker spawns (Dymola: log filter + parallel-startup lock). |
-| `preflight(config)` (classmethod) | no-op | Backend has an external dependency (Python module, native binary, license file). Raise `RuntimeError` with an install hint when missing — the CLI surfaces it verbatim. |
+| `preflight(config)` (classmethod) | no-op | Backend has an external dependency beside its executable (a Python module, a license file). Raise `RuntimeError` with an install hint when missing — the CLI surfaces it verbatim. The executable itself is `locate`'s to find and `require_found`'s to insist on. |
 | `starting_workers_message(n)` | `"Starting N <label> worker(s)..."` | You want a backend-specific notice (Julia: warmup-time warning). |
 | `max_restarts_per_worker` (class attr) | `3` | Restart budget needs tuning. |
 | `persistent_backend_cls()` (classmethod) | `cls` | Don't override — the default returns self so the CLI doesn't recurse. |
@@ -480,8 +480,13 @@ All five produce `{TIME_SERIES}`. The framework *does* gate on the declarations:
 
 ### Selecting a backend
 
-`backends.select_backend(config, *, persistent: bool)` is the choice itself, and
-it lives in `backends/` so callers that are not a CLI can reach it. It returns
+`backends.select_backend(config, *, persistent: bool, to_run: bool = False)` is
+the choice itself, and it lives in `backends/` so callers that are not a CLI can
+reach it. `to_run=True` — the backend is wanted to simulate with, not only to
+read results through — refuses a backend that was looked for and not found
+(`Backend.require_found`: `Dymola not found: executable not found — …`) before
+anything of a run starts, on either run mode; it is the one such check, and a
+backend writes none of its own. It returns
 the persistent variant when the registered class declares `PERSISTENT_WORKERS`
 and that variant's `preflight` passes, and the batch class otherwise — a
 `persistent=True` against a batch-only backend is a no-op, not an error, so one
@@ -490,8 +495,9 @@ backend is the CLI's to refuse: `dstf run --batch` on FMPy or Python is a
 `Config error` before this function is asked.)
 
 When the backend cannot be built here it raises `BackendUnavailableError`
-(a `RuntimeError` subclass): an unregistered backend name, a constructor whose
-tool is not installed, or a persistent probe that failed — the last carrying
+(a `RuntimeError` subclass): an unregistered backend name, a backend wanted
+for a run and not found, a constructor whose tool is not installed, or a
+persistent probe that failed — the last carrying
 both fixes, the install hint and `--batch`. "Cannot be built here" is a
 `RuntimeError` by contract, the one `Backend.preflight` names; every backend
 whose optional dependency may be missing raises that, FMPy's `fmpy` import

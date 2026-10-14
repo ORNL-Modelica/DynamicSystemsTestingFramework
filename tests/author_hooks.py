@@ -177,7 +177,7 @@ async def _no_workers(message: str = "licence server unreachable") -> dict:
         def read_result(self, test, test_key, run_result):
             raise AssertionError("nothing ran: there is no result to read")
 
-    def stub(config, *, persistent):
+    def stub(config, *, persistent, to_run=False):
         return Stub(
             SimpleNamespace(
                 work_dir=config.work_dir, timeout=30.0, backend="Stub", parallel=1

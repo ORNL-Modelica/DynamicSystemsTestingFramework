@@ -357,7 +357,7 @@ class TestAutoDetectBackend:
         assert not located.found
         assert located.executable is None
         assert located.parts[0].detail == (
-            f"the configured path(s) do not exist: {pinned}"
+            f"the configured executables: {pinned} does not exist"
         )
 
     def test_where_nothing_resolves_the_first_entry_is_the_one_named(
@@ -861,12 +861,27 @@ class TestFinding18BackendPath:
         """--backend-path without --backend: auto-detect may fill the
         simulator NAME, but the explicit path must win."""
         cfg_dir = self._autodetect_setup(tmp_path, monkeypatch)
+        custom = tmp_path / "custom" / "omc"
+        custom.parent.mkdir()
+        custom.write_text("#!/bin/sh\n")
+        custom.chmod(0o755)
+        config = Config(
+            config_file=str(cfg_dir / "testing.json"),
+            backend_path=str(custom),
+        )
+        assert config.backend_name == "OpenModelica"
+        assert config.backend_path == str(custom)
+
+    def test_a_cli_backend_path_that_is_gone_is_not_the_autodetected_one(
+        self, tmp_path, monkeypatch
+    ):
+        cfg_dir = self._autodetect_setup(tmp_path, monkeypatch)
         config = Config(
             config_file=str(cfg_dir / "testing.json"),
             backend_path="/my/custom/omc",
         )
         assert config.backend_name == "OpenModelica"
-        assert config.backend_path == "/my/custom/omc"
+        assert config.backend_path is None
 
     def test_autodetect_still_fills_path_when_unset(self, tmp_path, monkeypatch):
         """Guard the happy path: with no explicit backend_path, auto-detect

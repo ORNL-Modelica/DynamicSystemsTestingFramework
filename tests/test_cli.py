@@ -777,7 +777,8 @@ def run_env(tmp_config_dir, tmp_path, monkeypatch):
             "dstf.cli.run_cmds.discover_tests", lambda config: list(tests)
         )
         monkeypatch.setattr(
-            "dstf.cli.run_cmds._get_backend", lambda config, persistent=False: backend
+            "dstf.cli.run_cmds._get_backend",
+            lambda config, persistent=False, to_run=False: backend,
         )
         return backend
 

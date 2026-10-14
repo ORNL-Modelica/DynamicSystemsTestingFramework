@@ -35,7 +35,7 @@ from ..locate import (
     Located,
     Rule,
     find_executable,
-    looks_like_path,
+    pins,
 )
 from ..types import Capability, DatasetType
 
@@ -118,8 +118,7 @@ class PythonBackend(JsonDriverBackend):
         tool. ``PATH`` is not searched for some other ``python``: with no
         interpreter named, this one is the only one known to work."""
         found = find_executable(settings, ())
-        pinned = any(looks_like_path(str(e)) for e in settings.get("executables") or [])
-        if found.path is None and not pinned and sys.executable:
+        if found.path is None and not pins(settings) and sys.executable:
             found = Found(
                 EXECUTABLE, sys.executable, Rule(SEARCH, "the running interpreter")
             )

@@ -904,7 +904,7 @@ uv run dstf --config testing.json run -i
 | `-i`, `--interactive` | Review each test interactively |
 | `--parallel N` | Number of concurrent **simulation workers** (any backend, not just Dymola). Note: the same flag on `compare` means report-**rendering** threads — see below. |
 | `--backend NAME` | Override the backend (e.g., `"Dymola 2025"`) |
-| `--backend-path PATH` | Override the backend executable path |
+| `--backend-path PATH` | The backend's executable, in place of the one `testing.json` names or the search finds. One that is not there is not found: no other install is run in its place |
 | `--tolerance FLOAT` | Override the project's comparison tolerance (`testing.json`'s `tolerance`); one finite number |
 | `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
 | `--timeout SECS` | Per-test timeout in seconds, a whole number of 1 or more (default: 60) |

@@ -123,7 +123,7 @@ class Lib:
         self.backends: list[_ReloadingBackend] = []
         real = session_module.select_backend
 
-        def select(config, persistent=False):
+        def select(config, persistent=False, to_run=False):
             if not persistent:
                 return real(config, persistent=False)
             self.backends.append(_ReloadingBackend(config))

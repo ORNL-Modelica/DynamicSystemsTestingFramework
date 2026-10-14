@@ -25,6 +25,7 @@ from dstf.backends.dymola.interface_loader import INTERFACE
 from dstf.backends.fmpy.backend import FmpyBackend
 from dstf.backends.julia.backend import JuliaBackend
 from dstf.backends.locate import (
+    COMMAND_LINE,
     ENVIRONMENT,
     EXECUTABLE,
     SEARCH,
@@ -32,6 +33,7 @@ from dstf.backends.locate import (
     Located,
     Rule,
     find_executable,
+    with_backend_path,
 )
 from dstf.backends.openmodelica.backend import OpenModelicaBackend
 from dstf.backends.python.backend import PythonBackend
@@ -109,7 +111,39 @@ class TestFindExecutable:
         found = find_executable({"executables": pinned}, ("tool",))
         assert found.path is None and found.rule is None
         assert found.detail == (
-            "the configured path(s) do not exist: C:\\Program Files\\Tool\\tool.exe, /nope/tool"
+            "the configured executables: C:\\Program Files\\Tool\\tool.exe "
+            "does not exist, /nope/tool does not exist"
+        )
+
+    def test_one_pinned_path_among_names_ends_the_search(self, no_installs):
+        """ANY full path pins the list — not only a list of nothing else."""
+        _program(no_installs / "tool")
+        found = find_executable({"executables": ["tool-9", "/nope/tool"]}, ("tool",))
+        assert found.path is None and found.rule is None
+
+    def test_backend_path_is_the_one_entry_and_always_pinned(self, no_installs):
+        """`--backend-path` is the most pinned path there is: it is the one
+        entry looked at — over the block's — and when it is not there, no
+        other install is taken in its place. A bare name too."""
+        on_path = _program(no_installs / "tool")
+        block = {"executables": [str(on_path)]}
+        gone = find_executable(with_backend_path(block, "/nope/tool"), ("tool",))
+        assert gone.path is None and gone.rule is None
+        assert gone.detail == "--backend-path /nope/tool does not exist"
+        name = find_executable(with_backend_path(block, "tool-9"), ("tool",))
+        assert name.path is None
+        assert name.detail == "--backend-path tool-9 is not on PATH"
+
+    def test_backend_path_found_names_the_command_line(self, no_installs, tmp_path):
+        other = _program(tmp_path / "opt" / "tool")
+        found = find_executable(with_backend_path({}, str(other)), ("tool",))
+        assert (found.path, found.rule) == (
+            str(other),
+            Rule(COMMAND_LINE, "--backend-path"),
+        )
+        assert found.rule.said("Dymola") == "the command line: --backend-path"
+        assert Located((found,)).lines("Dymola")[1] == (
+            "    found by: the command line: --backend-path"
         )
 
     def test_names_that_do_not_resolve_fall_through_to_the_search(self, no_installs):
@@ -523,8 +557,37 @@ class TestWhichBackendRuns:
         assert config.backend_name == "Dymola"
         assert config.backend_path is None
         assert config.located.missing().startswith(
-            f"executable not found — the configured path(s) do not exist: {pinned}"
+            "executable not found — the configured executables: "
+            f"{pinned} does not exist"
         )
+
+    def test_a_backend_path_that_is_not_there_is_not_found(self, no_installs, tmp_path):
+        """`--backend-path /nope/omc` with an omc on PATH: the run used to
+        start that other omc and report its tests passed."""
+        _program(no_installs / "omc")
+        config = Config(
+            config_file=_project(tmp_path, {"backends": {"OpenModelica": {}}}),
+            backend_path="/nope/omc",
+        )
+        assert config.backend_path is None
+        assert not config.located.found
+        assert config.located.missing() == (
+            "executable not found — --backend-path /nope/omc does not exist"
+        )
+        with pytest.raises(RuntimeError) as exc:
+            OpenModelicaBackend.require_found(config)
+        assert str(exc.value) == (
+            "OpenModelica not found: executable not found — "
+            "--backend-path /nope/omc does not exist."
+        )
+
+    def test_python_is_not_the_running_interpreter_under_a_backend_path(
+        self, no_installs, tmp_path
+    ):
+        path = tmp_path / "testing.json"
+        path.write_text(json.dumps({"source_type": "python"}))
+        config = Config(config_file=path, backend_path="nope-python")
+        assert config.backend_path is None and not config.located.found
 
     def test_backend_path_is_the_one_executable_looked_at(self, no_installs, tmp_path):
         """`--backend-path` over the block: the path stays as given, and the
@@ -631,3 +694,134 @@ class TestAPlugInBackend:
         names = backend_names()
         assert names[:5] == ["Dymola", "OpenModelica", "FMPy", "Julia", "Python"]
         assert "Acme" in names[5:]
+
+
+# ---------------------------------------------------------------------------
+# A run of a backend that was not found starts nothing, on either run mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def workers_or_batch(tmp_path):
+    """A backend with both run modes — workers that stay alive, and
+    `--batch` — that records every run it is asked for. A project of one
+    test for it. Returns `(testing.json, the runs)`."""
+    from dstf.backends.types import Capability
+
+    runs: list[str] = []
+
+    @register("Twomode")
+    class TwomodeBackend(Backend):
+        capabilities = frozenset(
+            {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS}
+        )
+        source_types = frozenset({"twomode"})
+        binaries = ("twomodesim",)
+
+        @classmethod
+        def persistent_backend_cls(cls):
+            return TwomodeWorkers
+
+        def run_tests(self, tests):
+            runs.append(type(self).__name__)
+            return []
+
+        def read_result(self, test, test_key):  # pragma: no cover - never run
+            raise NotImplementedError
+
+    class TwomodeWorkers(TwomodeBackend):
+        pass
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "test_spec.json").write_text(
+        json.dumps({"tests": [{"model": "A", "variables": ["x"]}]})
+    )
+    path = project / "testing.json"
+    path.write_text(
+        json.dumps(
+            {
+                "source_type": "twomode",
+                "reference_root": ".",
+                "work_dir": "work",
+                "backends": {"Twomode": {}},
+            }
+        )
+    )
+    try:
+        yield path, runs
+    finally:
+        _REGISTRY.pop("Twomode", None)
+
+
+class TestARunRefusesUpFront:
+    """One place decides (`Backend.require_found`, asked by
+    `select_backend` for a run): no backend has a check of its own, so
+    `--batch` cannot run on to one failed simulation per test."""
+
+    @pytest.mark.parametrize("mode", [[], ["--batch"]], ids=["workers", "batch"])
+    def test_a_backend_path_that_is_not_there(
+        self, no_installs, workers_or_batch, capsys, mode
+    ):
+        """With a `twomodesim` on PATH: the run used to start that one."""
+        from dstf.cli import main
+
+        path, runs = workers_or_batch
+        _program(no_installs / "twomodesim")
+        argv = ["run", "--config", str(path), "--no-browser", *mode]
+        with pytest.raises(SystemExit) as exc:
+            main([*argv, "--backend-path", "/nope/twomodesim"])
+        assert exc.value.code == 1
+        assert capsys.readouterr().err == (
+            "Twomode not found: executable not found — "
+            "--backend-path /nope/twomodesim does not exist. Aborting.\n"
+        )
+        assert runs == []
+        # Nothing was started: no work directory, no dashboard.
+        assert not (path.parent / "work").exists()
+
+    @pytest.mark.parametrize("mode", [[], ["--batch"]], ids=["workers", "batch"])
+    def test_a_backend_that_is_not_installed(
+        self, no_installs, workers_or_batch, capsys, mode
+    ):
+        from dstf.cli import main
+
+        path, runs = workers_or_batch
+        argv = ["run", "--config", str(path), "--no-browser", *mode]
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert exc.value.code == 1
+        assert capsys.readouterr().err == (
+            "Twomode not found: executable not found — "
+            "looked for twomodesim on PATH. Aborting.\n"
+        )
+        assert runs == []
+
+    @pytest.mark.parametrize(
+        ("mode", "ran"),
+        [([], "TwomodeWorkers"), (["--batch"], "TwomodeBackend")],
+        ids=["workers", "batch"],
+    )
+    def test_a_backend_that_is_found_runs(
+        self, no_installs, workers_or_batch, capsys, mode, ran
+    ):
+        from dstf.cli import main
+
+        path, runs = workers_or_batch
+        _program(no_installs / "twomodesim")
+        main(["run", "--config", str(path), "--no-browser", *mode])
+        assert runs == [ran]
+
+    def test_reading_needs_no_executable(self, no_installs, workers_or_batch):
+        """`compare` and the tool read results through the backend; only a
+        run is refused."""
+        from dstf.backends import BackendUnavailableError, select_backend
+
+        path, _ = workers_or_batch
+        config = Config(config_file=path)
+        assert not config.located.found
+        assert select_backend(config, persistent=False, to_run=False) is not None
+        with pytest.raises(BackendUnavailableError, match="^Twomode not found: "):
+            select_backend(config, persistent=False, to_run=True)
+        with pytest.raises(BackendUnavailableError, match="^Twomode not found: "):
+            select_backend(config, persistent=True, to_run=True)

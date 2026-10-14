@@ -9,7 +9,8 @@ needs a second thing (Dymola's Python interface) adds it as another
 
 The rules, in order — the first that finds something wins:
 
-1. the backend's block in ``testing.json`` (:data:`SETTING`);
+1. the executable the command line names (:data:`COMMAND_LINE`), else the
+   backend's block in ``testing.json`` (:data:`SETTING`);
 2. an environment variable, where the backend has one (:data:`ENVIRONMENT`);
 3. the search: ``PATH``, then the backend's standard install folders
    (:data:`SEARCH`).
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 #: The kinds of rule a thing is found by.
+COMMAND_LINE = "command line"
 SETTING = "setting"
 ENVIRONMENT = "environment"
 SEARCH = "search"
@@ -33,12 +35,17 @@ SEARCH = "search"
 #: What a backend's program is called in a :class:`Found`.
 EXECUTABLE = "executable"
 
+#: The flag that names the executable on the command line, and the key
+#: ``Config`` hands its value to ``locate`` under (:func:`with_backend_path`)
+#: — no key of a block: a ``testing.json`` that held it is refused.
+BACKEND_PATH = "--backend-path"
+
 
 @dataclass(frozen=True)
 class Rule:
     """The rule that found a thing: its kind and what it names — the
-    setting's key, the variable's name, or where the search looked
-    (``PATH``, a folder)."""
+    flag, the setting's key, the variable's name, or where the search
+    looked (``PATH``, a folder)."""
 
     kind: str
     name: str
@@ -46,6 +53,8 @@ class Rule:
     def said(self, entry: str = "") -> str:
         """The rule in words. ``entry`` is the ``backends`` entry the
         settings came from, where there is one to name."""
+        if self.kind == COMMAND_LINE:
+            return f"the command line: {self.name}"
         if self.kind == SETTING:
             block = f"backends.{entry}." if entry else ""
             return f"testing.json: {block}{self.name}"
@@ -141,6 +150,30 @@ def looks_like_path(entry: str) -> bool:
     return bool(_WINDOWS_DRIVE_RE.match(entry))
 
 
+def with_backend_path(settings: Mapping[str, Any], path: str) -> dict[str, Any]:
+    """``settings`` for a run whose executable the command line named:
+    ``path`` is then the one entry looked at, over the block's own."""
+    return {**settings, BACKEND_PATH: path}
+
+
+def configured(settings: Mapping[str, Any]) -> tuple[list[str], Rule]:
+    """The executables ``settings`` names, in order, and the rule they are
+    named by: the command line's one over the block's list."""
+    named = settings.get(BACKEND_PATH)
+    if named is not None:
+        return [str(named)], Rule(COMMAND_LINE, BACKEND_PATH)
+    entries = [str(e) for e in settings.get("executables") or []]
+    return entries, Rule(SETTING, "executables")
+
+
+def pins(settings: Mapping[str, Any]) -> bool:
+    """Whether ``settings`` says WHICH install is meant, so that no other
+    may be taken in its place: the command line named the executable, or
+    the block's list holds a path (:func:`looks_like_path`)."""
+    entries, rule = configured(settings)
+    return rule.kind == COMMAND_LINE or any(looks_like_path(e) for e in entries)
+
+
 def find_executable(
     settings: Mapping[str, Any],
     binaries: Sequence[str],
@@ -151,34 +184,40 @@ def find_executable(
 ) -> Found:
     """A backend's executable, by the rules of this module.
 
-    1. ``settings["executables"]``, in order: the first that exists on disk
-       or resolves on ``PATH``. A list that PINS paths
-       (:func:`looks_like_path`) and holds none that exists is NOT FOUND,
-       and nothing below is tried: a list of OS-specific absolute paths
-       (``C:\\Program Files\\...\\Dymola.exe``) says the user wants *that*
-       install, and treating some same-named binary on ``PATH`` as its
-       equal would silently run another simulator on a mixed-OS setup (a
-       Linux machine beside the Windows one often has a ``dymola`` on
-       ``PATH`` that is a different version).
+    1. What ``settings`` names (:func:`configured`), in order: the first
+       that exists on disk or resolves on ``PATH``. Settings that PIN the
+       executable (:func:`pins`) and name none that is there are NOT
+       FOUND, and nothing below is tried: a list of OS-specific absolute
+       paths (``C:\\Program Files\\...\\Dymola.exe``) says the user wants
+       *that* install, and treating some same-named binary on ``PATH`` as
+       its equal would silently run another simulator on a mixed-OS setup
+       (a Linux machine beside the Windows one often has a ``dymola`` on
+       ``PATH`` that is a different version). ``--backend-path`` pins
+       whatever it is spelled like.
     2. ``environment``: ``(VARIABLE, candidates)`` pairs — the first set
        variable one of whose candidate paths exists.
     3. ``binaries`` on ``PATH``, then ``folders``: the backend's standard
        install folders as ``(folder, glob below it)`` pairs, the matches of
        all of them sorted by ``best_first`` (the newest version first).
     """
-    configured = [str(e) for e in settings.get("executables") or []]
-    for entry in configured:
+    entries, rule = configured(settings)
+    refused: list[str] = []
+    for entry in entries:
         path = Path(entry)
         if path.is_absolute() and path.exists():
-            return Found(EXECUTABLE, str(path), Rule(SETTING, "executables"))
+            return Found(EXECUTABLE, str(path), rule)
         on_path = shutil.which(entry)
         if on_path:
-            return Found(EXECUTABLE, on_path, Rule(SETTING, "executables"))
-    if any(looks_like_path(entry) for entry in configured):
-        return Found(
-            EXECUTABLE,
-            detail=f"the configured path(s) do not exist: {', '.join(configured)}",
+            return Found(EXECUTABLE, on_path, rule)
+        why = "does not exist" if looks_like_path(entry) else "is not on PATH"
+        refused.append(f"{entry} {why}")
+    if pins(settings):
+        named = (
+            f"{rule.name} "
+            if rule.kind == COMMAND_LINE
+            else "the configured executables: "
         )
+        return Found(EXECUTABLE, detail=named + ", ".join(refused))
     for variable, candidates in environment:
         value = os.environ.get(variable)
         if not value:
@@ -203,7 +242,7 @@ def find_executable(
             EXECUTABLE, str(match), Rule(SEARCH, f"the standard folder {base}")
         )
     looked = ["PATH", *dict.fromkeys(str(base) for base, _ in folders)]
-    names = [*configured, *(b for b in binaries if b not in configured)]
+    names = [*entries, *(b for b in binaries if b not in entries)]
     return Found(
         EXECUTABLE,
         detail=f"looked for {' / '.join(names) or 'no program'} on {', '.join(looked)}",

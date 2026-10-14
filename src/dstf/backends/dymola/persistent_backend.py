@@ -873,7 +873,6 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         # take effect here.
         from .interface_loader import load_dymola_interface as _load
 
-        cls.require_found(config)
         _load(cls.interface_of(config))
 
     def setup_before_workers(self) -> None:

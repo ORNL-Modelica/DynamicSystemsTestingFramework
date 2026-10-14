@@ -22,10 +22,10 @@ is just compile/solve of the user model, not the one-time package load
 that would have happened regardless of the test set.
 
 This is the default backend; pass ``--batch`` to opt out. There is no
-automatic fallback: if Julia's dependencies aren't ready (no Manifest.toml,
-failed `using`), ``preflight`` raises RuntimeError and the CLI aborts with
-a message naming both fixes — same pattern as Dymola and OpenModelica (see
-``backends.select_backend``).
+automatic fallback: a ``julia`` that was not found is refused before the
+run starts, as every backend's is (``backends.select_backend``), and a
+project that is not ready (no Manifest.toml, a failed `using`) fails the
+worker's start.
 """
 
 from __future__ import annotations
@@ -504,21 +504,6 @@ class PersistentJuliaBackend(PersistentBackendBase, JuliaBackend):
 
     worker_cls = JuliaWorker
     backend_label = "Julia"
-
-    @classmethod
-    def preflight(cls, config) -> None:
-        # Cheap probe: was `julia` found (`JuliaBackend.locate`)? Later
-        # failures (toml errors, missing packages, MTK compile failures)
-        # still bubble up from worker.start() inside run_tests.
-        if cls.executable_of(config) is None:
-            raise RuntimeError(
-                f"Julia binary not found ({cls.why_not_found(config)}). The "
-                "persistent-worker Julia backend spawns a long-lived "
-                "`julia --project=...` subprocess and needs `julia` available.\n"
-                "\n"
-                "Install Julia from https://julialang.org/downloads/ "
-                "(or use a version manager like `juliaup`)."
-            )
 
     def make_worker(self, worker_id: int) -> JuliaWorker:
         return JuliaWorker(worker_id, self.config, self.julia_config)

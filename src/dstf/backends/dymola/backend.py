@@ -387,10 +387,10 @@ class DymolaBackend(Backend):
         # Run the batch
         start_time = time.monotonic()
 
+        # A run starts with a backend that was found (`require_found`).
         executable = self.executable_of(self.config)
+        assert executable is not None
         try:
-            if executable is None:
-                raise FileNotFoundError(self.why_not_found(self.config))
             cmd = [executable]
             if not self.dymola_config.show_ide:
                 cmd.append("-nowindow")
@@ -491,7 +491,7 @@ class DymolaBackend(Backend):
                         test_key=test_key,
                         success=False,
                         elapsed=0.0,
-                        error_message=f"Dymola not found: {executable or missing}",
+                        error_message=f"Dymola not found: {missing}",
                     )
                 )
                 if self.progress is not None:

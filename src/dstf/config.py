@@ -304,9 +304,10 @@ class Config:
     # from a CLI ``--backend`` flag) is treated as authoritative and is
     # NOT overridden by anything from testing.json.
     backend_name: str | None = None
-    # The backend's executable. Given (CLI ``--backend-path``) it is that
-    # one and no other; else what the backend's ``locate`` found, or None:
-    # not on this machine (``located`` says where it was looked for).
+    # The backend's executable. Given (CLI ``--backend-path``), it is the
+    # one executable the backend's ``locate`` looks at. After construction:
+    # what ``locate`` found, or None — not on this machine (``located``
+    # says where it was looked for), the given one included.
     backend_path: str | None = None
     backend_setup: list[str] = field(
         default_factory=lambda: _default("backend_setup")
@@ -546,6 +547,7 @@ class Config:
         # The `backends` map, each block checked against its backend's own
         # settings. A map given to the constructor stands for the file's.
         from .backends import backend_class
+        from .backends.locate import with_backend_path
 
         self.backends = _backend_blocks(
             self.backends or file_config.get("backends", {}),
@@ -571,13 +573,12 @@ class Config:
         if backend_cls is not None:
             block = self.backend_settings
             if self.backend_path is not None:
-                # review 2026-07-06 finding 18: an explicitly supplied
-                # backend_path (CLI --backend-path) is never clobbered — it
-                # is the one executable looked at.
-                block = {**block, "executables": [self.backend_path]}
+                # The one executable looked at, by the rule a block's
+                # pinned entry goes by: one that is not there is not found,
+                # and no other install is taken in its place.
+                block = with_backend_path(block, self.backend_path)
             self.located = backend_cls.locate(block)
-            if self.backend_path is None:
-                self.backend_path = self.located.executable
+            self.backend_path = self.located.executable
 
         # Backend setup commands
         if not self.backend_setup and "backend_setup" in file_config:

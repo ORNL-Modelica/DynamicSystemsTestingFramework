@@ -40,7 +40,7 @@ def _notify_orphans(config, all_tests: list) -> None:
         )
 
 
-def _get_backend(config, persistent: bool = False):
+def _get_backend(config, persistent: bool = False, *, to_run: bool = False):
     """The CLI's wrapper over :func:`backends.select_backend`.
 
     The choice itself — persistent variant when the backend declares
@@ -57,7 +57,7 @@ def _get_backend(config, persistent: bool = False):
     from ..backends import BackendUnavailableError, select_backend
 
     try:
-        return select_backend(config, persistent=persistent)
+        return select_backend(config, persistent=persistent, to_run=to_run)
     except BackendUnavailableError as exc:
         print(f"{exc} Aborting.", file=sys.stderr)
         sys.exit(1)
@@ -190,7 +190,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         refuse_stored_overrides(all_tests if merged else tests, store)
     write_id_mapping(store, config)
 
-    backend = _get_backend(config, persistent=not args.batch)
+    backend = _get_backend(config, persistent=not args.batch, to_run=True)
 
     # --rerun selects tests by status from prior comparisons (no new sim yet).
     # Default category: failed. Implies --merge so the report covers the full suite.

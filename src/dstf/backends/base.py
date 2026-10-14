@@ -614,13 +614,15 @@ class Backend(ABC):
     @classmethod
     def require_found(cls, config: Config) -> None:
         """Raise ``RuntimeError`` when ``config`` looked for this backend
-        and did not find it — for a run's start, so a backend whose
-        configured path is gone is not driven through whatever else the
-        simulator's own tooling would pick up."""
-        if getattr(config, "located", None) is not None and config.backend_path is None:
-            raise RuntimeError(
-                f"{config.backend_name} not found: {cls.why_not_found(config)}"
-            )
+        and did not find it. THE check a run starts with
+        (``backends.select_backend(..., to_run=True)``), whatever the
+        backend and whichever its run mode: a backend whose configured path
+        is gone is not driven through whatever else the simulator's own
+        tooling would pick up, and none runs on to one failed simulation
+        per test."""
+        located = getattr(config, "located", None)
+        if located is not None and not located.found:
+            raise RuntimeError(f"{config.backend_name} not found: {located.missing()}.")
 
     @classmethod
     def diagnose(

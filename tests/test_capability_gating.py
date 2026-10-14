@@ -187,7 +187,7 @@ class TestSelectBackend:
     def test_cli_wrapper_turns_the_error_into_exit_1(self, monkeypatch, capsys):
         """`_get_backend` is the only place the abort message is printed."""
 
-        def _raise(config, *, persistent):
+        def _raise(config, *, persistent, to_run):
             raise BackendUnavailableError("Persistent-worker Probe unavailable.")
 
         monkeypatch.setattr("dstf.backends.select_backend", _raise)

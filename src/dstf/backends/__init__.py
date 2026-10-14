@@ -202,8 +202,15 @@ class BackendUnavailableError(RuntimeError):
     """
 
 
-def select_backend(config, *, persistent: bool) -> Backend:
+def select_backend(config, *, persistent: bool, to_run: bool = False) -> Backend:
     """Instantiate the backend for *config*, persistent variant when asked.
+
+    *to_run* says the backend is wanted to SIMULATE with, not only to read
+    results through: a backend that was looked for and not found is then
+    refused here, before anything of a run is started — on either run
+    mode, by the one check there is (:meth:`Backend.require_found`).
+    Reading needs no executable: `compare` scores a run on a machine that
+    has none.
 
     When *persistent* is True and the backend **declares**
     :attr:`Capability.PERSISTENT_WORKERS`, pre-flight the variant's
@@ -233,6 +240,11 @@ def select_backend(config, *, persistent: bool) -> Backend:
         # An unregistered backend name is a configuration problem, not a
         # bug; same class of failure as a missing executable.
         raise BackendUnavailableError(str(exc)) from exc
+    if to_run:
+        try:
+            batch_cls.require_found(config)
+        except RuntimeError as exc:
+            raise BackendUnavailableError(str(exc)) from exc
     if not persistent or Capability.PERSISTENT_WORKERS not in batch_cls.capabilities:
         # Batch-only backend (FMPy, Python today). Persistent flag is a
         # no-op rather than an error so a single CLI works across mixed

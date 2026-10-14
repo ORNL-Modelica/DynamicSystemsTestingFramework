@@ -2265,7 +2265,7 @@ class Session:
                 # class it reads results through — and silenced: the tool's
                 # process never narrates a run to the console it was
                 # started from.
-                backend = select_backend(project.config, persistent=True)
+                backend = select_backend(project.config, persistent=True, to_run=True)
                 backend.quiet = True
                 self._pool = open_pool(
                     project.config,

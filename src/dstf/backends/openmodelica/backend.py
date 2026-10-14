@@ -202,14 +202,9 @@ class OpenModelicaBackend(Backend):
         test_dir = self.config.work_dir / test_key
         test_dir.mkdir(parents=True, exist_ok=True)
 
-        if self.om_config.omc_path is None:
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=False,
-                elapsed=0.0,
-                error_message=f"omc not found: {self.why_not_found(self.config)}",
-            )
+        # A run starts with a backend that was found (`require_found`).
+        omc = self.om_config.omc_path
+        assert omc is not None
 
         if self.progress:
             self.progress.on_start(test_key)
@@ -246,7 +241,7 @@ class OpenModelicaBackend(Backend):
         wall_start = time.monotonic()
         try:
             proc = subprocess.run(
-                [self.om_config.omc_path, self.MOS_FILENAME],
+                [omc, self.MOS_FILENAME],
                 cwd=test_dir,
                 capture_output=True,
                 text=True,

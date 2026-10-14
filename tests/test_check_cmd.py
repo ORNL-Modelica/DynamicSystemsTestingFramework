@@ -114,9 +114,9 @@ class TestTheList:
         assert main(["--config", str(path), "check"]) == 1
         out = capsys.readouterr().out
         assert (
-            f"  * Python        not found  the configured path(s) do not exist: {gone}"
-            in out
-        )
+            "  * Python        not found  the configured executables: "
+            f"{gone} does not exist"
+        ) in out
         assert (
             "\nFAIL — Python is not ready. Fix one of:\n"
             '  1. Install Python, or set "executables" in its block of testing.json\'s '
