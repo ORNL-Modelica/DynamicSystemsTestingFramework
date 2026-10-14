@@ -125,7 +125,7 @@ def cmd_companion_add(args: argparse.Namespace) -> int:
 
     store = _store(args)
     path = Path(args.path)
-    fmt = args.format or infer_companion_format(str(path))
+    fmt = args.format if args.format is not None else infer_companion_format(str(path))
     try:
         mapping = _parse_variable_map(args.variable_map)
         _check_variable_map(store, args.model_id, path, fmt, mapping)

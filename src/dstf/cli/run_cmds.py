@@ -197,7 +197,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if getattr(args, "rerun", None) is not None:
         from ..comparison.comparator import compare_all
 
-        rerun_filter = args.rerun or "failed"
+        rerun_filter = args.rerun
         rerun_categories = _parse_review_filter(rerun_filter)
         prior_results = backend.read_last_results(all_tests)
         if not prior_results:
@@ -406,7 +406,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # reporting SIM_FAIL for every test. The work dir knows what produced it:
     # prefer the run's own recorded backend. An explicit --backend still
     # wins, and a work dir with no metadata keeps the auto-detect behaviour.
-    if not getattr(args, "backend", None):
+    if getattr(args, "backend", None) is None:
         work_dir = config.work_dir
         recorded, warning = recorded_backend(work_dir)
         if warning:

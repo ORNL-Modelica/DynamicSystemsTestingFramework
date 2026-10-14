@@ -19,7 +19,7 @@ def cmd_spec_add(args: argparse.Namespace) -> int:
     """Add a test to test_spec.json."""
     config = _build_config(args)
     model_id = args.model_id
-    variables = args.variables or []
+    variables = args.variables if args.variables is not None else []
 
     from ..discovery.spec_parser import add_to_test_spec
 

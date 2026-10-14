@@ -29,7 +29,7 @@ from collections.abc import Callable
 
 from ..config import DEFAULT_COMPARISON_TOLERANCE, Config
 from .author_cmd import DEFAULT_PORT
-from .common import _VALID_REVIEW_FILTERS, _parse_review_filter
+from .common import _VALID_REVIEW_FILTERS, _parse_review_filter, _split_filter_list
 from .diag_cmds import EXPORT_FILES
 from .run_cmds import REPORT_FILES
 from .spec_cmds import SCHEMAS
@@ -206,6 +206,34 @@ def _whole(
     return parse
 
 
+def _a_value(parse: Callable[[str], object] | None) -> Callable[[str], object]:
+    """The one argparse ``type=`` every flag that takes a value and every
+    positional goes through (:func:`build_arg_parser` lays it over each
+    one's own): an empty value is the parser's error. A truthiness test
+    read ``--backend ""`` as not given, ``--work-dir ""`` as the current
+    directory, and ``--filter ""`` selected every test — under ``compare
+    --accept``, every baseline."""
+
+    def value(text: str):
+        if not text.strip():
+            raise argparse.ArgumentTypeError("an empty value names nothing")
+        return text if parse is None else parse(text)
+
+    # argparse names a type in its "invalid <type> value" error
+    value.__name__ = getattr(parse, "__name__", "value")
+    return value
+
+
+def _filter_arg(value: str) -> str:
+    """``--filter``: patterns that are all empty (``,``) select every test,
+    as an empty filter did. A ``@FILE`` is read when the tests are."""
+    if not value.startswith("@") and not _split_filter_list(value):
+        raise argparse.ArgumentTypeError(
+            f"{value!r} names nothing: there is no pattern between its commas"
+        )
+    return value
+
+
 def _review_filter_arg(value: str) -> str:
     """argparse ``type=`` callback for ``-i`` / ``--rerun`` category lists.
 
@@ -343,6 +371,7 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
     "filter": (
         ("--filter",),
         dict(
+            type=_filter_arg,
             metavar="PATTERNS",
             help="Only the tests whose model id matches. ONE argument: a glob "
             "('MyLib.Examples.*'), a comma-separated list of globs "
@@ -618,7 +647,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     _add_soft_check(tree, top)
     _add_companion(tree, top)
     _add_manifest(tree, top)
+    for node in root.nodes.values():
+        for action in node._actions:
+            if _takes_a_value(action):
+                action.type = _a_value(action.type)
     return root
+
+
+def _takes_a_value(action: argparse.Action) -> bool:
+    """A flag that takes a value, or a positional — not a switch, ``--help``
+    or the sub-command."""
+    return action.nargs != 0 and not isinstance(
+        action, argparse._SubParsersAction | argparse._HelpAction
+    )
 
 
 # ---------------------------------------------------------------------------

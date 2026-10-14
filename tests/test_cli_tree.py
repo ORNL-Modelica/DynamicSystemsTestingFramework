@@ -542,6 +542,61 @@ def test_a_value_out_of_range_is_refused_with_what_is_allowed(argv, allowed, cap
     assert f"argument {argv[1]}: {allowed}" in text
 
 
+def _takes_a_value(action: argparse.Action) -> bool:
+    return action.nargs != 0 and not isinstance(
+        action, argparse._SubParsersAction | argparse._HelpAction
+    )
+
+
+@pytest.mark.parametrize("path", COMMANDS)
+def test_an_empty_value_is_refused_for_every_flag_and_positional(path, capsys):
+    """`compare --accept --filter ""` stored every baseline (an empty filter
+    selected everything); `--backend ""` was read as not given, `--work-dir
+    ""` as the current directory, `--config ""` as <cwd>/testing.json."""
+    node = NODES[path]
+    positionals = [a for a in node._actions if not a.option_strings]
+    words = path.split() + ARGV.get(path, [])
+    taking = [a for a in node._actions if _takes_a_value(a)]
+    assert taking
+    for action in taking:
+        if action.option_strings:
+            argv = [*words, action.option_strings[-1], ""]
+            name = "/".join(action.option_strings)
+        else:
+            # this positional empty, the others as ARGV gives them
+            given = list(ARGV.get(path, []))
+            index = positionals.index(action)
+            given[index : index + 1] = [""]
+            argv = [*path.split(), *given]
+            name = action.metavar or action.dest
+        text = _parse(argv, capsys)
+        assert isinstance(text, str), f"`dstf {path}` took an empty {name}"
+        assert f"argument {name}: an empty value names nothing" in text, text
+
+
+@pytest.mark.parametrize("flag", ["--config", "--source-path", "--test-spec"])
+def test_an_empty_project_flag_before_the_command_is_refused(flag, capsys):
+    text = _parse([flag, "", "discover"], capsys)
+    assert isinstance(text, str) and "an empty value names nothing" in text
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["compare", "--accept", "--filter", ","],
+        ["run", "--filter", " , "],
+        ["run", "--rerun", ","],
+        ["run", "-i", ","],
+    ],
+    ids=" ".join,
+)
+def test_a_list_of_nothing_but_commas_is_refused(argv, capsys):
+    """Patterns that are all empty select every test, as an empty filter did."""
+    text = _parse(argv, capsys)
+    assert isinstance(text, str), f"{argv} parsed"
+    assert "names nothing" in text, text
+
+
 def test_the_values_given_reach_the_config(tmp_path):
     from dstf.cli.common import _build_config
 

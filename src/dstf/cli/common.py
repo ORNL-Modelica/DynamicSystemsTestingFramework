@@ -124,7 +124,7 @@ def _filter_tests(
 ) -> list[TestModel]:
     """Filter tests by glob/list/file on model_id, plus optional package prefix."""
     filtered = tests
-    if package:
+    if package is not None:
         # review 2026-07-06 finding 65: match the package itself or children
         # across a dot boundary — "MyLib.Fluid" must not also select
         # "MyLib.FluidExperimental.*" (raw startswith did).
@@ -133,7 +133,7 @@ def _filter_tests(
             for t in filtered
             if t.model_id == package or t.model_id.startswith(package + ".")
         ]
-    if pattern:
+    if pattern is not None:
         patterns = _resolve_filter_patterns(pattern)
         # review 2026-07-06 finding 63: fnmatchcase — fnmatch.fnmatch is
         # case-insensitive on Windows, so the same filter selected different
@@ -197,6 +197,10 @@ def _exit_code(comparisons: Iterable[TestComparison]) -> int:
 def _parse_review_filter(filter_str: str) -> set[str]:
     """Parse and validate the review filter string."""
     filters = {f.strip() for f in filter_str.split(",") if f.strip()}
+    if not filters:
+        raise argparse.ArgumentTypeError(
+            f"{filter_str!r} names nothing: there is no category between its commas"
+        )
     invalid = filters - _VALID_REVIEW_FILTERS
     if invalid:
         raise argparse.ArgumentTypeError(
