@@ -21,15 +21,31 @@ from pathlib import Path
 
 @dataclass
 class RecognizerResult:
-    """One recognizer's contribution toward a ``TestModel`` for one source file.
+    """What a recognizer found in one source file: one test, and the parts of
+    it the file says.
 
-    Fields left ``None`` / empty are not contributed by this recognizer; the
-    framework defaults fill them in (or another recognizer overrides, when
-    multiple recognizers emit for the same ``model_id``).
+    A field left None or empty says nothing, and the test takes it from another
+    recognizer or the defaults. Results for the same model are merged field by
+    field, in the order the recognizers were registered: a later one wins.
 
-    The shape today mirrors what the bundled Modelica recognizer extracts.
-    PTA.4 broadens this with runtime-behavior fields (``simulate_only``,
-    ``requested_baselines``, ...).
+    Attributes:
+        model_id: The test's model, by its full name.
+        source_file: The file it was found in.
+        n_vars: How many ``UnitTests`` variables the test has.
+        unit_tests_instance: The name of the component whose ``x[i]`` those
+            variables are.
+        x_expressions: What the model wrote for each of them.
+        x_raw: The text of the ``x`` binding as written.
+        x_reference: Reference values written in the model, where there are.
+        error_expected: The error the model says to expect.
+        stop_time: The simulation's stop time, in seconds.
+        tolerance: The solver's tolerance.
+        method: The solver.
+        number_of_intervals: The number of output intervals.
+        output_interval: The time between output points, in seconds.
+        simulate_only: The test passes when its simulation completes; nothing
+            is scored.
+        requested_baselines: Extra baselines to produce for the test.
     """
 
     model_id: str
@@ -60,7 +76,19 @@ class RecognizerResult:
 
 
 class Recognizer(ABC):
-    """Base class for source-file recognizers."""
+    """A rule that finds tests in a library's source files.
+
+    Discovery runs every registered recognizer that applies to the project's
+    ``source_type`` over each source file, and merges what they find by model.
+    A recognizer plug-in subclasses this and adds an instance with
+    :func:`register`. A project can declare recognizers of its own in
+    ``testing.json`` instead, with no Python: see the recognizers reference.
+
+    Attributes:
+        name: The recognizer's name, unique; what messages and
+            ``disable_bundled`` name it by.
+        applies_to: The ``source_type`` values it runs for.
+    """
 
     #: Unique recognizer name; used in diagnostics and as a registry key.
     name: str = "<unnamed>"
@@ -69,14 +97,28 @@ class Recognizer(ABC):
 
     @abstractmethod
     def recognize(self, source_file: Path) -> RecognizerResult | None:
-        """Inspect a source file. Return a result if a test is recognized, else None."""
+        """Look at one source file for a test.
+
+        Called once per file of the library, so it should be cheap on a file that
+        holds none.
+
+        Args:
+            source_file: The file.
+
+        Returns:
+            The test the file holds, or None.
+        """
         ...
 
     def applies_to_path(self, source_file: Path, base: Path) -> bool:
-        """Optional pre-filter: return False to skip the file before recognize().
+        """Whether to look at a file at all, before :meth:`recognize`.
 
-        Default: True (no filtering). Subclasses can override to honor a
-        per-recognizer paths_include / paths_exclude config (PTA-follow.1).
+        Args:
+            source_file: The file.
+            base: The library's directory, which the file's path is relative to.
+
+        Returns:
+            False to skip the file. The default looks at every file.
         """
         return True
 
@@ -88,7 +130,11 @@ _REGISTRY: list[Recognizer] = []
 
 
 def register(recognizer: Recognizer) -> None:
-    """Add a recognizer to the registry (idempotent on identity)."""
+    """Add a recognizer, after those already registered.
+
+    Args:
+        recognizer: The recognizer. Adding the same object twice adds it once.
+    """
     if recognizer not in _REGISTRY:
         _REGISTRY.append(recognizer)
 

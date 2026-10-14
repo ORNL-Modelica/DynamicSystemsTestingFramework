@@ -97,7 +97,7 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
             # `null` is "not set", as this module's own example writes it.
             if value is None:
                 continue
-            kind = spec_shape.SIMULATION[key]["type"]
+            kind = spec_shape.SIMULATION[key].schema["type"]
             # A whole number written as a float (`500.0`) is still read
             # here, and reaches the test as an int (`_spec_number`): this
             # file's reading is pinned, where testing.json's is strict.

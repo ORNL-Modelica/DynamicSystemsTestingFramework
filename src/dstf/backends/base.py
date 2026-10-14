@@ -512,9 +512,13 @@ class ItemRunner:
 
 @dataclass(frozen=True)
 class Diagnosis:
-    """What ``dstf check`` says of one backend: the ``lines`` it prints,
-    whether the backend is ``usable`` as found, and — when it is not — the
-    ``fixes`` to choose from."""
+    """What ``dstf check`` says of one backend, as :meth:`Backend.diagnose` answers.
+
+    Attributes:
+        lines: The lines it prints.
+        usable: Whether the backend can run as found.
+        fixes: When it cannot, what to do about it, one choice each.
+    """
 
     lines: tuple[str, ...]
     usable: bool
@@ -522,19 +526,45 @@ class Diagnosis:
 
 
 class Backend(ABC):
-    """Abstract interface for running simulations across backends.
+    """A simulator as dstf drives it: where it is installed, how one test
+    runs, and how its result is read back.
 
-    Concrete backends today: Dymola, FMPy. The abstraction is dataset-shape
-    agnostic — a backend declares what it produces (``produced_datasets``)
-    and what it can do (``capabilities``).
+    A backend plug-in subclasses this, says what it is in class attributes and
+    registers the class with :func:`dstf.backends.register`. The framework
+    builds one instance per command, with the project's
+    :class:`~dstf.config.Config`; it reads :meth:`locate`, :meth:`diagnose` and
+    the class attributes without building one.
 
-    Subclasses must implement read_result(). They should override
-    run_tests() for batch execution, or implement run_single_test()
-    to use the default per-process execution.
+    A plug-in implements :meth:`read_result`, and either
+    :meth:`run_single_test` — the framework's :meth:`run_tests` then runs the
+    tests, ``--parallel`` at a time, and records each — or :meth:`run_tests`
+    itself. Every other method has a default that works.
 
-    Subclasses should override ``capabilities`` and ``produced_datasets`` to
-    declare what they support. The framework gates features on these
-    declarations rather than on backend class (see docs/extensibility.md).
+    Attributes:
+        capabilities: What the backend can do beyond running a test, as
+            :class:`~dstf.backends.types.Capability` flags. A flag is a promise:
+            :func:`~dstf.backends.register` refuses a class that declares one
+            and does not override the method it needs.
+        produced_datasets: The kinds of result data the backend produces
+            (:class:`~dstf.backends.types.DatasetType`), as a declaration.
+            What is checked is the data a result holds: a criterion whose
+            mode cannot score it fails.
+        settings: The keys of the backend's block in ``testing.json``'s
+            ``backends``, by name. Extend the default, which holds
+            ``executables``: ``{**Backend.settings, "key": Setting(...)}``.
+            ``Config`` refuses a key that is not here, and the reference page
+            and the published schema list these.
+        source_types: The ``source_type`` values the backend runs. A project
+            that names no backend runs with the first installed one that runs
+            its source type.
+        binaries: The names the backend's program goes by on ``PATH``, for the
+            default :meth:`locate`.
+        artifact_files: Files a run leaves in a test's directory that its
+            report page links, as ``(file name, label)`` pairs; one that is not
+            there is left out.
+        quiet: Whether a run prints nothing to the console. A caller with no
+            console sets it; a backend that prints checks it first.
+        config: The project's configuration, set by the constructor.
     """
 
     #: Capabilities the backend declares (populate in subclass).
@@ -569,6 +599,17 @@ class Backend(ABC):
     binaries: tuple[str, ...] = ()
 
     def __init__(self, config: Config):
+        """Keep the project's configuration.
+
+        A subclass that extends this calls it first. A backend whose tool cannot
+        be used on this machine — an optional package that does not import —
+        raises :class:`RuntimeError` with the reason here; the framework reports
+        it as the backend being unavailable.
+
+        Args:
+            config: The project's configuration, resolved: its paths are absolute
+                and its backend's settings are in ``config.backend_settings``.
+        """
         self.config = config
         self.quiet: bool = False
         self.progress = None  # set to a ProgressReporter during run_tests()
@@ -578,28 +619,50 @@ class Backend(ABC):
 
     @classmethod
     def locate(cls, settings: Mapping[str, Any]) -> Located:
-        """Where this backend's install is, and by which rule each part of
-        it was found — the ONLY place it is looked for. ``settings`` is the
-        backend's block of ``testing.json`` (empty: the search alone).
+        """Find this backend's install: the only place it is looked for.
 
-        The default finds one executable by the rules of
-        :func:`~.locate.find_executable`: ``settings["executables"]``, then
-        :attr:`binaries` on ``PATH``. A backend with standard install
-        folders, an environment variable or a second part overrides this.
+        ``Config`` asks it which backend a project runs with and which executable
+        a run uses, and ``dstf check`` prints what it answers. The default finds
+        one executable by the rules of :func:`~dstf.backends.locate.find_executable`:
+        the executables ``settings`` names (``--backend-path`` among them), then
+        :attr:`binaries` on ``PATH``. Override it for an environment variable,
+        standard install folders or a second part to find.
+
+        Args:
+            settings: The backend's block of ``testing.json``, paths made absolute;
+                empty when there is none. The command line's ``--backend-path``
+                arrives in it too.
+
+        Returns:
+            Each part of the install, first the one a run cannot do without, with
+            its path and the rule that found it — or, not found, where it was
+            looked for. Settings that name a path and find nothing there must
+            return the part not found: the framework then searches nowhere else.
         """
         return Located((find_executable(settings, cls.binaries),))
 
     @classmethod
     def settings_of(cls, config: Config) -> dict[str, Any]:
-        """This backend's settings for a run of ``config``: its block of
-        ``testing.json`` over the defaults of :attr:`settings`."""
+        """The backend's settings for a run of ``config``.
+
+        Args:
+            config: The project's configuration.
+
+        Returns:
+            Its block of ``testing.json``, over the defaults of :attr:`settings`.
+        """
         return {**defaults(cls.settings), **getattr(config, "backend_settings", {})}
 
     @classmethod
     def executable_of(cls, config: Config) -> str | None:
-        """The executable a run of ``config`` drives, or None: not found.
-        ``Config`` resolved it through :meth:`locate`; a config that never
-        went through that (a test's stand-in) gets the search."""
+        """The executable a run of ``config`` drives.
+
+        Args:
+            config: The project's configuration.
+
+        Returns:
+            The path :meth:`locate` found for it, or None when it was not found.
+        """
         if getattr(config, "located", None) is not None:
             return config.backend_path
         return getattr(config, "backend_path", None) or cls.locate({}).executable
@@ -628,57 +691,66 @@ class Backend(ABC):
     def diagnose(
         cls, located: Located, *, entry: str = "", config: Config | None = None
     ) -> Diagnosis:
-        """What ``dstf check`` prints of this backend, found as ``located``
-        (``entry`` is the ``backends`` entry its settings came from;
-        ``config`` the project's, or None where there is none).
+        """What ``dstf check`` prints of this backend, and whether it is usable.
 
-        The default is the :meth:`locate` lines, usable when every part was
-        found. A backend that can say more of its install — a version, an
-        import that must work — overrides this and adds to them.
+        The default prints the parts :meth:`locate` found and calls the backend
+        usable when every part was found. Override it to say more of an install —
+        a version, an import that must work — and add to those lines.
+
+        Args:
+            located: What :meth:`locate` answered.
+            entry: The name of the ``backends`` entry the settings came from, or
+                ``""``.
+            config: The project's configuration, or None where there is no project.
+
+        Returns:
+            The lines to print, whether the backend is usable as found, and when it
+            is not, the fixes to offer.
         """
         return Diagnosis(tuple(located.lines(entry)), located.complete)
 
     @classmethod
     def persistent_backend_cls(cls) -> type["Backend"] | None:
-        """Return the persistent-worker variant of this backend, or ``None``
-        if the backend is batch-only.
+        """The variant of this backend that keeps its simulator open between tests.
 
-        Override on backends that ship a persistent variant; the override
-        lazy-imports its sibling persistent module so the optional dep
-        (DymolaInterface, OMPython, ``julia`` binary) is not pulled in
-        during a plain batch run. The CLI calls this — keeping the lookup
-        on the backend class rather than in CLI code means a new persistent
-        backend is purely a backend-module change with no CLI edit.
+        Override it on a backend that declares
+        :attr:`~dstf.backends.types.Capability.PERSISTENT_WORKERS`, and import the
+        variant inside the method, so that its optional dependency is not imported
+        by a run that does not use it.
+
+        Returns:
+            A subclass of :class:`~dstf.backends.persistent.PersistentBackendBase`,
+            or None for a backend that has none.
         """
         return None
 
     @classmethod
     def preflight(cls, config: Config) -> None:
-        """Cheap pre-startup dependency probe.
+        """Check, cheaply, that what the backend needs beside its executable is
+        there — a Python package, a licence file.
 
-        Override on persistent backends that have an external dependency
-        (Python module, native binary, license file) to raise
-        :class:`RuntimeError` with an install hint when it's missing.
-        Cheap probes only — full failure modes (worker compile errors,
-        license issues) still surface from ``run_tests``. Default is a
-        no-op for backends with no extra dependencies beyond what the
-        package declares.
+        Called before a persistent backend's workers are started. The executable
+        itself is :meth:`locate`'s to find; this is for anything else. The
+        default checks nothing.
+
+        Args:
+            config: The project's configuration.
+
+        Raises:
+            RuntimeError: Something is missing; the message says what and how to
+                install it, and is shown as it is.
         """
         return None
 
     def describe_tool_version(self) -> str | None:
-        """Best-effort actual tool version (e.g. ``"Dymola 2026x"``, an omc
-        version, a Python version), or ``None`` when the backend can't cheaply
-        report one without a live session.
+        """The simulator's version, for a run's record, when it is cheap to ask.
 
-        Called eagerly by ``run_tests`` to stamp run provenance. A backend
-        whose version is cheap to probe (a subprocess ``--version``) should
-        implement it here even when it also has a persistent lane — the
-        persistent classes inherit it (Julia does this). Only a version that
-        NEEDS a live session belongs in :meth:`_probe_worker_version`, which
-        the persistent template calls after startup. MUST NOT raise — a failed
-        version probe degrades to the configured backend label, never an
-        aborted run.
+        Called before every run. A version that needs a running simulator is a
+        persistent backend's to report once its workers are up.
+
+        Returns:
+            The version (``"Dymola 2026x"``), or None when the backend cannot say
+            it cheaply. It must not raise.
         """
         return None
 
@@ -711,14 +783,20 @@ class Backend(ABC):
         ).as_dict()
 
     def export_fmu(self, test: TestModel, output_dir: "Path") -> "Path":
-        """Export the test's model as an FMU into ``output_dir``.
+        """Export a test's model as an FMU.
 
-        Backends must declare ``Capability.FMU_EXPORT`` in their
-        ``capabilities`` to call this; the default raises
-        :class:`NotImplementedError`. Used by 4.B's cross-backend chain
-        (e.g., Dymola export → FMPy simulate as a second baseline).
+        Override it on a backend that declares
+        :attr:`~dstf.backends.types.Capability.FMU_EXPORT`; the default raises.
 
-        Returns the absolute path to the produced ``.fmu`` file.
+        Args:
+            test: The test whose model to export.
+            output_dir: The directory to write the FMU into.
+
+        Returns:
+            The absolute path of the FMU written.
+
+        Raises:
+            NotImplementedError: The backend does not export FMUs.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support FMU export. "
@@ -732,10 +810,26 @@ class Backend(ABC):
         index: int,
         total: int,
     ) -> TestRunResult:
-        """Run a single test and return the result.
+        """Run one test, blocking until it ends.
 
-        Override this for per-process execution (default run_tests uses this).
-        Not needed if run_tests is overridden entirely (e.g., batch execution).
+        The default :meth:`run_tests` calls it once per test, from several threads
+        under ``--parallel``; the simulation queue of ``dstf author`` calls it too.
+        A test-level failure — the model does not translate, the solver gives up,
+        the time limit passes — is a result with ``success=False`` and the reason
+        in ``error_message``, not an exception.
+
+        Args:
+            test: The test, its simulation settings resolved (``stop_time``,
+                ``tolerance``, ``method``, ``number_of_intervals``,
+                ``output_interval``, ``timeout``).
+            test_key: The name of the test's directory in the work directory,
+                ``config.work_dir / test_key``, where its result is to be written.
+                The framework empties it before the run.
+            index: The test's place in the run, from 1.
+            total: How many tests the run holds.
+
+        Returns:
+            How the run went. Its result is read back by :meth:`read_result`.
         """
         raise NotImplementedError("Override run_tests() or run_single_test()")
 
@@ -760,10 +854,21 @@ class Backend(ABC):
         return ItemRunner(self, worker_id)
 
     def cancel_test(self, test_key: str) -> bool:
-        """Stop the test :meth:`run_single_test` is running under *test_key*,
-        from another thread; ``False`` when none is. That call then returns
-        a ``cancelled`` result. Backends whose single-test path can be
-        stopped declare :attr:`Capability.CANCEL` and override this."""
+        """Stop the test :meth:`run_single_test` is running under ``test_key``.
+
+        Called from another thread. Override it on a backend that declares
+        :attr:`~dstf.backends.types.Capability.CANCEL`; that
+        :meth:`run_single_test` then returns a result with ``cancelled=True``.
+
+        Args:
+            test_key: The key the test runs under.
+
+        Returns:
+            Whether a test was running under that key.
+
+        Raises:
+            NotImplementedError: The backend cannot stop a running test.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} declares no Capability.CANCEL: its "
             f"single-test path cannot be stopped."
@@ -782,34 +887,75 @@ class Backend(ABC):
         test_key: str,
         run_result: TestRunResult,
     ) -> TestResult:
-        """Read simulation output for a completed test."""
+        """Read back the result of a test's run.
+
+        Called after the run, and again by ``compare`` and by ``dstf author``, which
+        read a work directory without running: so it reads from the files the run
+        wrote, not from memory. A result that cannot be read is a result with
+        ``success=False`` and the reason, not an exception.
+
+        Args:
+            test: The test.
+            test_key: The name of the test's directory in ``config.work_dir``.
+            run_result: The run's own account, or None when it is not at hand.
+
+        Returns:
+            The tracked variables (the test's ``variable_patterns`` resolved
+            against what the result holds), each a time series named by its
+            name in the result.
+        """
         ...
 
     @classmethod
     def result_names(cls, test_dir: Path) -> list[str] | None:
-        """Every variable name in the result file under ``test_dir``
-        (``work_dir/<test_key>``), tracked or not; ``None`` when this backend
-        keeps no file it can list. A classmethod: the report reads a test's
-        files without instantiating a backend."""
+        """Every variable name the result file of a test holds, tracked or not.
+
+        A class method: a report reads a test's files without building a backend.
+        It must not raise on a missing, half-written or malformed file.
+
+        Args:
+            test_dir: The test's directory, ``work_dir / test_key``.
+
+        Returns:
+            The names, without ``time``; None when the backend keeps no file it can
+            list, in which case only tracked variables can be plotted.
+        """
         return None
 
     @classmethod
     def result_series(
         cls, test_dir: Path, names: Collection[str]
     ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-        """``{name: (time, values)}`` for the ``names`` the file has."""
+        """Variables of a test's result file, by name — what a plot of an untracked
+        variable reads.
+
+        Like :meth:`result_names`, a class method that must not raise.
+
+        Args:
+            test_dir: The test's directory, ``work_dir / test_key``.
+            names: The variables wanted.
+
+        Returns:
+            A mapping of each name the file holds to ``(time, values)``, as
+            1-D float arrays; a name it lacks is left out.
+        """
         return {}
 
     @classmethod
     def live_result_path(cls, test_dir: Path) -> Path | None:
-        """The result file of the test run in ``test_dir``
-        (``work_dir/<test_key>``) that GROWS while the run is in progress —
-        the path a :class:`~.common.live_mat.LiveMatReader` is built for.
-        ``None`` for a backend that writes its result once, at the end.
+        """The result file that grows while a test's run writes it.
 
-        Overridden by exactly the backends that declare
-        ``Capability.LIVE_RESULTS``. The file need not exist yet: a
-        persistent worker wipes the directory before each run."""
+        Override it on a backend that declares
+        :attr:`~dstf.backends.types.Capability.LIVE_RESULTS`: the authoring tool
+        reads that file to draw a running test. It need not exist yet.
+
+        Args:
+            test_dir: The test's directory, ``work_dir / test_key``.
+
+        Returns:
+            The file's path, or None for a backend that writes its result once,
+            at the end.
+        """
         return None
 
     def _prepare_run(self, tests: list[TestModel]) -> RunSetup:
@@ -916,10 +1062,19 @@ class Backend(ABC):
         )
 
     def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
-        """Run all tests with progress, timeouts, and parallelism.
+        """Run every test, and record how each went in the work directory.
 
-        Subclasses generally don't need to override this — override
-        run_single_test and read_result instead.
+        The default runs :meth:`run_single_test` for each test, ``--parallel`` at a
+        time, with progress on the console and on the live dashboard. Override it
+        to run a batch of tests in one go; an override goes through the same
+        bookkeeping as the default, by calling ``self._prepare_run(tests)`` first.
+
+        Args:
+            tests: The tests to run.
+
+        Returns:
+            The batch manifests the run wrote, which ``read_results`` reads
+            the results by.
         """
         if not tests:
             return []
@@ -1153,7 +1308,7 @@ class Backend(ABC):
         hand: ``None`` for a cancelled run, the failure for a run that
         failed, else the result read back (:meth:`read_run_result`).
 
-        :meth:`read_results`' per-test step for a caller holding one run
+        ``read_results``' per-test step for a caller holding one run
         result — the simulation queue reads each test back as it finishes.
         """
         if run_result.cancelled:
@@ -1192,7 +1347,7 @@ class Backend(ABC):
         on_result: Callable[[str, TestResult], None] | None = None,
     ) -> dict[str, TestResult]:
         """Read results from the most recent batch run in the work
-        directory: :meth:`read_results` over the manifest on disk, so each
+        directory: ``read_results`` over the manifest on disk, so each
         result reaches ``on_result`` with its run verdict already applied."""
         work_dir = self.config.work_dir
         if not work_dir.exists():

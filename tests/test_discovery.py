@@ -6,12 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dstf.config import (
-    DEFAULT_METHOD,
-    DEFAULT_STOP_TIME,
-    DEFAULT_TOLERANCE,
-    Config,
-)
+from dstf.config import Config
 from dstf.discovery.mo_parser import (
     _extract_model_name,
     _extract_within,
@@ -26,7 +21,14 @@ from dstf.discovery.spec_parser import (
     parse_test_spec,
     update_test_variables,
 )
+from dstf.discovery.spec_shape import SIMULATION
 from dstf.discovery.test_registry import TestModel, discover_tests
+
+# The simulation block's defaults, from the table they are written in.
+DEFAULT_STOP_TIME = SIMULATION["stop_time"].default
+DEFAULT_TOLERANCE = SIMULATION["tolerance"].default
+DEFAULT_METHOD = SIMULATION["method"].default
+
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PROJECT_ROOT = Path(__file__).parent.parent

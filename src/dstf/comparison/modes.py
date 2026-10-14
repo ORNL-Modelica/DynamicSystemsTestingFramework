@@ -47,12 +47,31 @@ from .sides import Sides, parse_sides
 
 
 class ComparisonMode(ABC):
-    """Strategy interface for variable comparison."""
+    """A way of scoring one variable of a run against its baseline: the
+    strategy behind a criterion's ``metric`` (a ``variable_overrides`` entry's
+    ``mode``).
+
+    A mode plug-in subclasses this, gives it a frozen dataclass of settings,
+    and registers both with :func:`~dstf.comparison.registry.register_metric`.
+    The dataclass's fields are the keys a criterion of the mode may hold: a key
+    that is not a field is refused where the spec is read, and each field's
+    ``metadata`` is what the reference page, the published JSON schema and the
+    authoring tool's forms show of it (see
+    :func:`~dstf.comparison.mode_schema.derive_schema`).
+
+    The framework builds a mode for each criterion it scores, through the
+    descriptor's ``build``, and calls :meth:`compare` once, on the part of the
+    run the criterion's window keeps.
+    """
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Short identifier used in config and VariableComparison.mode."""
+        """The name the mode is registered under (``"tube"``).
+
+        Returns:
+            The name; the same as its descriptor's.
+        """
         ...
 
     @abstractmethod
@@ -63,20 +82,32 @@ class ComparisonMode(ABC):
         act_time: np.ndarray,
         act_values: np.ndarray,
     ) -> VariableComparison:
-        """Compare actual vs reference and return metrics."""
+        """Score a run's variable against the baseline's.
+
+        Args:
+            ref_time: The baseline's sample times, in seconds, rising; equal
+                neighbours mark an event.
+            ref_values: The baseline's values, one per time.
+            act_time: The run's sample times, in seconds.
+            act_values: The run's values, one per time.
+
+        Returns:
+            The verdict, with ``passed``, the score and what the report shows. A
+            criterion that cannot be scored — no samples in its window — is a
+            comparison with ``passed=False`` and the reason in
+            ``diagnostics["error"]``, not an exception.
+        """
         ...
 
     def is_baseline_free(self) -> bool:
-        """Does this mode + its current config score without a reference?
+        """Whether this mode, as configured, scores without a baseline.
 
-        Default ``False`` — most modes (NRMSE, tube, final-only) compare
-        against a saved baseline. Subclasses that score purely against
-        config-declared bounds or structures (range; event-timing with a
-        declared ``events`` list; dominant-frequency with declared
-        ``peaks``) override this to return ``True``. Used by the
-        comparator to decide whether a test with no stored baseline can
-        still produce meaningful pass/fail — otherwise the whole test
-        collapses to the NO_REF state (idea #59 / D83).
+        A test with no stored baseline is still scored when every criterion it has
+        is baseline-free; otherwise it waits for one. The default is False.
+
+        Returns:
+            True when the configuration alone says what passes (declared
+            bounds, declared values).
         """
         return False
 
@@ -95,9 +126,10 @@ class NrmseConfig:
         metadata={
             "label": "Tolerance",
             "help": (
-                "Pass iff NRMSE = RMSE / signal_range stays below this value. "
-                "Range-normalized so the same tolerance works across variables "
-                "with different magnitudes."
+                "The ceiling: the criterion passes when the root-mean-square error, "
+                "divided by the range of the baseline, is below it. Dividing by the "
+                "range lets one number serve variables of any size; a baseline that "
+                "is constant is divided by its magnitude instead. One number."
             ),
         },
     )
@@ -118,11 +150,10 @@ class TubeConfig:
         metadata={
             "label": "Width mode",
             "help": (
-                "How the tube width is specified. "
-                "'band' = constant offset in signal units (uses tube_abs); "
-                "'rel' = fraction of |reference| (uses tube_rel); "
-                "'abs' = literal y-axis bounds — requires tube_points "
-                "with explicit upper/lower."
+                'How the tube\'s width is given; required. "band": a width in the '
+                'variable\'s units, from tube_abs or the rows of tube_points. "rel": '
+                "a fraction of the baseline's magnitude, from tube_rel or the rows. "
+                '"abs": the rows of tube_points are the tube\'s edges themselves.'
             ),
         },
     )
@@ -130,21 +161,33 @@ class TubeConfig:
         default=Sides(0.0, 0.0),
         metadata={
             "label": "Tube abs",
-            "help": "Absolute offset from reference (used when width_mode='band').",
+            "help": (
+                'In "band" mode with no tube_points: how far above and below the '
+                "baseline the run may be, in the variable's units. One number for "
+                "both sides, or a lower/upper pair."
+            ),
         },
     )
     tube_rel: Sides = field(
         default=Sides(0.0, 0.0),
         metadata={
             "label": "Tube rel",
-            "help": "Fractional offset from |reference| (e.g. 0.02 = 2%).",
+            "help": (
+                'In "rel" mode with no tube_points: how far above and below the '
+                "baseline the run may be, as a fraction of the baseline's magnitude "
+                "(0.02 is 2 %). One number for both sides, or a lower/upper pair."
+            ),
         },
     )
     tube_min_width: float = field(
         default=0.0,
         metadata={
             "label": "Min width",
-            "help": "Floor for the tube width — useful near zero-crossings.",
+            "help": (
+                "The narrowest the tube may be on either side, in the variable's "
+                "units, so that a relative tube stays open where the baseline "
+                'crosses zero. Not used in "abs" mode.'
+            ),
         },
     )
     tube_points: list[dict] | None = field(
@@ -152,22 +195,38 @@ class TubeConfig:
         metadata={
             "label": "Control points",
             "help": (
-                "Time-varying tube defined by control points. Edit on the "
-                "authoring tool's Edit on plot tab: drag a handle, or edit "
-                "the table."
+                "A tube that changes over time: one row per time, with the width "
+                'above (upper) and below (lower) the baseline there — or, in "abs" '
+                "mode, the edges. Before the first row and after the last, the "
+                "nearest row holds."
             ),
             # Row keys as ``_interpolate_tube_widths`` reads them: ``time``
             # indexed, each width ``.get`` with a 0 default. A row with
             # neither reads 0/0 and pinches the tube there; the reader
             # refuses only a list in which NO row has a width.
             "columns": (("time", "float"), ("upper", "float?"), ("lower", "float?")),
+            # What each column of a row holds, for the person writing it.
+            "column_help": {
+                "time": "The row's time, in seconds.",
+                "upper": (
+                    'The width above the baseline there, or in "abs" mode the upper '
+                    "edge; none is 0."
+                ),
+                "lower": (
+                    'The width below the baseline there, or in "abs" mode the lower '
+                    "edge; none is 0."
+                ),
+            },
         },
     )
     tube_interpolation: Literal["linear", "constant"] = field(
         default="linear",
         metadata={
             "label": "Interpolation",
-            "help": "How tube bounds interpolate between control points.",
+            "help": (
+                'Between two rows of tube_points: "linear" joins them with a '
+                'straight line, "constant" holds each row until the next.'
+            ),
         },
     )
 
@@ -208,11 +267,10 @@ class PointsConfig:
         metadata={
             "label": "Declared points",
             "help": (
-                "Optional list of (time, value, tolerance, "
-                "tolerance_mode, time_tolerance) checkpoints. When None "
-                "or empty, the mode falls back to final-value comparison "
-                "with the global ``tolerance``. Edit on the authoring "
-                "tool's Edit on plot tab: drag a handle, or edit the table."
+                "The checkpoints, one row each. A row passes when the run comes "
+                "within its tolerance of its value somewhere within its time "
+                "tolerance. With no rows, the run's final value is compared with "
+                "the baseline's."
             ),
             # As ``_compare_points`` reads them, all with ``.get``: a blank
             # ``time`` is the documented trace-end sentinel (``time: null``),
@@ -226,6 +284,29 @@ class PointsConfig:
                 ("tolerance_mode", ("abs", "rel")),
                 ("time_tolerance", "sides?", ("before", "after")),
             ),
+            # What each column of a row holds, for the person writing it.
+            "column_help": {
+                "time": (
+                    "The checkpoint's time, in seconds; none is the end of the run."
+                ),
+                "value": (
+                    "The value expected there; none is the baseline's value at that "
+                    "time."
+                ),
+                "tolerance": (
+                    "How far the run may be from the value: one number for both "
+                    "sides, or a lower/upper pair; none is the field tolerance."
+                ),
+                "tolerance_mode": (
+                    '"abs": the tolerance is in the variable\'s units; "rel": a '
+                    'fraction of the value\'s magnitude. None is "abs".'
+                ),
+                "time_tolerance": (
+                    "How much earlier and later than time the value may be met, in "
+                    "seconds: one number for both, or a before/after pair; none is "
+                    "0."
+                ),
+            },
         },
     )
     tolerance: Sides = field(
@@ -233,9 +314,9 @@ class PointsConfig:
         metadata={
             "label": "Default tolerance",
             "help": (
-                "Default per-point y-tolerance when not specified inside "
-                "a point dict. Also the tolerance for the implicit final-"
-                "value check when ``points`` is empty."
+                "The tolerance of a row that gives none, and of the final-value "
+                "check with no rows: one number for both sides, or a lower/upper "
+                "pair, in the variable's units."
             ),
         },
     )
@@ -254,8 +335,9 @@ class RangeConfig:
         metadata={
             "label": "Lower bound (optional)",
             "help": (
-                "Signal must never drop below this value. Leave blank to "
-                "skip — only the upper bound will apply."
+                "The lowest value the variable may take anywhere in the run. Leave "
+                "it out for no lower bound; at least one of the two bounds is "
+                "required."
             ),
         },
     )
@@ -264,8 +346,9 @@ class RangeConfig:
         metadata={
             "label": "Upper bound (optional)",
             "help": (
-                "Signal must never exceed this value. Leave blank to skip — "
-                "only the lower bound will apply."
+                "The highest value the variable may take anywhere in the run. Leave "
+                "it out for no upper bound; at least one of the two bounds is "
+                "required."
             ),
         },
     )
@@ -291,9 +374,9 @@ class EventTimingConfig:
         metadata={
             "label": "Time tolerance (s)",
             "help": (
-                "Default max time-shift between paired reference/actual "
-                "events. Per-event overrides in the declared ``events`` "
-                "list take precedence when present."
+                "How much earlier or later than its baseline event an event of the "
+                "run may happen, in seconds: one number for both, or an early/late "
+                "pair. A declared event's own tolerance wins over it."
             ),
             "side_labels": ("early", "late"),
         },
@@ -303,9 +386,8 @@ class EventTimingConfig:
         metadata={
             "label": "Event counts must match",
             "help": (
-                "If checked, reference and actual must fire the same number "
-                "of events. Unchecked allows pairs-that-exist comparisons "
-                "even when extra/missing events appear."
+                "Whether the run must have as many events as the baseline, or as "
+                "are declared. Off, only the events that pair up are compared."
             ),
         },
     )
@@ -314,17 +396,23 @@ class EventTimingConfig:
         metadata={
             "label": "Declared events",
             "help": (
-                "Declared reference-side events. Each entry has a ``time`` "
-                "(seconds) and an optional ``tolerance`` (seconds; falls "
-                "back to the leaf's ``time_tolerance`` if omitted). When "
-                "None, events are auto-detected from duplicate-time samples "
-                "in ``ref_time``. Edit the table on the authoring tool's "
-                "Edit on plot tab."
+                "Events you declare in place of the baseline's, one row each. Each "
+                "must be met by its own event of the run. With no rows, the "
+                "baseline's events are found and paired with the run's in order."
             ),
             "columns": (
                 ("time", "float"),
                 ("tolerance", "sides?", ("early", "late")),
             ),
+            # What each column of a row holds, for the person writing it.
+            "column_help": {
+                "time": "The event's time, in seconds.",
+                "tolerance": (
+                    "How much earlier and later the run's event may be, in seconds: "
+                    "one number for both, or an early/late pair; none is the field "
+                    "time_tolerance."
+                ),
+            },
         },
     )
 
@@ -350,10 +438,10 @@ class DominantFrequencyConfig:
         metadata={
             "label": "Peaks",
             "help": (
-                "Declared peaks to track. Each entry has a frequency, a "
-                "tolerance, and a tolerance mode ('rel' = fractional, "
-                "'abs' = Hz). Edit on the authoring tool's Edit on plot "
-                "tab: drag a handle, or edit the table."
+                "The frequencies the run's spectrum must show, one row each. A row "
+                "passes when the spectrum has a peak within its tolerance. With no "
+                "rows the criterion fails and reports the baseline's strongest "
+                "peaks."
             ),
             # ``freq`` stays required although ``_compare_dominant_frequency``
             # reads it with ``.get``: a peak without a frequency is
@@ -363,14 +451,33 @@ class DominantFrequencyConfig:
                 ("tolerance", "sides?"),
                 ("tolerance_mode", ("rel", "abs")),
             ),
+            # What each column of a row holds, for the person writing it.
+            "column_help": {
+                "freq": "The frequency, in hertz.",
+                "tolerance": (
+                    "How far the run's peak may be from it: one number for both "
+                    "sides, or a lower/upper pair; none is 0.01 on each side."
+                ),
+                "tolerance_mode": (
+                    '"rel": the tolerance is a fraction of freq; "abs": it is in '
+                    'hertz. None is "rel".'
+                ),
+            },
         },
     )
 
 
 #: The keys a ``quantity`` OBJECT may hold — one of them — on a metric whose
-#: config declares the field (``ScalarConfig``). ``expr`` is reserved: named
-#: here so it is refused as "not implemented", not as a misspelling.
-QUANTITY_KEYS = ("reduce", "expr")
+#: config declares the field (``ScalarConfig``), each with what it says.
+#: ``expr`` is reserved: named here so it is refused as "not implemented",
+#: not as a misspelling.
+QUANTITY_KEYS: dict[str, str] = {
+    "reduce": (
+        'How the variable becomes one number: "max", "min", "mean" (weighted '
+        'by time), "sample_mean", "final" or "integral".'
+    ),
+    "expr": "Reserved for an expression; not implemented, and refused.",
+}
 
 
 @dataclass(frozen=True)
@@ -406,13 +513,11 @@ class ScalarConfig:
         metadata={
             "label": "Quantity",
             "help": (
-                "Which number to score: a reduction of the leaf's variable "
-                '({"reduce": "max"|"min"|"mean"|"sample_mean"|"final"|'
-                "\"integral\"} — 'mean' is time-weighted, i.e. the integral "
-                "over the time span, so it doesn't move with the output grid, "
-                "while 'sample_mean' is the arithmetic mean of the samples), "
-                'or a dotted statistics / diagnostics path ("CPUtime.final", '
-                '"translation.scalar_unknowns"). Edited as raw JSON.'
+                'The number scored: a reduction of the leaf\'s variable, {"reduce": '
+                '"max"} or "min", "mean" (weighted by time), "sample_mean" (of the '
+                'samples, so it moves with the output grid), "final" or "integral"; '
+                "or the dotted path of a statistic of the run, such as "
+                '"CPUtime.final". A leaf with a path needs no variable.'
             ),
         },
     )
@@ -421,9 +526,9 @@ class ScalarConfig:
         metadata={
             "label": "Tolerance",
             "help": (
-                "Pass iff the deviation from the baseline scalar stays below "
-                "this value (absolute or relative — see tolerance mode). "
-                "Ignored when bounds are declared."
+                "How far the number may be from the same number of the baseline: "
+                "one number for both sides, or a lower/upper pair, read as "
+                "tolerance_mode says. Not used when a bound is given."
             ),
         },
     )
@@ -432,9 +537,9 @@ class ScalarConfig:
         metadata={
             "label": "Tolerance mode",
             "help": (
-                "'abs' = |actual - reference| <= tolerance; 'rel' = "
-                "|actual - reference| <= tolerance * |reference|, falling "
-                "back to the absolute test when the reference is 0."
+                '"abs": the tolerance is in the number\'s units. "rel": it is a '
+                "fraction of the baseline's number — in units where that number is "
+                "0."
             ),
         },
     )
@@ -443,8 +548,8 @@ class ScalarConfig:
         metadata={
             "label": "Lower bound (optional)",
             "help": (
-                "Declaring a bound switches the leaf to a baseline-free "
-                "check: the scalar must not fall below this value."
+                "The lowest the number may be. A bound replaces the comparison with "
+                "the baseline, so the criterion needs none."
             ),
         },
     )
@@ -453,8 +558,8 @@ class ScalarConfig:
         metadata={
             "label": "Upper bound (optional)",
             "help": (
-                "Declaring a bound switches the leaf to a baseline-free "
-                "check: the scalar must not exceed this value."
+                "The highest the number may be. A bound replaces the comparison "
+                "with the baseline, so the criterion needs none."
             ),
         },
     )

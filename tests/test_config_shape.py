@@ -19,8 +19,7 @@ from dstf.backends.dymola.backend import DymolaBackend, DymolaConfig
 from dstf.cli import main
 from dstf.cli.main import build_arg_parser
 from dstf.config import Config, ConfigError, load_config_file
-from dstf.config_shape import TESTING_JSON, Setting, default, refused
-from dstf.discovery.spec_shape import NOTES
+from dstf.config_shape import NOTES, TESTING_JSON, Setting, default, refused
 from dstf.reporting.schema_export import build_config_schema, build_schema
 
 REPO = Path(__file__).resolve().parents[1]

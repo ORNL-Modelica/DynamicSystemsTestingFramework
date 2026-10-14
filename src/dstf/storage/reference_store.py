@@ -128,12 +128,11 @@ def _extract_baselines(data: dict) -> dict[str, Baseline]:
 
 
 class ReferenceStore(_RolesMixin):
-    """Manages per-test JSON reference files.
+    """A project's stored baselines, one file per test under
+    ``<reference_root>/<Backend>/<os>/``.
 
-    The soft_check / companion CRUD (``add_soft_check``, ``get_companions``,
-    ``freeze_companion``, ...) is inherited from
-    :class:`~dstf.storage.roles._RolesMixin`; it reaches back only through
-    ``ref_dir`` and :meth:`_ref_file_for_model`.
+    Args:
+        config: The project's configuration, which says where they are.
     """
 
     def __init__(self, config: Config):

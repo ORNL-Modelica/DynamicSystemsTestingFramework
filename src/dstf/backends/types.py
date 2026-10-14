@@ -27,7 +27,29 @@ logger = logging.getLogger(__name__)
 
 
 class Capability(str, Enum):
-    """Declared abilities of a backend."""
+    """What a backend can do beyond running a test, declared in
+    :attr:`Backend.capabilities <dstf.backends.base.Backend.capabilities>`.
+
+    The framework offers a feature by the flag, never by the backend's name,
+    and :func:`~dstf.backends.register` refuses a class that declares a flag
+    without the method it needs.
+
+    Attributes:
+        PERSISTENT_WORKERS: The simulator stays open between tests, holding the
+            library loaded. Needs
+            :meth:`~dstf.backends.base.Backend.persistent_backend_cls`.
+        BATCH_FALLBACK: The backend runs tests without a simulator that stays
+            open, as ``--batch`` asks. Needs
+            :meth:`~dstf.backends.base.Backend.run_single_test` or
+            :meth:`~dstf.backends.base.Backend.run_tests`.
+        FMU_EXPORT: The backend exports a test's model as an FMU. Needs
+            :meth:`~dstf.backends.base.Backend.export_fmu`.
+        LIVE_RESULTS: The result file grows while the run writes it and can be
+            read then. Needs
+            :meth:`~dstf.backends.base.Backend.live_result_path`.
+        CANCEL: The backend stops a running test when asked from another
+            thread. Needs :meth:`~dstf.backends.base.Backend.cancel_test`.
+    """
 
     #: Backend can hold a loaded model in memory across multiple tests.
     PERSISTENT_WORKERS = "persistent-workers"
@@ -44,12 +66,15 @@ class Capability(str, Enum):
 
 
 class DatasetType(str, Enum):
-    """Typed categories of result data a backend may produce.
+    """The kinds of result data a backend may produce, declared in
+    :attr:`Backend.produced_datasets <dstf.backends.base.Backend.produced_datasets>`.
 
-    Every backend currently emits ``TIME_SERIES``. ``SCALARS`` is scorable
-    already — the ``scalar`` metric accepts it — so a scalars-only backend
-    would work today; the remaining types (events, spectra, distributions)
-    are reserved for metrics that don't exist yet.
+    Attributes:
+        TIME_SERIES: Variables over time; what every bundled backend produces.
+        SCALARS: Single numbers, which the ``scalar`` mode scores.
+        EVENTS: Reserved for a mode that does not exist yet.
+        SPECTRUM: Reserved for a mode that does not exist yet.
+        DISTRIBUTION: Reserved for a mode that does not exist yet.
     """
 
     TIME_SERIES = "time-series"
@@ -66,7 +91,19 @@ class DatasetType(str, Enum):
 
 @dataclass
 class VariableResult:
-    """Time series for a single tracked variable."""
+    """One variable of a test's result, as a time series.
+
+    Attributes:
+        index: Its place among the test's variables, from 1. For display and
+            order only: a variable is found by its name.
+        time: The time of each sample, in seconds.
+        values: The value at each time; as long as ``time``.
+        name: The variable's name in the result file (``pipe.T[1]``): the one
+            key a criterion, an override and a baseline name it by.
+        expression: What the model wrote for the variable, where that is not its
+            name (a ``UnitTests`` variable's expression): a label for people,
+            never a key. Empty otherwise.
+    """
 
     index: int  # 1-based
     time: np.ndarray
@@ -167,7 +204,22 @@ def variable_texts(
 
 @dataclass
 class TestResult:
-    """Results from a single test simulation."""
+    """A test's result as read back by
+    :meth:`Backend.read_result <dstf.backends.base.Backend.read_result>`.
+
+    Attributes:
+        model_id: The test's model.
+        success: Whether the run produced a result that could be read.
+        variables: The tracked variables.
+        diagnostics: Variables recorded and shown but not compared, such as
+            ``CPUtime``.
+        error_message: Why there is no result, when ``success`` is false.
+        statistics: Numbers the simulator reported about the run (its system
+            size, its timings), shown on the test's page and scorable by the
+            ``scalar`` mode.
+        run_reason: Whether ``error_message`` is the run's own reason rather
+            than a reader's account of the file.
+    """
 
     model_id: str
     success: bool
@@ -201,7 +253,26 @@ def timeout_message(what: str) -> str:
 
 @dataclass
 class TestRunResult:
-    """Result of running a single test."""
+    """How one test's run went, as
+    :meth:`Backend.run_single_test <dstf.backends.base.Backend.run_single_test>`
+    returns it.
+
+    Attributes:
+        model_id: The test's model.
+        test_key: The name of the test's directory in the work directory.
+        success: Whether the simulation completed.
+        elapsed: Its wall time, in seconds.
+        error_message: Why it did not complete.
+        timed_out: Whether it was stopped at its time limit.
+        statistics: Numbers the simulator reported about the run.
+        translation_wall: Seconds spent translating the model, where the
+            backend can tell.
+        sim_wall: Seconds spent simulating, where the backend can tell.
+        worker_killed: Set by a persistent worker whose simulator was killed
+            during the test, so that it is restarted.
+        cancelled: Whether the run was stopped on request: neither a failure
+            nor a result.
+    """
 
     model_id: str
     test_key: str

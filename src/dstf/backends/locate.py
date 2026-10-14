@@ -43,9 +43,14 @@ BACKEND_PATH = "--backend-path"
 
 @dataclass(frozen=True)
 class Rule:
-    """The rule that found a thing: its kind and what it names — the
-    flag, the setting's key, the variable's name, or where the search
-    looked (``PATH``, a folder)."""
+    """The rule a part of an install was found by.
+
+    Attributes:
+        kind: One of ``"command line"``, ``"setting"``, ``"environment"`` and
+            ``"search"``.
+        name: What it names: the flag, the setting's key, the variable's name,
+            or where the search looked (``PATH``, a folder).
+    """
 
     kind: str
     name: str
@@ -65,10 +70,15 @@ class Rule:
 
 @dataclass(frozen=True)
 class Found:
-    """One thing of a backend's install: ``what`` it is, its ``path`` and
-    the ``rule`` that found it — or, not found, no path and no rule, and
-    ``detail`` saying where it was looked for. Found, ``detail`` is what
-    else is known of it (a version)."""
+    """One part of a backend's install.
+
+    Attributes:
+        what: What the part is (``"executable"``).
+        path: Where it is; None when it was not found.
+        rule: The rule that found it; None when it was not found.
+        detail: Found, what else is known of it (a version); not found, where
+            it was looked for.
+    """
 
     what: str
     path: str | None = None
@@ -78,8 +88,12 @@ class Found:
 
 @dataclass(frozen=True)
 class Located:
-    """A backend's install: its parts, the first being the one a run cannot
-    do without (the executable; FMPy's package)."""
+    """A backend's install, as :meth:`Backend.locate
+    <dstf.backends.base.Backend.locate>` answers.
+
+    Attributes:
+        parts: The parts, the first being the one a run cannot do without.
+    """
 
     parts: tuple[Found, ...]
 
@@ -210,24 +224,31 @@ def find_executable(
     folders: Sequence[tuple[Path, str]] = (),
     best_first: Callable[[Path], Any] | None = None,
 ) -> Found:
-    """A backend's executable, by the rules of this module.
+    """Find a backend's executable by the rules every bundled backend uses,
+    in order; the first that finds one wins.
 
-    1. What ``settings`` names (:func:`configured`), in order: the first
-       path that is a program to start (:func:`unrunnable`), or name that
-       resolves on ``PATH``. Settings that PIN the
-       executable (:func:`pins`) and name none that is there are NOT
-       FOUND, and nothing below is tried: a list of OS-specific
-       paths (``C:\\Program Files\\...\\Dymola.exe``) says the user wants
-       *that* install, and treating some same-named binary on ``PATH`` as
-       its equal would silently run another simulator on a mixed-OS setup
-       (a Linux machine beside the Windows one often has a ``dymola`` on
-       ``PATH`` that is a different version). ``--backend-path`` pins
-       whatever it is spelled like.
-    2. ``environment``: ``(VARIABLE, candidates)`` pairs — the first set
-       variable one of whose candidate paths is a program to start.
-    3. ``binaries`` on ``PATH``, then ``folders``: the backend's standard
-       install folders as ``(folder, glob below it)`` pairs, the matches of
-       all of them sorted by ``best_first`` (the newest version first).
+    1. What ``settings`` names: ``--backend-path``, else the block's
+       ``executables``, in order. An entry with a separator is a path, taken
+       when it is a file that can be executed; any other is a program name,
+       looked up on ``PATH``. Settings that name a path and find nothing are
+       not found, and nothing below is tried: they say which install is meant.
+    2. ``environment``: the first variable that is set, one of whose candidate
+       paths is a file that can be executed.
+    3. ``binaries`` on ``PATH``, then the matches in ``folders``, best first.
+
+    Args:
+        settings: The backend's block of ``testing.json``, paths made absolute.
+        binaries: The names the program goes by on ``PATH``.
+        environment: ``(variable, candidates)`` pairs; ``candidates`` turns the
+            variable's value into the paths to try.
+        folders: The backend's standard install folders, as ``(folder, glob)``
+            pairs.
+        best_first: A sort key for the folders' matches (the newest version
+            first).
+
+    Returns:
+        The executable found, with the rule that found it; or, not found, where
+        it was looked for.
     """
     entries, rule = configured(settings)
     refused: list[str] = []

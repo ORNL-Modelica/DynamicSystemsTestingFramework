@@ -27,24 +27,31 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..config_shape import default
+from ..discovery.spec_shape import COMBINATOR, LEAF, WINDOW
 from .registry import DEFAULT_METRIC, combinator_names, metric, metric_names
 from .sides import _as_json, _is_number
 from .strict_keys import unknown_field, unread_param
 
-#: The keys the parser itself reads off a leaf; every other key of a leaf
-#: is one of its metric's params.
-_LEAF_KEYS = ("metric", "variable", "against", "window")
+#: The keys the parser itself reads off a leaf (``spec_shape.LEAF``);
+#: every other key of a leaf is one of its metric's params.
+_LEAF_KEYS = tuple(LEAF)
 
 #: A window's keys.
-_WINDOW_KEYS = ("start", "end")
+_WINDOW_KEYS = tuple(WINDOW)
 
-#: The keys every combinator has, and what each kind reads beyond them
-#: (``_parse_combinator``). A kind not named here reads nothing more.
-_COMBINATOR_KEYS = ("combinator", "children")
+#: What each kind of combinator reads beyond the keys every kind has
+#: (``_parse_combinator``). A kind not named here reads nothing more. Every
+#: key of either is a row of ``spec_shape.COMBINATOR``.
 COMBINATOR_KIND_KEYS: dict[str, tuple[str, ...]] = {
     "k-of-n": ("k",),
     "weighted": ("weights", "threshold", "direction"),
 }
+_COMBINATOR_KEYS = tuple(
+    key
+    for key in COMBINATOR
+    if not any(key in kind for kind in COMBINATOR_KIND_KEYS.values())
+)
 
 
 class MetricSpecError(ValueError):
@@ -568,7 +575,7 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
             raise MetricSpecError(
                 f"{path}.threshold", f"must be numeric, got {raw['threshold']!r}"
             ) from exc
-        direction = raw.get("direction", "less")
+        direction = raw.get("direction", default("direction", COMBINATOR))
         if direction not in ("less", "greater"):
             raise MetricSpecError(
                 f"{path}.direction", f"must be 'less' or 'greater', got {direction!r}"
@@ -614,7 +621,7 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
 
     # ``against`` picks which named baseline the leaf scores against.
     # Defaults to "primary"; must be a non-empty string if present.
-    against = raw.get("against", "primary")
+    against = raw.get("against", default("against", LEAF))
     if not isinstance(against, str) or not against:
         raise MetricSpecError(
             f"{path}.against", f"must be a non-empty string, got {against!r}"

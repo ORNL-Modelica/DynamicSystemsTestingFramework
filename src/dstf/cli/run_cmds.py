@@ -7,7 +7,9 @@ from pathlib import Path
 
 from ..backends import dataset_kind_for
 from ..backends.progress import recorded_backend, refuse_unregistered
-from ..config import DEFAULT_STOP_TIME, ConfigError
+from ..config import ConfigError
+from ..config_shape import default
+from ..discovery.spec_shape import SIMULATION
 from ..discovery.test_registry import discover_tests
 from ..pipeline import run_pipeline, wipe_stale_state_for_scope, write_id_mapping
 from .common import (
@@ -141,7 +143,7 @@ def _default_stop_time_notes(tests: list, config) -> list[str]:
       "the model's annotation gives no stop time" was false of it;
     - any other source type, which has no annotation layer: the entry
       gives none. Every backend runs such a test to the same default."""
-    ran = f"it runs to the default, {DEFAULT_STOP_TIME:g} s."
+    ran = f"it runs to the default, {default('stop_time', SIMULATION):g} s."
 
     def why(test) -> str:
         if config.source_type != "modelica":

@@ -111,7 +111,7 @@ class DymolaBackend(Backend):
             "With `run --batch`: how many tests one Dymola session runs "
             "before it is closed and the next is started. Small values (3 "
             "to 5) spread the load across workers and lose fewer tests to "
-            "a crash, but load the library more often. Default: every test "
+            "a crash, but load the library more often. Without it, every test "
             "of a worker in one session.",
         ),
         "interface": Setting(
@@ -120,7 +120,7 @@ class DymolaBackend(Backend):
             "Dymola's Python interface: the archive (dymola-*.whl or "
             "dymola.egg) or the folder that holds it. A relative path is "
             "relative to this file, and ~ is your home directory. "
-            "Default: the DYMOLA_INTERFACE_PATH environment variable, else "
+            "Without it, the DYMOLA_INTERFACE_PATH environment variable, else "
             "Modelica/Library/python_interface of the install of the "
             "Dymola that was found, and no other's. Only where that "
             "install cannot be determined, that of the newest Dymola in "

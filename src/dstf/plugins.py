@@ -40,15 +40,22 @@ _completed: set[str] = set()
 
 
 def load_plugins() -> list[str]:
-    """Import every ``dstf.plugins`` entry point, returning the names loaded.
+    """Import every plug-in installed for dstf.
 
-    Each entry point's ``.load()`` result is either a **module** (the import
-    itself performed the registrations) or a **callable** (invoked with no
-    arguments). Anything else is an error.
+    A plug-in is an entry point of the ``dstf.plugins`` group in a package's
+    metadata. One that names a module is imported, and its registrations run as
+    it is; one that names a callable is called with no arguments. Every command
+    of the ``dstf`` command line calls this before it runs; a program that uses
+    dstf as a library calls it once, before it builds a configuration. Calling
+    it again loads nothing again.
 
-    Idempotent — the second and later calls return the same names without
-    re-importing. Raises :class:`~dstf.config.ConfigError` naming the failing
-    entry point, chaining the original exception.
+    Returns:
+        The names of the entry points loaded.
+
+    Raises:
+        ConfigError: A plug-in failed to import or to run, or names something
+            that is neither a module nor a callable; the message names its
+            entry point.
     """
     global _loaded
     if _loaded is not None:

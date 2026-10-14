@@ -21,6 +21,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Iterable, Mapping
 
+from ..discovery import spec_shape
 from .registry import metric, unnamed_metrics
 
 #: Params read off EVERY leaf and override, whatever its metric.
@@ -35,7 +36,7 @@ from .registry import metric, unnamed_metrics
 #: the Metric contract, item 6; ``MetricDescriptor``): "an unrecognized
 #: ``quantity`` stays an inert param — a trajectory metric keeps scoring
 #: trajectories". That promise is kept here, by name, and not by leniency.
-EVERY_METRIC = ("tolerance", "quantity")
+EVERY_METRIC = tuple(spec_shape.EVERY_METRIC)
 
 
 def _edits(a: str, b: str) -> int:

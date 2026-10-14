@@ -19,6 +19,16 @@ from typing import TypeGuard
 
 @dataclass(frozen=True)
 class Sides:
+    """A tolerance with two sides. With ``d = actual - target``, a check passes
+    when ``-lower <= d <= upper``. A spec writes one number for both sides, or
+    ``{"lower": a, "upper": b}``.
+
+    Attributes:
+        lower: How far below its target the value may lie (in time: how much
+            earlier).
+        upper: How far above it (in time: how much later).
+    """
+
     lower: float
     upper: float
 

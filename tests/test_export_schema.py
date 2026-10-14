@@ -399,8 +399,24 @@ def test_a_two_sided_tolerance_exports_as_a_number_or_a_pair(
     defs = build_schema()["$defs"]
     node = dict(defs[mode]["properties"][name])
     assert node.pop("description")
+    # The pair's two sides are described too (`test_descriptions.py`); the
+    # shape is what this asserts.
+    node["oneOf"] = _without_descriptions(node["oneOf"])
     assert node == {"oneOf": NUMBER_OR_PAIR, "default": default, "title": title}
     json.dumps(defs)
+
+
+def _without_descriptions(node):
+    """``node`` with every ``description`` in it removed."""
+    if isinstance(node, dict):
+        return {
+            key: _without_descriptions(value)
+            for key, value in node.items()
+            if key != "description"
+        }
+    if isinstance(node, list):
+        return [_without_descriptions(value) for value in node]
+    return node
 
 
 def test_nrmse_tolerance_exports_as_one_number():

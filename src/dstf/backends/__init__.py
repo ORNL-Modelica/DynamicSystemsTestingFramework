@@ -121,12 +121,23 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
 
 
 def register(name: str):
-    """Class decorator that registers a Backend subclass.
+    """Register a backend class under a name: the class decorator a backend
+    plug-in is declared with.
 
-    Validates capability honesty at decoration time — see
-    :func:`_validate_capabilities`. A typo or stale flag becomes an
-    ``ImportError`` (via ``TypeError``) at module-import time rather
-    than a confusing ``NotImplementedError`` mid-run.
+    The name is what ``testing.json``'s ``backend`` and ``backends`` say, and
+    what ``--backend`` takes. An entry named ``"<name> 2025"`` is this
+    backend's too.
+
+    Args:
+        name: The backend's name.
+
+    Returns:
+        The decorator, which returns the class unchanged.
+
+    Raises:
+        TypeError: At decoration, when the class declares a
+            :class:`~dstf.backends.types.Capability` without overriding the
+            method it needs.
     """
 
     def decorator(cls: type[Backend]) -> type[Backend]:
@@ -206,48 +217,28 @@ def backend_family(backend_name: str) -> str:
 
 
 class BackendUnavailableError(RuntimeError):
-    """The configured backend cannot be built on this machine.
-
-    Not a bug: an unregistered backend name, a missing executable, or a
-    persistent variant whose dependency probe failed. Callers decide what
-    to do about it — the CLI prints the message and exits 1
-    (:func:`cli.run_cmds._get_backend`), the authoring tool shows it on the
-    job that asked for the run, and ``Session.open`` turns it into a
-    ``ConfigError`` so ``dstf author`` refuses the project with one line.
+    """The project's backend cannot be built on this machine: no backend of
+    that name is registered, its program was not found, or what it needs is not
+    installed. ``str()`` says which.
     """
 
 
 def select_backend(config, *, persistent: bool, to_run: bool = False) -> Backend:
-    """Instantiate the backend for *config*, persistent variant when asked.
+    """Build the backend a project runs with.
 
-    *to_run* says the backend is wanted to SIMULATE with, not only to read
-    results through: a backend that was looked for and not found is then
-    refused here, before anything of a run is started — on either run
-    mode, by the one check there is (:meth:`Backend.require_found`).
-    Reading needs no executable: `compare` scores a run on a machine that
-    has none.
+    Args:
+        config: The project's configuration.
+        persistent: Build the variant that keeps the simulator open between
+            tests, where the backend has one; ``--batch`` is False.
+        to_run: The backend will simulate, not only read results: one that was
+            not found on this machine is refused.
 
-    When *persistent* is True and the backend **declares**
-    :attr:`Capability.PERSISTENT_WORKERS`, pre-flight the variant's
-    dependency probe and instantiate it. When the probe raises
-    :class:`RuntimeError`, raise :class:`BackendUnavailableError` naming
-    both fixes (install the dep, or re-run with ``--batch``) — no silent
-    fallback.
+    Returns:
+        The backend.
 
-    The declaration is what gates, not the presence of the hook: a backend
-    that ships an experimental ``persistent_backend_cls`` it isn't ready to
-    have driven says so by leaving the flag off, and lands on the batch
-    path. Registration-time validation (:func:`_validate_capabilities`)
-    guarantees the converse — flag implies a real override — so a declaring
-    backend always has a class to return.
-
-    Backend-agnostic: no string matching on backend names. New persistent
-    backends plug in by declaring the capability and overriding
-    ``persistent_backend_cls`` + ``preflight`` on their backend classes.
-
-    This function itself reads ``config.backend`` only to phrase the
-    persistent-failure message; :func:`get_backend_class`, which it calls
-    first, requires the attribute.
+    Raises:
+        BackendUnavailableError: The backend is not registered, not found, or
+            cannot be used here; the message says why and what to do.
     """
     try:
         batch_cls = get_backend_class(config)

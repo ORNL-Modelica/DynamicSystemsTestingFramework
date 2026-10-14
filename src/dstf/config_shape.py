@@ -20,20 +20,31 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .discovery.spec_shape import NOTES
 from .json_types import holds, said
 
 
 @dataclass(frozen=True)
 class Setting:
-    """One key: the JSON-Schema fragment its value must be (draft 2020-12),
-    its default — ``None`` where there is none to write down: the key is
-    optional and the description says what happens without it — and a
-    description written for the person who sets it.
+    """One key of a JSON file dstf reads: ``testing.json``'s, a backend's
+    settings block, or a ``test_spec.json`` table.
 
-    A default is written HERE and nowhere else: code that needs it asks
-    :func:`default`, the schema and the reference page print it from this
-    field, and the description does not say it again."""
+    The same row is read three ways: the file is checked against it, code that
+    needs the default asks :func:`default`, and the reference page and the
+    published JSON schema print it. A default is written here and nowhere else,
+    and the description does not say it again.
+
+    Attributes:
+        schema: The JSON-Schema fragment (draft 2020-12) the value must match.
+        default: The value when the key is absent; None where there is none to
+            write down, in which case the description says what happens
+            without it.
+        description: What the key does, for the person who writes it: one or
+            two sentences ending in a full stop.
+        own_rule: The value is held to a rule of its own, with its own message,
+            and the type check leaves it to that rule.
+        path: For a backend setting whose value is a path: :data:`FILE` or
+            :data:`PROGRAM`. ``Config`` hands the backend an absolute one.
+    """
 
     schema: Mapping[str, Any]
     default: Any
@@ -57,12 +68,18 @@ FILE = "file"
 PROGRAM = "program"
 
 
-def _note(key: str) -> Setting:
-    return Setting(
-        NOTES[key],
-        None,
-        "A note for people. Nothing reads it.",
+#: A person's notes, on ``testing.json`` and on a ``test_spec.json`` entry
+#: and its ``comparison`` block. Read by nothing, by design — the
+#: documented place for free text, so that no other unread key has to be
+#: tolerated to leave room for one. ``metadata`` is an object of any shape.
+NOTES: dict[str, Setting] = {
+    key: Setting(schema, None, "A note for people. Nothing reads it.")
+    for key, schema in (
+        ("description", {"type": "string"}),
+        ("info", {"type": "string"}),
+        ("metadata", {"type": "object"}),
     )
+}
 
 
 _STRINGS = {"type": "array", "items": {"type": "string"}}
@@ -164,8 +181,9 @@ TESTING_JSON: dict[str, Setting] = {
         "The library under test, relative to this file: for a Modelica "
         "library the directory that holds its package.mo; otherwise the "
         "directory of the FMUs, the Julia project or the Python tests. "
-        "Default: a Modelica library is looked for from the directory the "
-        "command is run in; any other source is this file's directory.",
+        "Without it, a Modelica library is looked for from the directory "
+        "the command is run in, and any other source is this file's "
+        "directory.",
     ),
     "source_type": Setting(
         # The choices are the registered backends' (`backends.source_types`,
@@ -182,17 +200,18 @@ TESTING_JSON: dict[str, Setting] = {
         {"type": "string"},
         None,
         "The library's name in reports and in the default work_dir. A "
-        "Modelica library is always named by its package.mo; for any other "
-        "source the default is the name of this file's directory.",
+        "Modelica library is always named by its package.mo; any other "
+        "source, without this key, by the name of this file's directory.",
     ),
     "backend": Setting(
         {"type": "string"},
         None,
         "The simulator to run with: an entry of backends, or a backend's "
-        "name. A name that starts with a backend's is that backend — \"Dymola "
-        '2025" is a Dymola; any other name is a config error. Default: the first entry of backends that is '
-        "found on this machine; with no backends, the first installed "
-        "backend that runs this source_type.",
+        "name. A name that starts with a backend's is that backend — "
+        '"Dymola 2025" is a Dymola; any other name is a config error. '
+        "Without it, the first entry of backends that is found on this "
+        "machine; with no backends, the first installed backend that runs "
+        "this source_type.",
     ),
     "backends": Setting(
         {"type": "object"},
@@ -220,20 +239,20 @@ TESTING_JSON: dict[str, Setting] = {
         None,
         "Where the stored baselines are, relative to this file. They are "
         "kept below it by backend and operating system, <Backend>/<os>/. "
-        "Default: this file's directory if it is named ReferenceResults, "
+        "Without it, this file's directory if it is named ReferenceResults, "
         "else Resources/ReferenceResults beside the library.",
     ),
     "test_spec": Setting(
         {"type": "string"},
         None,
         "The file of test definitions and criteria, relative to this file. "
-        "Default: test_spec.json in reference_root.",
+        "Without it, test_spec.json in reference_root.",
     ),
     "work_dir": Setting(
         {"type": "string"},
         None,
         "Where a run writes its results and reports; a relative path is "
-        "relative to this file. Default: "
+        "relative to this file. Without it, "
         "testing_output/<library>/<backend>/<os>/ under the directory the "
         "command is run in.",
     ),
@@ -242,14 +261,14 @@ TESTING_JSON: dict[str, Setting] = {
         None,
         "The operating-system part of the baselines' folder, "
         '<reference_root>/<Backend>/<os>/: "linux", "windows" or "macos". '
-        "Default: the system the tool runs on.",
+        "Without it, the system the tool runs on.",
     ),
     "tolerance": Setting(
         {"type": ["number", "null"]},
         1e-4,
-        "The base comparison tolerance: what a variable is compared with "
-        "when neither its test nor its stored baseline sets one. One finite "
-        "number.",
+        "The project's base tolerance: what a criterion is scored with when "
+        "neither it, an override, its test nor its stored baseline gives it "
+        "one — for nrmse, the ceiling. One finite number of 0 or more.",
         own_rule=True,
     ),
     "baseline_points": Setting(
@@ -315,7 +334,7 @@ TESTING_JSON: dict[str, Setting] = {
         "Names of bundled recognizers to switch off, for example "
         '"modelica:bundled-unit-tests".',
     ),
-    **{key: _note(key) for key in NOTES},
+    **NOTES,
 }
 
 

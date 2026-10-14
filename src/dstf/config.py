@@ -17,12 +17,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default simulation parameters (Dymola defaults)
-DEFAULT_STOP_TIME = 1.0
-DEFAULT_TOLERANCE = 1e-4
-DEFAULT_METHOD = "Dassl"
-DEFAULT_NUMBER_OF_INTERVALS = 500
-
 # Comparison defaults: testing.json's `tolerance`, where it is not set.
 DEFAULT_COMPARISON_TOLERANCE = _default("tolerance")
 
@@ -97,8 +91,10 @@ def read_package_name(package_dir: Path) -> str:
 
 
 class ConfigError(ValueError):
-    """A testing.json problem the user must fix (malformed, unreadable, or a
-    missing explicit --config path)."""
+    """A project's configuration cannot be used: ``testing.json`` or
+    ``test_spec.json`` is malformed or holds a key nothing reads, a path is
+    missing, a plug-in failed to load. ``str()`` names the file and the key.
+    """
 
 
 class NoProject(ConfigError):
@@ -363,16 +359,30 @@ def _dependency_looks_like_path(entry: str, base_dir: Path) -> bool:
 
 @dataclass
 class Config:
-    """Runtime configuration for the testing system.
+    """A project's configuration: its ``testing.json``, the command line's
+    flags over it, and the defaults, with every path made absolute.
 
-    The primary input is source_path — for source_type == "modelica" this is
-    the directory containing package.mo for the library being tested; for FMU
-    / Julia / data-file sources it generalizes to that source location.
+    Build one with the file, ``Config(config_file=Path("testing.json"))``; a
+    keyword given here wins over the file, as the flag of the same name does on
+    the command line. Plug-ins load first (:func:`dstf.load_plugins`): a
+    backend's settings are checked against its table.
 
-    A field that mirrors a ``testing.json`` key takes its default from that
-    key's row of ``config_shape.TESTING_JSON`` — the one place a default is
-    written down, and the one a person reads it from — when the ``Config``
-    is built, so nothing holds a copy of it.
+    Attributes:
+        config_file: The ``testing.json`` to read, or the directory holding
+            it; None to look for one near the library.
+        source_path: The library under test.
+        reference_root: Where the stored baselines are.
+        test_spec_file: The ``test_spec.json``.
+        work_dir: Where a run writes.
+        backend_name: The backend's entry or name; None for the file's choice.
+        parallel: How many tests run at once.
+        timeout: Seconds a test may run.
+        tolerance: The project's base tolerance.
+        backend_settings: The backend's settings block, after construction.
+
+    Raises:
+        ConfigError: The file or a value cannot be used; the message names the
+            key.
     """
 
     # Source type: "modelica" (default, `source_path` points at a package.mo dir),
