@@ -853,19 +853,19 @@ def _warned(*leaves: dict) -> dict:
 _WRONG_IN_THE_FILE = {
     "a stored soft check outside warn": (
         {"combinator": "and", "children": [_leaf(), _leaf(against="other")]},
-        "This criterion scores against 'other' outside a 'warn'",
+        "metrics.children[1]: This criterion scores against 'other' outside a 'warn'",
     ),
     "a stored companion outside warn": (
         {"combinator": "and", "children": [_leaf(), _leaf(against="rig")]},
-        "This criterion scores against 'rig' outside a 'warn'",
+        "metrics.children[1]: This criterion scores against 'rig' outside a 'warn'",
     ),
     "a name nothing holds outside warn": (
         {"combinator": "and", "children": [_leaf(), _leaf(against="nosuch")]},
-        "This criterion scores against 'nosuch' outside a 'warn'",
+        "metrics.children[1]: This criterion scores against 'nosuch' outside a 'warn'",
     ),
     "warnings alone": (
         {"combinator": "warn", "children": [_leaf()]},
-        "Every tree needs at least one criterion scored against the primary",
+        "metrics: Every tree needs at least one criterion scored against the primary",
     ),
     "a weighted sum of opposite directions": (
         {
@@ -877,7 +877,7 @@ _WRONG_IN_THE_FILE = {
                 {"metric": "tube", "variable": "x", "tube_width_mode": "rel"},
             ],
         },
-        "A 'weighted' node cannot mix lower-is-better and higher-is-better",
+        "metrics: A 'weighted' node cannot mix lower-is-better and higher-is-better",
     ),
 }
 
@@ -895,8 +895,8 @@ class TestRolesWhereATestIsScored:
     """Where a test is scored, a tree is refused only for what is wrong in
     its FILE, never for what this ``<Backend>/<os>`` folder happens to hold:
     the same spec is scored in every folder, and a soft check is imported
-    into one. A tree that is refused fails with the rule's sentence and no
-    criterion scored."""
+    into one. A tree that is refused fails with every rule it breaks, each
+    with its place in the tree, and no criterion scored."""
 
     @pytest.fixture
     def roles(self, store_with_primary, tmp_path):
@@ -958,6 +958,29 @@ class TestRolesWhereATestIsScored:
         assert refusal(comp) is None
         assert comp.metric_tree is not None
 
+    def test_every_rule_the_tree_breaks_is_said(self, roles):
+        """A tree that breaks two rules says both, each where it is."""
+        from dstf.reporting.status import refusal
+
+        tree = {
+            "combinator": "warn",
+            "children": [
+                {
+                    "combinator": "weighted",
+                    "threshold": 1.0,
+                    "weights": [1.0, 1.0],
+                    "children": [
+                        _leaf(),
+                        {"metric": "tube", "variable": "x", "tube_width_mode": "rel"},
+                    ],
+                }
+            ],
+        }
+        reason = refusal(self._compare(roles, tree))
+        assert reason is not None
+        assert "metrics.children[0]: A 'weighted' node cannot mix" in reason
+        assert "metrics: Every tree needs at least one criterion" in reason
+
     def test_a_tree_wrong_in_its_file_with_no_baseline_is_refused(
         self, sample_models_dir, tmp_path
     ):
@@ -992,7 +1015,7 @@ class TestWhatEachRuleReads:
 
         for tree, sentence in _WRONG_IN_THE_FILE.values():
             errors = validate_tree(parse_metric_tree(tree))
-            assert errors and errors[0].message.startswith(sentence), errors
+            assert errors and str(errors[0]).startswith(sentence), errors
         for name in _RIGHT_IN_THE_FILE.values():
             assert validate_tree(parse_metric_tree(_warned(_leaf(against=name)))) == []
 

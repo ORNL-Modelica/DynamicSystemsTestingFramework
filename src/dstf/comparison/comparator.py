@@ -180,8 +180,8 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
 
 def broken_roles(test: TestModel) -> str | None:
     """Why the test's ``metrics`` tree is wrong in its FILE, as the
-    validator's sentences (:func:`.validator.validate_tree` with no lookup),
-    or ``None``: no criterion against the primary outside every ``warn``; a
+    validator's sentences (:func:`.validator.validate_tree` with no lookup)
+    each led by its place in the tree, or ``None``: no criterion against the primary outside every ``warn``; a
     criterion outside a ``warn`` that names anything but the primary; a
     ``weighted`` that sums scores of opposite directions. A test with no
     tree breaks none — its criteria are the primary's, outside any ``warn``.
@@ -201,8 +201,11 @@ def broken_roles(test: TestModel) -> str | None:
     from .validator import validate_tree
 
     errors = validate_tree(test.metric_tree_spec)
-    # Each message is a sentence that ends in its own full stop.
-    return " ".join(e.message for e in errors) or None
+    # Every rule the tree breaks, each led by where it is in the tree, as
+    # `spec update` says it (`metrics.children[1]: This criterion ...`): a
+    # tree of many criteria names the one to fix. Each message is a
+    # sentence that ends in its own full stop.
+    return " ".join(str(e) for e in errors) or None
 
 
 def stored_override_problem(
