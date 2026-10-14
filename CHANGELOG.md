@@ -20,6 +20,8 @@ lists each one and where it went.
   of one group, and each action offers only the flags it reads. A flag a
   command does not read is an error, wherever it is written:
 
+  <!-- commands: the first column is history -->
+
   | 1.0 | 1.1 |
   |---|---|
   | `dstf add <model>` | `dstf spec add <model>` |

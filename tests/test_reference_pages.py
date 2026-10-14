@@ -100,6 +100,38 @@ def test_every_command_and_every_flag_is_rendered():
                 assert flag in shown, f"dstf {path}: {flag}"
 
 
+def test_every_option_s_default_is_the_parser_s():
+    """The Default column says what the parser fills in when the option is
+    not given: the value itself — a string as it is, any other as JSON —
+    or a dash where it fills in nothing (no default, a switch)."""
+    import json
+
+    parser = build_arg_parser()
+    nodes = {c.path: c for c in rows.command_nodes()}
+    shown = 0
+    for path, node in parser.nodes.items():
+        options = iter(nodes[path].options)
+        for action in node._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                continue
+            if action.help == argparse.SUPPRESS:
+                continue
+            option = next(options)
+            default = action.default
+            if action.nargs == 0 or default in (None, argparse.SUPPRESS, False):
+                assert option.default == "—", f"dstf {path}: {option.names}"
+                continue
+            value = (
+                option.default
+                if isinstance(default, str)
+                else json.loads(option.default)
+            )
+            assert value == default, f"dstf {path}: {option.names}"
+            shown += 1
+    # --report-format's `console`, author's port: values, not only dashes
+    assert shown >= 3, shown
+
+
 def test_a_key_added_to_a_table_is_rendered(monkeypatch):
     """No list of keys of its own: a key the code gains is on the page."""
     from dstf.config_shape import TESTING_JSON

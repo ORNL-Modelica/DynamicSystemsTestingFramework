@@ -1040,6 +1040,17 @@ def test_a_command_s_flag_before_the_command_says_where_it_goes(argv, said, caps
             ["--backend", "Python", "rn"],
             "dstf: error: argument <command>: invalid choice: 'rn'",
         ),
+        # a flag whose value is optional takes ONE word: the next is the
+        # command (not "--interactive goes after the command", every word
+        # up to `run` swallowed)
+        (
+            ["-i", "failed", "extra", "run"],
+            "dstf: error: argument <command>: invalid choice: 'extra'",
+        ),
+        (
+            ["--rerun", "failed", "extra", "run"],
+            "dstf: error: argument <command>: invalid choice: 'extra'",
+        ),
     ],
     ids=lambda v: " ".join(v) if isinstance(v, list) else "",
 )

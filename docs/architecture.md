@@ -909,7 +909,8 @@ one the metric contract had; items 1-6 are on the API page.
    and a drag of the metric's handle markers and lines is refused ("has no
    on-plot handles"); the builtin `nrmse` does. Only a `Marker` or an
    `HLine` of `kind="handle"`, and a `Marker` or a `VLine` of `kind="grip"`
-   (item 12), reaches the editor: nothing else on the plot — a window, a
+   (a tolerance's side, whose geometry is described below), reaches the
+   editor: nothing else on the plot — a window, a
    box, a result line — takes the pointer in the page, and a drag of one
    that arrives all the same stages nothing. A grip moves on ONE axis: its
    editor gets the released position on that axis and the grip's own
