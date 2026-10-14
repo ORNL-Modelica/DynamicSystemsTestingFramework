@@ -971,7 +971,14 @@ class TestAStoredBaselinesOverride:
         )
 
     @pytest.mark.parametrize(
-        "flags", [[], ["--merge"], ["--rerun", "failed"], ["-i", "failed"]]
+        "flags",
+        [
+            [],
+            # a merge scores every test, the ones its filter leaves out too
+            ["--merge", "--filter", "NoSuch.*"],
+            ["--rerun", "failed"],
+            ["-i", "failed"],
+        ],
     )
     def test_a_run_that_scores_refuses_before_it_simulates(
         self, tmp_path, capsys, flags
