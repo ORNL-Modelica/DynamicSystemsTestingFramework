@@ -535,13 +535,27 @@ class TestABaseToleranceThatIsNoNumberIsNotWritten:
         assert "Applied" not in out
         assert spec.read_bytes() == before
 
-    @pytest.mark.parametrize("value", [0, -1, 0.5, None])
+    @pytest.mark.parametrize("value", [0, 0.5, None])
     def test_a_number_or_null_is_applied(self, tmp_path, capsys, value):
         spec = self._spec(tmp_path, {"comparison": {"tolerance": 1e-4}})
         ops = [{"op": "replace", "path": "/comparison/tolerance", "value": value}]
         assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
         (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
         assert entry["comparison"]["tolerance"] == value
+
+    def test_a_negative_number_is_refused_and_nothing_is_applied(
+        self, tmp_path, capsys
+    ):
+        spec = self._spec(tmp_path, {"comparison": {"tolerance": 1e-4}})
+        before = spec.read_bytes()
+        ops = [{"op": "replace", "path": "/comparison/tolerance", "value": -1}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 1
+        out = capsys.readouterr().out
+        assert (
+            "the base tolerance must be 0 or more (test_spec.json "
+            "comparison.tolerance is -1)"
+        ) in out
+        assert spec.read_bytes() == before
 
     @pytest.mark.parametrize(
         "before,after", [(1, True), (0, False), (1.0, True)], ids=repr

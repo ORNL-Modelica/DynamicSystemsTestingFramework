@@ -175,6 +175,9 @@ def cmd_companion_list(args: argparse.Namespace) -> int:
 def cmd_companion_freeze(args: argparse.Namespace) -> int:
     """Copy an external companion's data into the reference storage."""
     store = _store(args)
+    if args.name not in store.get_companions(args.model_id):
+        print(f"Companion {args.name!r} not found on {args.model_id}")
+        return 1
     try:
         ok = store.freeze_companion(args.model_id, args.name)
     except FileNotFoundError as e:
@@ -183,7 +186,7 @@ def cmd_companion_freeze(args: argparse.Namespace) -> int:
     if ok:
         print(f"Frozen companion {args.name!r} for {args.model_id}")
     else:
-        print(f"Companion {args.name!r} is already frozen or does not exist")
+        print(f"Companion {args.name!r} of {args.model_id} is already frozen")
     return 0
 
 

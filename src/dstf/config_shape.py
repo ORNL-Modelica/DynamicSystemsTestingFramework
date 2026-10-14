@@ -156,7 +156,7 @@ TESTING_JSON: dict[str, Setting] = {
         {"type": "string"},
         None,
         "The JSON Schema an editor checks this file against as it is typed "
-        "(`dstf spec schema` writes one). Nothing else reads it.",
+        "(`dstf spec schema testing` writes one). Nothing else reads it.",
     ),
     "source_path": Setting(
         {"type": "string"},

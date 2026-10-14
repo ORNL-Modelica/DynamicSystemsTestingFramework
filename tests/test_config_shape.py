@@ -105,6 +105,13 @@ class TestUnknownKeys:
         path = _project(tmp_path, {"$schema": "./testing.schema.json"})
         assert Config(config_file=path).backend == "Python"
 
+    def test_the_schema_pointer_names_the_command_that_writes_this_file_s(self):
+        """`dstf spec schema` prints test_spec.json's; this file's is `dstf
+        spec schema testing`. The description ships in the published schema."""
+        published = build_config_schema()["properties"]["$schema"]["description"]
+        for text in (TESTING_JSON["$schema"].description, published):
+            assert "(`dstf spec schema testing` writes one)" in text
+
     def test_a_file_that_is_no_object(self, tmp_path):
         path = tmp_path / "testing.json"
         path.write_text('["a"]', encoding="utf-8")

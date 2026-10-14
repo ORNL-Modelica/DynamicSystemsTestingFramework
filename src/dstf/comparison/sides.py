@@ -45,8 +45,10 @@ def is_base_tolerance(value: object) -> bool:
     the reference JSON's ``comparison.tolerance``, the project's): ONE finite
     number. Not a pair — nrmse, the default metric, has one ceiling — and
     not a bool, a string or a list, which ``float()`` took or raised on;
-    not NaN or an infinity, which every leaf then refused in its own words."""
-    return _is_number(value)
+    not NaN or an infinity, which every leaf then refused in its own words;
+    and 0 or more: a negative ceiling failed every nrmse test (``--tolerance
+    -1`` was taken)."""
+    return _is_number(value) and value >= 0
 
 
 def _as_json(value: object) -> str:
@@ -67,7 +69,10 @@ def base_tolerance_refused(where: str, value: object) -> str:
     with — a test's comparison's ``error_message``, a project's config
     error: the rule, then where the value is written (``where``, in words)
     and what it is (:func:`_as_json`). Where a pair belongs is said to a
-    dict alone: a string or a list was no attempt at one."""
+    dict alone: a string or a list was no attempt at one. A number is
+    refused for being negative, and is told so."""
+    if _is_number(value):
+        return f"the base tolerance must be 0 or more ({where} is {_as_json(value)})"
     rule = "the base tolerance must be a number"
     if isinstance(value, dict):
         rule += "; a lower/upper pair belongs on a criterion"

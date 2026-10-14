@@ -319,6 +319,41 @@ class TestCompanionStorage:
         assert companions["rig"].data_file == "rig.csv"
         assert companions["rig"].path is None
 
+    def test_the_command_says_a_companion_that_is_not_there(
+        self, store_with_primary, tmp_path, capsys
+    ):
+        """`companion freeze <model> <typo>` exited 0 saying "is already
+        frozen or does not exist". A companion that does not exist is exit
+        1 and says so; one already frozen stays exit 0."""
+        from dstf.cli import main
+
+        store, test = store_with_primary
+        external = tmp_path / "rig_data.csv"
+        external.write_text("time,value\n0,0\n1,1\n")
+        store.add_companion(test.model_id, "rig", path=external)
+        where = [
+            "--source-path",
+            str(store.config.source_path),
+            "--reference-root",
+            str(store.config.reference_root),
+            "--backend",
+            str(store.config.backend_name),
+        ]
+
+        def freeze(name):
+            rc = main(["companion", "freeze", test.model_id, name, *where])
+            return rc, capsys.readouterr().out.strip().splitlines()[-1]
+
+        assert freeze("rgi") == (
+            1,
+            f"Companion 'rgi' not found on {test.model_id}",
+        )
+        assert freeze("rig") == (0, f"Frozen companion 'rig' for {test.model_id}")
+        assert freeze("rig") == (
+            0,
+            f"Companion 'rig' of {test.model_id} is already frozen",
+        )
+
     def test_freeze_json_keeps_data_and_metadata_apart(
         self, store_with_primary, tmp_path
     ):

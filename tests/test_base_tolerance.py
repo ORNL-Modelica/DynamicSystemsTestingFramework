@@ -220,15 +220,30 @@ def test_a_null_base_in_the_baseline_is_unset(project, tmp_path):
 
 
 @pytest.mark.parametrize("baseline", [True, False], ids=["baseline", "no baseline"])
-@pytest.mark.parametrize("raw", ["0", "-1", "0.5", "null"])
+@pytest.mark.parametrize("raw", ["0", "0.5", "null"])
 def test_a_number_or_no_base_is_never_refused(project, tmp_path, raw, baseline):
-    """A baseline-free test reads no tolerance: zero, a negative number and
-    an unset base score it exactly as a base of 0.5 does."""
+    """A baseline-free test reads no tolerance: zero and an unset base
+    score it exactly as a base of 0.5 does."""
     project.edit_spec(CSV, raw)
     if not baseline:
         project.reference(CSV).unlink()
     rc, cases = project.junit(tmp_path)
     assert _case(cases, CSV) == ("pass", None) and rc == 0
+
+
+@pytest.mark.parametrize("kind", list(KINDS))
+@pytest.mark.parametrize("raw", ["-1", "-1e-09"])
+def test_a_negative_base_refuses_the_test(project, tmp_path, raw, kind):
+    """A negative ceiling fails every nrmse test: it is refused by the one
+    rule a base that is no number is, from the spec as from the project."""
+    model_id, fields = KINDS[kind]
+    project.edit_spec(model_id, raw, **fields)
+    rc, cases = project.junit(tmp_path)
+    assert _case(cases, model_id) == (
+        "failure",
+        f"the base tolerance must be 0 or more ({SPEC} is {raw})",
+    )
+    assert rc == 1
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +522,17 @@ class TestTheStoreWritesNoBaseThatIsNoNumber:
 
     @pytest.mark.parametrize(
         "bad",
-        [PAIR, {"lower": 0.1}, "0.5", "abc", True, [1], float("nan"), float("inf")],
+        [
+            PAIR,
+            {"lower": 0.1},
+            "0.5",
+            "abc",
+            True,
+            [1],
+            float("nan"),
+            float("inf"),
+            -1,
+        ],
         ids=repr,
     )
     def test_the_tests_is_not_written(self, project, bad):
@@ -517,7 +542,7 @@ class TestTheStoreWritesNoBaseThatIsNoNumber:
     def test_an_existing_one_is_not_carried_over(self, project, raw):
         assert "comparison" not in self._store(project, None, existing=raw)
 
-    @pytest.mark.parametrize("number", [0, 0.25, -1])
+    @pytest.mark.parametrize("number", [0, 0.25])
     def test_a_number_is_written_and_an_existing_number_is_kept(self, project, number):
         assert self._store(project, number)["comparison"] == {"tolerance": number}
         kept = self._store(project, None, existing=json.dumps(number))

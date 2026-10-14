@@ -1702,7 +1702,9 @@ def _add_companion(tree: _Tree, top) -> None:
             original may move or go. A companion that is already frozen is
             left as it is.
 
-            Exit code: 0, or 1 when the file it points at is not there.
+            Exit code: 0 (a companion already frozen too), or 1 when the
+            test has no companion of that name or the file it points at is
+            not there.
             """,
         examples=(
             "dstf companion freeze MyLib.Examples.Rod rig --config testing.json",

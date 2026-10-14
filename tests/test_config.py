@@ -831,7 +831,7 @@ class TestTheProjectToleranceIsOneFiniteNumber:
             Config(config_file=str(path))
         assert str(exc.value) == self._said(f"{path}: tolerance", json.loads(raw))
 
-    @pytest.mark.parametrize("raw,value", [("null", 1e-4), ("0", 0.0), ("-1", -1.0)])
+    @pytest.mark.parametrize("raw,value", [("null", 1e-4), ("0", 0.0), ("2", 2.0)])
     def test_null_is_the_default_and_a_number_is_itself(self, tmp_path, raw, value):
         config = Config(config_file=str(self._write(tmp_path, raw)))
         assert config.tolerance == value and type(config.tolerance) is float
@@ -865,6 +865,31 @@ class TestTheProjectToleranceIsOneFiniteNumber:
         err = capsys.readouterr().err
         assert f"Config error: {self.RULE} ({said.format(path=path)})" in err
         assert "Traceback" not in err
+
+    @pytest.mark.parametrize(
+        "file_raw,flag,said",
+        [
+            ("-1", [], "{path}: tolerance is -1"),
+            ("0.5", ["--tolerance", "-1"], "--tolerance is -1.0"),
+            ("0.5", ["--tolerance=-1e-9"], "--tolerance is -1e-09"),
+        ],
+    )
+    def test_a_negative_one_is_refused_as_well(
+        self, tmp_path, capsys, monkeypatch, file_raw, flag, said
+    ):
+        """`--tolerance -1` was taken, and every nrmse test then failed."""
+        from dstf.cli import main
+
+        monkeypatch.chdir(tmp_path)
+        path = self._write(tmp_path, file_raw)
+        work = tmp_path / "work"
+        argv = ["--config", str(path), "compare", *flag, "--work-dir", str(work)]
+        assert main(argv) == 2
+        err = capsys.readouterr().err
+        assert err == (
+            "Config error: the base tolerance must be 0 or more "
+            f"({said.format(path=path)})\n"
+        )
 
     def test_the_tool_refuses_to_open_it(self, tmp_path):
         from dstf.authoring.session import Session
