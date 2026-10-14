@@ -861,6 +861,8 @@ no file — is an error.
 
 If `testing.json` includes `source_path`, you only need `--config` or `--reference-root`.
 
+Where no `testing.json` is found at all, a command that may create a file of the project — `run`, `compare`, `spec add`, `spec update`, `soft-check add`, `companion add`, `companion freeze` — writes a default one beside the library (`{"backends": {}, "dependencies": []}`) and says so. Every other command — `discover`, `check`, the lists, `baseline export`, `manifest`, the removals — reads the project on defaults and writes none; each command's `--help` says which it is.
+
 ### `discover` — Find tests
 
 Lists all discoverable tests without running anything.

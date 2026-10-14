@@ -41,9 +41,7 @@ def _method_text(test: TestModel, config: Config) -> str:
 
 def cmd_discover(args: argparse.Namespace) -> int:
     """Discover and list all test models."""
-    # A listing writes nothing: a project with no testing.json is read on
-    # defaults, and none is created beside it.
-    config = _build_config(args, write_default=False)
+    config = _build_config(args)
     tests = discover_tests(config)
     tests = _filter_tests(tests, args.filter, args.package)
 
@@ -306,7 +304,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     from ..config_shape import default
 
     try:
-        config: Config | None = _build_config(args, write_default=False)
+        config: Config | None = _build_config(args)
     except NoProject:
         # No testing.json and no library here: nothing to read. The
         # backends are still where they are.

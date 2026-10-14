@@ -20,8 +20,8 @@ DEFAULT_PORT = 8080
 def cmd_author(args: argparse.Namespace) -> int:
     """Open the authoring shell on this project and serve until Quit."""
     # The Session builds the Config itself, from the file it will save
-    # beside. Nothing is resolved before this check: a full Config
-    # resolution can WRITE a default testing.json next to a package.mo.
+    # beside: `dstf author` opens the project a testing.json names, and
+    # looks for none.
     # --source-path, --reference-root and --test-spec are not offered (the
     # tool edits and saves the spec testing.json names; an override here
     # would save to a different file than it shows), so the parser has

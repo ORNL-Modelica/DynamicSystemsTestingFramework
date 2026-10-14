@@ -71,6 +71,9 @@ class _Root(argparse.ArgumentParser):
         self.reads: dict[str, frozenset[str]] = {}
         #: Per command: its one line of the top-level listing.
         self.summaries: dict[str, str] = {}
+        #: The commands that may create a file of the project, and so write
+        #: a default testing.json where none is found (``_Tree.command``).
+        self.creates: set[str] = set()
 
     def parse_known_args(self, args=None, namespace=None):
         parsed, extras = super().parse_known_args(args, namespace)
@@ -405,7 +408,7 @@ _NO_CONFIG_WRITES = (
     "library (in the reference root when --reference-root is given)."
 )
 _NO_CONFIG_READS = (
-    "When none is found, the project is read on defaults and nothing is written."
+    "When none is found, the project is read on defaults and none is written."
 )
 
 
@@ -476,17 +479,28 @@ class _Tree:
         description: str,
         examples,
         project: tuple[str, ...] = (),
-        no_config: str = _NO_CONFIG_WRITES,
+        creates: bool = False,
         spec_use: str = "this command reads",
         config_help: str | None = None,
     ):
         """A command that runs. ``project`` names the project flags it
         reads; they are offered here, and ONLY they are accepted before it.
-        ``no_config`` and ``spec_use`` are this command's words in those
-        flags' help, ``config_help`` its own help for ``--config``."""
+        ``spec_use`` is this command's word in those flags' help,
+        ``config_help`` its own help for ``--config``.
+
+        ``creates`` is the command's declaration that it may create a file
+        of the project — a baseline, a spec entry, a soft check, a
+        companion. ONE declaration, read twice: such a command writes a
+        default testing.json where it finds none (``_build_config``), and
+        its ``--config`` help says so. The default is that it may not: a
+        command that reads, lists, exports or removes starts no project."""
         node = self._add(
             sub, path, summary=summary, description=description, examples=examples
         )
+        node.set_defaults(may_create_project=creates)
+        if creates:
+            self.root.creates.add(path)
+        no_config = _NO_CONFIG_WRITES if creates else _NO_CONFIG_READS
         for dest in project:
             own = {"help": config_help} if dest == "config" and config_help else {}
             # SUPPRESS is load-bearing: a sub-parser parses into a fresh
@@ -651,7 +665,6 @@ def _add_discover(tree: _Tree, top) -> None:
             "dstf discover --source-path MyLib --test-spec refs/test_spec.json",
         ),
         project=_ALL,
-        no_config=_NO_CONFIG_READS,
     )
     _offer_selection(node)
 
@@ -685,6 +698,7 @@ def _add_run(tree: _Tree, top) -> None:
             "dstf run --config testing.json -i failed",
         ),
         project=_ALL,
+        creates=True,
     )
     _offer_selection(node)
     _offer_scoring(node)
@@ -801,6 +815,7 @@ def _add_compare(tree: _Tree, top) -> None:
             "dstf compare --config testing.json --tolerance 0.01 --filter 'MyLib.Fluid.*'",
         ),
         project=_ALL,
+        creates=True,
     )
     _offer_selection(node)
     _offer_scoring(node)
@@ -939,6 +954,7 @@ def _add_spec(tree: _Tree, top) -> None:
             "dstf spec add MyLib.Examples.Smoke --config testing.json",
         ),
         project=_ALL,
+        creates=True,
         spec_use="this command writes",
     )
     node.add_argument(
@@ -977,6 +993,7 @@ def _add_spec(tree: _Tree, top) -> None:
             """,
         examples=("dstf spec update spec_patch.json --config testing.json",),
         project=_ALL,
+        creates=True,
         spec_use="this command writes",
     )
     node.add_argument(
@@ -1126,6 +1143,7 @@ def _add_soft_check(tree: _Tree, top) -> None:
             "dstf soft-check add MyLib.Examples.Rod openmodelica refs/OpenModelica/linux/ref_0003.json --config testing.json",
         ),
         project=_STORE,
+        creates=True,
     )
     _model(node, "The test the soft check belongs to, by its model id.")
     node.add_argument(
@@ -1218,6 +1236,7 @@ def _add_companion(tree: _Tree, top) -> None:
             "dstf companion add MyLib.Examples.Rod rig data/rig.csv --config testing.json --map rod.T[1]=T_inlet --map rod.T[2]=T_outlet",
         ),
         project=_STORE,
+        creates=True,
     )
     _model(node, "The test the companion belongs to, by its model id.")
     node.add_argument(
@@ -1285,6 +1304,7 @@ def _add_companion(tree: _Tree, top) -> None:
             "dstf companion freeze MyLib.Examples.Rod rig --config testing.json",
         ),
         project=_STORE,
+        creates=True,
     )
     _model(node, "The test the companion belongs to, by its model id.")
     node.add_argument("name", help="The companion to freeze, by its name.")
@@ -1436,7 +1456,6 @@ def _add_check(tree: _Tree, top) -> None:
             "dstf check 'Dymola 2025'",
         ),
         project=_STORE,
-        no_config=_NO_CONFIG_READS,
     )
     node.add_argument(
         # Not "backend": that is `--backend`'s name, which names the backend

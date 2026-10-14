@@ -687,7 +687,7 @@ class TestFinding19AutoCreate:
         monkeypatch.chdir(tmp_path)
         lib = _make_lib(tmp_path / "src")
         ref_root = tmp_path / "fresh" / "refs"  # does not exist
-        config = Config(source_path=lib, reference_root=ref_root)
+        config = Config(source_path=lib, reference_root=ref_root, write_default=True)
         assert (ref_root / "testing.json").is_file()
         assert config.reference_root == ref_root.resolve()
 
@@ -710,7 +710,11 @@ class TestFinding19AutoCreate:
             return real(self, data, *args, **kwargs)
 
         monkeypatch.setattr(Path, "write_text", spy)
-        Config(source_path=lib, reference_root=tmp_path / "fresh" / "refs")
+        Config(
+            source_path=lib,
+            reference_root=tmp_path / "fresh" / "refs",
+            write_default=True,
+        )
 
         assert seen["testing.json"] == "\n"
 
@@ -727,7 +731,7 @@ class TestFinding19AutoCreate:
         lib = _make_lib(tmp_path)
         cfg = tmp_path / "testing.json"
         cfg.write_text("{}", encoding="utf-8")
-        config = Config(source_path=lib)
+        config = Config(source_path=lib, write_default=True)
         assert cfg.read_text(encoding="utf-8") == "{}"
         # Nothing named, nothing found: the first backend that runs Modelica.
         assert config.backend_name == "Dymola"

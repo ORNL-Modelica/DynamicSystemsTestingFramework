@@ -494,8 +494,10 @@ class Config:
     config_file: Path | None = None
 
     # Whether a project with no testing.json anywhere gets a default one
-    # written. `discover` and `check` read a project and write nothing.
-    write_default: bool = True
+    # written. Not unless the caller says so: a command says it in the
+    # command tree (`cli.parser`, `creates=True`) when it may create a file
+    # of the project; one that reads, lists, exports or removes does not.
+    write_default: bool = False
 
     # Resolved (set during __post_init__)
     library_name: str | None = None

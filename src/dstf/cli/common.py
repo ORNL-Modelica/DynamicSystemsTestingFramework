@@ -39,17 +39,20 @@ _CONFIG_FLAGS: dict[str, tuple[str, bool]] = {
 }
 
 
-def _build_config(args: argparse.Namespace, *, write_default: bool = True) -> Config:
-    """Build Config from parsed CLI arguments. ``write_default=False`` is
-    for a command that only reads: a project with no testing.json is then
-    read on defaults, and none is written beside it.
+def _build_config(args: argparse.Namespace) -> Config:
+    """Build Config from parsed CLI arguments.
+
+    A project with no testing.json is read on defaults, and none is written
+    beside it — unless the command declared, in the tree, that it may
+    create a file of the project (``cli.parser``: ``creates=True``, which
+    the parser puts on the namespace). Only such a command starts one.
 
     A flag that was given is passed on whatever its value — ``is not
     None``, NOT truthiness: ``--tolerance 0`` is the strictest possible
     setting and Config/comparator honor an explicit 0.0, and a value that
     cannot be meant (``--timeout 0``) is the parser's to refuse, never this
     function's to drop."""
-    kwargs: dict = {"write_default": write_default}
+    kwargs: dict = {"write_default": getattr(args, "may_create_project", False)}
     for attr, (field, is_path) in _CONFIG_FLAGS.items():
         value = getattr(args, attr, None)
         if value is not None:

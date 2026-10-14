@@ -547,3 +547,86 @@ def test_output_beside_the_console_format_is_an_error(command, capsys):
         assert isinstance(args, argparse.Namespace) and args.output == "out"
     # another command's --output is its own
     assert _parse(["spec", "schema", "-o", "s.json"], capsys).output == "s.json"
+
+
+# ---------------------------------------------------------------------------
+# Only a command that may create the project's files starts a project
+# ---------------------------------------------------------------------------
+
+#: The commands that write a default testing.json where none is found, each
+#: because it may create a file of the project — a baseline, a spec entry, a
+#: soft check, a companion. Every other reads, lists, exports or removes
+#: what is there, and writes no config.
+CREATES = {
+    "run",
+    "compare",
+    "spec add",
+    "spec update",
+    "soft-check add",
+    "companion add",
+    "companion freeze",
+}
+
+#: A command line for each command that looks for a project (`author` and
+#: `spec schema` look for none), run in a directory that holds only a library.
+IN_A_LIBRARY = {
+    "discover": [],
+    "check": [],
+    "run": ["--backend", "OpenModelica", "--no-browser"],
+    "compare": ["--backend", "OpenModelica"],
+    "spec add": ["Lib.A"],
+    "spec update": ["{file}"],
+    "baseline export": [],
+    "soft-check add": ["Lib.A", "om", "{file}"],
+    "soft-check list": [],
+    "soft-check remove": ["Lib.A", "om"],
+    "companion add": ["Lib.A", "exp", "{file}"],
+    "companion list": [],
+    "companion freeze": ["Lib.A", "exp"],
+    "companion remove": ["Lib.A", "exp"],
+    "manifest show": [],
+    "manifest dump": [],
+    "manifest cleanup": [],
+}
+
+
+def test_every_command_says_whether_it_may_create_the_project_s_files():
+    assert sorted({*IN_A_LIBRARY, "author", "spec schema"}) == COMMANDS
+    assert PARSER.creates == CREATES
+
+
+@pytest.mark.parametrize("path", sorted(IN_A_LIBRARY))
+def test_a_command_that_creates_nothing_of_a_project_writes_no_config(
+    path, tmp_path, monkeypatch, capsys
+):
+    """`manifest show`, `baseline export`, `companion list`, `soft-check
+    list` and the commands that remove left a default testing.json beside
+    the library, as a side effect of looking for one."""
+    lib = tmp_path / "work" / "Lib"
+    lib.mkdir(parents=True)
+    (lib / "package.mo").write_text("within ;\npackage Lib\nend Lib;\n")
+    patch = tmp_path / "file.json"
+    patch.write_text("{}")
+    # No simulator anywhere: `run` is refused before it starts one.
+    (tmp_path / "bin").mkdir()
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+    monkeypatch.chdir(tmp_path / "work")
+    argv = [*path.split(), *(a.format(file=patch) for a in IN_A_LIBRARY[path])]
+    try:
+        main(argv)
+    except SystemExit:
+        pass
+    capsys.readouterr()
+    created = (tmp_path / "work" / "testing.json").is_file()
+    assert created is (path in CREATES)
+    assert not list(tmp_path.rglob("Lib/testing.json"))
+
+
+@pytest.mark.parametrize("path", sorted(IN_A_LIBRARY))
+def test_a_command_s_help_says_what_it_does_where_no_testing_json_is_found(path):
+    text = " ".join(NODES[path].format_help().split())
+    writes = "When none is found, this command writes a default one beside the library"
+    reads = "When none is found, the project is read on defaults and none is written."
+    assert (writes in text) is (path in CREATES)
+    assert (reads in text) is (path not in CREATES)

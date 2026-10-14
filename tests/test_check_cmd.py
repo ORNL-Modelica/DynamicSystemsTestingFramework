@@ -217,8 +217,12 @@ class TestWithNoTestingJson:
         out = capsys.readouterr().out
         assert "Created default" not in out
         assert not list(tmp_path.rglob("testing.json"))
-        # Every other command still starts a project with one.
+        # Nor does a Config that was not told to…
         Config(source_path=lib)
+        assert not list(tmp_path.rglob("testing.json"))
+        # …which is what a command that may create the project's files
+        # tells it (`test_cli_tree`: run, spec add, companion add, …).
+        Config(source_path=lib, write_default=True)
         assert "Created default testing.json" in capsys.readouterr().out
         assert (tmp_path / "work" / "testing.json").is_file()
 
