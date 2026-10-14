@@ -451,6 +451,22 @@ def _named_baseline_expression_warnings(
     return out
 
 
+def _named_companions(
+    test: TestModel, store: ReferenceStore | None, held: set[str]
+) -> frozenset[str]:
+    """The names ``test``'s tree scores against that this folder stores no
+    baseline of (``held``) and does store as a companion: a leaf naming one
+    says it is a companion here, not that no soft check of its name is
+    stored. The store is asked only when a leaf names a missing baseline."""
+    from .tree_spec import collect_variables_by_baseline
+
+    assert test.metric_tree_spec is not None
+    missing = set(collect_variables_by_baseline(test.metric_tree_spec)) - held
+    if store is None or not missing:
+        return frozenset()
+    return frozenset(store.get_companions(test.model_id)) & missing
+
+
 #: Where an override key was read from, for the message below. The two
 #: tiers are merged before scoring, so the key alone does not say which
 #: file to open.
@@ -701,6 +717,7 @@ def compare_test(
             ),
             model_id=test.model_id,
             held_in=store.folder if store is not None else "",
+            companions=_named_companions(test, store, set(baselines)),
         )
         unscored = _tracked_but_not_scored(test, result)
         return TestComparison(

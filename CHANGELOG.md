@@ -124,7 +124,9 @@ lists each one and where it went.
   authoring tool refused every edit of that test — and, before its first
   accept, the tree itself; they write it, and say `'experiment' is not
   stored for FMPy/macos: it is not scored here`. A criterion that names a
-  companion of this backend and OS is still refused there.
+  companion of this backend and OS is still refused there; where it is
+  scored, under `warn`, it says `'rig' is a companion here: it is only
+  drawn, never scored` instead of that no soft check of its name is stored.
 - The dashboard's copyable commands named `testing.json` by a relative path
   and left out the run's other flags: after `run --reference-root ALT`, its
   `compare --accept` overwrote a baseline in `testing.json`'s own reference

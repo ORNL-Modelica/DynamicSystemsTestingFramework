@@ -883,11 +883,19 @@ _WRONG_IN_THE_FILE = {
 
 #: A tree whose FILE is right, and which a folder may not hold a baseline
 #: of: a criterion under ``warn`` naming what this folder does not store as
-#: a soft check. `spec update` and the tool refuse to WRITE it here; where
-#: it is scored it is an advisory criterion not scored, and the test passes.
+#: a soft check. Where it is scored it is an advisory criterion not scored,
+#: and the test passes; each says why, in the words this folder's holding
+#: gives (``{folder}`` is this store's). `spec update` and the tool write the
+#: first, and refuse the second: a companion here is known wrong here.
 _RIGHT_IN_THE_FILE = {
-    "a name this folder does not hold, under warn": "nosuch",
-    "a companion under warn": "rig",
+    "a name this folder does not hold, under warn": (
+        "nosuch",
+        "no soft check 'nosuch' is stored for {folder}",
+    ),
+    "a companion under warn": (
+        "rig",
+        "'rig' is a companion here: it is only drawn, never scored",
+    ),
 }
 
 
@@ -942,13 +950,13 @@ class TestRolesWhereATestIsScored:
         from dstf.reporting.status import PASS, classify, refusal
 
         store, _, _ = roles
-        name = _RIGHT_IN_THE_FILE[case]
+        name, sentence = _RIGHT_IN_THE_FILE[case]
         comp = self._compare(roles, _warned(_leaf(against=name)))
         assert classify(comp) == PASS, comp.error_message
         assert refusal(comp) is None
         errors = [v.diagnostics.get("error") for v in comp.variables if not v.passed]
         folder = f"{store.config.backend}/{store.config.os_name}"
-        assert errors == [f"no soft check {name!r} is stored for {folder}"]
+        assert errors == [sentence.format(folder=folder)]
 
     def test_a_write_names_a_baseline_this_folder_does_not_hold_and_writes(self, roles):
         """`spec update`'s read-modify-write: a tree whose warn names a soft
@@ -1044,7 +1052,7 @@ class TestWhatEachRuleReads:
         for tree, sentence in _WRONG_IN_THE_FILE.values():
             errors = validate_tree(parse_metric_tree(tree))
             assert errors and str(errors[0]).startswith(sentence), errors
-        for name in _RIGHT_IN_THE_FILE.values():
+        for name, _ in _RIGHT_IN_THE_FILE.values():
             assert validate_tree(parse_metric_tree(_warned(_leaf(against=name)))) == []
 
     @pytest.mark.parametrize("broken", sorted(_WRONG_IN_THE_FILE))

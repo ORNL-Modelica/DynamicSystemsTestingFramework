@@ -156,7 +156,10 @@ $ dstf --config testing.json companion add MyLib.HeatExchanger rig ./rig.csv \
 Both names are checked when you register, so a typo is refused at once. The
 companion points at the file where it is; `dstf companion freeze` copies the
 data in beside the baseline, so it travels with the repository. On a test's
-page the companion is ticked on in the plot's overlay picker.
+page the companion is ticked on in the plot's overlay picker. A criterion
+that names it in `against` is refused where it is written; one written by
+hand under `warn` is not scored, and says `'rig' is a companion here: it is
+only drawn, never scored`.
 
 ## Export
 
