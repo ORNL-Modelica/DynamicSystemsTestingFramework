@@ -1815,3 +1815,39 @@ def test_a_command_s_help_says_what_it_does_where_no_testing_json_is_found(path)
     reads = "When none is found, the project is read on defaults and none is written."
     assert (writes in text) is (path in CREATES)
     assert (reads in text) is (path not in CREATES)
+
+
+def test_a_compare_keeps_the_run_s_settings_for_what_it_does_not_read(
+    tmp_path, monkeypatch, capsys
+):
+    """The dashboard's commands do what the RUN that made the results did: a
+    `compare` re-renders the page with its own settings for what it reads,
+    and keeps the run's for the rest. After `run --timeout 7` and a plain
+    `compare`, the page's `run` lost `--timeout 7`; and a compare given
+    `--tolerance 0.5` scored with it, so its `compare` carries it."""
+    import json
+    import shutil
+
+    from conftest import PROJECT_ROOT
+
+    lib = tmp_path / "lib"
+    shutil.copytree(
+        PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
+        lib,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    config = lib / "Resources" / "ReferenceResults" / "testing.json"
+    monkeypatch.chdir(tmp_path)
+    argv = ["--config", str(config), "--work-dir", str(tmp_path / "work")]
+    main(["run", *argv, "--filter", _CONSTANT_CSV, "--timeout", "7", "--no-browser"])
+    page = tmp_path / "work" / "dashboard.html"
+    assert "--timeout 7" in _page_flags(page)["run"]
+    main(["compare", *argv, "--filter", _CONSTANT_CSV, "--tolerance", "0.5"])
+    capsys.readouterr()
+    flags = _page_flags(page)
+    assert "--timeout 7" in flags["run"], flags
+    assert "--timeout" not in flags["compare"], flags
+    assert "--tolerance 0.5" in flags["compare"], flags
+    assert json.loads((tmp_path / "work" / "status.json").read_text("utf-8"))[
+        "run_given"
+    ]

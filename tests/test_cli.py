@@ -868,7 +868,7 @@ class TestRerunEmptySetIsSuccess:
     ):
         called = {}
 
-        def fake_suite(comparisons, results, tests, store, config, *, browser):
+        def fake_suite(comparisons, results, tests, store, config, **_):
             called["comparisons"] = list(comparisons)
 
         monkeypatch.setattr("dstf.cli.run_cmds._generate_report_suite", fake_suite)

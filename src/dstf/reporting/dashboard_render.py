@@ -27,7 +27,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -117,25 +117,12 @@ COMMAND_KINDS: tuple[tuple[str, str, frozenset[str]], ...] = (
 _WHOLE = frozenset({"author"})
 
 
-def build_rerun_flags(config) -> dict[str, str]:
-    """The flags the dashboard's command builder writes after each command
-    of its Command menu (:data:`COMMAND_KINDS`), by the command — `dstf
-    <kind> <flags> --filter ...` — so that the command does the same thing
-    to the same project the run did, pasted into a terminal in any
-    directory.
-
-    They name the testing.json the run read or wrote, and everything the
-    run did not take from it or the defaults (`Config.overrides`: a flag it
-    was given, or a place the current directory decided), each path
-    absolute. They go after the command because `--work-dir` and
-    `--backend` are offered there only. Each command carries the ones it
-    reads (`cli.parser.reads`): `compare` simulates nothing and reads no
-    `--timeout`, and `compare --accept` scores nothing and reads no
-    `--tolerance`. `author` is left out where it would not read one
-    (:data:`_WHOLE`) — as it is for a Config built with no testing.json
-    (`run_pipeline` called as a library), which is named by its library and
-    reference root instead."""
-    from ..cli.parser import reads
+def _settings_given(config) -> list[tuple[str, list[str]]]:
+    """What a command was given that a command built for the dashboard must
+    say again, each by its dest with its words after the flag, in the order
+    a built command writes them: the testing.json it read or wrote, then
+    every one of `Config.overrides` (a flag it was given, or a place the
+    current directory decided), each path absolute."""
 
     def q(value) -> str:
         s = str(value)
@@ -158,6 +145,83 @@ def build_rerun_flags(config) -> dict[str, str]:
         # backend_path is what `locate` found, absolute, and is not resolved:
         # a venv's python is a link whose target has none of its packages.
         given.append((dest, [] if value is True else [q(value)]))
+    return given
+
+
+def run_given(config) -> list[list]:
+    """What the run was given, as :func:`build_rerun_flags` reads it back
+    (``ran``): ``[[dest, [words]], ...]``. ``status.json`` holds it under
+    ``run_given`` (``ProgressReporter``), for the ``compare`` that scores
+    the run's results later."""
+    return [[dest, words] for dest, words in _settings_given(config)]
+
+
+def _ran(snapshot_given) -> list[tuple[str, list[str]]] | None:
+    """``status.json``'s ``run_given`` as :func:`build_rerun_flags` takes
+    it, or None where the snapshot holds none (one written before it did):
+    only a pair of a dest a built command writes and its words is read."""
+    if not isinstance(snapshot_given, list):
+        return None
+    order = {dest for _, dest in _OVERRIDE_FLAGS} | {"config"}
+    return [
+        (pair[0], list(pair[1]))
+        for pair in snapshot_given
+        if isinstance(pair, list)
+        and len(pair) == 2
+        and pair[0] in order
+        and isinstance(pair[1], list)
+        and all(isinstance(w, str) for w in pair[1])
+    ]
+
+
+def compare_rerun_flags(config) -> dict[str, str]:
+    """The flags a ``compare`` renders the dashboard with:
+    :func:`build_rerun_flags` with the run's own settings (``status.json``'s
+    ``run_given``) kept for every flag ``compare`` does not read. The
+    results are the run's, and so are the commands that would make them
+    again: a ``run --timeout 7`` compared later still offers its ``run``
+    with ``--timeout 7``."""
+    from ..backends.progress import read_status
+
+    snapshot = read_status(config.work_dir) or {}
+    return build_rerun_flags(config, ran=_ran(snapshot.get("run_given")))
+
+
+def build_rerun_flags(
+    config, ran: Sequence[tuple[str, list[str]]] | None = None
+) -> dict[str, str]:
+    """The flags the dashboard's command builder writes after each command
+    of its Command menu (:data:`COMMAND_KINDS`), by the command — `dstf
+    <kind> <flags> --filter ...` — so that the command does the same thing
+    to the same project the run did, pasted into a terminal in any
+    directory.
+
+    They name the testing.json the run read or wrote, and everything the
+    run did not take from it or the defaults (`Config.overrides`: a flag it
+    was given, or a place the current directory decided), each path
+    absolute. They go after the command because `--work-dir` and
+    `--backend` are offered there only. Each command carries the ones it
+    reads (`cli.parser.reads`): `compare` simulates nothing and reads no
+    `--timeout`, and `compare --accept` scores nothing and reads no
+    `--tolerance`. `author` is left out where it would not read one
+    (:data:`_WHOLE`) — as it is for a Config built with no testing.json
+    (`run_pipeline` called as a library), which is named by its library and
+    reference root instead.
+
+    ``ran`` is what the RUN that made the results was given, for a
+    ``compare`` that renders the page after it (:func:`compare_rerun_flags`):
+    a flag ``compare`` reads is the compare's own — it scored with it — and
+    every other is the run's."""
+    from ..cli.parser import reads
+
+    given = _settings_given(config)
+    if ran is not None:
+        order = ["config", *(dest for _, dest in _OVERRIDE_FLAGS)]
+        given = sorted(
+            [(d, v) for d, v in given if reads("compare", d)]
+            + [(d, v) for d, v in ran if not reads("compare", d)],
+            key=lambda pair: order.index(pair[0]),
+        )
     flags = {}
     for kind, path, beside in COMMAND_KINDS:
         carried = [(d, v) for d, v in given if reads(path, d, beside)]

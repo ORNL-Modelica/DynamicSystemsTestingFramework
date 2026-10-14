@@ -365,7 +365,7 @@ class ItemRun:
         ran (removed, or failed before a worker started) have no row. The
         caller renders the final page (``render_final``) as after a run."""
         from .backends.progress import DONE_PHASE, ProgressReporter, TestStatus
-        from .reporting.dashboard_render import build_rerun_flags
+        from .reporting.dashboard_render import build_rerun_flags, run_given
 
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
@@ -407,6 +407,7 @@ class ItemRun:
             rerun_flags=build_rerun_flags(self.config),
             metadata=self.backend._build_run_metadata(**self.backend.run_versions()),
             theme=self.config.theme,
+            run_given=run_given(self.config),
         )
         # The wall time of the items reported: from the first one's start
         # to the last one's end.

@@ -1158,6 +1158,7 @@ def _output_report(comparisons, args, config, results) -> int:
     from dstf.cli.common import _exit_code
     from dstf.cli.run_cmds import _show_reports
 
+    args = types.SimpleNamespace(command="compare", **vars(args))
     _show_reports(comparisons, results, [], None, config, args)
     return _exit_code(comparisons)
 

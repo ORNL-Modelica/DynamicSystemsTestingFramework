@@ -70,6 +70,7 @@ class ProgressReporter:
         rerun_flags: dict[str, str] | None = None,
         metadata: dict | None = None,
         theme: str = "default",
+        run_given: list | None = None,
     ):
         self.work_dir = work_dir
         self.total = total
@@ -80,6 +81,10 @@ class ProgressReporter:
         # any CWD: the flags after each command of its menu. Computed by
         # callers via dashboard_render.build_rerun_flags(config).
         self.rerun_flags = rerun_flags
+        # What the run was given, by flag (dashboard_render.run_given): a
+        # later `compare` renders the page with the run's own for every flag
+        # it does not read itself (`--timeout`).
+        self.run_given = run_given
         # Run-level provenance (backend family/configured name/os/version). Serialized into
         # status.json under "metadata" and rendered as a banner by the
         # reporters. None → the "metadata" key stays null (backward compat with
@@ -230,6 +235,7 @@ class ProgressReporter:
             "counts": counts,
             "tests": tests,
             "rerun_flags": self.rerun_flags,
+            "run_given": self.run_given,
             "start_wall": self._start_wall,
             "updated_at": time.time(),
             "metadata": metadata,

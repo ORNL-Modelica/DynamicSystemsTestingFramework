@@ -130,7 +130,9 @@ lists each one and where it went.
   places the run was given, the default work dir, and `--backend-path`,
   `--tolerance`, `--timeout` and `--default-points` where that command reads
   them, by absolute paths, so it does what the run did from any directory;
-  `author` is offered only when it reads them all.
+  `author` is offered only when it reads them all. A `compare` that renders
+  the page after the run keeps the run's settings for what it does not read
+  itself: its `run` still carries the run's `--timeout`.
 - The default `testing.json` a command writes where it finds none did not
   record the library: `dstf --config <it>` from another directory found no
   project. It now records `source_path`, and the reference root and spec

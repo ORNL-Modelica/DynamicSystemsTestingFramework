@@ -512,11 +512,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # NRMSE, Variables and Warnings come from its comparison, the walls
     # from the run's run_stats.json, a CPU time where it kept none from its
     # result; the Reference link is the sidecar's, and stays empty.
-    from ..reporting.dashboard_render import build_rerun_flags, render_final
+    from ..reporting.dashboard_render import render_final
 
     render_final(
         config.work_dir,
-        rerun_flags=build_rerun_flags(config),
+        rerun_flags=_rerun_flags(config, args),
         theme=config.theme,
         comparisons=comparisons,
         results=results,
@@ -524,6 +524,18 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     _show_reports(comparisons, results, tests, store, config, args)
     return _exit_code(comparisons)
+
+
+def _rerun_flags(config, args) -> dict[str, str]:
+    """The flags the dashboard's commands carry when this command renders
+    it: a ``run``'s own, which made the results; a ``compare``'s, which
+    keeps the run's for every flag it does not read itself
+    (``dashboard_render.compare_rerun_flags``)."""
+    from ..reporting.dashboard_render import build_rerun_flags, compare_rerun_flags
+
+    if args.command == "compare":
+        return compare_rerun_flags(config)
+    return build_rerun_flags(config)
 
 
 def _show_reports(comparisons, results, tests, store, config, args) -> None:
@@ -550,13 +562,26 @@ def _show_reports(comparisons, results, tests, store, config, args) -> None:
     print_report(comparisons)
     if getattr(args, "report", False):
         _generate_report_suite(
-            comparisons, results, tests, store, config, browser=_browser(args)
+            comparisons,
+            results,
+            tests,
+            store,
+            config,
+            browser=_browser(args),
+            rerun_flags=_rerun_flags(config, args),
         )
     _write_report_file(comparisons, args, config, results)
 
 
 def _generate_report_suite(
-    comparisons, results, tests, store, config, *, browser: bool
+    comparisons,
+    results,
+    tests,
+    store,
+    config,
+    *,
+    browser: bool,
+    rerun_flags: dict[str, str],
 ) -> None:
     """Generate per-test reports + refresh the unified dashboard, and open
     it in a browser tab when ``browser``.
@@ -566,13 +591,13 @@ def _generate_report_suite(
     work_dir/reports/. dashboard_render.render_final then reads
     those sidecars and produces the top-level work_dir/dashboard.html.
     """
-    from ..reporting.dashboard_render import build_rerun_flags, render_final
+    from ..reporting.dashboard_render import render_final
     from ..reporting.report_suite import generate_report_suite, open_in_browser
 
     generate_report_suite(comparisons, results, tests, store, config)
     render_final(
         config.work_dir,
-        rerun_flags=build_rerun_flags(config),
+        rerun_flags=rerun_flags,
         theme=config.theme,
         comparisons=comparisons,
         results=results,
@@ -607,13 +632,13 @@ def _write_report_file(
         # One HTML surface, not three: --report-format html writes the same
         # dashboard page render_final produces (both callers have already
         # refreshed it), just to the requested path.
-        from ..reporting.dashboard_render import build_rerun_flags, render_final_to
+        from ..reporting.dashboard_render import render_final_to
 
         out = Path(_report_output(args, fmt))
         render_final_to(
             config.work_dir,
             out,
-            rerun_flags=build_rerun_flags(config),
+            rerun_flags=_rerun_flags(config, args),
             theme=config.theme,
             comparisons=comparisons,
             results=results,
