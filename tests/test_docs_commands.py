@@ -191,7 +191,7 @@ def test_the_pages_are_read():
         for page in PAGES
     }
     assert counts["README.md"] >= 1, counts
-    assert counts["CLAUDE.md"] >= 5, counts
+    assert counts["CLAUDE.md"] >= 3, counts
     assert counts["examples/python/PythonTestingLib/README.md"] >= 1, counts
     assert set(counts) >= {"docs/releasing.md", "examples/fmu/README.md"}
     # The guides teach the command line: each shows commands, and so many

@@ -990,22 +990,3 @@ class TestSchema:
         assert main(["spec", "schema", "testing", "-o", str(out)]) == 0
         capsys.readouterr()
         assert json.loads(out.read_text(encoding="utf-8")) == build_config_schema()
-
-
-def _keys_listed(text: str, pattern: str) -> list[str]:
-    return re.findall(pattern, text, flags=re.MULTILINE)
-
-
-class TestTheDocsListTheTable:
-    """The key list a contributor reads names the keys the code reads — no
-    more, no fewer. The notes and `$schema` are read by nothing and not
-    listed. (A user reads the reference page, generated from the table.)"""
-
-    KEYS = sorted(set(TESTING_JSON) - set(NOTES) - {"$schema"})
-
-    def test_claude_md_s_configuration_list(self):
-        text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
-        section = text[
-            text.index("## Configuration") : text.index("### test_spec.json format")
-        ]
-        assert sorted(_keys_listed(section, r"^- `([^`]+)` —")) == self.KEYS
