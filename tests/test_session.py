@@ -839,18 +839,27 @@ class TestOpen:
     def test_a_source_edit_reaches_the_project_through_the_rescan(
         self, tmp_path, monkeypatch
     ):
+        """The open is the cache's; the rescan's scan reaches the project on
+        the UI loop. With no loop the rescan thread applied its scan itself,
+        and could do so before the open's caller read the cached one — the
+        assertion "from the cache" then saw 101 (1 run in 5, alone). A loop
+        stands in here, run by the test once the cache was read."""
+        import queue
+
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
         cfg = _modelica_project(tmp_path)
         Session().open(cfg, work_dir=tmp_path / "work")
         mo, before = _bump_stop_time(tmp_path)
-        s = Session()
+        loop: queue.Queue = queue.Queue()
+        s = Session(post=loop.put)
         rescored = []
         s.on("results", lambda e: rescored.append(set(e["models"])))
         s.open(cfg, work_dir=tmp_path / "work")
         assert (
             s.project.test(before.model_id).stop_time == before.stop_time
         )  # from the cache
-        assert s.rescan_done.wait(10.0)
+        while not s.rescan_done.is_set():
+            loop.get(timeout=10.0)()  # the UI loop runs what was posted to it
         assert s.project.test(before.model_id).stop_time == before.stop_time + 1
         assert rescored[-1] == {before.model_id}  # only the changed model was rescored
 
