@@ -124,14 +124,15 @@ class TestTheList:
         ) in out
 
     def test_a_backend_named_and_no_class_for_it(self, no_installs, tmp_path, capsys):
+        """A config error like any other the file holds, not a line of the
+        list."""
         path = _python_project(tmp_path / "proj", backend="Simulink")
-        assert main(["--config", str(path), "check"]) == 1
-        out = capsys.readouterr().out
-        assert (
-            "  * Simulink      not found  no backend is registered under this name"
-            in out
+        assert main(["--config", str(path), "check"]) == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.startswith(
+            f'Config error: {path}: backend: "Simulink" is no entry of backends '
         )
-        assert out.endswith("Simulink: no backend is registered under this name.\n")
 
 
 def _no_project(tmp_path: Path) -> Path:

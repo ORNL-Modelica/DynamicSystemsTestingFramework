@@ -194,6 +194,50 @@ class TestAFileThatIsNotThatFile:
         assert err.startswith(f"Config error: {a}: ") and "Traceback" not in err
 
 
+class TestABackendThatIsNone:
+    """`"backend": "Nope"`: `discover` exited 0, and `run` ended with
+    `Unsupported backend: Nope (from 'Nope'). Available: (none)`."""
+
+    COMMANDS = [["discover"], ["run", "--no-browser"], ["compare"], ["check"]]
+
+    @pytest.mark.parametrize("command", COMMANDS, ids=lambda c: c[0])
+    def test_the_file_s_backend_names_no_entry_and_no_backend(
+        self, tmp_path, capsys, command
+    ):
+        path = _project(tmp_path, {"backend": "Nope", "backends": {"Python 3": {}}})
+        assert main(["--config", str(path), *command]) == 2
+        assert capsys.readouterr().err == (
+            f'Config error: {path}: backend: "Nope" is no entry of backends '
+            "(Python 3) and no backend's name (Dymola, OpenModelica, FMPy, "
+            "Julia, Python)\n"
+        )
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["testing.json"]
+
+    def test_with_no_backends_only_the_backends_are_named(self, tmp_path):
+        path = _project(tmp_path, {"backend": "Simulink"})
+        with pytest.raises(ConfigError) as exc:
+            Config(config_file=path)
+        assert str(exc.value) == (
+            f'{path}: backend: "Simulink" is no entry of backends and no '
+            "backend's name (Dymola, OpenModelica, FMPy, Julia, Python)"
+        )
+
+    def test_the_flag_s_is_said_as_the_flag(self, tmp_path, capsys):
+        path = _project(tmp_path, {})
+        assert main(["compare", "--config", str(path), "--backend", "Nope"]) == 2
+        assert capsys.readouterr().err.startswith(
+            'Config error: --backend: "Nope" is no entry of backends and no '
+            "backend's name (Dymola, "
+        )
+
+    @pytest.mark.parametrize("name", ["Python", "Python 3", "Python 3.12", "Dymola"])
+    def test_an_entry_a_backend_and_a_name_that_starts_with_one_are_taken(
+        self, tmp_path, name
+    ):
+        path = _project(tmp_path, {"backend": name, "backends": {"Python 3": {}}})
+        assert Config(config_file=path).backend_name == name
+
+
 class TestWrongTypes:
     @pytest.mark.parametrize(
         ("key", "value", "said"),

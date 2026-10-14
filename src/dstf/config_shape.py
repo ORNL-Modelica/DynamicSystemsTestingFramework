@@ -113,7 +113,7 @@ TESTING_JSON: dict[str, Setting] = {
         None,
         "The simulator to run with: an entry of backends, or a backend's "
         "name. A name that starts with a backend's is that backend — \"Dymola "
-        '2025" is a Dymola. Default: the first entry of backends that is '
+        '2025" is a Dymola; any other name is a config error. Default: the first entry of backends that is '
         "found on this machine; with no backends, the first installed "
         "backend that runs this source_type.",
     ),

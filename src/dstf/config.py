@@ -472,8 +472,8 @@ class Config:
     # none). `Backend.settings_of` lays it over the backend's defaults.
     backend_settings: dict[str, Any] = field(init=False, default_factory=dict)
     # Where the selected backend's install is and by which rule each part
-    # was found (`Backend.locate`); None for a backend no class is
-    # registered for.
+    # was found (`Backend.locate`). Set by __post_init__; None only on a
+    # stand-in that never went through it.
     located: "Located | None" = field(init=False, default=None)
 
     def __post_init__(self):
@@ -606,7 +606,7 @@ class Config:
 
         # The `backends` map, each block checked against its backend's own
         # settings. A map given to the constructor stands for the file's.
-        from .backends import backend_class
+        from .backends import backend_class, backend_names
         from .backends.locate import anchored, with_backend_path
 
         self.backends = _backend_blocks(
@@ -621,27 +621,37 @@ class Config:
         #   3. The first entry of the "backends" map that is found on this
         #      machine; with no map, the first registered backend that runs
         #      this source_type and is found (`_pick_backend`)
+        named = "--backend"
         if self.backend_name is None:
             if "backend" in file_config:
                 self.backend_name = file_config["backend"]
+                named = f"{config_found}: backend"
             else:
                 self.backend_name = _pick_backend(self.backends, self.source_type)
+
+        # A name that is an entry of `backends`, a backend's, or one that
+        # starts with a backend's ("Dymola 2025"). Any other names nothing
+        # that could run, and no partition a baseline could be read from.
+        backend_cls = backend_class(self.backend)
+        if backend_cls is None:
+            entries = f" ({', '.join(self.backends)})" if self.backends else ""
+            raise ConfigError(
+                f"{named}: {json.dumps(self.backend_name)} is no entry of "
+                f"backends{entries} and no backend's name "
+                f"({', '.join(backend_names())})"
+            )
 
         # The selected backend's settings, and where its install is: the
         # backend's own `locate` is the one place that is looked for.
         self.backend_settings = dict(self.backends.get(self.backend_name, {}))
-        backend_cls = backend_class(self.backend)
-        if backend_cls is not None:
-            block = self.backend_settings
-            if self.backend_path is not None:
-                # The one executable looked at, by the rule a block's
-                # pinned entry goes by: one that is not there is not found,
-                # and no other install is taken in its place.
-                block = with_backend_path(
-                    block, anchored(self.backend_path, Path.cwd())
-                )
-            self.located = backend_cls.locate(block)
-            self.backend_path = self.located.executable
+        block = self.backend_settings
+        if self.backend_path is not None:
+            # The one executable looked at, by the rule a block's pinned
+            # entry goes by: one that is not there is not found, and no
+            # other install is taken in its place.
+            block = with_backend_path(block, anchored(self.backend_path, Path.cwd()))
+        self.located = backend_cls.locate(block)
+        self.backend_path = self.located.executable
 
         # Backend setup commands
         if not self.backend_setup and "backend_setup" in file_config:
