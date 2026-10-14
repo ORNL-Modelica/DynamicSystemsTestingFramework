@@ -1079,6 +1079,33 @@ def test_a_project_flag_with_two_values_is_refused(flag, spelled, capsys):
     assert getattr(args, _dest(flag)) == "b.json"
 
 
+def test_a_directory_and_its_testing_json_are_one_config(tmp_path, capsys):
+    """`--config DIR discover --config DIR/testing.json` was refused as
+    given twice: both name the one file, as Config reads them (a directory
+    is its testing.json). Another file in it is still two values."""
+    (tmp_path / "testing.json").write_text("{}")
+    (tmp_path / "other.json").write_text("{}")
+    for one, other in (
+        (tmp_path, tmp_path / "testing.json"),
+        (tmp_path / "testing.json", tmp_path),
+    ):
+        args = _parse(
+            ["--config", str(one), "discover", "--config", str(other)], capsys
+        )
+        assert isinstance(args, argparse.Namespace), f"{one} / {other}: {args}"
+    text = _parse(
+        [
+            "--config",
+            str(tmp_path),
+            "discover",
+            "--config",
+            str(tmp_path / "other.json"),
+        ],
+        capsys,
+    )
+    assert isinstance(text, str) and "--config is given twice" in text
+
+
 def test_the_top_level_help_says_a_flag_is_written_once():
     text = " ".join(PARSER.format_help().split())
     assert "Each is written once, on either side." in text

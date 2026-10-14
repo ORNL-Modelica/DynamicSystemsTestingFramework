@@ -155,6 +155,14 @@ def _resolved(path: Path) -> Path:
         raise ConfigError(f"{path}: {e}") from e
 
 
+def config_file_named(path: Path) -> Path:
+    """The testing.json ``--config`` names by ``path``: absolute, and the
+    file of that name in it when it is a directory. The one rule Config
+    reads it by, and the command line tells two spellings of one by."""
+    resolved = _resolved(path)
+    return resolved / CONFIG_FILENAME if resolved.is_dir() else resolved
+
+
 def load_config_file(path: Path) -> dict:
     """Load a testing.json config file.
 
@@ -606,9 +614,7 @@ class Config:
         # The file that was read, for an error to name.
         config_found: Path | None = None
         if self.config_file:
-            config_path = _resolved(Path(self.config_file))
-            if config_path.is_dir():
-                config_path = config_path / CONFIG_FILENAME
+            config_path = config_file_named(Path(self.config_file))
             if not config_path.is_file():
                 # review 2026-07-06 finding 14: an explicit --config that
                 # doesn't exist must fail loudly, not silently fall through

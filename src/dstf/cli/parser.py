@@ -35,7 +35,7 @@ import textwrap
 from collections.abc import Callable, Collection
 from pathlib import Path
 
-from ..config import DEFAULT_COMPARISON_TOLERANCE, Config
+from ..config import DEFAULT_COMPARISON_TOLERANCE, Config, config_file_named
 from .author_cmd import DEFAULT_PORT
 from .common import _VALID_REVIEW_FILTERS, _parse_review_filter, _split_filter_list
 from .diag_cmds import EXPORT_FILES
@@ -188,9 +188,11 @@ class _Root(argparse.ArgumentParser):
         for dest, value in before.items():
             after = getattr(parsed, dest, None)
             # Each of the four is a path: `./C` and `C`, or `C` and its
-            # absolute spelling, are one value.
+            # absolute spelling, are one value — and a directory given to
+            # --config is its testing.json, as Config reads it.
+            where = config_file_named if dest == "config" else Path.resolve
             if after != value and (
-                after is None or Path(after).resolve() != Path(value).resolve()
+                after is None or where(Path(after)) != where(Path(value))
             ):
                 return (
                     f"{PROJECT_FLAGS[dest]} is given twice, {value} before the "
