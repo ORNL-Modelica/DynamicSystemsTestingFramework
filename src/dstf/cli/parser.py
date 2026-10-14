@@ -514,13 +514,12 @@ class _Tree:
         summary: str,
         description: str,
         examples,
-        project: tuple[str, ...] = (),
         creates: bool = False,
         spec_use: str = "this command reads",
         config_help: str | None = None,
     ):
-        """A command that runs. ``project`` names the project flags it
-        reads; they are offered here, and ONLY they are accepted before it.
+        """A command that runs. The project flags it reads (:data:`READS`)
+        are offered here, and ONLY they are accepted before it.
         ``spec_use`` is this command's word in those flags' help,
         ``config_help`` its own help for ``--config``.
 
@@ -537,6 +536,7 @@ class _Tree:
         if creates:
             self.root.creates.add(path)
         no_config = _NO_CONFIG_WRITES if creates else _NO_CONFIG_READS
+        project = [dest for dest in PROJECT_FLAGS if dest in READS[path]]
         for dest in project:
             own = {"help": config_help} if dest == "config" and config_help else {}
             # SUPPRESS is load-bearing: a sub-parser parses into a fresh
@@ -582,6 +582,62 @@ COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 _ALL = ("config", "source_path", "reference_root", "test_spec")
 _STORE = ("config", "source_path", "reference_root")
+_SELECT = ("filter", "package")
+_REPORTS = ("report_format", "output", "report", "no_browser")
+
+#: What each command reads: every flag it offers, by its dest. The tree is
+#: built from it — a command offers the project flags named here, and
+#: :func:`build_arg_parser` refuses to build a command that offers any flag
+#: this table does not name, or names one it does not offer. That its
+#: handler reads each one is ``tests/test_cli_tree.py``'s to prove.
+READS: dict[str, tuple[str, ...]] = {
+    "discover": (*_ALL, *_SELECT),
+    "run": (
+        *_ALL,
+        *_SELECT,
+        "tolerance",
+        "default_points",
+        *_REPORTS,
+        "interactive",
+        "accept",
+        "backend",
+        "backend_path",
+        "work_dir",
+        "parallel",
+        "batch",
+        "timeout",
+        "merge",
+        "rerun",
+    ),
+    "compare": (
+        *_ALL,
+        *_SELECT,
+        "tolerance",
+        "default_points",
+        *_REPORTS,
+        "backend",
+        "backend_path",
+        "work_dir",
+        "parallel",
+        "accept",
+    ),
+    "author": ("config", *_SELECT, "port", "no_browser", "work_dir", "backend"),
+    "check": _STORE,
+    "spec add": (*_ALL, "variables"),
+    "spec update": (*_ALL, "backend"),
+    "spec schema": ("output",),
+    "baseline export": (*_STORE, "format", "output", "backend", "work_dir"),
+    "soft-check add": (*_STORE, "backend"),
+    "soft-check list": (*_STORE, "backend"),
+    "soft-check remove": (*_STORE, "backend"),
+    "companion add": (*_STORE, "format", "variable_map", "backend"),
+    "companion list": (*_STORE, "backend"),
+    "companion freeze": (*_STORE, "backend"),
+    "companion remove": (*_STORE, "backend"),
+    "manifest show": (*_STORE, "show_obsolete", "backend"),
+    "manifest dump": (*_STORE, "backend", "work_dir"),
+    "manifest cleanup": (*_ALL, "orphans", "apply", "backend", "work_dir"),
+}
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -647,6 +703,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     _add_soft_check(tree, top)
     _add_companion(tree, top)
     _add_manifest(tree, top)
+    for path, node in root.commands.items():
+        offered = {a.dest for a in node._actions if a.option_strings} - {"help"}
+        if offered != set(READS[path]):
+            raise AssertionError(
+                f"`dstf {path}` offers {sorted(offered)} and reads "
+                f"{sorted(READS[path])} (cli.parser.READS)"
+            )
     for node in root.nodes.values():
         for action in node._actions:
             if _takes_a_value(action):
@@ -712,7 +775,6 @@ def _add_discover(tree: _Tree, top) -> None:
             "dstf discover --config testing.json --filter 'MyLib.Examples.*'",
             "dstf discover --source-path MyLib --test-spec refs/test_spec.json",
         ),
-        project=_ALL,
     )
     _offer_selection(node)
 
@@ -745,7 +807,6 @@ def _add_run(tree: _Tree, top) -> None:
             "dstf run --config testing.json --report-format junit -o results.xml --no-browser",
             "dstf run --config testing.json -i failed",
         ),
-        project=_ALL,
         creates=True,
     )
     _offer_selection(node)
@@ -862,7 +923,6 @@ def _add_compare(tree: _Tree, top) -> None:
             "dstf compare --config testing.json --report-format html -o report.html",
             "dstf compare --config testing.json --tolerance 0.01 --filter 'MyLib.Fluid.*'",
         ),
-        project=_ALL,
         creates=True,
     )
     _offer_selection(node)
@@ -934,7 +994,6 @@ def _add_author(tree: _Tree, top) -> None:
             "dstf author --config testing.json",
             "dstf author --config testing.json --port 8090 --no-browser",
         ),
-        project=("config",),
         # Its own words: no testing.json is searched for, and the other
         # three flags are not this command's.
         config_help="The project's testing.json. Required: the tool reads "
@@ -1001,7 +1060,6 @@ def _add_spec(tree: _Tree, top) -> None:
             "dstf spec add MyLib.Examples.Rod --config testing.json --variables 'rod.T*' pump.m_flow",
             "dstf spec add MyLib.Examples.Smoke --config testing.json",
         ),
-        project=_ALL,
         creates=True,
         spec_use="this command writes",
     )
@@ -1040,7 +1098,6 @@ def _add_spec(tree: _Tree, top) -> None:
             the patch is refused or the file cannot be read.
             """,
         examples=("dstf spec update spec_patch.json --config testing.json",),
-        project=_ALL,
         creates=True,
         spec_use="this command writes",
     )
@@ -1133,7 +1190,6 @@ def _add_baseline(tree: _Tree, top) -> None:
             "dstf baseline export --config testing.json -o references.json",
             "dstf baseline export --config testing.json --format csv --backend OpenModelica",
         ),
-        project=_STORE,
     )
     _offer(
         node,
@@ -1190,7 +1246,6 @@ def _add_soft_check(tree: _Tree, top) -> None:
         examples=(
             "dstf soft-check add MyLib.Examples.Rod openmodelica refs/OpenModelica/linux/ref_0003.json --config testing.json",
         ),
-        project=_STORE,
         creates=True,
     )
     _model(node, "The test the soft check belongs to, by its model id.")
@@ -1219,7 +1274,6 @@ def _add_soft_check(tree: _Tree, top) -> None:
             "dstf soft-check list --config testing.json",
             "dstf soft-check list MyLib.Examples.Rod --config testing.json",
         ),
-        project=_STORE,
     )
     _model(
         node,
@@ -1242,7 +1296,6 @@ def _add_soft_check(tree: _Tree, top) -> None:
         examples=(
             "dstf soft-check remove MyLib.Examples.Rod openmodelica --config testing.json",
         ),
-        project=_STORE,
     )
     _model(node, "The test the soft check belongs to, by its model id.")
     node.add_argument("name", help="The soft check to remove, by its name.")
@@ -1283,7 +1336,6 @@ def _add_companion(tree: _Tree, top) -> None:
             "dstf companion add MyLib.Examples.Rod rig data/rig.csv --config testing.json",
             "dstf companion add MyLib.Examples.Rod rig data/rig.csv --config testing.json --map rod.T[1]=T_inlet --map rod.T[2]=T_outlet",
         ),
-        project=_STORE,
         creates=True,
     )
     _model(node, "The test the companion belongs to, by its model id.")
@@ -1327,7 +1379,6 @@ def _add_companion(tree: _Tree, top) -> None:
             "dstf companion list --config testing.json",
             "dstf companion list MyLib.Examples.Rod --config testing.json",
         ),
-        project=_STORE,
     )
     _model(
         node,
@@ -1351,7 +1402,6 @@ def _add_companion(tree: _Tree, top) -> None:
         examples=(
             "dstf companion freeze MyLib.Examples.Rod rig --config testing.json",
         ),
-        project=_STORE,
         creates=True,
     )
     _model(node, "The test the companion belongs to, by its model id.")
@@ -1372,7 +1422,6 @@ def _add_companion(tree: _Tree, top) -> None:
         examples=(
             "dstf companion remove MyLib.Examples.Rod rig --config testing.json",
         ),
-        project=_STORE,
     )
     _model(node, "The test the companion belongs to, by its model id.")
     node.add_argument("name", help="The companion to remove, by its name.")
@@ -1408,7 +1457,6 @@ def _add_manifest(tree: _Tree, top) -> None:
             "dstf manifest show --config testing.json",
             "dstf manifest show --config testing.json --show-obsolete --backend OpenModelica",
         ),
-        project=_STORE,
     )
     node.add_argument(
         "--show-obsolete",
@@ -1427,7 +1475,6 @@ def _add_manifest(tree: _Tree, top) -> None:
             run writes the same file.)
             """,
         examples=("dstf manifest dump --config testing.json --work-dir out",),
-        project=_STORE,
     )
     _offer(node, "backend")
     _offer(
@@ -1455,7 +1502,6 @@ def _add_manifest(tree: _Tree, top) -> None:
             "dstf manifest cleanup --config testing.json --apply",
             "dstf manifest cleanup --config testing.json --orphans --apply",
         ),
-        project=_ALL,
     )
     node.add_argument(
         "--orphans",
@@ -1503,7 +1549,6 @@ def _add_check(tree: _Tree, top) -> None:
             "dstf check OpenModelica",
             "dstf check 'Dymola 2025'",
         ),
-        project=_STORE,
     )
     node.add_argument(
         # Not "backend": that is `--backend`'s name, which names the backend
@@ -1521,4 +1566,10 @@ def _add_check(tree: _Tree, top) -> None:
     )
 
 
-__all__ = ["COMMAND_GROUPS", "PROJECT_FLAGS", "build_arg_parser", "command_path"]
+__all__ = [
+    "COMMAND_GROUPS",
+    "PROJECT_FLAGS",
+    "READS",
+    "build_arg_parser",
+    "command_path",
+]

@@ -143,6 +143,103 @@ def test_the_top_level_help_lists_every_command_once_under_a_heading(monkeypatch
         assert summary in text
 
 
+def test_the_top_level_help_keeps_its_examples_and_the_project_flags(monkeypatch):
+    """`format_help` is the tree's own (`_Root`): it lays out the listing,
+    and must still print the examples and the rows of the four flags that
+    say where the project is."""
+    monkeypatch.setenv("COLUMNS", "80")
+    text = PARSER.format_help()
+    examples = _examples(PARSER)
+    assert len(examples) >= 3
+    for line in examples:
+        assert f"  {line}\n" in text, line
+    section = text.split("\nwhere the project is:\n", 1)[1]
+    for flag in PROJECT_FLAGS.values():
+        assert re.search(rf"^  {flag} [A-Z]+ ", section, re.M), flag
+
+
+#: A word each command's one line must hold — written here, so that two
+#: commands' lines swapped, or one copied over another, is seen.
+_SUMMARY_WORDS = {
+    "discover": "List the tests",
+    "run": "Simulate",
+    "compare": "without simulating",
+    "author": "authoring tool",
+    "check": "backends",
+    "spec add": "Add a test",
+    "spec update": "JSON-Patch",
+    "spec schema": "schema",
+    "baseline export": "every stored baseline",
+    "soft-check add": "as a soft check",
+    "soft-check list": "soft checks",
+    "soft-check remove": "Remove a soft check",
+    "companion add": "as a companion",
+    "companion list": "companions",
+    "companion freeze": "Copy a companion",
+    "companion remove": "Remove a companion",
+    "manifest show": "status",
+    "manifest dump": "mapping",
+    "manifest cleanup": "obsolete",
+}
+
+
+@pytest.mark.parametrize("path", COMMANDS)
+def test_each_command_s_line_is_its_own(path):
+    summary = PARSER.summaries[path]
+    assert _SUMMARY_WORDS[path] in summary, summary
+    assert list(PARSER.summaries.values()).count(summary) == 1
+    # the group's listing says the same
+    if " " in path:
+        group, action = path.split()
+        (sub,) = _subparsers(NODES[group])
+        (listed,) = [c.help for c in sub._choices_actions if c.dest == action]
+        assert listed == summary
+
+
+def test_dstf_with_no_command_prints_the_help_and_exits_1(capsys):
+    assert main([]) == 1
+    assert "\nrun and score:\n" in capsys.readouterr().out
+
+
+def test_variables_with_no_value_is_a_simulate_only_test(capsys):
+    args = _parse(["spec", "add", "Lib.M", "--variables"], capsys)
+    assert isinstance(args, argparse.Namespace), args
+    assert args.variables == []
+
+
+@pytest.mark.parametrize(
+    ("flag", "field"), [("--timeout", "timeout"), ("--parallel", "parallel")]
+)
+def test_a_flag_s_default_in_its_help_is_the_code_s(flag, field, monkeypatch):
+    """The help states Config's default, not a number written beside it."""
+    import dataclasses
+
+    from dstf.config import Config
+
+    (spec,) = [f for f in dataclasses.fields(Config) if f.name == field]
+    monkeypatch.setattr(spec, "default", 617)
+    nodes = build_arg_parser().nodes
+    for path in ("run", "compare"):
+        for action in nodes[path]._actions:
+            if flag in action.option_strings:
+                assert "Default: 617." in action.help, (path, action.help)
+
+
+def test_a_description_keeps_a_hyphenated_name_whole():
+    """The descriptions are filled by `_text`; a name with a hyphen in it
+    (`soft-check`, `--reference-root`) is never cut at the hyphen."""
+    from dstf.cli.parser import _text
+
+    names = "--reference-root soft-check dynamic-systems-testing-framework"
+    for pad in range(60, 78):
+        text = _text("x" * pad + " " + names)
+        words = text.split()
+        assert words[1:] == names.split(), text
+    for path, node in NODES.items():
+        for line in (node.description or "").splitlines():
+            assert not re.search(r"\w-$", line), f"`dstf {path}`: {line!r}"
+
+
 def test_the_tree_builds_and_prints_without_a_plug_in_or_a_file(monkeypatch):
     """`--help` and `--version` wait for neither — and the documentation's
     generator walks the same tree."""
@@ -292,6 +389,100 @@ def test_the_table_names_every_command():
     assert set(ARGV) <= set(COMMANDS)
 
 
+def test_the_code_s_table_agrees_with_this_one():
+    """`cli.parser.READS` is what the tree is built from; this file's table
+    of the project, backend and work-dir flags is written from the code
+    that runs each command. The two say the same."""
+    from dstf.cli.parser import READS as CODE
+
+    assert sorted(CODE) == COMMANDS
+    for command, flags in READS.items():
+        assert {f for f in _FLAGS if _dest(f) in CODE[command]} == flags, command
+
+
+def test_a_flag_the_table_does_not_name_cannot_be_offered(monkeypatch):
+    """`discover` offering `--tolerance`, `manifest show` offering
+    `--filter`: the tree refuses to build."""
+    from dstf.cli import parser
+
+    reads = dict(parser.READS)
+    reads["discover"] = tuple(d for d in reads["discover"] if d != "package")
+    monkeypatch.setattr(parser, "READS", reads)
+    with pytest.raises(AssertionError, match="`dstf discover` offers"):
+        build_arg_parser()
+
+
+# --- each command's handler reads what the table says it reads -------------
+
+
+def _functions(module) -> dict:
+    import inspect
+
+    return {
+        name: fn
+        for name, fn in vars(module).items()
+        if inspect.isfunction(fn) and fn.__module__.startswith("dstf.cli")
+    }
+
+
+def _handler_reads(fn, seen=None) -> set[str]:
+    """The attributes of ``args`` a handler reads: ``args.x`` and
+    ``getattr(args, "x", …)`` in its body, and in every function of
+    ``dstf.cli`` it hands ``args`` to, followed by name.
+
+    Its limits: ``_build_config(args)`` counts as reading every flag that
+    reaches Config (it reads them in a loop over ``_CONFIG_FLAGS``), whether
+    or not the command then uses the Config field; a read in a branch that
+    never runs counts; ``args`` passed on under another name, or read
+    through ``vars(args)``, is not seen."""
+    import ast
+    import inspect
+    import sys
+    import textwrap
+
+    from dstf.cli.common import _CONFIG_FLAGS
+
+    seen = set() if seen is None else seen
+    if fn in seen:
+        return set()
+    seen.add(fn)
+    if fn.__name__ == "_build_config":
+        return set(_CONFIG_FLAGS) | {"default_points", "may_create_project"}
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    module = _functions(sys.modules[fn.__module__])
+    reads: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "args"
+        ):
+            reads.add(node.attr)
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        given = [*node.args, *(k.value for k in node.keywords)]
+        if not any(isinstance(a, ast.Name) and a.id == "args" for a in given):
+            continue
+        if node.func.id == "getattr" and isinstance(node.args[1], ast.Constant):
+            reads.add(node.args[1].value)
+        elif node.func.id in module:
+            reads |= _handler_reads(module[node.func.id], seen)
+    return reads
+
+
+@pytest.mark.parametrize("command", COMMANDS)
+def test_the_handler_reads_every_flag_the_command_offers(command):
+    """A flag offered and not read is the silent drop this tree exists to
+    refuse: `author` passing `backend=None` on, `manifest show` listing the
+    obsolete references without asking `--show-obsolete`."""
+    from dstf.cli.main import _COMMANDS
+    from dstf.cli.parser import READS as CODE
+
+    reads = _handler_reads(_COMMANDS[command])
+    unread = sorted(set(CODE[command]) - reads)
+    assert not unread, f"`dstf {command}` offers {unread} and its handler reads none"
+
+
 @pytest.mark.parametrize("command", COMMANDS)
 @pytest.mark.parametrize("flag", _FLAGS)
 def test_a_flag_is_offered_where_it_is_read_and_an_error_elsewhere(
@@ -317,8 +508,11 @@ def test_a_flag_is_offered_where_it_is_read_and_an_error_elsewhere(
             f"{flag} before `dstf {command}` was taken and dropped"
         )
         if flag in _PROJECT:
-            # said by the command, in words: argparse cannot see this one
+            # said by the command, in words, on either side: before it,
+            # argparse cannot see this one; after it, argparse would say
+            # no more than "unrecognized"
             assert f"dstf {command}: error: {flag} does not apply" in before
+            assert f"dstf {command}: error: {flag} does not apply" in after
 
 
 @pytest.mark.parametrize("command", COMMANDS)
