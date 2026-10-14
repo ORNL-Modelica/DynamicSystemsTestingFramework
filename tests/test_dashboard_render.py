@@ -302,10 +302,10 @@ def test_rerun_prefix_carries_no_subcommand():
     from dstf.reporting.dashboard_render import build_rerun_prefix
 
     with_config = build_rerun_prefix(
-        SimpleNamespace(config_file="/some/path/testing.json")
+        SimpleNamespace(config_found="/some/path/testing.json")
     )
     with_paths = build_rerun_prefix(
-        SimpleNamespace(config_file=None, source_path="/lib", reference_root="/refs")
+        SimpleNamespace(config_found=None, source_path="/lib", reference_root="/refs")
     )
     for prefix in (with_config, with_paths):
         assert prefix.startswith("dstf ")

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import re
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -294,10 +295,8 @@ def test_every_example_parses(path, example, capsys):
         assert command_path(args).startswith(path + " ")
 
 
-def test_every_command_the_dashboard_builds_parses(capsys):
-    """The dashboard's selection footer builds `dstf --config <cfg> <kind>
-    --filter …` from its Command menu (and ` --merge --report` after a
-    plain `run`): each is a command line of this tree."""
+def _dashboard_kinds() -> list[str]:
+    """The dashboard's Command menu, as the template writes it."""
     from pathlib import Path
 
     import dstf.reporting
@@ -306,12 +305,101 @@ def test_every_command_the_dashboard_builds_parses(capsys):
     menu = page.read_text(encoding="utf-8").split('<select id="cmd-kind"', 1)[1]
     kinds = re.findall(r'<option value="([^"]+)">', menu.split("</select>", 1)[0])
     assert "run" in kinds and "author" in kinds and len(kinds) >= 5
-    for kind in kinds:
+    return kinds
+
+
+#: Each way a run can be started: the directory it starts in (under the
+#: test's project) and the flags that say where the project is.
+_STARTED = {
+    "--config": (".", ["--config", "testing.json"]),
+    "--config, a directory": (".", ["--config", "."]),
+    "--source-path and --reference-root": (
+        ".",
+        ["--source-path", "Lib", "--reference-root", "refs"],
+    ),
+    "--source-path, testing.json in the reference root": (
+        "A",
+        ["--source-path", "Lib", "--reference-root", "cfgrefs"],
+    ),
+    # the run writes a default one beside the library
+    "--source-path, no testing.json anywhere": ("bare", ["--source-path", "Lib"]),
+    "the current directory": (".", []),
+}
+
+
+@pytest.mark.parametrize("started", sorted(_STARTED))
+def test_every_command_the_dashboard_builds_parses(
+    started, tmp_path, monkeypatch, capsys
+):
+    """The dashboard's selection footer builds `<prefix> <kind> --filter …`
+    from its Command menu (and ` --merge --report` after a plain `run`).
+    After a run started any way at all, each is a command line of this tree
+    that names the run's testing.json by its absolute path — the line is
+    pasted into a terminal anywhere — and `author`, which reads `--config`
+    alone, parses too. A run made with --source-path and --reference-root
+    built `dstf --source-path … author`, which exits 2."""
+    from dstf.cli.common import _build_config
+    from dstf.reporting.dashboard_render import build_rerun_prefix
+
+    project = tmp_path / "project"
+    for lib in ("Lib", "A/Lib", "bare/Lib"):
+        (project / lib).mkdir(parents=True)
+        (project / lib / "package.mo").write_text("within ;\npackage Lib\nend Lib;\n")
+    (project / "refs").mkdir()
+    (project / "A" / "cfgrefs").mkdir()
+    (project / "testing.json").write_text(
+        '{"source_path": "Lib", "backend": "OpenModelica"}'
+    )
+    (project / "A" / "cfgrefs" / "testing.json").write_text(
+        '{"source_path": "../Lib", "backend": "OpenModelica"}'
+    )
+    cwd, flags = _STARTED[started]
+    monkeypatch.chdir(project / cwd)
+    config = _build_config(build_arg_parser().parse_args(["run", *flags]))
+    capsys.readouterr()
+    assert config.config_found is not None, "a run always has a testing.json"
+    prefix = build_rerun_prefix(config)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    for kind in _dashboard_kinds():
         tail = " --merge --report" if kind == "run" else ""
-        line = f'--config "/a b/testing.json" {kind} --filter "Lib.A,Lib.B"{tail}'
-        args = _parse(shlex.split(line), capsys)
-        assert isinstance(args, argparse.Namespace), f"dstf {line}\n{args}"
-        assert args.filter == "Lib.A,Lib.B" and args.config == "/a b/testing.json"
+        line = f'{prefix} {kind} --filter "Lib.A,Lib.B"{tail}'
+        argv = shlex.split(line)
+        assert argv[0] == "dstf"
+        args = _parse(argv[1:], capsys)
+        assert isinstance(args, argparse.Namespace), f"{line}\n{args}"
+        assert args.filter == "Lib.A,Lib.B"
+        assert args.config == str(config.config_found), line
+        assert Path(args.config).is_absolute() and Path(args.config).is_file()
+
+
+def test_with_no_testing_json_the_dashboard_offers_no_author(tmp_path, monkeypatch):
+    """A Config built with no testing.json found and none written (the run
+    as a library call, `run_pipeline`): the commands name the library and
+    the reference root, absolute, and `author` — which needs a testing.json
+    — is not offered."""
+    from dstf.config import Config
+    from dstf.reporting.dashboard_render import build_rerun_prefix, render_live
+
+    lib = tmp_path / "Lib"
+    lib.mkdir()
+    (lib / "package.mo").write_text("within ;\npackage Lib\nend Lib;\n")
+    monkeypatch.chdir(tmp_path)
+    config = Config(source_path=Path("Lib"), backend_name="OpenModelica")
+    assert config.config_found is None
+    prefix = build_rerun_prefix(config)
+    assert shlex.split(prefix) == [
+        "dstf",
+        "--source-path",
+        str(lib),
+        "--reference-root",
+        str(config.reference_root),
+    ]
+    render_live(tmp_path / "w", rerun_prefix=prefix)
+    page = (tmp_path / "w" / "dashboard.html").read_text(encoding="utf-8")
+    assert '<option value="author">' not in page
+    assert '<option value="run">' in page
 
 
 # ---------------------------------------------------------------------------

@@ -84,31 +84,46 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
         return None
 
 
-def build_rerun_prefix(config) -> str:
-    """Build the CLI prefix the dashboard uses in its rerun-command builder.
+#: How a built command names the project when it names its testing.json —
+#: the only way `author` takes one.
+_CONFIG_PREFIX = "dstf --config "
 
-    Produces e.g. `dstf --config "/abs/path/testing.json"` — the global
-    flags only, NO subcommand: the dashboard's command menu picks the
-    subcommand (`run`, `compare`, `compare --accept`,
-    `run --rerun failed,sim-failed`) and appends ` --filter ...`, so the
-    user can paste the result into any terminal regardless of CWD.
-    Prefers --config when available; otherwise falls back to
-    --source-path (+ optional --reference-root).
-    """
+
+def build_rerun_prefix(config) -> str:
+    """The CLI prefix the dashboard's command builder starts each command
+    with: the flags that say where the project is, NO subcommand — the
+    dashboard's Command menu picks it (`run`, `compare`, `compare --accept`,
+    `run --rerun failed,sim-failed`, `author`) and appends ` --filter ...`.
+
+    It names the testing.json the run read or wrote, by its absolute path,
+    so the command runs from any directory: ``dstf --config
+    "/abs/testing.json"``. A run always has one (`run` and `compare` write a
+    default where none is found); a Config built with none (`run_pipeline`
+    called as a library) is named by its library and reference root
+    instead, absolute too, and the dashboard then offers no `author`, which
+    reads `--config` alone (:func:`offers_author`)."""
 
     def q(p) -> str:
         s = str(p)
         return f'"{s}"' if " " in s else s
 
-    if getattr(config, "config_file", None):
-        return f"dstf --config {q(config.config_file)}"
-
+    found = getattr(config, "config_found", None)
+    if found is not None:
+        return _CONFIG_PREFIX + q(Path(found).resolve())
     parts = ["dstf"]
-    if getattr(config, "source_path", None):
-        parts += ["--source-path", q(config.source_path)]
-    if getattr(config, "reference_root", None):
-        parts += ["--reference-root", q(config.reference_root)]
+    for flag, value in (
+        ("--source-path", getattr(config, "source_path", None)),
+        ("--reference-root", getattr(config, "reference_root", None)),
+    ):
+        if value is not None:
+            parts += [flag, q(Path(value).resolve())]
     return " ".join(parts)
+
+
+def offers_author(prefix: str) -> bool:
+    """Whether the dashboard can build an `author` command on ``prefix``:
+    the tool opens the project a testing.json names, and nothing else."""
+    return prefix.startswith(_CONFIG_PREFIX)
 
 
 def format_run_metadata(meta: dict | None) -> dict | None:
@@ -405,6 +420,7 @@ def build_dashboard_context(
         # data-status.
         "statuses": [[STATUS_CLASSES[s], STATUS_LABELS[s]] for s in PILL_STATUSES],
         "rerun_prefix": prefix,
+        "offers_author": offers_author(prefix),
         "updated_at": snapshot.get("updated_at", time.time()),
         # Wall-clock anchor for the dashboard's live elapsed clock. JS reads
         # SNAPSHOT_WALL (= updated_at, when the snapshot was written) and

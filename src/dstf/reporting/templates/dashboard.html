@@ -248,7 +248,7 @@ body.has-selection { padding-bottom: 5em; }
       <option value="compare">compare</option>
       <option value="compare --accept">compare --accept</option>
       <option value="run --rerun failed,sim-failed">run --rerun failed,sim-failed</option>
-      <option value="author">author</option>
+      {% if offers_author %}<option value="author">author</option>{% endif %}
     </select>
   </label>
   <button class="btn-primary" id="btn-copy-cmd" onclick="copyCommand()">Copy rerun command</button>

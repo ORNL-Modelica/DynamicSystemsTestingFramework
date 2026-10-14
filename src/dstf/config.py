@@ -502,8 +502,9 @@ class Config:
     # Resolved (set during __post_init__)
     library_name: str | None = None
 
-    # The testing.json that was read — the one given, or the one the search
-    # found — or None: there is none, and the project runs on defaults.
+    # The testing.json that was read — the one given, the one the search
+    # found, or the default one this command wrote — or None: there is
+    # none, and the project runs on defaults.
     config_found: Path | None = field(init=False, default=None)
 
     # The selected backend's block of `backends`, as written (empty: it has
@@ -630,6 +631,7 @@ class Config:
         if config_found_dir is None and self.write_default:
             config_dir = self.reference_root if self.reference_root else repo_root
             file_config = _create_default_config(config_dir)
+            config_found = _resolved(config_dir / CONFIG_FILENAME)
 
         # Source type (optional; default "modelica" from dataclass).
         # testing.json may set: "source_type": "fmu" | "julia" | ... (future)
