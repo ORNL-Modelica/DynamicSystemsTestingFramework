@@ -298,9 +298,11 @@ class DymolaBackend(Backend):
             the manifest-wins protection never materialized for it.
             """
             all_results.extend(results)
-            for r in results:
-                manifest.record_result(r)
+            # The version first: each result is recorded with the metadata of
+            # the run that produced it, the version this batch reported in.
             _stamp_tool_version()
+            for r in results:
+                manifest.record_result(r, setup.progress.metadata)
 
         if n_workers <= 1:
             # Sequential: run all batches in order on a single worker

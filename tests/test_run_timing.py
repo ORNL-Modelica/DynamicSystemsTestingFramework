@@ -197,8 +197,13 @@ def test_a_run_keeps_each_tests_statistics_beside_its_result(ran):
             "sim_wall",
             "elapsed",
             "statistics",
+            "run_metadata",
         }
         assert data["model_id"] == model_id
+        # The run that produced the result, as its reporter held it: what an
+        # accept writes as the baseline's provenance.
+        assert data["run_metadata"]["backend"] == "Python"
+        assert data["run_metadata"]["generated_at"] > 0
         assert data["translation_wall"] is None  # written as null
         assert data["sim_wall"] > 0 and data["elapsed"] >= data["sim_wall"]
         assert data["statistics"]["simulation"]["wall_time"] == data["sim_wall"]
@@ -310,6 +315,7 @@ def test_a_wall_that_is_not_a_number_reads_back_as_none(tmp_path):
         "sim_wall": None,
         "elapsed": 0.0,
         "statistics": None,
+        "run_metadata": None,
     }
 
 
@@ -361,10 +367,28 @@ def test_a_failed_run_keeps_its_file(tmp_path):
         work_dir=tmp_path / "work",
         manifest={"test_0001": {"model_id": "Lib.A", "ref_id": None}},
     )
-    m.record_result(_rr(success=False, elapsed=2.0, translation_wall=1.5))
+    m.record_result(_rr(success=False, elapsed=2.0, translation_wall=1.5), None)
     data = json.loads((tmp_path / "work" / "test_0001" / "run_stats.json").read_text())
     assert data["translation_wall"] == 1.5 and data["elapsed"] == 2.0
     assert data["sim_wall"] is None
+
+
+def test_record_result_writes_the_runs_metadata_beside_the_result(tmp_path):
+    """The metadata of the run that produced the result, in the FILE beside
+    it, and read back as written: what an accept writes as provenance."""
+    from dstf.storage.run_stats import read_run_stats
+
+    (tmp_path / "work").mkdir()
+    m = BatchManifest(
+        work_dir=tmp_path / "work",
+        manifest={"test_0001": {"model_id": "Lib.A", "ref_id": None}},
+    )
+    meta = {"backend": "Python", "tool_version": "Python 3.12.1", "generated_at": 5.0}
+    m.record_result(_rr(elapsed=1.0), meta)
+    test_dir = tmp_path / "work" / "test_0001"
+    data = json.loads((test_dir / "run_stats.json").read_text())
+    assert data["run_metadata"] == meta
+    assert read_run_stats(test_dir, "Lib.A")["run_metadata"] == meta
 
 
 def test_statistics_json_cannot_hold_do_not_cost_the_verdict(tmp_path):
@@ -380,7 +404,8 @@ def test_statistics_json_cannot_hold_do_not_cost_the_verdict(tmp_path):
             elapsed=1.0,
             sim_wall=1.0,
             statistics={"x": np.float32(1.5), "p": Path("/a")},
-        )
+        ),
+        None,
     )
     assert m.manifest["test_0001"]["last_run_status"] == "passed"
     data = json.loads((tmp_path / "work" / "test_0001" / "run_stats.json").read_text())
@@ -397,7 +422,7 @@ def test_a_file_that_cannot_be_written_does_not_cost_the_verdict(tmp_path, capsy
         work_dir=work,
         manifest={"test_0001": {"model_id": "Lib.A", "ref_id": None}},
     )
-    m.record_result(_rr(elapsed=1.0, sim_wall=1.0))
+    m.record_result(_rr(elapsed=1.0, sim_wall=1.0), None)
     saved = json.loads((work / "batch_manifest.json").read_text())
     assert saved["test_0001"]["last_run_status"] == "passed"
     warns = [ln for ln in capsys.readouterr().err.splitlines() if "WARN" in ln]

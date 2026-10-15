@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
+from conftest import PROVENANCE
 from dstf.cli import main
 
 RAMP = "PythonTestingLib.Examples.SimpleRamp"
@@ -517,7 +518,9 @@ class TestTheStoreWritesNoBaseThatIsNoNumber:
         (test,) = [t for t in discover_tests(project.config) if t.model_id == RAMP]
         result = _results(project, [test])[RAMP]
         test.comparison_tolerance = tolerance
-        assert ReferenceStore(project.config).store_reference(test, result)
+        assert ReferenceStore(project.config).store_reference(
+            test, result, provenance=PROVENANCE
+        )
         return json.loads(project.reference(RAMP).read_text(encoding="utf-8"))
 
     @pytest.mark.parametrize(

@@ -56,7 +56,8 @@ def test_a_cancelled_result_is_recorded_cancelled_not_failed(tmp_path):
             success=False,
             error_message="Cancelled",
             cancelled=True,
-        )
+        ),
+        None,
     )
     on_disk = json.loads((tmp_path / "batch_manifest.json").read_text())
     assert (
@@ -92,7 +93,8 @@ def test_a_cancelled_test_reads_back_as_no_result(tmp_path):
     manifest.record_result(
         TestRunResult(
             model_id=ramp.model_id, test_key=key, success=False, cancelled=True
-        )
+        ),
+        None,
     )
 
     assert backend.read_last_results([ramp]) == {}
@@ -109,7 +111,7 @@ def test_a_cancelled_run_in_hand_yields_no_result(tmp_path):
     rr = TestRunResult(
         model_id="Lib.A", test_key=keyed[0][1], success=False, cancelled=True
     )
-    manifest.record_result(rr)
+    manifest.record_result(rr, None)
     manifest.results = [rr]
 
     assert backend.read_results([manifest], [test]) == {}

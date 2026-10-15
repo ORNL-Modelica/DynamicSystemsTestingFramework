@@ -1625,7 +1625,8 @@ class PersistentBackendBase(Backend):
                         success=False,
                         elapsed=0.0,
                         error_message=message,
-                    )
+                    ),
+                    setup.progress.metadata,
                 )
                 setup.progress.on_finish(
                     test_key, success=False, elapsed=0.0, detail=message
@@ -1732,8 +1733,11 @@ class PersistentBackendBase(Backend):
                 completed[0] += 1
                 idx = completed[0]
             # Persist before anything else can fail: this is the abort-proof
-            # half of the run-verdict record (BatchManifest.record_result).
-            manifest.record_result(tr)
+            # half of the run-verdict record (BatchManifest.record_result),
+            # with the metadata of this run (`run_tests` set its reporter).
+            manifest.record_result(
+                tr, self.progress.metadata if self.progress is not None else None
+            )
             label = f"{test_key} {test.model_id.rsplit('.', 1)[-1]}"
             status = "ok" if tr.success else ("TIMEOUT" if tr.timed_out else "FAIL")
             parts = []

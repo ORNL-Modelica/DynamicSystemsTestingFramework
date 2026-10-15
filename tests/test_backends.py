@@ -1102,6 +1102,7 @@ class TestDymolaStatisticsFromLogs:
                 elapsed=1.0,
                 statistics={"simulation": {"cpu_time_integration": 99.0}},
             ),
+            None,
         )
         test = _tm("Lib.A", variable_patterns=["x"])
         kept = kept_run_result(test_dir, "Lib.A", "test_0001")

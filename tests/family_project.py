@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from conftest import make_test_model
+from conftest import PROVENANCE, make_test_model
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.storage.reference_store import ReferenceStore
@@ -80,5 +80,6 @@ def family_project(
                 for k, name in enumerate(every, start=1)
             ],
         ),
+        provenance=PROVENANCE,
     )
     return cfg, work

@@ -2,6 +2,8 @@
 
 import json
 import shutil
+from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +45,22 @@ def make_test_model(model_id: str = "Lib.T", **kw) -> TestModel:
     )
     defaults.update(kw)
     return TestModel(**defaults)
+
+
+#: A baseline's provenance, as accept writes one, for tests that store a
+#: baseline directly (`store_reference` requires one).
+PROVENANCE = {
+    "backend": "Dymola",
+    "backend_name": "Dymola",
+    "tool_version": None,
+    "library_versions": None,
+    "dstf_version": None,
+    "os": "linux",
+    "run_started": None,
+}
+
+#: The same for every model, for `accept_results`.
+PROVENANCES: Mapping[str, dict] = defaultdict(lambda: PROVENANCE)
 
 
 def series(name: str, time: list, variables: list[dict], **fields) -> Baseline:

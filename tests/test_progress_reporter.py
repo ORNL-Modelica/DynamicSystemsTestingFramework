@@ -193,3 +193,16 @@ def test_reading_back_the_status_is_none_when_the_document_is_not_an_object(tmp_
     so a list is no snapshot rather than an AttributeError downstream."""
     (tmp_path / "status.json").write_text("[]", encoding="utf-8")
     assert read_status(tmp_path) is None
+
+
+def test_metadata_is_a_copy_with_the_late_patch(tmp_path):
+    """What `record_result` stamps beside each result: the metadata as it
+    stands, `update_metadata`'s late `tool_version` included — a copy."""
+    pr = ProgressReporter(tmp_path, total=1, metadata={"backend": "Dymola"})
+    assert pr.metadata == {"backend": "Dymola"}
+    pr.update_metadata(tool_version="Dymola 2026x")
+    got = pr.metadata
+    assert got == {"backend": "Dymola", "tool_version": "Dymola 2026x"}
+    got["tool_version"] = "changed"
+    assert pr.metadata["tool_version"] == "Dymola 2026x"
+    assert ProgressReporter(tmp_path, total=1).metadata is None

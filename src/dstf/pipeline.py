@@ -350,12 +350,18 @@ class ItemRun:
 
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
+        # The metadata of the run that produced THIS result, recorded beside
+        # it: a queue has no ProgressReporter (status.json is written once,
+        # when it drains — `write_status`), so it is built here from the
+        # backend as `write_status` builds it, its start the run's own.
+        metadata = self.backend._build_run_metadata(**self.backend.run_versions())
+        metadata["generated_at"] = time.time() - (run_result.elapsed or 0.0)
         with self._manifest_lock:
             # Re-read: another item's thread has saved since this one's
             # begin, and ref ids may have been assigned by an accept.
             manifest = BatchManifest.load(work_dir / "batch_manifest.json")
             manifest.enrich_ref_ids(self.store.index)
-            manifest.record_result(run_result)
+            manifest.record_result(run_result, metadata)
         return self.backend.result_of_run(test, test_key, run_result)
 
     def write_status(self, items: Iterable[QueueItem]) -> None:

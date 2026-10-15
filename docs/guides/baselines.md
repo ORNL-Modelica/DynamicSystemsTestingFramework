@@ -85,6 +85,10 @@ A test's number never changes and is never reused. Each `ref_NNNN.json` holds
 its model's name, the simulation settings and statistics of the run, the time
 points and each tracked variable's values, and the comparison settings that
 were in effect when it was accepted, so its tolerances travel with it. Its
+`provenance` says what produced it: the backend, the simulator and library
+versions, the DSTF version, the system and when the run started — the run
+whose result was accepted (a baseline accepted before this was recorded gains
+it at its next accept). Its
 `status` is `active`, `skip` (left out of comparison for now) or `obsolete`
 (to be removed). `dstf manifest show` lists the tests and their numbers, and
 `dstf manifest cleanup` lists the obsolete files, removing them with

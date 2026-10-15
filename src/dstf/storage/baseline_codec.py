@@ -217,6 +217,10 @@ def reference_to_json(ref: ReferenceFile) -> dict:
             "stored_points": ref.sampling.stored_points,
             "precision": ref.sampling.precision,
         }
+    # What produced the baseline (accept writes it on every primary; a file
+    # accepted before it existed has none until its next accept).
+    if b.provenance:
+        out["provenance"] = b.provenance
     if ref.comparison:
         out["comparison"] = ref.comparison
     if b.statistics:

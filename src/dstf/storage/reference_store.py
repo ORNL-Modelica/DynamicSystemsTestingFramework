@@ -16,6 +16,7 @@ import io
 import json
 import logging
 import shutil
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -101,8 +102,14 @@ class ReferenceStore(_RolesMixin):
         self,
         test: TestModel,
         result: TestResult,
+        *,
+        provenance: dict,
     ) -> bool:
         """Store simulation results as a new reference baseline.
+
+        ``provenance`` is what produced *result* (``accept._provenance``),
+        written as the file's ``provenance``: required, so no writer can
+        store a baseline without saying where it came from.
 
         Raises :class:`ValueError` when the trajectory contains non-finite
         values or no rows at all — callers that accept in bulk should catch
@@ -283,6 +290,7 @@ class ReferenceStore(_RolesMixin):
                 diagnostics=diagnostics,
                 simulation=simulation,
                 statistics=result.statistics or {},
+                provenance=provenance,
             ),
         )
 
@@ -297,8 +305,11 @@ class ReferenceStore(_RolesMixin):
         self,
         tests: list[TestModel],
         results: dict[str, TestResult],
+        *,
+        provenance: Mapping[str, dict],
     ) -> tuple[list[str], list[tuple[str, str]], list[str]]:
-        """Accept simulation results as new baselines.
+        """Accept simulation results as new baselines, each with the
+        ``provenance`` of its model's result.
 
         Returns ``(stored, skipped, simulate_only)``: the model ids whose
         baseline was written, in the order given; ``(model_id, reason)`` for
@@ -325,7 +336,9 @@ class ReferenceStore(_RolesMixin):
                 simulate_only.append(test.model_id)
                 continue
             try:
-                ok = self.store_reference(test, result)
+                ok = self.store_reference(
+                    test, result, provenance=provenance[test.model_id]
+                )
             except ValueError as exc:
                 # review 2026-07-06 leftover B: one poisoned trajectory must
                 # not abort accepting the rest — skip it, warn, keep going.

@@ -335,6 +335,9 @@ order the codec writes them (optional ones only when present):
   "date_added": "2026-01-15T...", "last_updated": "2026-04-08T...",
   "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl", "number_of_intervals": 500, "output_interval": null},
   "sampling": {"setting": "all", "source_points": 501, "stored_points": 501, "precision": "single"},
+  "provenance": {"backend": "Dymola", "backend_name": "Dymola 2026x", "tool_version": "Dymola Version 2026x, 2025-10-10",
+                 "library_versions": {"Modelica": "4.1.0"}, "dstf_version": "1.2.0", "os": "linux",
+                 "run_started": "2026-10-15T09:12:44+00:00"},
   "comparison": {"tolerance": 0.01, "variable_overrides": {"pipe.T[1]": {"tolerance": 0.1}}},
   "statistics": {
     "translation": {
@@ -361,6 +364,15 @@ the arrays are read back through: a `"single"` file's numbers are written with
 17 — the run's own numbers either way. A diagnostic is stored as a summary
 (`final`, `min`, `max`), never a trajectory; an old `{name, values}` entry is
 summarized by the codec on read.
+
+`provenance` is written by every accept (`storage/accept.py::_provenance`):
+the `RunMetadata` of the run that produced the accepted result — read from the
+`run_stats.json` that `BatchManifest.record_result` writes beside each result,
+never from `status.json`, which is one snapshot per work dir — with
+`generated_at` as ISO-8601 `run_started`. No machine name, no load. A run that
+recorded no metadata still gets the whole block: `backend`, `backend_name` and
+`os` from the config, the rest `null`. A file accepted before the block
+existed has none until its next accept.
 
 A variable entry is `{"index", "name", "expression", "values"}` in that order
 (D132). `name` is the name the RESULT FILE gives the variable —

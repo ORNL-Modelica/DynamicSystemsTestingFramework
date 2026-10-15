@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from conftest import make_test_model, series
+from conftest import PROVENANCE, make_test_model, series
 from dstf.authoring.capabilities import Artifact, OpenProject, Patch, StoreWrite
 from dstf.authoring.session import (
     NO_TREE,
@@ -123,6 +123,7 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
                 success=True,
                 variables=[VariableResult(index=1, time=tt, values=tt, name="x")],
             ),
+            provenance=PROVENANCE,
         )
     return refs / "testing.json", work
 
@@ -229,6 +230,7 @@ def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
                     VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
                 ],
             ),
+            provenance=PROVENANCE,
         )
     return cfg, work
 
@@ -372,6 +374,7 @@ def _unit_tests_project(tmp_path: Path) -> tuple[Path, Path]:
                 VariableResult(index=2, time=tt, values=2.1 * tt, name=UT2),
             ],
         ),
+        provenance=PROVENANCE,
     )
     return cfg, work
 
@@ -414,6 +417,7 @@ def _awkward_expression_project(tmp_path: Path, *, with_baseline: bool = True):
                     VariableResult(index=2, time=tt, values=2 * tt, name="y"),
                 ],
             ),
+            provenance=PROVENANCE,
         )
     return cfg, work
 
@@ -1340,6 +1344,7 @@ class TestRescoreAndStage:
                 success=True,
                 variables=[VariableResult(index=1, time=t, values=t, name="x")],
             ),
+            provenance=PROVENANCE,
         )
         s = Session()
         s.open(cfg, work_dir=work)
@@ -2528,6 +2533,7 @@ def _long_names_project(tmp_path: Path) -> tuple[Path, Path]:
                 VariableResult(index=2, time=tt, values=2 * tt, name=second),
             ],
         ),
+        provenance=PROVENANCE,
     )
     return cfg, work
 
@@ -4611,6 +4617,7 @@ def _stats_session(tmp_path: Path, *, result: bool = True) -> Session:
                 VariableResult(index=0, time=tt, values=0.80 * tt, name="CPUtime")
             ],
         ),
+        provenance=PROVENANCE,
     )
     s = Session()
     s.open(cfg, work_dir=work)
@@ -4860,6 +4867,7 @@ def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
             ],
             statistics=copy.deepcopy(DYMOLA_BASE),
         ),
+        provenance=PROVENANCE,
     )
     return cfg, work
 

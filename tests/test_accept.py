@@ -327,3 +327,75 @@ def test_a_test_refused_for_its_broken_tree_is_skipped_with_the_sentence(tmp_pat
     )
     assert (stored, skipped) == (0, [("FakeLib.A", broken_roles(test))])
     assert path.read_bytes() == before
+
+
+#: A run's metadata as its reporter holds it (`RunMetadata.as_dict`).
+RUN_META = {
+    "backend": "Dymola",
+    "backend_name": "Dymola 2026x",
+    "os": "linux",
+    "tool_version": "Dymola Version 2026x, 2025-10-10",
+    "dstf_version": "1.2.0",
+    "generated_at": 1_791_000_000.0,
+    "library_versions": {"Modelica": "4.1.0"},
+}
+
+
+def _accept_one(tmp_path, metadata):
+    """Accept FakeLib.A, whose run recorded *metadata* beside its result
+    (`record_result`); the written FILE's provenance."""
+    from dstf.backends.types import TestRunResult
+    from dstf.storage.batch_manifest import BatchManifest
+
+    config, store = _env(
+        tmp_path,
+        {
+            "test_0001": {
+                "model_id": "FakeLib.A",
+                "ref_id": None,
+                "last_run_status": "pending",
+            }
+        },
+    )
+    manifest = BatchManifest.load(config.work_dir / "batch_manifest.json")
+    manifest.record_result(
+        TestRunResult(
+            model_id="FakeLib.A", test_key="test_0001", success=True, elapsed=1.0
+        ),
+        metadata,
+    )
+    test = make_test_model("FakeLib.A", variable_patterns=["x"])
+    stored, skipped, _, _ = accept_run_results(
+        store, [test], {"FakeLib.A": _result("FakeLib.A")}, config.work_dir
+    )
+    assert (stored, skipped) == (1, [])
+    ref_file = store.reference_file("FakeLib.A")
+    return config, json.loads(ref_file.read_text(encoding="utf-8"))["provenance"]
+
+
+def test_accept_writes_the_runs_provenance(tmp_path):
+    _, provenance = _accept_one(tmp_path, RUN_META)
+    assert provenance == {
+        "backend": "Dymola",
+        "backend_name": "Dymola 2026x",
+        "tool_version": "Dymola Version 2026x, 2025-10-10",
+        "library_versions": {"Modelica": "4.1.0"},
+        "dstf_version": "1.2.0",
+        "os": "linux",
+        "run_started": "2026-10-03T04:00:00+00:00",
+    }
+
+
+def test_accept_without_run_metadata_writes_nulls(tmp_path):
+    """A run that recorded no metadata: the block is still written whole,
+    what the config says filled in, the rest null."""
+    config, provenance = _accept_one(tmp_path, None)
+    assert provenance == {
+        "backend": config.backend,
+        "backend_name": config.backend_name or config.backend,
+        "tool_version": None,
+        "library_versions": None,
+        "dstf_version": None,
+        "os": config.os_name,
+        "run_started": None,
+    }

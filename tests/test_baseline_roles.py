@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from conftest import series
+from conftest import PROVENANCE, series
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
@@ -53,7 +53,7 @@ def store_with_primary(sample_models_dir, tmp_path):
     config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
     store = ReferenceStore(config)
     test = _make_test_model()
-    store.store_reference(test, _make_test_result())
+    store.store_reference(test, _make_test_result(), provenance=PROVENANCE)
     return store, test
 
 
@@ -730,6 +730,7 @@ class TestCompanionMapCLI:
                     VariableResult(index=2, time=t, values=np.cos(t), name="y"),
                 ],
             ),
+            provenance=PROVENANCE,
         )
         rc = self._run(
             store,

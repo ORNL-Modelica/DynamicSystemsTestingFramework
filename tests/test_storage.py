@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import dstf.storage.ref_index as ri_mod
-from conftest import series
+from conftest import PROVENANCE, PROVENANCES, series
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
@@ -232,7 +232,7 @@ class TestReferenceStore:
         test = self._make_test_model()
         result = self._make_test_result()
 
-        stored = store.store_reference(test, result)
+        stored = store.store_reference(test, result, provenance=PROVENANCE)
         assert stored is True
 
         ref = store.get_reference(test.model_id)
@@ -252,7 +252,7 @@ class TestReferenceStore:
         test = self._make_test_model()
         result = self._make_test_result()
 
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
         ref = store.get_reference(test.model_id)
 
         assert ref.status == "active"
@@ -269,12 +269,12 @@ class TestReferenceStore:
         test = self._make_test_model()
         result = self._make_test_result()
 
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
         ref1 = store.get_reference(test.model_id)
         original_date = ref1.date_added
 
         # Store again (update)
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
         ref2 = store.get_reference(test.model_id)
         assert ref2.date_added == original_date
 
@@ -294,7 +294,7 @@ class TestReferenceStore:
         test = self._make_test_model()
         result = self._make_test_result()
 
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
         ref = _file(store, test.model_id)
 
         assert "diagnostics" in ref
@@ -317,7 +317,7 @@ class TestReferenceStore:
         test = self._make_test_model()
         result = self._make_test_result()
 
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
         ref = store.get_reference(test.model_id)
 
         assert ref.baseline.statistics["CPUtime"] == 1.0
@@ -333,7 +333,7 @@ class TestReferenceStore:
         test = self._make_test_model()
         result = TestResult(model_id=test.model_id, success=False)
 
-        stored = store.store_reference(test, result)
+        stored = store.store_reference(test, result, provenance=PROVENANCE)
         assert stored is False
 
     def test_cleanup_obsolete(self, sample_models_dir, tmp_path):
@@ -346,7 +346,7 @@ class TestReferenceStore:
         test = self._make_test_model()
         result = self._make_test_result()
 
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
         _set_status(store, test.model_id, "obsolete")
 
         removed = store.cleanup_obsolete()
@@ -368,7 +368,7 @@ class TestReferenceStore:
         assert test.output_interval is None
 
         result = self._make_test_result()  # 101 time points
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
         ref = store.get_reference(test.model_id)
 
         # Should derive: 101 unique times - 1 = 100 intervals
@@ -386,7 +386,7 @@ class TestReferenceStore:
         test.output_interval = 0.5
         result = self._make_test_result()
 
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
         ref = store.get_reference(test.model_id)
 
         assert ref.baseline.simulation["output_interval"] == 0.5
@@ -402,7 +402,7 @@ class TestReferenceStore:
         test = self._make_test_model()
         result = self._make_test_result()
 
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
 
         ref_files = list(config.reference_dir.glob("ref_*.json"))
         assert len(ref_files) == 1
@@ -441,7 +441,7 @@ class TestReferenceStore:
                 VariableResult(index=2, time=time, values=time, name="plain"),
             ],
         )
-        store.store_reference(self._make_test_model(), result)
+        store.store_reference(self._make_test_model(), result, provenance=PROVENANCE)
 
         ref = _file(store, "ModelicaTestingLib.Examples.Test1")
         assert [(v["name"], v["expression"]) for v in ref["variables"]] == [
@@ -459,7 +459,7 @@ class TestReferenceStore:
         store1 = ReferenceStore(config)
         test = self._make_test_model()
         result = self._make_test_result()
-        store1.store_reference(test, result)
+        store1.store_reference(test, result, provenance=PROVENANCE)
 
         # Create a new store (simulates restart)
         store2 = ReferenceStore(config)
@@ -510,7 +510,7 @@ class TestBaselineView:
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         result = TestReferenceStore()._make_test_result()
-        store.store_reference(test, result)
+        store.store_reference(test, result, provenance=PROVENANCE)
 
         b = store.get_reference(test.model_id).baseline
         assert b.name == PRIMARY_BASELINE
@@ -531,7 +531,9 @@ class TestBaselineView:
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
-        store.store_reference(test, TestReferenceStore()._make_test_result())
+        store.store_reference(
+            test, TestReferenceStore()._make_test_result(), provenance=PROVENANCE
+        )
         ref_file = store.ref_dir / "ref_0001.json"
         data = json.loads(ref_file.read_text(encoding="utf-8"))
         data["baselines"] = {
@@ -543,7 +545,9 @@ class TestBaselineView:
         }
         ref_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-        store.store_reference(test, TestReferenceStore()._make_test_result())
+        store.store_reference(
+            test, TestReferenceStore()._make_test_result(), provenance=PROVENANCE
+        )
 
         data_after = json.loads(ref_file.read_text(encoding="utf-8"))
         assert "baselines" not in data_after
@@ -557,7 +561,9 @@ class TestExports:
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         helper = TestReferenceStore()
-        store.store_reference(helper._make_test_model(), helper._make_test_result())
+        store.store_reference(
+            helper._make_test_model(), helper._make_test_result(), provenance=PROVENANCE
+        )
 
         out = tmp_path / "export" / "summary.csv"
         store.export_csv(out)
@@ -604,7 +610,9 @@ class TestLineEndings:
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         helper = TestReferenceStore()
-        store.store_reference(helper._make_test_model(), helper._make_test_result())
+        store.store_reference(
+            helper._make_test_model(), helper._make_test_result(), provenance=PROVENANCE
+        )
 
         refs = list((tmp_path / "refs").rglob("ref_*.json"))
         assert refs
@@ -669,7 +677,7 @@ def _mk_store(sample_models_dir, tmp_path) -> ReferenceStore:
 def store_with_primary(sample_models_dir, tmp_path):
     store = _mk_store(sample_models_dir, tmp_path)
     test = _mk_model()
-    store.store_reference(test, _mk_result())
+    store.store_reference(test, _mk_result(), provenance=PROVENANCE)
     return store, test
 
 
@@ -775,9 +783,13 @@ class TestAtomicWrites:
 
         monkeypatch.setattr(Path, "write_text", spy)
 
-        store.store_reference(test, _mk_result())  # update existing ref
+        store.store_reference(
+            test, _mk_result(), provenance=PROVENANCE
+        )  # update existing ref
         # A new model: its ID is claimed with the codec's stub, then replaced.
-        store.store_reference(_mk_model("Lib.New"), _mk_result("Lib.New"))
+        store.store_reference(
+            _mk_model("Lib.New"), _mk_result("Lib.New"), provenance=PROVENANCE
+        )
         store.add_soft_check(
             test.model_id,
             "experiment",
@@ -820,8 +832,12 @@ class TestIdAllocation:
         assert store1.index.get_id("Lib.A") is None
         assert store2.index.get_id("Lib.B") is None
 
-        store1.store_reference(_mk_model("Lib.A"), _mk_result("Lib.A"))
-        store2.store_reference(_mk_model("Lib.B"), _mk_result("Lib.B"))
+        store1.store_reference(
+            _mk_model("Lib.A"), _mk_result("Lib.A"), provenance=PROVENANCE
+        )
+        store2.store_reference(
+            _mk_model("Lib.B"), _mk_result("Lib.B"), provenance=PROVENANCE
+        )
 
         fresh = ReferenceStore(config)
         ref_a = fresh.get_reference("Lib.A")
@@ -879,8 +895,12 @@ class TestIdHighWaterMark:
     def test_id_freed_by_cleanup_is_not_reused(self, sample_models_dir, tmp_path):
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = _mk_store(sample_models_dir, tmp_path)
-        store.store_reference(_mk_model("Lib.A"), _mk_result("Lib.A"))
-        store.store_reference(_mk_model("Lib.B"), _mk_result("Lib.B"))
+        store.store_reference(
+            _mk_model("Lib.A"), _mk_result("Lib.A"), provenance=PROVENANCE
+        )
+        store.store_reference(
+            _mk_model("Lib.B"), _mk_result("Lib.B"), provenance=PROVENANCE
+        )
         assert store.get_reference("Lib.B").test_id == "0002"
 
         _set_status(store, "Lib.B", "obsolete")
@@ -888,7 +908,9 @@ class TestIdHighWaterMark:
 
         # Fresh process, fresh scan: 0002 is gone from disk but still spent.
         fresh = ReferenceStore(config)
-        fresh.store_reference(_mk_model("Lib.C"), _mk_result("Lib.C"))
+        fresh.store_reference(
+            _mk_model("Lib.C"), _mk_result("Lib.C"), provenance=PROVENANCE
+        )
         assert fresh.get_reference("Lib.C").test_id == "0003"
 
     def test_high_water_file_is_not_indexed_as_a_ref(self, tmp_path):
@@ -1200,7 +1222,9 @@ class TestStoreReferenceRejectsNonFinite:
         values = [0.0, 1.0, poison] + [2.0] * 8
         with pytest.raises(ValueError) as exc:
             store.store_reference(
-                _mk_test("Lib.Bad"), _mk_valued_result("Lib.Bad", values)
+                _mk_test("Lib.Bad"),
+                _mk_valued_result("Lib.Bad", values),
+                provenance=PROVENANCE,
             )
         msg = str(exc.value)
         assert "Lib.Bad" in msg
@@ -1214,12 +1238,12 @@ class TestStoreReferenceRejectsNonFinite:
         result.variables[0].time = np.array([0.0, float("nan"), 2.0])
         result.variables[0].values = np.array([0.0, 1.0, 2.0])
         with pytest.raises(ValueError, match="Lib.Bad"):
-            store.store_reference(_mk_test("Lib.Bad"), result)
+            store.store_reference(_mk_test("Lib.Bad"), result, provenance=PROVENANCE)
 
     def test_finite_trajectory_still_stores(self, sample_models_dir, tmp_path):
         store = _mk_store(sample_models_dir, tmp_path)
         assert store.store_reference(
-            _mk_test("Lib.Good"), _mk_valued_result("Lib.Good")
+            _mk_test("Lib.Good"), _mk_valued_result("Lib.Good"), provenance=PROVENANCE
         )
 
     def test_accept_results_skips_poisoned_and_continues(
@@ -1232,7 +1256,9 @@ class TestStoreReferenceRejectsNonFinite:
             "Lib.Bad": _mk_valued_result("Lib.Bad", [float("nan")] * 11),
         }
         with caplog.at_level(logging.WARNING):
-            stored, skipped, _ = store.accept_results([bad, good], results)
+            stored, skipped, _ = store.accept_results(
+                [bad, good], results, provenance=PROVENANCES
+            )
         assert stored == ["Lib.Good"]
         assert [m for m, _ in skipped] == ["Lib.Bad"]
         assert "non-finite" in skipped[0][1]
@@ -1245,7 +1271,9 @@ class TestStoreReferenceRejectsNonFinite:
             "Lib.T1": _mk_valued_result("Lib.T1"),
             "Lib.T2": _mk_valued_result("Lib.T2", success=False),
         }
-        stored, skipped, _ = store.accept_results([t1, t2], results)
+        stored, skipped, _ = store.accept_results(
+            [t1, t2], results, provenance=PROVENANCES
+        )
         assert stored == ["Lib.T1"]
         assert skipped == [("Lib.T2", "simulation failed")]
 
@@ -1258,7 +1286,7 @@ class TestStoreReferenceRejectsNonFinite:
         sim_only = _mk_test("Lib.SimOnly", simulate_only=True)
         result = TestResult(model_id="Lib.SimOnly", success=True)
         stored, skipped, simulate_only = store.accept_results(
-            [sim_only], {"Lib.SimOnly": result}
+            [sim_only], {"Lib.SimOnly": result}, provenance=PROVENANCES
         )
         assert stored == []
         assert skipped == []
@@ -1272,7 +1300,9 @@ class TestStoreReferenceRejectsNonFinite:
         store = _mk_store(sample_models_dir, tmp_path)
         sim_only = _mk_test("Lib.SimOnly", simulate_only=True)
         failed = TestResult(model_id="Lib.SimOnly", success=False)
-        assert store.accept_results([sim_only], {"Lib.SimOnly": failed}) == (
+        assert store.accept_results(
+            [sim_only], {"Lib.SimOnly": failed}, provenance=PROVENANCES
+        ) == (
             [],
             [("Lib.SimOnly", "simulation failed")],
             [],

@@ -203,3 +203,20 @@ def test_write_reference_is_atomic_and_reads_back(tmp_path):
     codec.write_reference(p, ref)
     assert p.read_text(encoding="utf-8") == PRIMARY_SINGLE
     assert codec.read_reference(p) == ref
+
+
+def test_provenance_is_written_after_sampling_and_read_back():
+    data = json.loads(PRIMARY_SINGLE)
+    prov = {
+        "backend": "Dymola",
+        "backend_name": "Dymola 2026x",
+        "tool_version": "Dymola Version 2026x",
+        "library_versions": {"Modelica": "4.1.0"},
+        "dstf_version": "1.2.0",
+        "os": "linux",
+        "run_started": "2026-10-15T09:12:44+00:00",
+    }
+    ref = codec.decode_reference({**data, "provenance": prov})
+    assert ref.baseline.provenance == prov
+    keys = list(json.loads(codec.encode_reference(ref)))
+    assert keys.index("provenance") == keys.index("sampling") + 1

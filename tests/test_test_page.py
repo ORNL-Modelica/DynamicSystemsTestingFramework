@@ -10711,6 +10711,7 @@ def _ref_override_project(tmp_path, on="x"):
             ],
             statistics=copy.deepcopy(DYMOLA_BASE),
         ),
+        provenance=PROVENANCE,
     )
     return cfg, work
 
@@ -11875,6 +11876,7 @@ async def test_a_failed_runs_statistics_line_says_there_is_no_run_result(
 
 # -- U5 Task 3: a click on a tree row ----------------------------------------
 
+from conftest import PROVENANCE
 from dstf.authoring.shell.test_page import TREE as TREE_OPEN  # noqa: E402
 
 #: Every kind of group, each over criteria on x and y (A tracks both).

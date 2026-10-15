@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from conftest import make_test_model
+from conftest import PROVENANCE, PROVENANCES, make_test_model
 from dstf.authoring.session import Session
 from dstf.backends.types import TestResult, VariableResult
 from dstf.cli.main import main
@@ -91,7 +91,7 @@ def _stored(config: Config, result: TestResult, test=None) -> dict:
     """``result`` accepted as ``test``'s baseline, as a reader gets it."""
     store = ReferenceStore(config)
     test = test or make_test_model(M, variable_patterns=["i", "x"])
-    assert store.store_reference(test, result) is True
+    assert store.store_reference(test, result, provenance=PROVENANCE) is True
     reference = store.get_reference(M)
     assert reference is not None
     return _view(reference)
@@ -663,8 +663,10 @@ def test_a_result_with_no_rows_is_not_stored_and_the_accept_says_so(tmp_path):
     test = make_test_model(M, variable_patterns=["x"])
     store = ReferenceStore(config)
     with pytest.raises(ValueError, match="no rows to store"):
-        store.store_reference(test, result)
-    stored, skipped, _ = store.accept_results([test], {M: result})
+        store.store_reference(test, result, provenance=PROVENANCE)
+    stored, skipped, _ = store.accept_results(
+        [test], {M: result}, provenance=PROVENANCES
+    )
     assert stored == []
     assert skipped == [
         (M, f"refusing to store baseline for {M}: the result has no rows to store")

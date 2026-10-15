@@ -4,6 +4,7 @@ call."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..backends.common.result_variables import criterion_variables, tracks
@@ -13,11 +14,13 @@ from ..comparison.comparator import (
     nothing_scored,
     refused_base_tolerance,
 )
+from ..config import Config
 from ..discovery.test_registry import TestModel
 from .baseline import ReferenceFile
-from .batch_manifest import unfinished_run_models
+from .batch_manifest import BatchManifest, unfinished_run_models
 from .ref_index import RefIndex
 from .reference_store import ReferenceStore
+from .run_stats import read_run_stats
 
 #: A baseline file larger than this many bytes — 5 MB — is said by the accept
 #: that wrote it (D153). A constant, not a key: the remedy it names is the key.
@@ -137,6 +140,56 @@ def accept_refusal(
     return nothing_scored(test, result) or broken_roles(test)
 
 
+def _provenance(meta: dict | None, config: Config) -> dict:
+    """A baseline's ``provenance``: the metadata of the run that produced the
+    result accepted (``RunMetadata.as_dict``, kept in the test's
+    ``run_stats.json``), its start as ISO-8601 ``run_started``. No machine
+    name and no load (owner, 2026-10-15). Written whole even when the run
+    recorded none: ``backend``, ``backend_name`` and ``os`` from ``config``,
+    every other field ``null`` — a writer never leaves a field out."""
+    meta = meta or {}
+    started = meta.get("generated_at")
+    return {
+        "backend": meta.get("backend") or config.backend,
+        "backend_name": meta.get("backend_name")
+        or config.backend_name
+        or config.backend,
+        "tool_version": meta.get("tool_version"),
+        "library_versions": meta.get("library_versions"),
+        "dstf_version": meta.get("dstf_version"),
+        "os": meta.get("os") or config.os_name,
+        "run_started": datetime.fromtimestamp(started, timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        if isinstance(started, (int, float))
+        else None,
+    }
+
+
+def _provenances(
+    store: ReferenceStore, tests: list[TestModel], work_dir: Path
+) -> dict[str, dict]:
+    """Each test's ``provenance``, read from the ``run_stats.json`` beside the
+    result an accept of it stores: the work dir's batch manifest names the
+    test's directory. The file is as fresh as the result (a rerun wipes the
+    directory), so a queue rerun in the tool stamps the rerun's metadata."""
+    manifest_path = work_dir / "batch_manifest.json"
+    manifest = BatchManifest.load(manifest_path) if manifest_path.exists() else None
+    keys = (
+        {entry["model_id"]: key for key, entry in manifest.manifest.items()}
+        if manifest is not None
+        else {}
+    )
+    out = {}
+    for test in tests:
+        key = keys.get(test.model_id)
+        kept = read_run_stats(work_dir / key, test.model_id) if key else None
+        out[test.model_id] = _provenance(
+            kept["run_metadata"] if kept is not None else None, store.config
+        )
+    return out
+
+
 def accept_run_results(
     store: ReferenceStore,
     tests: list[TestModel],
@@ -190,7 +243,9 @@ def accept_run_results(
     held_before = {
         t.model_id: _variable_names(store.get_reference(t.model_id)) for t in accepted
     }
-    stored, skipped, simulate_only = store.accept_results(accepted, results)
+    stored, skipped, simulate_only = store.accept_results(
+        accepted, results, provenance=_provenances(store, accepted, work_dir)
+    )
     by_model = {t.model_id: t for t in accepted}
     note = simulate_only_note(simulate_only)
     return (

@@ -685,6 +685,9 @@ class _Progress:
     """`Backend.progress`, calling `between` once the first test has been
     recorded — the moment between two tests of a run."""
 
+    #: The run's metadata, as `record_result` asks it (none recorded here).
+    metadata = None
+
     def __init__(self, between):
         self._between = between
 

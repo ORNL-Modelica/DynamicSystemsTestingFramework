@@ -1617,6 +1617,8 @@ def test_dashboard_detail_keeps_the_whole_timeout_hint(tmp_path):
     captured: dict = {}
 
     class _Progress:
+        metadata = None  # the run's, as `record_result` asks it
+
         def on_start(self, test_key, worker_id=None):
             pass
 
@@ -1658,6 +1660,8 @@ def test_a_non_timeout_failure_detail_is_still_clipped(tmp_path):
     captured: dict = {}
 
     class _Progress:
+        metadata = None  # the run's, as `record_result` asks it
+
         def on_start(self, test_key, worker_id=None):
             pass
 
