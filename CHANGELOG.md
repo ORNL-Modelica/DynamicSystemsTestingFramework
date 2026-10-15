@@ -6,7 +6,7 @@ follow [semantic versioning](https://semver.org/). DSTF is in beta: the command
 line and the `testing.json` keys may still change between minor versions, and
 this file says when they do.
 
-## [1.1.0] - unreleased
+## [1.1.0] - 2026-10-14
 
 This release changes the command line and `testing.json`. Nothing old is
 accepted under another name: a removed command or flag is the parser's error,
