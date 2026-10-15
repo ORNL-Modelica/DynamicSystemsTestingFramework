@@ -1,6 +1,6 @@
 """Applying a validated patch set to ``test_spec.json``.
 
-The one read-modify-write both ``dstf spec-update`` and the authoring
+The one read-modify-write both ``dstf spec update`` and the authoring
 Session's ``save`` go through: materialize the implicit tree where a
 per-leaf op needs one, apply each model's ops to its entry, refuse a base
 tolerance the patch made no number, refuse a key nothing reads, run the
@@ -65,7 +65,7 @@ def implicit_tree_op(entry: dict, *, variables: Sequence[str] | None = None) -> 
     ``synthesize_implicit_tree``). ``variables`` replaces the entry's own
     list: the authoring Session passes the names the flat path actually
     scored, which for a test tracked by its ``.mo`` annotation are not in
-    the spec at all (``spec-update``, with no result in hand, can only use
+    the spec at all (``spec update``, with no result in hand, can only use
     the entry's). Raises :class:`PatchError` when there are no variables to
     build leaves from."""
     from ..comparison.tree_spec import spec_to_raw, synthesize_implicit_tree
@@ -77,14 +77,14 @@ def implicit_tree_op(entry: dict, *, variables: Sequence[str] | None = None) -> 
         raise PatchError(
             f"cannot materialize an implicit metrics tree for "
             f"{entry.get('model')!r}: the entry declares no tracked variables "
-            "to build leaves from"
+            "to build criteria from"
         )
     globs = [v for v in variables if not is_literal_variable(v)]
     if globs:
         raise PatchError(
             f"cannot materialize an implicit metrics tree for "
-            f"{entry.get('model')!r}: {globs!r} are patterns, and a leaf per "
-            "pattern would score a sentinel where the flat path scored the "
+            f"{entry.get('model')!r}: {globs!r} are patterns, and a criterion "
+            "per pattern would score a sentinel where the flat path scored the "
             "variables the result resolved"
         )
     bad_modes = unknown_override_modes(entry)
@@ -152,9 +152,11 @@ def validate_entry_metric_tree(
     """When the patched entry has a ``metrics`` key, parse it as the spec
     parser does — a ``null`` there is refused, like any other value that is
     no tree — and run the D66 validator against the reference store's
-    baseline roles. Skipped when the entry has no such key (implicit AND).
-    ``store`` saves the caller that already holds one (the Session) a
-    rescan of the whole partition per call."""
+    baseline roles: the file's rules, and a name that is a companion in
+    this folder. A name this folder holds no baseline of is written
+    (:func:`not_stored_notes` says it). Skipped when the entry has no such
+    key (implicit AND). ``store`` saves the caller that already holds one
+    (the Session) a rescan of the whole partition per call."""
     entry = spec_entry(data, model_id)
     if entry is None or "metrics" not in entry:
         return
@@ -185,6 +187,32 @@ def validate_entry_metric_tree(
             # Each message is a sentence that ends in its own full stop.
             reason=" ".join(e.message for e in errors),
         )
+
+
+def not_stored_notes(
+    entry: dict | None, model_id: str, store: ReferenceStore
+) -> list[str]:
+    """One sentence per baseline ``entry``'s tree names that ``store``'s
+    folder holds none of — ``'experiment' is not stored for FMPy/macos: it
+    is not scored here`` — for a writer to say beside what it wrote: the
+    entry is written, since the soft check may be one of another folder,
+    and where it is scored here the criterion is not. None for an entry
+    with no tree, or one that does not parse (a write refuses that)."""
+    if entry is None or "metrics" not in entry:
+        return []
+    from ..comparison.tree_spec import MetricSpecError, parse_metric_tree
+    from ..comparison.validator import (
+        not_held_here,
+        not_stored_here,
+        role_lookup_from_store,
+    )
+
+    try:
+        tree = parse_metric_tree(entry["metrics"])
+    except MetricSpecError:
+        return []
+    lookup = role_lookup_from_store(store, model_id)
+    return [not_stored_here(name, store.folder) for name in not_held_here(tree, lookup)]
 
 
 class UnscorableCriterion(PatchError):
@@ -351,7 +379,7 @@ def refuse_newly_unscorable(
     before: dict | None, ops: Sequence[dict], after: dict | None, model_id: str
 ) -> None:
     """THE rule for a criterion that can never be scored, applied where a
-    FILE is written (``spec-update`` and the tool's Save, both through
+    FILE is written (``spec update`` and the tool's Save, both through
     :func:`apply_validated_patches`): the write is refused only for a
     criterion that is unscorable in ``after`` — ``before`` with ``ops``
     applied — and was not already there, with the same content, in

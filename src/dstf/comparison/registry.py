@@ -1,6 +1,6 @@
 """Registries for comparison metrics and MetricTree combinators.
 
-The extension seam docs/extensibility.md promises for the Metric layer.
+The extension seam a plug-in uses for the Metric layer (docs/guides/plugin.md).
 Before this module the metric and combinator name spaces were closed
 if/elif chains duplicated across four files (``modes.resolve_mode``,
 ``tree_spec.VALID_METRICS`` / ``_MODE_TO_METRIC``,
@@ -55,58 +55,52 @@ TIME_SERIES_ONLY = frozenset({DatasetType.TIME_SERIES})
 
 @dataclass(frozen=True)
 class MetricDescriptor:
-    """Everything the framework needs to know about one leaf metric.
+    """Everything the framework knows of one comparison mode: what
+    :func:`register_metric` registers.
 
-    ``build`` takes the flat override dict (the ``variable_overrides``
-    payload shape, also used for a :class:`~.tree_spec.LeafSpec`'s params)
-    plus the resolved tolerance, and returns a ready-to-score mode.
+    Only ``name``, ``config_cls``, ``build`` and ``description`` are needed of
+    a plug-in; the other fields are for what the bundled modes do beyond
+    scoring — dragging a handle on a plot, seeding a new criterion — and have
+    defaults that leave those features off.
 
-    ``score_direction`` says which way a better score runs: ``"lower"``
-    for error-like scores (NRMSE, point violations) and ``"higher"`` for
-    coverage-like ones (tube's in-band fraction). ``accepted_datasets``
-    declares which :class:`~dstf.backends.types.DatasetType` kinds the
-    metric can score — a leaf handed anything else hard-fails in
-    :func:`~.tree_eval._evaluate_leaf`.
-
-    ``accepts_quantity`` says the metric's ``quantity`` param names the
-    data it scores. For such a metric — and ONLY for such a metric — a
-    string ``quantity`` makes the evaluator resolve the value from the
-    run's statistics / diagnostics instead of a tracked trajectory, and
-    lets :func:`~.tree_spec._parse_leaf` default ``variable`` to the path.
-    Off by default: a metric that scores trajectories must keep scoring
-    trajectories, so an unrecognized ``quantity`` stays an inert param
-    rather than silently swapping that metric's data source.
-
-    ``summarize`` turns the mode's ``VariableComparison`` into the pill
-    text and criterion sentence; see :mod:`.summaries`.
-
-    ``edit_handle`` is the inverse of the mode's ``kind="handle"``
-    primitives: the raw leaf, the handle's local id and its dragged position
-    in, the new raw leaf out, :class:`~.handles.HandleEditError` for a drag
-    the leaf cannot take; see :mod:`.handles`. ``None`` for a metric no drag
-    edits (the builtins ``nrmse`` and ``event-timing``).
-
-    ``place_row`` is what a Ctrl+click on the plot adds to the metric's
-    table: the leaf with one more row, settled on the data it scores
-    (:class:`~.handles.RowPlace`); ``None`` for a metric with no rows.
-    ``row_noun`` says what that row is called for a leaf — "a point" — or
-    ``None`` where a click adds nothing to THAT leaf (a tube of constant
-    width); the editor's hint reads it.
-
-    ``seed`` gives a new leaf its first values from the data it will score
-    (the reference / actual series in, the params to add out), so a leaf
-    added with only a metric and a variable is valid and sensible; ``None``
-    for a metric valid bare (``nrmse``, ``points``, ``event-timing``). See
-    :mod:`.seeds`.
-
-    ``drawn_by_default`` says whether the Test page draws a closed criterion
-    of this metric that is not failing before its swatch is touched
-    (``range`` and ``scalar`` do not); a failing one draws regardless.
+    Attributes:
+        name: The name a criterion's ``metric`` gives (``"tube"``).
+        config_cls: The mode's settings, as a frozen dataclass; its fields are
+            the keys a criterion may hold, described by their metadata
+            (``label``, ``help``, ``columns`` and ``column_help`` for a table
+            of rows).
+        build: Makes the mode for one criterion: called with the criterion's
+            keys as written and its tolerance, already resolved to a
+            :class:`~dstf.comparison.sides.Sides`; returns a
+            :class:`~dstf.comparison.modes.ComparisonMode`. Raises
+            :class:`ValueError` for settings that cannot be scored, which fails
+            that criterion with the message.
+        description: What the mode scores and when to use it, in one paragraph
+            for the person writing a criterion.
+        accepted_datasets: The kinds of result data the mode can score.
+        score_direction: ``"lower"`` when a smaller score is better (an error),
+            ``"higher"`` when a larger one is (a coverage).
+        accepts_quantity: Whether a string ``quantity`` names the data the
+            mode scores, in place of a variable.
+        summarize: The verdict in words: the short text and the sentence the
+            report shows.
+        edit_handle: For a mode the authoring tool edits by dragging on the
+            plot: the criterion after a drag.
+        drawn_by_default: Whether the authoring tool draws a passing criterion
+            of the mode before it is asked to.
+        seed: A new criterion's first settings, from the data it will score.
+        place_row: The criterion with one more row, where a click on the plot
+            adds one.
+        row_noun: What such a row is called (``"a point"``).
     """
 
     name: str
     config_cls: type
     build: Callable[[dict, Sides], ComparisonMode]
+    #: What the metric scores and when to use it, in one paragraph for the
+    #: person writing a criterion: the reference page and the published
+    #: schema print it. Its fields are described by their own ``help``.
+    description: str = ""
     accepted_datasets: frozenset[DatasetType] = TIME_SERIES_ONLY
     score_direction: Literal["lower", "higher"] = "lower"
     accepts_quantity: bool = False
@@ -131,16 +125,21 @@ class MetricDescriptor:
 
 @dataclass(frozen=True)
 class CombinatorDescriptor:
-    """One MetricTree combinator: a name plus a spec → instance builder.
+    """One kind of group of a criteria tree: what :func:`register_combinator`
+    registers.
 
-    ``build`` reads whatever combinator-specific fields it needs off the
-    :class:`~.tree_spec.CombinatorSpec` (``k``, ``weights``, ...). The
-    *shape* validation of those fields stays in ``tree_spec`` at parse
-    time — this is dispatch only.
+    Attributes:
+        name: The name a group's ``combinator`` gives (``"k-of-n"``).
+        build: Makes the group's combinator from the parsed group, whose
+            fields (``k``, ``weights``, ...) the parser has already checked.
+        description: When the group passes, in one paragraph.
     """
 
     name: str
     build: Callable[[CombinatorSpec], Combinator]
+    #: When the group passes, in one paragraph for the person writing a
+    #: tree: the reference page prints it.
+    description: str = ""
 
 
 # Insertion-ordered: registration order is the canonical presentation order
@@ -151,10 +150,19 @@ _COMBINATORS: dict[str, CombinatorDescriptor] = {}
 
 
 def register_metric(desc: MetricDescriptor) -> MetricDescriptor:
-    """Register a leaf metric. Raises on a duplicate name.
+    """Register a comparison mode under its name.
 
-    Duplicates are loud rather than last-writer-wins: two metrics sharing
-    a name would make spec parsing depend on import order.
+    A mode plug-in calls it when its module is imported. The mode is then a
+    ``metric`` a criterion may name, and a ``mode`` an override may.
+
+    Args:
+        desc: The mode's descriptor.
+
+    Returns:
+        ``desc``, unchanged.
+
+    Raises:
+        ValueError: A mode is already registered under that name.
     """
     if desc.name in _METRICS:
         raise ValueError(f"metric {desc.name!r} is already registered")
@@ -163,7 +171,17 @@ def register_metric(desc: MetricDescriptor) -> MetricDescriptor:
 
 
 def register_combinator(desc: CombinatorDescriptor) -> CombinatorDescriptor:
-    """Register a MetricTree combinator. Raises on a duplicate name."""
+    """Register a kind of group under its name.
+
+    Args:
+        desc: The group's descriptor.
+
+    Returns:
+        ``desc``, unchanged.
+
+    Raises:
+        ValueError: A group is already registered under that name.
+    """
     if desc.name in _COMBINATORS:
         raise ValueError(f"combinator {desc.name!r} is already registered")
     _COMBINATORS[desc.name] = desc
@@ -204,7 +222,7 @@ def summarize(vc: VariableComparison) -> ScoreSummary:
     """
     error = (vc.diagnostics or {}).get("error")
     if error:
-        label = f"{vc.mode} leaf" if vc.mode else "leaf"
+        label = f"{vc.mode} criterion" if vc.mode else "criterion"
         return ScoreSummary(
             display="not scored", criterion=f"{label} not scored — {error}"
         )

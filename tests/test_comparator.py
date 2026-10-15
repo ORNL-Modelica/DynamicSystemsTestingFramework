@@ -423,7 +423,7 @@ def _make_test(comparison_tolerance=None, variable_overrides=None):
     for it)."""
     return TestModel(
         model_id="Test.Model",
-        source_file=Path(""),
+        source_file=None,
         source_package="Test",
         short_name="Model",
         n_vars=0,
@@ -1061,6 +1061,8 @@ class _NoBaselineStore:
     def get_reference(self, _model_id):
         return None
 
+    folder = "Stub/linux"
+
     def get_soft_checks(self, _model_id):
         return {}
 
@@ -1519,7 +1521,7 @@ class TestTreeConfigErrorIsALeafFailure:
 
         return TestModel(
             model_id=model_id,
-            source_file=Path(""),
+            source_file=None,
             source_package="Test",
             short_name="Model",
             n_vars=1,
@@ -1545,6 +1547,8 @@ class TestTreeConfigErrorIsALeafFailure:
                         }
                     ],
                 }
+
+            folder = "Stub/linux"
 
             def get_soft_checks(self, _model_id):
                 return {}
@@ -1649,7 +1653,7 @@ class TestTreeConfigErrorIsALeafFailure:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_verdict.py — regression tests for the
-# 2026-07-06 review, Theme 1: verdict integrity (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, Theme 1: verdict integrity.
 #
 # Decisions encoded here:
 #
@@ -2066,6 +2070,8 @@ class TestCompareOne:
         class _Store:
             def get_reference(self, model_id):
                 return ref if model_id == "Test.Model" else None
+
+            folder = "Stub/linux"
 
             def get_soft_checks(self, model_id):
                 return {}
@@ -2504,6 +2510,8 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
         from dstf.storage.baseline import Baseline
 
         class _Store:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {
                     "fmpy": Baseline(
@@ -2658,7 +2666,8 @@ class TestTheExpressionRidesOnEveryComparison:
             _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
         )
         vc = self._leaf(comp)
-        assert not vc.passed and "baseline not found" in vc.diagnostics["error"]
+        assert not vc.passed
+        assert vc.diagnostics["error"] == "no soft check 'nope' is stored"
         assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
 
     def test_a_misconfigured_leaf_keeps_the_expression(self):
@@ -2755,6 +2764,8 @@ class TestTheExpressionCheckPairsByName:
         from dstf.storage.baseline import Baseline
 
         class _Store:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {
                     "fmpy": Baseline(
@@ -2820,6 +2831,8 @@ class TestTheExpressionCheckPairsByName:
         from dstf.storage.baseline import Baseline
 
         class _Store:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {
                     "fmpy": Baseline(
@@ -2866,6 +2879,8 @@ class TestTheExpressionCheckPairsByName:
         from dstf.storage.baseline import Baseline
 
         class _Store:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 return {
                     "fmpy": Baseline(
@@ -3024,7 +3039,7 @@ class TestTheFlatPathScoresWhatTheTestTracks:
     def test_a_glob_and_the_unit_tests_names_are_tracked(self):
         test = TestModel(
             model_id="Test.Model",
-            source_file=Path(""),
+            source_file=None,
             source_package="Test",
             short_name="Model",
             n_vars=1,
@@ -3051,7 +3066,7 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         """``pipe.T?`` is ``pipe.T1``, not a prefix of ``pipe.T12``."""
         test = TestModel(
             model_id="Test.Model",
-            source_file=Path(""),
+            source_file=None,
             source_package="Test",
             short_name="Model",
             n_vars=0,

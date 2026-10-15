@@ -151,9 +151,9 @@ def _leaf_at(s: SessionView, model_id: str, path: str) -> dict:
         except (KeyError, IndexError, TypeError, ValueError):
             node = None
     if not isinstance(node, dict):
-        raise ValueError(f"{path} names no leaf of {model_id}")
+        raise ValueError(f"{path} names no criterion of {model_id}")
     if "combinator" in node:
-        raise ValueError(f"{path} is a combinator, not a leaf")
+        raise ValueError(f"{path} is a group, not a criterion")
     return node
 
 
@@ -463,7 +463,7 @@ def dragged(
     paths = [p for p, _ in _leaf_paths(s, model_id, variable)]
     path = _leaf_path_of(handle, paths)
     if path is None:
-        raise ValueError(f"{handle} names no leaf on {variable} of {model_id}")
+        raise ValueError(f"{handle} names no criterion on {variable} of {model_id}")
     if view is None:
         view = s.view(model_id, variable)  # full resolution, not the figure
     leaf = next((lv for lv in view.leaves if lv.path == path), None)

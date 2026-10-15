@@ -66,7 +66,7 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
                 "test_spec": "./test_spec.json",
                 "reference_root": ".",
                 "backend": "Python",
-                "backends": {"Python": ["python3", "python"]},
+                "backends": {"Python": {"executables": ["python3", "python"]}},
                 "tolerance": 0.01,
             }
         ),
@@ -138,7 +138,12 @@ def _modelica_project(tmp_path: Path) -> Path:
     _write_lib(lib)
     cfg_path = lib / "testing.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    cfg.update({"backend": "Python", "backends": {"Python": ["python3", "python"]}})
+    cfg.update(
+        {
+            "backend": "Python",
+            "backends": {"Python": {"executables": ["python3", "python"]}},
+        }
+    )
     cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
     return cfg_path
 
@@ -172,11 +177,19 @@ def _add_bar(tmp_path: Path) -> None:
 
 
 def _snapshot(work: Path) -> list[tuple[str, bytes]]:
-    return sorted(
-        (str(p.relative_to(work)), p.read_bytes())
-        for p in work.rglob("*")
-        if p.is_file()
-    )
+    """The work dir's files and their bytes. A write in flight is left out:
+    a file is written as ``<name>.<pid>.<hex>.tmp`` and renamed, so a running
+    worker's temp file can be listed here and gone before it is read (CI saw
+    exactly that, FileNotFoundError on ``batch_manifest.json.….tmp``)."""
+    files = []
+    for p in work.rglob("*"):
+        if p.suffix == ".tmp" or not p.is_file():
+            continue
+        try:
+            files.append((str(p.relative_to(work)), p.read_bytes()))
+        except FileNotFoundError:  # removed between the listing and the read
+            continue
+    return sorted(files)
 
 
 def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
@@ -544,7 +557,9 @@ class TestOpen:
 
         cfg, work = _project(tmp_path)
         testing = json.loads(cfg.read_text(encoding="utf-8"))
-        testing["backends"] = {"Python": [str(tmp_path / "no-such-python")]}
+        testing["backends"] = {
+            "Python": {"executables": [str(tmp_path / "no-such-python")]}
+        }
         cfg.write_text(json.dumps(testing), encoding="utf-8")
         # The map's one path does not exist; without this neither does the
         # PATH fallback, in the config and in the backend alike.
@@ -832,18 +847,27 @@ class TestOpen:
     def test_a_source_edit_reaches_the_project_through_the_rescan(
         self, tmp_path, monkeypatch
     ):
+        """The open is the cache's; the rescan's scan reaches the project on
+        the UI loop. With no loop the rescan thread applied its scan itself,
+        and could do so before the open's caller read the cached one — the
+        assertion "from the cache" then saw 101 (1 run in 5, alone). A loop
+        stands in here, run by the test once the cache was read."""
+        import queue
+
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
         cfg = _modelica_project(tmp_path)
         Session().open(cfg, work_dir=tmp_path / "work")
         mo, before = _bump_stop_time(tmp_path)
-        s = Session()
+        loop: queue.Queue = queue.Queue()
+        s = Session(post=loop.put)
         rescored = []
         s.on("results", lambda e: rescored.append(set(e["models"])))
         s.open(cfg, work_dir=tmp_path / "work")
         assert (
             s.project.test(before.model_id).stop_time == before.stop_time
         )  # from the cache
-        assert s.rescan_done.wait(10.0)
+        while not s.rescan_done.is_set():
+            loop.get(timeout=10.0)()  # the UI loop runs what was posted to it
         assert s.project.test(before.model_id).stop_time == before.stop_time + 1
         assert rescored[-1] == {before.model_id}  # only the changed model was rescored
 
@@ -1426,7 +1450,7 @@ class TestRescoreAndStage:
         assert [op.path for op in session.spec.pending] == ["/metrics", LOOSEN.path]
 
     def test_save_refuses_a_base_tolerance_that_is_no_number(self, session):
-        """Save goes through `spec-update`'s check: the file is not written."""
+        """Save goes through `spec update`'s check: the file is not written."""
         from dstf.discovery.patch_apply import PatchError
 
         session.stage([PatchOp(A, "add", "/comparison", {"tolerance": [1]})])
@@ -4833,3 +4857,62 @@ def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
         ),
     )
     return cfg, work
+
+
+class TestABaselineThisFolderDoesNotHold:
+    """`stage` refuses what is wrong in the FILE and a name that IS a
+    companion here; a warn naming a soft check this folder does not store is
+    staged — it is one of another folder — and the pending preview says it
+    is not scored here (`Session.not_stored_notes`)."""
+
+    @staticmethod
+    def _warned(against: str) -> dict:
+        return {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+                {
+                    "combinator": "warn",
+                    "children": [
+                        {"metric": "nrmse", "variable": "x", "against": against}
+                    ],
+                },
+            ],
+        }
+
+    @pytest.mark.parametrize("model_id", [A, B])  # with a baseline; NO_REF
+    def test_it_is_staged_and_said(self, session, model_id):
+        folder = session.project.store.folder
+        session.stage(
+            [PatchOp(model_id, "add", "/metrics", self._warned("experiment"))]
+        )
+        assert session.spec.entry(model_id)["metrics"] == self._warned("experiment")
+        assert session.not_stored_notes(model_id) == [
+            f"'experiment' is not stored for {folder}: it is not scored here"
+        ]
+        # An edit of another criterion of that tree is staged too.
+        session.stage(
+            [PatchOp(model_id, "replace", "/metrics/children/0/tolerance", 0.4)]
+        )
+        assert session.spec.entry(model_id)["metrics"]["children"][0] == {
+            "metric": "nrmse",
+            "variable": "x",
+            "tolerance": 0.4,
+        }
+
+    def test_a_stored_soft_check_is_no_note(self, session):
+        t = [i / 4 for i in range(5)]
+        session.project.store.add_soft_check(
+            A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
+        )
+        session.stage([PatchOp(A, "add", "/metrics", self._warned("om_cross"))])
+        assert session.not_stored_notes(A) == []
+        assert session.not_stored_notes(B) == []  # no tree: nothing named
+
+    def test_a_companion_here_is_refused(self, session, tmp_path):
+        rig = tmp_path / "rig.csv"
+        rig.write_text("time,x\n0,0\n1,1\n", encoding="utf-8")
+        session.project.store.add_companion(A, "rig", str(rig))
+        with pytest.raises(PatchError, match="the companion 'rig'"):
+            session.stage([PatchOp(A, "add", "/metrics", self._warned("rig"))])
+        assert session.spec.pending == []

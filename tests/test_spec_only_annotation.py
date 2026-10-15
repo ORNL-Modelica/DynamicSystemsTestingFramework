@@ -1,7 +1,7 @@
 """A test declared only in ``test_spec.json`` takes its model's
 ``experiment(...)`` annotation, as a scanned test does: the entry's own
-``simulation.*`` wins, and what it omits comes from the model (docs/usage.md,
-"Two-layer contract"). Before this a spec-only entry was taken as written,
+``simulation.*`` wins, and what it omits comes from the model (the
+``simulation`` keys' descriptions in ``spec_shape``). Before this a spec-only entry was taken as written,
 and a model annotated ``StopTime=200`` ran for the framework's 1 s."""
 
 from __future__ import annotations
@@ -587,7 +587,7 @@ class TestASpecOnlyEntryTakesItsAnnotation:
         missing = _discovered(rodlib)["RodLib.Missing"]
         assert (missing.stop_time, missing.method) == (1.0, "Dassl")
         assert missing.field_sources["stop_time"] == "default"
-        assert missing.source_file == Path("")
+        assert missing.source_file is None
 
     def test_the_bundled_examples_spec_only_test(self, tmp_path):
         """`NoUnitTest` is annotated `StopTime=5, Tolerance=1e-4`; with its
@@ -608,10 +608,10 @@ class TestASpecOnlyEntryTakesItsAnnotation:
         assert test.source_file == lib / "Examples" / "NoUnitTest.mo"
 
     def test_dstf_add_then_discover(self, rodlib, capsys):
-        """The newcomer's path: `dstf add` writes a bare entry, and
+        """The newcomer's path: `dstf spec add` writes a bare entry, and
         `discover` shows the model's stop time, not 1."""
         argv = ["--config", str(rodlib)]
-        assert main([*argv, "add", "RodLib.Rod", "--variables", "T[1]"]) == 0
+        assert main([*argv, "spec", "add", "RodLib.Rod", "--variables", "T[1]"]) == 0
         capsys.readouterr()
         assert main([*argv, "discover"]) == 0
         (row,) = [
@@ -620,19 +620,59 @@ class TestASpecOnlyEntryTakesItsAnnotation:
         assert row.split()[1:] == ["1", "pattern", "200", "Dassl", "spec"]
 
     def test_dstf_add_with_no_variables_adds_a_simulate_only_test(self, rodlib, capsys):
-        """`dstf add <model>` says `(simulate only)` and writes an entry
+        """`dstf spec add <model>` says `(simulate only)` and writes an entry
         that declares nothing to score: the test it makes IS simulate-only
         (it failed every run as one that scored nothing)."""
         argv = ["--config", str(rodlib)]
-        assert main([*argv, "add", "RodLib.Rod"]) == 0
+        assert main([*argv, "spec", "add", "RodLib.Rod"]) == 0
         assert "Variables: (simulate only)" in capsys.readouterr().out
         spec = json.loads(rodlib.with_name("test_spec.json").read_text("utf-8"))
         assert spec["tests"] == [{"model": "RodLib.Rod", "variables": []}]
         test = _discovered(rodlib)["RodLib.Rod"]
         assert test.simulate_only is False and test.is_simulate_only is True
         # A pattern makes it a scored test again.
-        assert main([*argv, "add", "RodLib.Parts.Rod", "--variables", "T[1]"]) == 0
-        assert _discovered(rodlib)["RodLib.Parts.Rod"].is_simulate_only is False
+        assert (
+            main([*argv, "spec", "add", "RodLib.Parts.Leaf", "--variables", "x"]) == 0
+        )
+        assert _discovered(rodlib)["RodLib.Parts.Leaf"].is_simulate_only is False
+
+    @pytest.mark.parametrize(
+        "model", ["RodLib.NoSuchModel", "RodLib.Parts.NoSuchRod", "Other.Rod"]
+    )
+    def test_dstf_add_of_a_model_that_is_not_there_writes_nothing(
+        self, rodlib, capsys, model
+    ):
+        """`dstf spec add RodLib.NoSuchModel` printed `Added:`, exited 0 and
+        wrote an entry no run could simulate. The library decides
+        (`mo_parser.find_class`): a class it does not hold is one sentence,
+        exit 1, and no file written."""
+        spec = rodlib.with_name("test_spec.json")
+        before = spec.read_bytes()
+        assert main(["--config", str(rodlib), "spec", "add", model]) == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err == (
+            f"{model} is no class of the library RodLib "
+            f"({rodlib.parent.parent / 'RodLib'}): nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        "package", ["RodLib.Sub", "RodLib.Parts", "RodLib.Parts.Other"]
+    )
+    def test_dstf_add_of_a_package_writes_nothing(self, rodlib, capsys, package):
+        """A package is a class of the library and holds models; it is none,
+        and no run simulates it."""
+        spec = rodlib.with_name("test_spec.json")
+        before = spec.read_bytes()
+        assert main(["--config", str(rodlib), "spec", "add", package]) == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err == (
+            f"{package} is a package of the library RodLib, which holds models "
+            f"and is none: name one of its models; nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
 
     def test_a_non_modelica_source_is_unchanged(self, tmp_path, monkeypatch):
         """No annotation is looked for — the library is not even probed —
@@ -694,7 +734,12 @@ def test_the_tool_fills_a_spec_only_test_and_reads_its_model_once(
     from dstf.discovery import mo_parser
 
     cfg = json.loads(rodlib.read_text(encoding="utf-8"))
-    cfg.update({"backend": "Python", "backends": {"Python": ["python3", "python"]}})
+    cfg.update(
+        {
+            "backend": "Python",
+            "backends": {"Python": {"executables": ["python3", "python"]}},
+        }
+    )
     rodlib.write_text(json.dumps(cfg), encoding="utf-8")
     _write_spec(rodlib, {"model": "RodLib.Rod", "variables": ["T[1]"]})
 
@@ -716,3 +761,372 @@ def test_the_tool_fills_a_spec_only_test_and_reads_its_model_once(
     assert rod.comparison_tolerance == 0.25  # re-merged, twice
     assert (rod.stop_time, rod.tolerance) == (200, 1e-6)  # still the model's
     assert asked == ["RodLib.Rod"]
+
+
+# ---------------------------------------------------------------------------
+# `spec add` on a project whose tests name their file: `--source`
+# ---------------------------------------------------------------------------
+
+
+def _example(tmp_path: Path, which: str) -> Path:
+    """A copy of a bundled example's project; its testing.json."""
+    import shutil
+
+    examples = Path(__file__).parent.parent / "examples"
+    where = {
+        "python": ("python/PythonTestingLib", "Resources/ReferenceResults"),
+        "julia": ("julia/JuliaMtkTestingLib", "Resources/ReferenceResults"),
+        "fmu": ("fmu", ""),
+    }[which]
+    copy = tmp_path / which
+    shutil.copytree(
+        examples / where[0],
+        copy,
+        ignore=shutil.ignore_patterns(
+            "__pycache__", "reference-fmus-binaries", "testing_output"
+        ),
+    )
+    return copy / where[1] / "testing.json"
+
+
+class TestSpecAddWritesAnEntryThatRuns:
+    """`spec add` on a Python, Julia or FMU project wrote an entry with no
+    `source`, and `run` then failed it with a raw ImportError in
+    status.json: such a test runs the file its entry names. `--source`
+    names it; without it the command is refused."""
+
+    @pytest.mark.parametrize(
+        ("which", "backend", "suffix"),
+        [
+            ("python", "Python", ".py"),
+            ("julia", "Julia", ".jl"),
+            ("fmu", "FMPy", ".fmu"),
+        ],
+    )
+    def test_without_source_nothing_is_added(
+        self, tmp_path, capsys, which, backend, suffix
+    ):
+        config = _example(tmp_path, which)
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        assert main(["--config", str(config), "spec", "add", "Lib.New"]) == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err == (
+            f"--source is required: a test of the {backend} backend runs the "
+            f"{suffix} file its entry names (--source FILE); nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        ("which", "family", "entry", "suffix", "file"),
+        [
+            ("python", "Python", "Python 3.12", ".py", "Examples/SimpleRamp.py"),
+            ("julia", "Julia", "Julia 1.11", ".jl", "Examples/SimpleRamp.jl"),
+        ],
+    )
+    def test_an_entry_named_by_version_is_its_backend_s(
+        self, tmp_path, capsys, which, family, entry, suffix, file
+    ):
+        """A `backends` entry named `"Python 3.12"` is the Python backend:
+        `--source` is required and taken as for one named `"Python"`. The
+        entry's NAME found no backend, and `spec add` refused `--source` as
+        not applying, or wrote an entry with no file that every run failed."""
+        config = _example(tmp_path, which)
+        settings = json.loads(config.read_text("utf-8"))
+        settings["backends"] = {entry: settings["backends"][family]}
+        settings["backend"] = entry
+        config.write_text(json.dumps(settings), "utf-8")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        argv = ["--config", str(config), "spec", "add", "Lib.New"]
+        assert main(argv) == 1
+        assert capsys.readouterr().err == (
+            f"--source is required: a test of the {family} backend runs the "
+            f"{suffix} file its entry names (--source FILE); nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+        source = config.parent.parent.parent / file
+        assert source.is_file()
+        assert main([*argv, "--source", str(source)]) == 0
+        assert "Added: Lib.New" in capsys.readouterr().out
+        added = json.loads(spec.read_text("utf-8"))["tests"][-1]
+        assert added["model"] == "Lib.New" and added["source"].endswith(file)
+
+    def test_the_entry_names_its_file_and_runs(self, tmp_path, monkeypatch, capsys):
+        config = _example(tmp_path, "python")
+        lib = config.parent.parent.parent
+        model = "PythonTestingLib.Examples.Copy"
+        monkeypatch.chdir(tmp_path)
+        source = Path("python") / "Examples" / "ConstantCsv.py"
+        argv = ["--config", str(config)]
+        assert main([*argv, "spec", "add", model, "--source", str(source)]) == 0
+        assert "Added: PythonTestingLib.Examples.Copy" in capsys.readouterr().out
+        spec = json.loads(Config(config_file=config).spec_path.read_text("utf-8"))
+        # relative to the spec file, as every `source` is
+        assert spec["tests"][-1] == {
+            "model": model,
+            "variables": [],
+            "source": "../../Examples/ConstantCsv.py",
+        }
+        assert (config.parent / spec["tests"][-1]["source"]).resolve() == (
+            lib / "Examples" / "ConstantCsv.py"
+        )
+        work = tmp_path / "work"
+        code = main(
+            ["run", *argv, "--filter", model, "--work-dir", str(work), "--no-browser"]
+        )
+        capsys.readouterr()
+        assert code == 0
+        status = json.loads((work / "status.json").read_text("utf-8"))
+        assert [t["verdict"] for t in status["tests"]] == ["PASS"]
+
+    def test_a_suffix_in_capitals_is_the_backend_s_and_runs(self, tmp_path, capsys):
+        """A suffix is compared without its case — `Ramp.PY` is a Python
+        file, as a Windows folder lists it — and the driver runs the file it
+        was given whatever its suffix's case: a `.PY` that `spec add` took
+        and every run then failed with `Cannot load` would be the entry
+        that runs nothing this command refuses to write."""
+        config = _example(tmp_path, "python")
+        lib = config.parent.parent.parent
+        capital = lib / "Examples" / "Ramp.PY"
+        capital.write_bytes((lib / "Examples" / "SimpleRamp.py").read_bytes())
+        model = "PythonTestingLib.Examples.Capital"
+        argv = ["--config", str(config)]
+        assert main([*argv, "spec", "add", model, "--source", str(capital)]) == 0
+        work = tmp_path / "work"
+        code = main(
+            ["run", *argv, "--filter", model, "--work-dir", str(work), "--no-browser"]
+        )
+        capsys.readouterr()
+        status = json.loads((work / "status.json").read_text("utf-8"))
+        # simulate-only (no --variables): it passes iff its file ran
+        assert code == 0 and [t["verdict"] for t in status["tests"]] == ["PASS"]
+
+    def test_a_source_that_is_not_there_is_refused(self, tmp_path, capsys):
+        config = _example(tmp_path, "python")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        missing = tmp_path / "nope.py"
+        argv = ["--config", str(config), "spec", "add", "Lib.New", "--source"]
+        assert main([*argv, str(missing)]) == 1
+        assert capsys.readouterr().err == (
+            f"--source {missing}: no such file; nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    def test_a_source_of_another_kind_is_refused(self, tmp_path, capsys):
+        """A `.csv` for a Python test was written as its `source`, and every
+        run failed it: the backend runs a file of one suffix
+        (`Backend.source_suffix`)."""
+        config = _example(tmp_path, "python")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        csv = config.parent.parent.parent / "Examples/data/constant_experiment.csv"
+        assert csv.is_file()
+        argv = ["--config", str(config), "spec", "add", "Lib.New", "--source"]
+        assert main([*argv, str(csv)]) == 1
+        assert capsys.readouterr().err == (
+            f"--source {csv}: a test of the Python backend runs a .py file; "
+            f"nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    def test_a_source_that_is_a_directory_is_refused(self, tmp_path, capsys):
+        config = _example(tmp_path, "python")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        folder = config.parent.parent.parent / "Examples"
+        argv = ["--config", str(config), "spec", "add", "Lib.New", "--source"]
+        assert main([*argv, str(folder)]) == 1
+        assert capsys.readouterr().err == (
+            f"--source {folder}: a directory, not a .py file; nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+    def test_an_overwrite_takes_the_new_source(self, tmp_path, monkeypatch, capsys):
+        """`y` to "Overwrite?" replaces the entry's `source` with the one
+        given now; the old file is no longer what the test runs."""
+        config = _example(tmp_path, "python")
+        examples = config.parent.parent.parent / "Examples"
+        argv = ["--config", str(config), "spec", "add", "Lib.New", "--source"]
+        assert main([*argv, str(examples / "SimpleRamp.py")]) == 0
+        monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+        assert main([*argv, str(examples / "ConstantCsv.py")]) == 0
+        assert "Updated: Lib.New" in capsys.readouterr().out
+        spec = json.loads(Config(config_file=config).spec_path.read_text("utf-8"))
+        (entry,) = [e for e in spec["tests"] if e["model"] == "Lib.New"]
+        assert entry["source"] == "../../Examples/ConstantCsv.py"
+
+    def test_a_question_with_no_answer_writes_nothing(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Where input ends (CI, `< /dev/null`) the overwrite question gets
+        no answer: "Aborted.", exit 1 — not the 0 of a `n` — and the entry
+        is as it was. `spec add --help` says so."""
+        config = _example(tmp_path, "python")
+        spec = Config(config_file=config).spec_path
+        before = spec.read_bytes()
+        argv = ["--config", str(config), "spec", "add"]
+        model = json.loads(before)["tests"][0]["model"]
+        source = config.parent.parent.parent / "Examples" / "SimpleRamp.py"
+
+        def no_answer(_prompt):
+            raise EOFError
+
+        monkeypatch.setattr("builtins.input", no_answer)
+        assert main([*argv, model, "--source", str(source)]) == 1
+        assert capsys.readouterr().out.endswith("\nAborted.\n")
+        assert spec.read_bytes() == before
+        with pytest.raises(SystemExit):
+            main(["spec", "add", "--help"])
+        said = " ".join(capsys.readouterr().out.split())
+        assert (
+            'the question gets no answer (its input ends, as in CI: "Aborted.")' in said
+        )
+
+    def test_a_modelica_test_names_no_file(self, rodlib, capsys):
+        spec = rodlib.with_name("test_spec.json")
+        before = spec.read_bytes()
+        argv = ["--config", str(rodlib), "spec", "add", "RodLib.Rod", "--source"]
+        assert main([*argv, str(rodlib)]) == 1
+        assert capsys.readouterr().err == (
+            "--source does not apply: a test of the OpenModelica backend runs "
+            "no file its entry names; nothing was added.\n"
+        )
+        assert spec.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# spec add says what a class that is no model IS
+# ---------------------------------------------------------------------------
+
+KINDS = """\
+within RodLib;
+package Kinds "classes of every kind a run cannot simulate, among models"
+  function Fn
+    input Real a;
+    output Real b;
+  algorithm
+    b := a;
+    annotation (Inline=true);
+  end Fn;
+  record Rec
+    Real r;
+  end Rec;
+  connector Port
+    Real p;
+  end Port;
+  connector RealIn = input Real "a short connector";
+  partial model Base
+    Real x;
+  end Base;
+  model WithFn "its own annotation comes after its nested function's"
+    function inner
+      input Real a;
+      output Real b;
+    algorithm
+      b := a;
+      annotation (experiment(StopTime=666));
+    end inner;
+    Real y = inner(1);
+    annotation (experiment(StopTime=31));
+  end WithFn;
+  model AfterCall "a function partial application declares no class"
+    Real y = solve(function Fn(a=1), 0, 1);
+    annotation (experiment(StopTime=32));
+  end AfterCall;
+  model Last
+    Real x;
+    annotation (experiment(StopTime=33));
+  end Last;
+end Kinds;
+"""
+
+OWN_FUNCTION = """\
+within RodLib;
+function Own "a function in its own file"
+  input Real a;
+  output Real b;
+algorithm
+  b := 2*a;
+end Own;
+"""
+
+
+@pytest.fixture
+def kindlib(rodlib) -> Path:
+    lib = rodlib.parent.parent / "RodLib"
+    (lib / "Kinds.mo").write_text(KINDS, encoding="utf-8")
+    (lib / "Own.mo").write_text(OWN_FUNCTION, encoding="utf-8")
+    return rodlib
+
+
+class TestSpecAddSaysWhatAClassIs:
+    """`spec add` of a class that is no model said "is no class of the
+    library", which was false: it says what the class is. A partial model
+    is refused too — no run can simulate it."""
+
+    @pytest.mark.parametrize(
+        ("model_id", "said"),
+        [
+            (
+                "RodLib",
+                "RodLib is the library itself, not a model: name one of its "
+                "models; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.Fn",
+                "RodLib.Kinds.Fn is a function, not a model: no run can "
+                "simulate it; nothing was added.",
+            ),
+            (
+                "RodLib.Own",
+                "RodLib.Own is a function, not a model: no run can simulate "
+                "it; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.Rec",
+                "RodLib.Kinds.Rec is a record, not a model: no run can "
+                "simulate it; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.Port",
+                "RodLib.Kinds.Port is a connector, not a model: no run can "
+                "simulate it; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.RealIn",
+                "RodLib.Kinds.RealIn is a connector, not a model: no run can "
+                "simulate it; nothing was added.",
+            ),
+            (
+                "RodLib.Kinds.Base",
+                "RodLib.Kinds.Base is a partial model: no run can simulate "
+                "it; nothing was added.",
+            ),
+        ],
+    )
+    def test_it_is_refused_with_what_it_is(self, kindlib, capsys, model_id, said):
+        spec = kindlib.with_name("test_spec.json")
+        before = spec.read_bytes()
+        assert main(["--config", str(kindlib), "spec", "add", model_id]) == 1
+        out, err = capsys.readouterr()
+        assert (out, err) == ("", said + "\n")
+        assert spec.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        ("model_id", "stop_time"),
+        [
+            ("RodLib.Kinds.WithFn", 31),
+            ("RodLib.Kinds.AfterCall", 32),
+            ("RodLib.Kinds.Last", 33),
+        ],
+    )
+    def test_a_model_among_them_is_found_with_its_own_annotation(
+        self, kindlib, model_id, stop_time
+    ):
+        found = find_class(kindlib.parent.parent / "RodLib", "RodLib", model_id)
+        assert found is not None and found.kind == "model" and not found.partial
+        assert found.experiment.stop_time == stop_time
+        assert main(["--config", str(kindlib), "spec", "add", model_id]) == 0

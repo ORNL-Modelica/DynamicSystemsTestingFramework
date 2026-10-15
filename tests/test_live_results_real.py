@@ -58,12 +58,10 @@ end LiveLib;
 
 
 def _dymola_available() -> bool:
-    from dstf.backends.dymola.interface_loader import find_dymola_interface_archive
+    from dstf.backends.dymola.backend import DymolaBackend
 
-    return (
-        shutil.which("dymola") is not None
-        and find_dymola_interface_archive(None) is not None
-    )
+    # The executable and its Python interface, as a run finds them.
+    return DymolaBackend.locate({}).complete
 
 
 def _ompython_available() -> bool:

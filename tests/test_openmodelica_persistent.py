@@ -115,7 +115,7 @@ def _synth_record_text(rec: dict) -> str:
 def _make_test(**overrides) -> TestModel:
     defaults: dict[str, Any] = dict(
         model_id="Demo.Example.A",
-        source_file=Path(""),
+        source_file=None,
         source_package="Demo.Example",
         short_name="A",
         n_vars=0,
@@ -138,6 +138,15 @@ def _make_config(tmp_path: Path, **overrides) -> Config:
     )
     defaults.update(overrides)
     return Config(**defaults)
+
+
+def _omc(tmp_path: Path) -> str:
+    """An omc that is there, for a test of what comes AFTER it is found: a
+    run on a machine without one stops at "OpenModelica not found"."""
+    omc = tmp_path / "omc-home" / "bin" / "omc"
+    omc.parent.mkdir(parents=True, exist_ok=True)
+    omc.write_text("#!/bin/sh\n")
+    return str(omc)
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +806,9 @@ class TestCLISelectionWiring:
         )
         from dstf.cli import run_cmds as cli_mod
 
-        cfg = _make_config(tmp_path, dependencies=["Modelica"])
+        cfg = _make_config(
+            tmp_path, dependencies=["Modelica"], backend_path=_omc(tmp_path)
+        )
         # Stub load_omc_session so the import path resolves without OMPython.
         monkeypatch.setattr(
             "dstf.backends.openmodelica.session_loader.load_omc_session",
@@ -816,7 +827,9 @@ class TestCLISelectionWiring:
         error and exits 1 (no silent fallback to batch)."""
         from dstf.cli import run_cmds as cli_mod
 
-        cfg = _make_config(tmp_path, dependencies=["Modelica"])
+        cfg = _make_config(
+            tmp_path, dependencies=["Modelica"], backend_path=_omc(tmp_path)
+        )
 
         def _raise():
             raise RuntimeError("OMPython is not installed.")
@@ -830,6 +843,7 @@ class TestCLISelectionWiring:
         assert excinfo.value.code == 1
         stderr = capsys.readouterr().err
         assert "Persistent-worker OpenModelica unavailable" in stderr
+        assert "OMPython is not installed." in stderr
         assert "Aborting" in stderr
         assert "--batch" in stderr
 
@@ -942,7 +956,7 @@ class TestPersistentIntegration:
         try:
             test = TestModel(
                 model_id="Modelica.Blocks.Examples.PID_Controller",
-                source_file=Path(""),
+                source_file=None,
                 source_package="Modelica.Blocks.Examples",
                 short_name="PID_Controller",
                 n_vars=0,
@@ -987,7 +1001,7 @@ def _write_stub_mat(path: Path, *, stop_time: float) -> None:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Finding 26 — the persistent OM worker honors the configured omc path by
 # exporting OPENMODELICAHOME from it, and leaves the environment alone when
@@ -1033,7 +1047,11 @@ class TestOmPersistentOmcPath:
         omc = om_home / "bin" / "omc"
         omc.parent.mkdir(parents=True)
         omc.write_text("#!/bin/sh\n")
-        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+        # Set, then unset: `delenv` alone records nothing to undo for a
+        # variable that was not there, and what `start` exports would stay
+        # in the process — where every later `locate` reads it.
+        monkeypatch.setenv("OPENMODELICAHOME", "")
+        monkeypatch.delenv("OPENMODELICAHOME")
 
         worker = self._worker(tmp_path, str(omc))
         worker.start()

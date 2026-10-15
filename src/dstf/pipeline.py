@@ -43,15 +43,17 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RunOutcome:
-    """What one pipeline run produced.
+    """What :func:`run_pipeline` produced.
 
-    ``results`` is keyed by exactly the models in ``scope_tests`` — with
-    ``merge`` that is wider than the tests just simulated, because the
-    out-of-scope entries are read back from the previous runs' files, and
-    never wider than the scope, whatever else the work dir's manifest holds
-    from earlier runs. Every result carries its run verdict
-    (``Backend.read_results``): a merged-in test whose last run failed or
-    timed out is ``success=False`` here exactly as ``compare`` reports it.
+    Attributes:
+        manifests: The batch manifests the run wrote.
+        results: Each test's result, by model: exactly the tests of
+            ``scope_tests``. A test whose last run failed or timed out has
+            ``success=False``, as ``compare`` reports it.
+        scope_tests: The tests run or, with ``merge``, read back.
+        notices: Lines for the caller to show.
+        report_pages_removed: How many per-test report pages the run removed as
+            out of date.
     """
 
     manifests: list[BatchManifest]
@@ -200,20 +202,32 @@ def run_pipeline(
     merge: bool = False,
     candidates: list | None = None,
 ) -> RunOutcome:
-    """Simulate *tests* and read their results back.
+    """Run tests and read their results back: ``dstf run`` without the
+    command line.
 
-    *backend* and *store* come from the caller rather than being built here:
-    the CLI already needs the backend before the run (``--rerun`` reads the
-    last results through it) and the authoring session holds both.
+    It writes what the command does — the results and the live dashboard in
+    the work directory — but opens no browser, asks nothing and never ends
+    the process: a failure is an exception, for the caller to report. The
+    backend's progress lines are silenced by setting ``backend.quiet``. It does
+    not score: the commands that score (``dstf run``, ``dstf compare``) write
+    each test's verdict to ``verdicts.json`` in the work directory.
 
-    *merge* widens the read/compare scope to every model the returned batch
-    manifests know about, not just what ran this call — the incremental-rerun
-    story. *candidates* is the population that widening draws from, in its own
-    order (the CLI passes every discovered test); without it the scope can
-    only be *tests*.
+    Args:
+        config: The project's configuration.
+        tests: The tests to run, as discovery returns them.
+        backend: The backend to run them with, built for ``config``.
+        store: The project's stored baselines.
+        merge: Read back, besides ``tests``, every test the work directory's
+            earlier runs recorded, as ``run --merge`` does.
+        candidates: The tests that widening may draw from, in their order;
+            without it, only ``tests``.
 
-    Raises whatever the backend raises. An empty *tests* is not an error here:
-    whether "nothing to run" is a failure is the caller's policy.
+    Returns:
+        The run's manifests, the tests in scope and their results.
+
+    Raises:
+        Exception: Whatever the backend raises when it cannot run. An empty
+            ``tests`` is not an error.
     """
     if not tests:
         return RunOutcome(manifests=[], results={}, scope_tests=[], notices=[])
@@ -245,9 +259,9 @@ def run_pipeline(
     # live progress as tests register. The first ProgressReporter.register
     # call overwrites this initial empty page. Idempotent: the CLI renders
     # it a moment earlier too, before opening a browser tab on it.
-    from .reporting.dashboard_render import build_rerun_prefix, render_live
+    from .reporting.dashboard_render import build_rerun_flags, render_live
 
-    render_live(work_dir, rerun_prefix=build_rerun_prefix(config), theme=config.theme)
+    render_live(work_dir, rerun_flags=build_rerun_flags(config), theme=config.theme)
 
     manifests = backend.run_tests(tests)
 
@@ -351,7 +365,7 @@ class ItemRun:
         ran (removed, or failed before a worker started) have no row. The
         caller renders the final page (``render_final``) as after a run."""
         from .backends.progress import DONE_PHASE, ProgressReporter, TestStatus
-        from .reporting.dashboard_render import build_rerun_prefix
+        from .reporting.dashboard_render import build_rerun_flags, run_given
 
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
@@ -390,9 +404,10 @@ class ItemRun:
         progress = ProgressReporter(
             work_dir,
             len(rows),
-            rerun_prefix=build_rerun_prefix(self.config),
+            rerun_flags=build_rerun_flags(self.config),
             metadata=self.backend._build_run_metadata(**self.backend.run_versions()),
             theme=self.config.theme,
+            run_given=run_given(self.config),
         )
         # The wall time of the items reported: from the first one's start
         # to the last one's end.

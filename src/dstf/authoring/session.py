@@ -26,7 +26,7 @@ from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.common.result_variables import tracked_results
 from ..backends.pool import ItemState, QueueItem, Refused, StartingWorker
-from ..backends.progress import recorded_backend
+from ..backends.progress import recorded_backend, refuse_unregistered
 from ..backends.types import (
     DatasetType,
     TestResult,
@@ -60,6 +60,7 @@ from ..discovery.spec_update import (
     implicit_tree_op,
     is_literal_variable,
     needs_materialization,
+    not_stored_notes,
     unknown_override_modes,
     validate_entry_keys,
     validate_entry_metric_tree,
@@ -375,6 +376,7 @@ def resolve_project(
         assert config.work_dir is not None  # resolved in __post_init__
         recorded, warning = recorded_backend(config.work_dir)
         if recorded and recorded != config.backend_name:
+            refuse_unregistered(recorded, config.work_dir)
             config = Config(
                 config_file=config_path, backend_name=recorded, work_dir=work_dir
             )
@@ -848,7 +850,7 @@ class Session:
     def rescore(self, model_id: str) -> TestComparison:
         """Score ``model_id`` against the spec with pending ops applied. A
         flat-override test first gets the same ``add /metrics`` op
-        ``spec-update`` prepends, so the document the tool edits and the one
+        ``spec update`` prepends, so the document the tool edits and the one
         it saves never differ in shape — but only when that tree scores
         exactly what the flat path scored (Conventions #7); otherwise the
         test is scored as loaded and nothing is staged. That op does not
@@ -1085,6 +1087,15 @@ class Session:
         if result is not None and test is not None:
             result = replace(result, variables=tracked_results(test, result))
         return tracked_names(scored, result)
+
+    def not_stored_notes(self, model_id: str) -> list[str]:
+        """A sentence per baseline the test's entry, as staged, names that
+        this folder stores none of (:func:`~dstf.discovery.spec_update.
+        not_stored_notes`): `stage` took it — a soft check of another
+        folder — and the pending preview says it is not scored here, as
+        ``spec update`` prints it."""
+        project = self._require_project()
+        return not_stored_notes(self.spec.entry(model_id), model_id, project.store)
 
     def variable_texts(self, model_id: str) -> dict[str, VariableText]:
         """``{name: VariableText}`` for this test — both readings of every
@@ -1790,7 +1801,7 @@ class Session:
         return out
 
     def save(self) -> None:
-        """Apply exactly the pending ops through ``spec-update``'s
+        """Apply exactly the pending ops through ``spec update``'s
         read-modify-write, then reload. Refuses when the file changed on
         disk since it was loaded, and when the edits leave a criterion that
         can never be scored (`UnscorableSaveError`: `stage` took it, for its
@@ -2265,7 +2276,7 @@ class Session:
                 # class it reads results through — and silenced: the tool's
                 # process never narrates a run to the console it was
                 # started from.
-                backend = select_backend(project.config, persistent=True)
+                backend = select_backend(project.config, persistent=True, to_run=True)
                 backend.quiet = True
                 self._pool = open_pool(
                     project.config,

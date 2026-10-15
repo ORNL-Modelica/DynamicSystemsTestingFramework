@@ -528,6 +528,32 @@ async def test_the_note_counts_the_criteria_the_tree_writes_out(tmp_path):
         )
 
 
+async def test_the_drawer_says_a_soft_check_this_folder_does_not_store(shell):
+    """A warn naming a soft check this folder does not hold is staged (one
+    of another folder) and the preview says it in `spec update`'s line."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
+            {
+                "combinator": "warn",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "against": "experiment"}
+                ],
+            },
+        ],
+    }
+    folder = shell.session.project.store.folder
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _open_drawer(user)
+        shell.session.stage([PatchOp(A, "add", "/metrics", tree)])
+        await user.should_see(marker="drawer-not-stored", retries=20)
+        assert _one(user, "drawer-not-stored").text == (
+            f"'experiment' is not stored for {folder}: it is not scored here"
+        )
+
+
 async def test_a_new_entrys_note_says_it_is_new(tmp_path):
     """D is scanned but the spec file has no entry for it: its first
     per-leaf edit creates the entry with its tree written out, and the diff
@@ -1227,7 +1253,7 @@ def test_the_app_runs_the_shells_shutdown(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod.ui, "run", lambda *a, **k: None)
     monkeypatch.setattr(app_mod.Shell, "mount", lambda self: None)
     cfg, work = _project(tmp_path)
-    app_mod.run_app(cfg, work_dir=work, show=False)
+    app_mod.run_app(cfg, port=8091, work_dir=work, show=False)
     (handler,) = handlers
     assert handler.__func__ is Shell.shutdown
 
@@ -1307,7 +1333,7 @@ def _with_alt_backend(cfg) -> None:
     observable — a new Config, the select's new value — without a second
     simulator on this machine."""
     data = json.loads(cfg.read_text(encoding="utf-8"))
-    data["backends"]["Python (alt)"] = ["python3", "python"]
+    data["backends"]["Python (alt)"] = {"executables": ["python3", "python"]}
     cfg.write_text(json.dumps(data), encoding="utf-8")
 
 

@@ -32,13 +32,23 @@ _EPS = 100 * np.finfo(np.float64).eps
 
 @dataclass
 class VariableComparison:
-    """Comparison result for a single tracked variable.
+    """A criterion's verdict on one variable, as a mode's
+    :meth:`~dstf.comparison.modes.ComparisonMode.compare` returns it.
 
-    Conforms to the ``MetricResult`` contract in docs/extensibility.md:
-    carries a ``passed`` flag, a numeric score (``nrmse`` for NRMSE mode,
-    ``tube_points_inside`` for tube mode), and a structured ``diagnostics``
-    bag for metric-specific extras (e.g. event-timing deltas, spectral
-    peaks) that future metrics may attach without widening the schema.
+    Attributes:
+        index: Set by the framework; 0 from a mode.
+        name: Set by the framework; ``""`` from a mode.
+        passed: Whether the criterion passes.
+        nrmse: The mode's score, which a weighted group sums.
+        rmse: The root-mean-square error, where the mode has one.
+        signal_range: The baseline's range.
+        max_abs_error: The largest difference from the baseline.
+        max_abs_error_time: Where it is, in seconds.
+        reference_final: The baseline's final value.
+        actual_final: The run's final value.
+        mode: The mode's name.
+        diagnostics: What else the report shows; ``"error"`` holds why the
+            criterion could not be scored.
     """
 
     index: int

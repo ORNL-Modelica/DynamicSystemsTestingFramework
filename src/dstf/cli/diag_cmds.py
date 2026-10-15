@@ -1,9 +1,10 @@
-"""Query and diagnostic commands: discover, export, manifest, check-*."""
+"""Query and diagnostic commands: `discover`, `baseline export`, the
+`manifest` group, `check`."""
 
 import argparse
 from pathlib import Path
 
-from ..config import Config
+from ..config import Config, ConfigError, NoProject
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
 from ..pipeline import write_id_mapping
@@ -75,87 +76,119 @@ def cmd_discover(args: argparse.Namespace) -> int:
     for source, count in sorted(by_source.items()):
         print(f"  Source '{source}': {count}")
 
+    # A test whose tree is wrong in its FILE is listed, and refused where it
+    # is scored (`broken_roles`): say so here, in the refusal's own words,
+    # before a run finds out. The exit code says only that tests were found.
+    from ..comparison.comparator import broken_roles
+
+    refused = [(t.model_id, b) for t in tests if (b := broken_roles(t)) is not None]
+    if refused:
+        print()
+    for model_id, sentence in refused:
+        print(f"{model_id} will not be scored: {sentence}")
+
     return 0
 
 
-def cmd_export(args: argparse.Namespace) -> int:
-    """Export reference data."""
+#: `baseline export --format`: each format and the file it is written to
+#: in the work dir when no --output names one. The first is the default.
+EXPORT_FILES = {"json": "references.json", "csv": "references.csv"}
+
+
+def cmd_baseline_export(args: argparse.Namespace) -> int:
+    """Write every stored baseline of the partition to one file."""
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-
+    assert config.work_dir is not None  # resolved in Config.__post_init__
     # review 2026-07-06 finding 60: --output arrives as a string — coerce to
     # Path (the ReferenceStore export APIs call .parent on it).
+    out = (
+        Path(args.output)
+        if args.output is not None
+        else config.work_dir / EXPORT_FILES[args.format]
+    )
     if args.format == "csv":
-        out = Path(args.output) if args.output else (config.work_dir / "references.csv")
         store.export_csv(out)
-        print(f"Exported to {out}")
     else:
-        out = (
-            Path(args.output) if args.output else (config.work_dir / "references.json")
-        )
         store.export_json(out)
-        print(f"Exported to {out}")
-
+    print(f"Exported to {out}")
     return 0
 
 
-def cmd_manifest(args: argparse.Namespace) -> int:
-    """Show and manage test references."""
+def cmd_manifest_show(args: argparse.Namespace) -> int:
+    """List the partition's references and the status of each."""
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-    action = args.action
+    all_tests = store.index.all_tests()
+    active = {tid: e for tid, e in all_tests.items() if e["status"] != "obsolete"}
+    obsolete = {tid: e for tid, e in all_tests.items() if e["status"] == "obsolete"}
+    skipped = {tid: e for tid, e in all_tests.items() if e["status"] == "skip"}
 
-    if action == "show":
-        all_tests = store.index.all_tests()
-        active = {tid: e for tid, e in all_tests.items() if e["status"] != "obsolete"}
-        obsolete = {tid: e for tid, e in all_tests.items() if e["status"] == "obsolete"}
-        skipped = {tid: e for tid, e in all_tests.items() if e["status"] == "skip"}
+    print(f"References: {config.reference_dir}")
+    print(f"Active: {len(active)}  Skip: {len(skipped)}  Obsolete: {len(obsolete)}\n")
 
-        print(f"References: {config.reference_dir}")
-        print(
-            f"Active: {len(active)}  Skip: {len(skipped)}  Obsolete: {len(obsolete)}\n"
-        )
+    if active:
+        print(f"{'ID':>6}  {'Status':<10}  {'Model ID'}")
+        print("-" * 90)
+        for tid in sorted(active):
+            entry = active[tid]
+            print(f"{tid:>6}  {entry['status']:<10}  {entry['model_id']}")
 
-        if active:
-            print(f"{'ID':>6}  {'Status':<10}  {'Model ID'}")
-            print("-" * 90)
-            for tid in sorted(active):
-                entry = active[tid]
-                print(f"{tid:>6}  {entry['status']:<10}  {entry['model_id']}")
+    if skipped:
+        print("\nSkipped:")
+        for tid in sorted(skipped):
+            print(f"{tid:>6}  {skipped[tid]['model_id']}")
 
-        if skipped:
-            print("\nSkipped:")
-            for tid in sorted(skipped):
-                print(f"{tid:>6}  {skipped[tid]['model_id']}")
+    if obsolete and args.show_obsolete:
+        print("\nObsolete:")
+        for tid in sorted(obsolete):
+            print(f"{tid:>6}  {obsolete[tid]['model_id']}")
 
-        if obsolete and args.show_obsolete:
-            print("\nObsolete:")
-            for tid in sorted(obsolete):
-                print(f"{tid:>6}  {obsolete[tid]['model_id']}")
+    return 0
 
-        return 0
 
-    elif action == "dump":
+def cmd_manifest_dump(args: argparse.Namespace) -> int:
+    """Write the ref ID → model ID mapping to the work directory."""
+    config = _build_config(args)
+    from ..storage.reference_store import ReferenceStore
+
+    store = ReferenceStore(config)
+    assert config.work_dir is not None  # resolved in Config.__post_init__
+    written = config.work_dir / "reference_manifest.json"
+    try:
         write_id_mapping(store, config)
-        mapping_path = config.work_dir / "reference_manifest.json"
-        print(f"Written to {mapping_path}")
-        return 0
+    except OSError as e:
+        # A work dir this user may not write: the sentence, not a traceback.
+        raise ConfigError(f"{written} cannot be written: {e.strerror}") from e
+    print(f"Written to {written}")
+    return 0
 
-    elif action == "cleanup":
-        # Dry-run is the universal default for destructive paths: `cleanup`
-        # lists what it would remove and exits 0 unless --apply is given.
-        # The --orphans path always worked this way; the obsolete-reference
-        # path used to delete on sight.
-        apply = getattr(args, "apply", False)
-        if getattr(args, "orphans", False):
-            return _cleanup_orphans(config, apply=apply)
-        return _cleanup_obsolete(store, apply=apply)
 
-    return 1
+def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
+    """List what a cleanup would remove, or — ``--apply`` — remove it.
+
+    Dry-run is the universal default for destructive paths: ``cleanup``
+    lists what it would remove and exits 0 unless ``--apply`` is given. The
+    ``--orphans`` path always worked this way; the obsolete-reference path
+    used to delete on sight.
+    """
+    config = _build_config(args)
+    if args.orphans:
+        # What --orphans reads, named on the line: one that is not there
+        # would read as "no orphans" of a spec or work dir never looked at.
+        spec, work = config.test_spec_file, config.work_dir
+        if args.test_spec is not None and spec is not None and not spec.is_file():
+            raise ConfigError(f"--test-spec {spec}: no such file")
+        if args.work_dir is not None and work is not None and not work.is_dir():
+            raise ConfigError(f"--work-dir {work}: no such directory")
+        return _cleanup_orphans(config, apply=args.apply)
+    from ..storage.reference_store import ReferenceStore
+
+    return _cleanup_obsolete(ReferenceStore(config), apply=args.apply)
 
 
 def _cleanup_obsolete(store, apply: bool) -> int:
@@ -244,107 +277,152 @@ def _cleanup_orphans(config, apply: bool) -> int:
     return 0
 
 
-def cmd_check_dymola(args: argparse.Namespace) -> int:
-    """Diagnose discovery of Dymola's Python interface."""
-    from ..backends.dymola.interface_loader import describe_dymola_interface
+def _check_entries(config: Config | None) -> list[tuple[str, dict]]:
+    """What `dstf check` lists, each with its settings block: the entries
+    of the project's `backends` map, in the order written, then every
+    registered backend the project has no entry of (the search alone)."""
+    from ..backends import backend_family, backend_names
 
-    override = (
-        Path(args.dymola_interface) if getattr(args, "dymola_interface", None) else None
+    entries = (
+        [(name, dict(block)) for name, block in config.backends.items()]
+        if config
+        else []
     )
-    info = describe_dymola_interface(override)
-
-    print("Dymola Python interface diagnostic")
-    print("==================================")
-    print(f"  Archive found:   {info['archive'] or '(none)'}")
-    if info["format"]:
-        print(f"  Format:          .{info['format']}")
-    print(f"  sys.path entry:  {info['sys_path_entry'] or '(none)'}")
-    print(f"  import ok:       {info['import_ok']}")
-    if info.get("dymola_interface_module"):
-        print(f"  Module:          {info['dymola_interface_module']}")
-    if info["error"]:
-        print(f"  Error:           {info['error']}")
-    print()
-    print("Searched roots:")
-    for r in info["search_roots"]:
-        print(f"  - {r}")
-    if info["discovered_dirs"]:
-        print("Discovered install dirs (newest first):")
-        for d in info["discovered_dirs"]:
-            print(f"  - {d}")
-
-    if info["import_ok"]:
-        print("\nOK — ready to use the Dymola Python interface.")
-        return 0
-    print("\nFAIL — fix one of:")
-    print("  1. Pass --dymola-interface <path>")
-    print("  2. Set DYMOLA_INTERFACE_PATH env var")
-    return 1
+    selected = config.backend_name if config else None
+    if selected and selected not in dict(entries) and config is not None:
+        entries.append((selected, dict(config.backend_settings)))
+    listed = {backend_family(name) for name, _ in entries}
+    entries.extend((name, {}) for name in backend_names() if name not in listed)
+    return entries
 
 
-def cmd_check_openmodelica(args: argparse.Namespace) -> int:
-    """Diagnose OMPython availability + the `omc` binary."""
-    import shutil as _shutil
+def _check_target(named: str, entries: list[tuple[str, dict]], selected: str) -> str:
+    """The one of ``entries`` that `dstf check <named>` diagnoses: the
+    entry of that name; else, for a backend's name, its entry the project
+    runs with, or its first written. A name that is neither — it starts
+    with a backend's, or the parser had refused it — is a config error
+    that lists both."""
+    from ..backends import backend_family, backend_names
 
-    from ..backends.openmodelica.session_loader import describe_om_session
-
-    info = describe_om_session()
-    omc_path = _shutil.which("omc")
-
-    print("OpenModelica diagnostic")
-    print("=======================")
-    print(f"  OMPython installed: {info['ompython_installed']}")
-    print(f"  OMPython version:   {info['version'] or '(unknown)'}")
-    print(f"  Import ok:          {info['import_ok']}")
-    if info["error"]:
-        print(f"  Error:              {info['error']}")
-    print(f"  omc binary:         {omc_path or '(not on PATH)'}")
-
-    ok = info["import_ok"] and bool(omc_path)
-    if ok:
-        print("\nOK — persistent-worker OpenModelica is ready.")
-        return 0
-    print("\nFAIL — fix one of:")
-    if not info["import_ok"]:
-        print("  - Install OMPython:   uv sync --extra om --locked --inexact")
-        print("                          (or reinstall dstf with the [om] extra)")
-    if not omc_path:
-        print("  - Install OpenModelica and ensure `omc` is on PATH")
-    print(
-        "Or run with --batch to use the omc-script fallback (still needs omc on PATH)."
+    names = [name for name, _ in entries]
+    if named in names:
+        return named
+    of_backend = [name for name in names if backend_family(name) == named]
+    if named in backend_names() and of_backend:
+        return selected if selected in of_backend else of_backend[0]
+    written = [name for name in names if name not in backend_names()]
+    listed = f" ({', '.join(written)})" if written else ""
+    raise ConfigError(
+        f'check: "{named}" is no entry of backends{listed} and no backend\'s '
+        f"name ({', '.join(backend_names())})"
     )
-    return 1
 
 
-def cmd_check_julia(args: argparse.Namespace) -> int:
-    """Diagnose the `julia` binary on PATH."""
-    import shutil as _shutil
-    import subprocess as _subprocess
+def cmd_check(args: argparse.Namespace) -> int:
+    """Say where each backend is on this machine and by which rule it was
+    found, then diagnose one: the entry or backend named, else the one the
+    project selects. Exit 0 iff that one is usable."""
+    from ..backends import backend_class, backend_family
+    from ..config import _pick_backend
+    from ..config_shape import default
 
-    julia_path = _shutil.which("julia")
-    print("Julia diagnostic")
-    print("================")
-    print(f"  julia binary: {julia_path or '(not on PATH)'}")
-    if not julia_path:
-        print(
-            "\nFAIL — install Julia from https://julialang.org/downloads/ "
-            "(or via `juliaup`)."
+    # The reference root is read here only to look for testing.json in it
+    # (and not at all beside --config: `cli.parser.UNREAD`). One that is
+    # not there holds none, and the search would go on as if it had not
+    # been given.
+    root = args.reference_root
+    if root is not None and not Path(root).is_dir():
+        raise ConfigError(
+            f"--reference-root {root}: no such directory (check reads it "
+            "only to look for testing.json in it)"
         )
-        return 1
     try:
-        out = _subprocess.run(
-            [julia_path, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
+        config: Config | None = _build_config(args)
+    except NoProject:
+        # No testing.json and no library here: nothing to read. The
+        # backends are still where they are.
+        config = None
+
+    if config is None:
+        project = "no testing.json here: the search alone"
+        # As a project with an empty testing.json would be read.
+        selected, _ = _pick_backend({}, default("source_type"))
+    else:
+        project = (
+            f"testing.json: {config.config_found}"
+            if config.config_found is not None
+            else f"no testing.json: {config.library_name} on defaults"
         )
-        print(f"  version:      {out.stdout.strip() or '(no output)'}")
-    except Exception as exc:  # noqa: BLE001
-        print(f"  version probe failed: {exc}")
-        return 1
-    print("\nOK — julia is invocable.")
-    print(
-        "Note: first run on a project pays a multi-minute MTK / OrdinaryDiffEq "
-        "JIT compile (subsequent runs hit the cache)."
+        assert config.backend_name is not None  # resolved in __post_init__
+        selected = config.backend_name
+    entries = _check_entries(config)
+    # An entry of the project's map says its settings; any other is searched for.
+    in_config = set(config.backends) if config is not None else set()
+    # Every name listed is a backend's or starts with one (`Config`).
+    classes = {
+        name: cls
+        for name, _ in entries
+        if (cls := backend_class(backend_family(name))) is not None
+    }
+    located = {name: classes[name].locate(block) for name, block in entries}
+
+    if args.check_backend is None:
+        print(f"Backends ({project})")
+        # An entry by its name, with the backend it is of where that is
+        # not its name: `Dymola 2025 [Dymola]`.
+        labels = {
+            name: name
+            if backend_family(name) == name
+            else f"{name} [{backend_family(name)}]"
+            for name, _ in entries
+        }
+        width = max(len(label) for label in labels.values())
+        for name, _ in entries:
+            found = located[name]
+            if not found.found:
+                state = f"not found  {found.parts[0].detail}"
+            else:
+                first = found.parts[0]
+                assert first.rule is not None  # a found part names its rule
+                rule = first.rule.said(name if name in in_config else "")
+                state = f"found      {first.path}  ({rule})"
+            mark = "*" if name == selected else " "
+            print(f"  {mark} {labels[name]:<{width}}  {state}")
+        print(
+            "  * the backend this project runs with"
+            if config is not None
+            else "  * the backend a Modelica project with no testing.json runs with"
+        )
+        if config is not None and config.passed_over:
+            print(f"  {config.passed_over}")
+        print()
+        target = selected
+    else:
+        target = _check_target(args.check_backend, entries, selected)
+
+    diagnosis = classes[target].diagnose(
+        located[target], entry=target if target in in_config else "", config=config
     )
-    return 0
+    print(target)
+    for line in diagnosis.lines:
+        print(line)
+    if diagnosis.usable:
+        print(f"\nOK — {target} is ready.")
+        return 0
+    print(f"\nFAIL — {target} is not ready. Fix one of:")
+    fixes = diagnosis.fixes or _default_fixes(target, classes[target])
+    for i, fix in enumerate(fixes, start=1):
+        print(f"  {i}. {fix}")
+    return 1
+
+
+def _default_fixes(name: str, cls) -> tuple[str, ...]:
+    """What to do about a backend that says no more than that a part of it
+    was not found: install it — or, where its block takes ``executables``,
+    say where it is."""
+    if "executables" not in cls.settings:
+        return (f"Install {name}",)
+    return (
+        f'Install {name}, or set "executables" in its block of testing.json\'s '
+        '"backends" to where it is',
+    )

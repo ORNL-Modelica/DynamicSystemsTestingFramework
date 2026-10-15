@@ -330,7 +330,7 @@ class TestBatchDymolaRecordsVerdicts:
 
     def test_pooled_batches_record_every_verdict(self, tmp_path, monkeypatch):
         """The parallel path lands results through a different call site."""
-        cfg = _config(tmp_path, parallel=3, batch_size=1)
+        cfg = _config(tmp_path, parallel=3, backends={"Dymola": {"batch_size": 1}})
         backend = _dymola_backend(cfg, monkeypatch)
 
         backend.run_tests([_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.C")])
@@ -377,7 +377,7 @@ class TestBatchDymolaRecordsVerdicts:
         abort would skip."""
         from dstf.backends.dymola.backend import DymolaBackend
 
-        cfg = _config(tmp_path, parallel=1, batch_size=1)
+        cfg = _config(tmp_path, parallel=1, backends={"Dymola": {"batch_size": 1}})
         seen: list[dict] = []
 
         def _observing(self, batch, *a, **k):

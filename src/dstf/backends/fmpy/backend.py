@@ -5,8 +5,9 @@ Consumes prebuilt FMUs via the FMPy Python library. Produces the same
 comparator, storage, and reporting layers work unchanged.
 
 Simulation flow per test (``run_single_test``):
-  1. Resolve the FMU path from ``test.source_file`` (spec_parser puts it
-     there when the spec entry has a ``"source"`` field).
+  1. Take the FMU path from ``test.source_file`` (spec_parser puts it
+     there when the spec entry has a ``"source"`` field). No ``source`` is
+     no FMU: nothing names one after the model, as Python and Julia do.
   2. Read the model description to discover scalar variables.
   3. Resolve ``test.variable_patterns`` against the declared names.
   4. Call ``fmpy.simulate_fmu`` with the resolved settings.
@@ -39,18 +40,23 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from ...config import Config
+from ...config_shape import Setting
 from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
 from .. import register
-from ..base import Backend
+from ..base import Backend, Diagnosis
 from ..common import result_files
 from ..common.result_variables import criterion_variables
+from ..locate import SEARCH, Found, Located, Rule
 from ..types import (
     Capability,
     DatasetType,
@@ -74,6 +80,19 @@ _SOLVER_MAP = {
 }
 
 
+#: What FMPy's one part is called in a ``Located``.
+PACKAGE = "fmpy package"
+
+
+#: Held while a model description is read. fmpy validates it against the
+#: FMI schema, which it builds anew for each read (`lxml.etree.XMLSchema`),
+#: and libxml2 cannot build a schema from two threads at once: under `run
+#: --parallel 2` every test failed with `XMLSchemaParseError` ("the given
+#: type is not a built-in type", "Document is not valid XML Schema"). The
+#: read is milliseconds; the simulations stay side by side.
+_MODEL_DESCRIPTION_LOCK = threading.Lock()
+
+
 @register("FMPy")
 class FmpyBackend(Backend):
     """Runs FMU simulations using the FMPy Python library.
@@ -92,6 +111,10 @@ class FmpyBackend(Backend):
     #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
     capabilities: frozenset[Capability] = frozenset()
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
+    #: None: FMPy is a Python library, with no program to name.
+    settings: Mapping[str, Setting] = {}
+    source_types = frozenset({"fmu"})
+    source_suffix = ".fmu"
     artifact_files = (("result.npz", "Result file"),)
 
     #: Filename used for the on-disk structured-array cache per test.
@@ -114,6 +137,55 @@ class FmpyBackend(Backend):
                 "  source checkout:  uv sync --extra fmpy --locked --inexact\n"
                 "  installed tool:   reinstall with the [fmpy] extra"
             ) from exc
+
+    @classmethod
+    def locate(cls, settings: Mapping[str, Any]) -> Located:
+        """The ``fmpy`` package of the Python running this tool: FMPy has
+        no executable, and is found iff it can be imported."""
+        import importlib.metadata
+        import importlib.util
+
+        spec = importlib.util.find_spec("fmpy")
+        if spec is None or spec.origin is None:
+            return Located(
+                (
+                    Found(
+                        PACKAGE,
+                        detail="this Python has no fmpy; install the [fmpy] extra",
+                    ),
+                )
+            )
+        try:
+            version = f"version {importlib.metadata.version('fmpy')}"
+        except importlib.metadata.PackageNotFoundError:
+            version = ""
+        return Located(
+            (
+                Found(
+                    PACKAGE,
+                    str(Path(spec.origin).parent),
+                    Rule(SEARCH, "this Python's packages"),
+                    version,
+                ),
+            )
+        )
+
+    @classmethod
+    def diagnose(
+        cls, located: Located, *, entry: str = "", config: Config | None = None
+    ) -> Diagnosis:
+        """The located package; not found, what to install — FMPy has no
+        program for a block to name."""
+        return Diagnosis(
+            tuple(located.lines(entry)),
+            located.complete,
+            ()
+            if located.complete
+            else (
+                "Install fmpy: reinstall dstf with the [fmpy] extra "
+                "(from a checkout: uv sync --extra fmpy --locked --inexact)",
+            ),
+        )
 
     def describe_tool_version(self) -> str | None:
         """The fmpy library version drives simulation, so it's the run's
@@ -139,8 +211,19 @@ class FmpyBackend(Backend):
     ) -> TestRunResult:
         import fmpy
 
-        fmu_path = _resolve_fmu_path(test)
-        if fmu_path is None or not fmu_path.exists():
+        fmu_path = test.source_file
+        if fmu_path is None:
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                error_message=(
+                    f"{test.model_id}: its test_spec.json entry names no FMU — "
+                    f"an FMPy test runs the .fmu its 'source' names, a path "
+                    f"relative to the spec file."
+                ),
+            )
+        if not fmu_path.exists():
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
@@ -167,7 +250,8 @@ class FmpyBackend(Backend):
         try:
             if self.progress:
                 self.progress.on_phase(test_key, "loading")
-            md = fmpy.read_model_description(str(fmu_path))
+            with _MODEL_DESCRIPTION_LOCK:
+                md = fmpy.read_model_description(str(fmu_path))
             available = _list_scalar_variables(md)
             requested = _tracked(
                 test,
@@ -367,16 +451,6 @@ class FmpyBackend(Backend):
 # ---------------------------------------------------------------------------
 # Helpers (free functions for testability)
 # ---------------------------------------------------------------------------
-
-
-def _resolve_fmu_path(test: TestModel) -> Path | None:
-    """Get the FMU binary path for a test.
-
-    spec_parser stores the resolved path in ``test.source_file`` when the
-    spec entry has a ``"source"`` field.
-    """
-    p = test.source_file
-    return p if p and str(p) else None
 
 
 def _list_scalar_variables(md) -> list[str]:

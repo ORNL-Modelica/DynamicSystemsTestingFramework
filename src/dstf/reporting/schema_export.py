@@ -1,4 +1,6 @@
-"""JSON-Schema export for ``test_spec.json`` (PHASE_6_PLAN 6.4.5).
+"""JSON-Schema export for ``test_spec.json`` (PHASE_6_PLAN 6.4.5) and for
+``testing.json`` (:func:`build_config_schema`, from the one table ``Config``
+reads the file by).
 
 Derives a JSON-Schema document from:
   * every registered metric's Config dataclass (reusing the 6.1.1
@@ -23,34 +25,25 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import re
 from typing import Any
 
-from ..comparison.mode_schema import derive_schema
+from ..comparison.mode_schema import column_help, derive_schema
 from ..comparison.modes import QUANTITY_KEYS
 from ..comparison.registry import (
     combinator_names,
+    metric,
     metric_names,
     metrics,
     unnamed_metrics,
 )
 from ..comparison.strict_keys import EVERY_METRIC, declares_quantity, row_fields
 from ..comparison.tree_spec import COMBINATOR_KIND_KEYS
+from ..config_shape import TESTING_JSON, schema_properties
 from ..discovery import spec_shape
+from ..discovery.spec_shape import SIDES as _SIDES
 
 _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
-
-#: A tolerance with two sides: one number (both sides), or exactly
-#: ``lower`` and ``upper`` — what :func:`~dstf.comparison.sides.parse_sides`
-#: takes. A pair with one side, or with a third key, is neither.
-_SIDES = [
-    {"type": "number"},
-    {
-        "type": "object",
-        "properties": {"lower": {"type": "number"}, "upper": {"type": "number"}},
-        "required": ["lower", "upper"],
-        "additionalProperties": False,
-    },
-]
 
 
 def _field_to_schema(field) -> dict:
@@ -132,41 +125,17 @@ def _leaf_identity_rule() -> dict:
 
 
 def _leaf_common_properties() -> dict[str, Any]:
-    """Leaf keys that co-reside with mode-specific knobs in the same object.
+    """Leaf keys that co-reside with mode-specific knobs in the same object
+    (``spec_shape.LEAF``), the metric's name closed to the registered ones.
 
     Shared between the leaf spec and every mode ``$def`` — the mode defs are
     ``$ref``'d from inside the leaf (if metric == <mode> then $ref), so they
-    describe the same flat object and must list these keys for editor/LLM
-    autocomplete (review 2026-07-06 finding 72).
+    describe the same flat object and must list these keys for editor
+    autocomplete.
     """
-    return {
-        "metric": {
-            "type": "string",
-            "enum": sorted(metric_names()),
-            "description": "The per-variable metric to score with.",
-        },
-        "variable": {
-            "type": "string",
-            "description": "Variable name as reported by the backend.",
-        },
-        "against": {
-            "type": "string",
-            "default": "primary",
-            "description": (
-                "Which baseline to score against — 'primary' or the name "
-                "of a registered soft_check. Companions are not scorable."
-            ),
-        },
-        "window": {
-            "type": "object",
-            "description": "Scope the leaf to [start, end] (idea #46).",
-            "properties": {
-                "start": {"type": "number"},
-                "end": {"type": "number"},
-            },
-            "additionalProperties": False,
-        },
-    }
+    properties = schema_properties(spec_shape.LEAF)
+    properties["metric"]["enum"] = sorted(metric_names())
+    return properties
 
 
 def _param_properties(config_cls: type, mode_name: str) -> dict[str, Any] | None:
@@ -177,12 +146,9 @@ def _param_properties(config_cls: type, mode_name: str) -> dict[str, Any] | None
     does not check it, and neither does the schema."""
     if not dataclasses.is_dataclass(config_cls):
         return None
-    props: dict[str, Any] = {
-        # A leaf's own tolerance, a number or a pair, where the metric's
-        # config does not type it itself; `quantity` of any shape.
-        "tolerance": {"oneOf": copy.deepcopy(_SIDES)},
-        "quantity": {},
-    }
+    # A leaf's own tolerance, a number or a pair, where the metric's config
+    # does not type it itself; `quantity` of any shape.
+    props: dict[str, Any] = schema_properties(spec_shape.EVERY_METRIC)
     assert set(props) == set(EVERY_METRIC)
     for f in derive_schema(config_cls, mode=mode_name).fields:
         props[f.name] = _field_to_schema(f)
@@ -195,19 +161,30 @@ def _param_properties(config_cls: type, mode_name: str) -> dict[str, Any] | None
                 {"type": "string"},
                 {
                     "type": "object",
-                    "properties": {key: {} for key in QUANTITY_KEYS},
+                    "properties": {
+                        key: {"description": text}
+                        for key, text in QUANTITY_KEYS.items()
+                    },
                     "additionalProperties": False,
                 },
                 {"type": "null"},
             ],
         }
+    helps = column_help(config_cls)
     for name, columns in row_fields(mode_name).items():
         props[name] = {
             **props[name],
             "type": ["array", "null"],
             "items": {
                 "type": "object",
-                "properties": {column: {} for column in sorted(columns)},
+                "properties": {
+                    column: (
+                        {"description": helps[name][column]}
+                        if column in helps.get(name, {})
+                        else {}
+                    )
+                    for column in sorted(columns)
+                },
                 "additionalProperties": False,
             },
         }
@@ -224,6 +201,9 @@ def _mode_def(config_cls: type, mode_name: str) -> dict:
         "title": f"{mode_name} mode config",
         "properties": {**_leaf_common_properties(), **(params or {})},
     }
+    desc = metric(mode_name)
+    if desc is not None and desc.description:
+        node["description"] = desc.description
     if params is not None:
         node["additionalProperties"] = False
     return node
@@ -237,7 +217,8 @@ def _override_def(config_clss: list[tuple[str, type]], title: str) -> dict:
     """A flat ``comparison.variable_overrides`` entry scored by one of
     ``config_clss`` (more than one for an entry with no ``mode``): ``mode``
     and those metrics' params, and nothing else."""
-    props: dict[str, Any] = {"mode": {"type": "string", "enum": sorted(metric_names())}}
+    props: dict[str, Any] = schema_properties(spec_shape.OVERRIDE)
+    props["mode"]["enum"] = sorted(metric_names())
     closed = True
     for name, config_cls in config_clss:
         params = _param_properties(config_cls, name)
@@ -318,7 +299,7 @@ def build_schema() -> dict:
 
     leaf_spec = {
         "type": "object",
-        "title": "Metric tree leaf",
+        "title": "A criterion of the metrics tree",
         # ``variable`` is not unconditionally required: a metric that
         # declares ``accepts_quantity`` may name its data with a string
         # ``quantity`` instead (see _leaf_identity_rule, folded into allOf
@@ -348,33 +329,13 @@ def build_schema() -> dict:
         ],
     }
 
+    combinator_properties = schema_properties(spec_shape.COMBINATOR)
+    combinator_properties["combinator"]["enum"] = sorted(combinator_names())
     combinator_spec = {
         "type": "object",
         "title": "Metric tree combinator",
         "required": ["combinator", "children"],
-        "properties": {
-            "combinator": {
-                "type": "string",
-                "enum": sorted(combinator_names()),
-            },
-            "children": {
-                "type": "array",
-                "items": {"$ref": "#/$defs/tree_node"},
-                "minItems": 1,
-            },
-            "k": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Required when combinator = 'k-of-n'.",
-            },
-            "weights": {
-                "type": "array",
-                "items": {"type": "number"},
-                "description": "Weights for 'weighted' combinator; parallel to children.",
-            },
-            "threshold": {"type": "number"},
-            "direction": {"type": "string", "enum": ["less", "greater"]},
-        },
+        "properties": combinator_properties,
         "additionalProperties": False,
         "allOf": _combinator_kind_rules(),
     }
@@ -384,7 +345,7 @@ def build_schema() -> dict:
         "required": ["model"],
         # The entry's keys, and its simulation and comparison blocks': the
         # one table the spec parser checks an entry against.
-        "properties": copy.deepcopy(spec_shape.ENTRY),
+        "properties": schema_properties(spec_shape.ENTRY),
         "additionalProperties": False,
     }
 
@@ -395,7 +356,7 @@ def build_schema() -> dict:
         "required": ["tests"],
         # The root's own keys — `tests`, and the `$schema` that points an
         # editor here — and no other: the parser refuses one (`spec_shape`).
-        "properties": copy.deepcopy(spec_shape.ROOT),
+        "properties": schema_properties(spec_shape.ROOT),
         "additionalProperties": False,
         "$defs": {
             "test_entry": test_entry,
@@ -410,4 +371,51 @@ def build_schema() -> dict:
             **mode_defs,
             **_override_defs(modes),
         },
+    }
+
+
+def build_config_schema() -> dict:
+    """The JSON-Schema document of ``testing.json``: every key of
+    ``config_shape.TESTING_JSON`` with its type, default and description,
+    and under ``backends`` each registered backend's own settings table
+    (``Backend.settings``) for the entries named after it.
+
+    As strict as ``Config``: a key that is in neither table is refused
+    there, and is ``additionalProperties: false`` here.
+    """
+    from ..backends import backend_class, backend_names, source_types
+
+    properties = schema_properties(TESTING_JSON)
+    # What `Config` holds the value to: one a registered backend runs.
+    properties["source_type"]["enum"] = source_types()
+    blocks: dict[str, Any] = {}
+    names = backend_names()
+    for name in names:
+        cls = backend_class(name)
+        if cls is None:
+            continue
+        # An entry is its backend's by how its name STARTS: "Dymola 2025" —
+        # the LONGEST backend name it starts with (`backend_family`), so
+        # the pattern of `Acme` lets by what starts with `AcmePlus`.
+        longer = [other[len(name) :] for other in names if other.startswith(name)]
+        beyond = "|".join(re.escape(rest) for rest in longer if rest)
+        blocks[f"^{re.escape(name)}" + (f"(?!{beyond})" if beyond else "")] = {
+            "type": "object",
+            "title": f"{name} settings",
+            "description": (
+                f"The settings of a backends entry for {name}: one whose "
+                f"name starts with {name}."
+            ),
+            "properties": schema_properties(cls.settings),
+            "additionalProperties": False,
+        }
+    properties["backends"].update(
+        {"patternProperties": blocks, "additionalProperties": False}
+    )
+    return {
+        "$schema": _JSON_SCHEMA_URI,
+        "title": "DSTF testing.json",
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
     }

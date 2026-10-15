@@ -181,6 +181,14 @@ def register_builtins() -> None:
     register_metric(
         MetricDescriptor(
             name="nrmse",
+            description=(
+                "Compares the whole trajectory with the baseline: the "
+                "root-mean-square error, divided by the range of the baseline, must "
+                "stay below the tolerance. The error is taken piece by piece "
+                "between events, so a jump is not smeared across its neighbours. "
+                "The default mode, and the one to start with for a signal you "
+                "expect to reproduce closely."
+            ),
             config_cls=NrmseConfig,
             build=_build_nrmse,
             score_direction="lower",
@@ -190,6 +198,12 @@ def register_builtins() -> None:
     register_metric(
         MetricDescriptor(
             name="tube",
+            description=(
+                "Draws an envelope around the baseline — a band of fixed width, a "
+                "width relative to the baseline, or edges you give over time — and "
+                "passes when every point of the run lies inside it. Use it when you "
+                "can say how far a signal may wander, and where."
+            ),
             config_cls=TubeConfig,
             build=_build_tube,
             # Tube's score is the fraction of samples inside the envelope.
@@ -204,6 +218,13 @@ def register_builtins() -> None:
     register_metric(
         MetricDescriptor(
             name="points",
+            description=(
+                "Checks the run at the times you declare: each checkpoint has a "
+                "time, a value (or the baseline's value at that time) and a "
+                "tolerance in value and in time. With no checkpoints it compares "
+                "the final value with the baseline's. Use it for set points, "
+                "settled values and anything that matters at an instant."
+            ),
             config_cls=PointsConfig,
             build=_build_points,
             score_direction="lower",
@@ -216,6 +237,12 @@ def register_builtins() -> None:
     register_metric(
         MetricDescriptor(
             name="range",
+            description=(
+                "Checks that every point of the run lies between a lower and an "
+                "upper bound, either of which may be left out. It reads no "
+                "baseline. Use it for physical limits: a temperature that must stay "
+                "below a limit, a level that must stay positive."
+            ),
             config_cls=RangeConfig,
             build=_build_range,
             score_direction="lower",
@@ -228,6 +255,13 @@ def register_builtins() -> None:
     register_metric(
         MetricDescriptor(
             name="event-timing",
+            description=(
+                "Compares when events happen: the instants at which the result "
+                "holds two points at the same time, which is how a Modelica tool "
+                "records an event. Each event of the run must fall within the time "
+                "tolerance of its baseline event, or of an event you declare. Use "
+                "it for the timing of switches, valves and relays."
+            ),
             config_cls=EventTimingConfig,
             build=_build_event_timing,
             score_direction="lower",
@@ -240,6 +274,13 @@ def register_builtins() -> None:
     register_metric(
         MetricDescriptor(
             name="dominant-frequency",
+            description=(
+                "Compares spectra: each frequency you declare must appear as a peak "
+                "of the run's spectrum within its tolerance. With no declared peaks "
+                "it fails and reports the baseline's strongest peaks to choose "
+                "from. Use it for oscillations whose frequency matters more than "
+                "their phase."
+            ),
             config_cls=DominantFrequencyConfig,
             build=_build_dominant_frequency,
             score_direction="lower",
@@ -253,6 +294,13 @@ def register_builtins() -> None:
     register_metric(
         MetricDescriptor(
             name="scalar",
+            description=(
+                "Scores one number: a reduction of the variable (its maximum, "
+                "minimum, mean, final value or integral) or a statistic of the run, "
+                "against the same number from the baseline or between bounds you "
+                "give. Use it for an overshoot, a total, a settled value or a run "
+                "statistic such as CPU time."
+            ),
             config_cls=ScalarConfig,
             build=_build_scalar,
             # The one metric that scores a number rather than a trajectory:
@@ -270,20 +318,49 @@ def register_builtins() -> None:
     )
 
     register_combinator(
-        CombinatorDescriptor(name="and", build=lambda spec: AndCombinator())
+        CombinatorDescriptor(
+            name="and",
+            description=(
+                "Passes when every child passes. A test with no metrics tree is "
+                "scored as an and of its tracked variables."
+            ),
+            build=lambda spec: AndCombinator(),
+        )
     )
     register_combinator(
-        CombinatorDescriptor(name="or", build=lambda spec: OrCombinator())
+        CombinatorDescriptor(
+            name="or",
+            description="Passes when at least one child passes.",
+            build=lambda spec: OrCombinator(),
+        )
     )
     register_combinator(
-        CombinatorDescriptor(name="k-of-n", build=lambda spec: KOfNCombinator(spec.k))
+        CombinatorDescriptor(
+            name="k-of-n",
+            description="Passes when at least k of its children pass.",
+            build=lambda spec: KOfNCombinator(spec.k),
+        )
     )
     register_combinator(
-        CombinatorDescriptor(name="warn", build=lambda spec: WarnCombinator())
+        CombinatorDescriptor(
+            name="warn",
+            description=(
+                "Holds one child, whose failure is reported as a warning and does "
+                "not fail the test. A criterion scored against a soft check must "
+                "sit under one."
+            ),
+            build=lambda spec: WarnCombinator(),
+        )
     )
     register_combinator(
         CombinatorDescriptor(
             name="weighted",
+            description=(
+                "Adds up its children's scores, each times its weight, and passes "
+                'when the sum is below the threshold (direction "less", for scores '
+                'that are errors) or above it ("greater", for scores that are '
+                "coverage)."
+            ),
             build=lambda spec: WeightedCombinator(
                 spec.weights, spec.threshold, spec.direction
             ),

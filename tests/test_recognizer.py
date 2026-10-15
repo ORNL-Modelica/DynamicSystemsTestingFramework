@@ -6,6 +6,12 @@ from pathlib import Path
 
 import pytest
 
+# mo_parser registers the bundled recognizer when it is imported. Import it
+# here, before the fixture's first snapshot: imported later (by the first
+# test), the snapshot would be the empty registry, the restore would drop the
+# bundled recognizer, and Python never imports the module again — the file
+# then failed run alone and passed only after another file had imported it.
+from dstf.discovery import mo_parser  # noqa: F401
 from dstf.discovery import recognizer as recognizer_module
 from dstf.discovery.recognizer import (
     Recognizer,
@@ -32,14 +38,12 @@ class TestBundledRecognizer:
 
     def test_bundled_registers_on_mo_parser_import(self):
         # Import triggers registration
-        from dstf.discovery import mo_parser  # noqa: F401
 
         recs = get_recognizers("modelica")
         names = [r.name for r in recs]
         assert "modelica:bundled-unit-tests" in names
 
     def test_bundled_filters_by_source_type(self):
-        from dstf.discovery import mo_parser  # noqa: F401
 
         # Bundled recognizer applies only to "modelica"
         recs = get_recognizers("modelica")
@@ -50,7 +54,6 @@ class TestBundledRecognizer:
         assert not any(r.name == "modelica:bundled-unit-tests" for r in fmu_recs)
 
     def test_bundled_extracts_simple_test(self):
-        from dstf.discovery import mo_parser  # noqa: F401
 
         recs = [
             r
@@ -72,7 +75,6 @@ class TestBundledRecognizer:
     def test_bundled_threads_the_instance_name(self, tmp_path):
         """The UnitTests component's instance name reaches the TestModel —
         its variables are ``<instance>.x[i]`` in the result file."""
-        from dstf.discovery import mo_parser  # noqa: F401
         from dstf.discovery.test_registry import (
             _build_test_model_from_recognizer_results,
         )
@@ -93,7 +95,6 @@ class TestBundledRecognizer:
         assert merged.unit_tests_instance == "ut"
 
     def test_bundled_returns_none_for_non_test_file(self):
-        from dstf.discovery import mo_parser  # noqa: F401
 
         recs = [
             r
@@ -132,7 +133,6 @@ class TestRegistryMerge:
     def test_user_recognizer_overrides_bundled_field(self, tmp_path):
         # Both recognizers see the same .mo file; user one sets stop_time=99,
         # bundled sets it from the experiment annotation. User wins.
-        from dstf.discovery import mo_parser  # noqa: F401
         from dstf.discovery.test_registry import (
             _build_test_model_from_recognizer_results,
         )
@@ -248,7 +248,7 @@ class TestRegistryMerge:
         )
         spec = TestModel(
             model_id="L.M",
-            source_file=Path(""),
+            source_file=None,
             source_package="L",
             short_name="M",
             n_vars=0,

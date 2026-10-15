@@ -5,6 +5,7 @@ Integration tests at the bottom exercise real omc and are gated on
 ``shutil.which("omc")`` so CI / machines without omc still pass.
 """
 
+import dataclasses
 import shutil
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -31,7 +32,8 @@ class TestOpenModelicaConfig:
             work_dir=tmp_path / "work",
         )
         om = OpenModelicaConfig.from_config(cfg)
-        assert om.omc_path  # resolved via BACKEND_BINARY_NAMES or shutil.which
+        # What `OpenModelicaBackend.locate` found — None on a machine without omc.
+        assert om.omc_path == cfg.backend_path
         assert om.std_version == "latest"
         assert "CPUtime" in om.diagnostic_variables
         assert "EventCounter" in om.diagnostic_variables
@@ -110,7 +112,7 @@ class TestOpenModelicaBackendUnit:
         )
         test = TestModel(
             model_id="Lib.Examples.MissingVar",
-            source_file=Path(""),
+            source_file=None,
             source_package="Lib.Examples",
             short_name="MissingVar",
             n_vars=1,
@@ -142,16 +144,22 @@ class TestOpenModelicaBackendUnit:
         )
 
         (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        # An omc that is there to run: a machine without one fails the test
+        # at "omc not found" before anything is written.
+        omc = tmp_path / "omc"
+        omc.write_text("#!/bin/sh\n")
+        omc.chmod(0o755)
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",
             backend_name="OpenModelica",
+            backend_path=str(omc),
             work_dir=tmp_path / "work",
         )
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Lib.A",
-            source_file=Path(""),
+            source_file=None,
             source_package="Lib",
             short_name="A",
             n_vars=0,
@@ -237,9 +245,12 @@ class TestOpenModelicaBackendUnit:
             work_dir=tmp_path / "work",
         )
         backend = OpenModelicaBackend(cfg)
+        # A run starts with an omc that was found; this machine's is not
+        # asked (CI has none) — subprocess.run is faked below.
+        backend.om_config = dataclasses.replace(backend.om_config, omc_path="omc")
         test = TestModel(
             model_id="Lib.DoesNotExist",
-            source_file=Path(""),
+            source_file=None,
             source_package="Lib",
             short_name="DoesNotExist",
             n_vars=0,
@@ -378,7 +389,7 @@ class TestOpenModelicaIntegration:
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Modelica.Blocks.Examples.PID_Controller",
-            source_file=Path(""),
+            source_file=None,
             source_package="Modelica.Blocks.Examples",
             short_name="PID_Controller",
             n_vars=0,
@@ -425,7 +436,7 @@ class TestOpenModelicaIntegration:
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Modelica.Blocks.Examples.PID_Controller",
-            source_file=Path(""),
+            source_file=None,
             source_package="Modelica.Blocks.Examples",
             short_name="PID_Controller",
             n_vars=0,
@@ -462,7 +473,7 @@ class TestOpenModelicaIntegration:
         backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Definitely.Not.Here",
-            source_file=Path(""),
+            source_file=None,
             source_package="Definitely.Not",
             short_name="Here",
             n_vars=0,

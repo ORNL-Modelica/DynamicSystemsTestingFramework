@@ -6,12 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dstf.config import (
-    DEFAULT_METHOD,
-    DEFAULT_STOP_TIME,
-    DEFAULT_TOLERANCE,
-    Config,
-)
+from dstf.config import Config
 from dstf.discovery.mo_parser import (
     _extract_model_name,
     _extract_within,
@@ -26,7 +21,14 @@ from dstf.discovery.spec_parser import (
     parse_test_spec,
     update_test_variables,
 )
+from dstf.discovery.spec_shape import SIMULATION
 from dstf.discovery.test_registry import TestModel, discover_tests
+
+# The simulation block's defaults, from the table they are written in.
+DEFAULT_STOP_TIME = SIMULATION["stop_time"].default
+DEFAULT_TOLERANCE = SIMULATION["tolerance"].default
+DEFAULT_METHOD = SIMULATION["method"].default
+
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -569,9 +571,7 @@ def test_field_sources_records_spec_override():
     }
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        # Stub package.mo so Config.__post_init__ short-circuits the
-        # find_package_dir parent-walk (which on WSL trips on unreadable
-        # Windows-mount artifacts at the filesystem root).
+        # Stub package.mo so the library is this directory.
         (td / "package.mo").write_text("package MyLib end MyLib;")
         spec_path = td / "test_spec.json"
         spec_path.write_text(json.dumps(spec))
@@ -583,7 +583,7 @@ def test_field_sources_records_spec_override():
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_discovery.py — regression tests for
-# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+# the 2026-07-06 review, Themes 2 & 6.
 #
 # Decisions encoded here:
 #
@@ -642,7 +642,7 @@ def _write_lib(
 def _mk_model(**kw) -> TestModel:
     defaults = dict(
         model_id="MyLib.Foo",
-        source_file=Path(""),
+        source_file=None,
         source_package="MyLib",
         short_name="Foo",
         n_vars=1,
@@ -1310,7 +1310,7 @@ class TestDiscoveryFromDocument:
         assert spec_only.field_sources == {}
 
     def test_the_fallback_spec_file_is_discovered(self, tmp_path):
-        """`dstf add` writes <reference_root>/test_spec.json when no test_spec
+        """`dstf spec add` writes <reference_root>/test_spec.json when no test_spec
         is configured; discovery reads that same file (Conventions #8)."""
         from dstf.discovery.test_registry import discover_tests
 

@@ -27,7 +27,11 @@ __all__ = [
     "resolve_variable_patterns",
     "get_backend",
     "get_backend_class",
+    "backend_class",
+    "backend_family",
+    "backend_names",
     "select_backend",
+    "source_types",
     "dataset_kind_for",
 ]
 
@@ -117,12 +121,23 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
 
 
 def register(name: str):
-    """Class decorator that registers a Backend subclass.
+    """Register a backend class under a name: the class decorator a backend
+    plug-in is declared with.
 
-    Validates capability honesty at decoration time — see
-    :func:`_validate_capabilities`. A typo or stale flag becomes an
-    ``ImportError`` (via ``TypeError``) at module-import time rather
-    than a confusing ``NotImplementedError`` mid-run.
+    The name is what ``testing.json``'s ``backend`` and ``backends`` say, and
+    what ``--backend`` takes. An entry named ``"<name> 2025"`` is this
+    backend's too.
+
+    Args:
+        name: The backend's name.
+
+    Returns:
+        The decorator, which returns the class unchanged.
+
+    Raises:
+        TypeError: At decoration, when the class declares a
+            :class:`~dstf.backends.types.Capability` without overriding the
+            method it needs.
     """
 
     def decorator(cls: type[Backend]) -> type[Backend]:
@@ -150,55 +165,89 @@ def get_backend_class(config: Config) -> type[Backend]:
     unavailable-backend ``RuntimeError`` an optional dependency's absence
     signals (FmpyBackend.__init__ imports fmpy).
     """
-    backend = config.backend
-    if backend not in _REGISTRY:
-        _import_builtin_backend(backend)
-    cls = _REGISTRY.get(backend)
+    cls = backend_class(config.backend)
     if cls is None:
         available = ", ".join(sorted(_REGISTRY)) or "(none)"
         raise ValueError(
-            f"Unsupported backend: {backend} "
+            f"Unsupported backend: {config.backend} "
             f"(from '{config.backend_name}'). Available: {available}"
         )
     return cls
 
 
-class BackendUnavailableError(RuntimeError):
-    """The configured backend cannot be built on this machine.
+def backend_class(name: str) -> type[Backend] | None:
+    """The backend registered under ``name`` — a built-in is imported on
+    first use — or None."""
+    if name not in _REGISTRY:
+        _import_builtin_backend(name)
+    return _REGISTRY.get(name)
 
-    Not a bug: an unregistered backend name, a missing executable, or a
-    persistent variant whose dependency probe failed. Callers decide what
-    to do about it — the CLI prints the message and exits 1
-    (:func:`cli.run_cmds._get_backend`), the authoring tool shows it on the
-    job that asked for the run, and ``Session.open`` turns it into a
-    ``ConfigError`` so ``dstf author`` refuses the project with one line.
+
+def backend_names() -> list[str]:
+    """Every backend there is a class for: the built-ins, then what a
+    plug-in or a caller registered, in registration order. The order
+    ``dstf check`` lists them in, and the one a project that names no
+    backend is searched in (``Backend.source_types``)."""
+    return [*_BUILTINS, *(name for name in _REGISTRY if name not in _BUILTINS)]
+
+
+def source_types() -> list[str]:
+    """Every ``source_type`` a project may say: the ones a registered
+    backend runs (``Backend.source_types``), in the backends' order — the
+    built-ins' ``modelica``, ``fmu``, ``julia``, ``python``, then a
+    plug-in's. ``Config`` refuses any other, and the published schema
+    lists these."""
+    found: dict[str, None] = {}
+    for name in backend_names():
+        cls = backend_class(name)
+        if cls is not None:
+            found.update(dict.fromkeys(sorted(cls.source_types)))
+    return list(found)
+
+
+def backend_family(backend_name: str) -> str:
+    """The backend a named entry is of: ``"Dymola 2025"`` is a ``"Dymola"``,
+    ``"OpenModelica 1.23"`` an ``"OpenModelica"`` — the registered name it
+    starts with, the longest where two do. A name that starts with none is
+    its own (and no backend, as :func:`get_backend_class` then says)."""
+    for name in sorted(backend_names(), key=len, reverse=True):
+        if backend_name.startswith(name):
+            return name
+    return backend_name
+
+
+class BackendUnavailableError(RuntimeError):
+    """The project's backend cannot be built on this machine: no backend of
+    that name is registered, its program was not found, or what it needs is not
+    installed. ``str()`` says which, in words true wherever it is shown — the
+    command line and `dstf author`'s Queue alike.
+
+    ``batch_runs``: only the variant whose workers stay alive is refused;
+    the backend's per-test script mode would run. A caller that offers that
+    mode says so in its own words (the CLI's ``--batch``).
     """
 
+    def __init__(self, message: str, *, batch_runs: bool = False):
+        super().__init__(message)
+        self.batch_runs = batch_runs
 
-def select_backend(config, *, persistent: bool) -> Backend:
-    """Instantiate the backend for *config*, persistent variant when asked.
 
-    When *persistent* is True and the backend **declares**
-    :attr:`Capability.PERSISTENT_WORKERS`, pre-flight the variant's
-    dependency probe and instantiate it. When the probe raises
-    :class:`RuntimeError`, raise :class:`BackendUnavailableError` naming
-    both fixes (install the dep, or re-run with ``--batch``) — no silent
-    fallback.
+def select_backend(config, *, persistent: bool, to_run: bool = False) -> Backend:
+    """Build the backend a project runs with.
 
-    The declaration is what gates, not the presence of the hook: a backend
-    that ships an experimental ``persistent_backend_cls`` it isn't ready to
-    have driven says so by leaving the flag off, and lands on the batch
-    path. Registration-time validation (:func:`_validate_capabilities`)
-    guarantees the converse — flag implies a real override — so a declaring
-    backend always has a class to return.
+    Args:
+        config: The project's configuration.
+        persistent: Build the variant that keeps the simulator open between
+            tests, where the backend has one; ``--batch`` is False.
+        to_run: The backend will simulate, not only read results: one that was
+            not found on this machine is refused.
 
-    Backend-agnostic: no string matching on backend names. New persistent
-    backends plug in by declaring the capability and overriding
-    ``persistent_backend_cls`` + ``preflight`` on their backend classes.
+    Returns:
+        The backend.
 
-    This function itself reads ``config.backend`` only to phrase the
-    persistent-failure message; :func:`get_backend_class`, which it calls
-    first, requires the attribute.
+    Raises:
+        BackendUnavailableError: The backend is not registered, not found, or
+            cannot be used here; the message says why and what to do.
     """
     try:
         batch_cls = get_backend_class(config)
@@ -206,10 +255,17 @@ def select_backend(config, *, persistent: bool) -> Backend:
         # An unregistered backend name is a configuration problem, not a
         # bug; same class of failure as a missing executable.
         raise BackendUnavailableError(str(exc)) from exc
+    if to_run:
+        try:
+            batch_cls.require_found(config)
+        except RuntimeError as exc:
+            raise BackendUnavailableError(str(exc)) from exc
     if not persistent or Capability.PERSISTENT_WORKERS not in batch_cls.capabilities:
         # Batch-only backend (FMPy, Python today). Persistent flag is a
         # no-op rather than an error so a single CLI works across mixed
-        # backends in a multi-library config.
+        # backends in a multi-library config. A `--batch` WRITTEN for such
+        # a backend is another matter, and the CLI's to refuse
+        # (`cli.run_cmds._refuse_batch_without_workers`).
         return _instantiate(batch_cls, config)
     pcls = batch_cls.persistent_backend_cls()
     if pcls is None:
@@ -220,12 +276,8 @@ def select_backend(config, *, persistent: bool) -> Backend:
         pcls.preflight(config)
     except RuntimeError as exc:
         raise BackendUnavailableError(
-            f"Persistent-worker {config.backend} unavailable.\n"
-            f"\n"
-            f"{exc}\n"
-            f"\n"
-            f"Or re-run with `--batch` to use the per-test subprocess "
-            f"backend instead."
+            f"Persistent-worker {config.backend} unavailable.\n\n{exc}",
+            batch_runs=True,
         ) from exc
     return _instantiate(pcls, config)
 
@@ -245,16 +297,20 @@ def _instantiate(cls: type[Backend], config) -> Backend:
         raise BackendUnavailableError(str(exc)) from exc
 
 
+#: The built-in backends and the module each registers itself from. Their
+#: order is the order :func:`backend_names` lists them in.
+_BUILTINS = {
+    "Dymola": ".dymola",
+    "OpenModelica": ".openmodelica",
+    "FMPy": ".fmpy",
+    "Julia": ".julia",
+    "Python": ".python",
+}
+
+
 def _import_builtin_backend(name: str) -> None:
     """Import a built-in backend module so it registers itself."""
-    builtins = {
-        "Dymola": ".dymola",
-        "FMPy": ".fmpy",
-        "OpenModelica": ".openmodelica",
-        "Julia": ".julia",
-        "Python": ".python",
-    }
-    module = builtins.get(name)
+    module = _BUILTINS.get(name)
     if module:
         import importlib
 

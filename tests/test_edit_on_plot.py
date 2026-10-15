@@ -569,9 +569,9 @@ def test_a_rows_edit_names_what_its_path_or_model_is_instead(session):
     _tree_on_d(session)
     ok = [{"time": 0.5, "upper": 0.1}]
     for path in ("/metrics/children/9", "/metrics/children/0/tube_points", "/x/0"):
-        with pytest.raises(ValueError, match=f"^{path} names no leaf of {D}$"):
+        with pytest.raises(ValueError, match=f"^{path} names no criterion of {D}$"):
             _rows(session, ok, path=path)
-    with pytest.raises(ValueError, match="^/metrics is a combinator, not a leaf$"):
+    with pytest.raises(ValueError, match="^/metrics is a group, not a criterion$"):
         _rows(session, ok, path="/metrics")
     with pytest.raises(ValueError, match="^Nope.Model is not a test of this project$"):
         _rows(session, ok, model_id="Nope.Model")

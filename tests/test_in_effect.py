@@ -129,14 +129,18 @@ def test_a_scalar_with_bounds_and_a_tube_show_no_tolerance(tmp_path):
 
 def test_a_leaf_that_was_not_scored_never_says_zero_in_effect(tmp_path):
     """A leaf that returned before it scored — a variable the result lacks,
-    a baseline the test does not have — shows the tolerance it WOULD have
+    a soft check this folder does not store (under `warn`: outside one the
+    tree is refused, `broken_roles`) — shows the tolerance it WOULD have
     applied, never the comparison's 0.0 default."""
     tree = {
         "combinator": "and",
         "children": [
             {"metric": "nrmse", "variable": "x"},
             {"metric": "nrmse", "variable": "w_not_in_result"},
-            {"metric": "nrmse", "variable": "y", "against": "nope"},
+            {
+                "combinator": "warn",
+                "children": [{"metric": "nrmse", "variable": "y", "against": "nope"}],
+            },
         ],
     }
     s = _session(tmp_path, test_tol=0.01, metrics=tree)

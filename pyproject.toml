@@ -1,6 +1,6 @@
 [project]
 name = "dynamic-systems-testing-framework"
-version = "1.0.1"
+version = "1.1.0"
 description = "Dynamic Systems Testing Framework — regression & unit testing for time-dependent system behavior, with plug-in backends: Modelica (Dymola, OpenModelica), FMU (FMPy), Julia (ModelingToolkit) and Python to start"
 # What the package index shows: the README as the project page (its one image
 # is an absolute URL for that), the license by its SPDX name with the file
@@ -14,6 +14,7 @@ keywords = [
     "modelingtoolkit", "simulation", "regression-testing", "testing",
 ]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -59,12 +60,18 @@ fmpy = ["fmpy>=0.3"]
 # subprocess path instead.
 # Install with: uv sync --extra om --locked --inexact
 om = ["OMPython>=3.5"]
+# The documentation site (docs/conf.py): Sphinx, Markdown pages through MyST,
+# the Furo theme. Build it with:
+#   uv sync --extra docs --locked --inexact
+#   uv run sphinx-build -W --keep-going -b html docs docs/_build/html
+docs = ["sphinx>=8.1", "myst-parser>=4.0", "furo>=2024.8.6"]
 
 [project.urls]
 Homepage = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework"
 Repository = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework"
-Documentation = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/docs/usage.md"
+Documentation = "https://dstf.readthedocs.io/"
 Issues = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/issues"
+Changelog = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/CHANGELOG.md"
 
 [project.scripts]
 dstf = "dstf.cli:main_entry"
@@ -90,7 +97,7 @@ markers = [
     "fmpy: requires fmpy package",
     "ompython: requires OMPython package (persistent-worker OpenModelica)",
     "reference_fmus: requires Reference-FMUs binaries at examples/fmu/reference-fmus-binaries",
-    "julia: requires Julia 1.10+ with ModelingToolkit + OrdinaryDiffEq installed in examples/julia/JuliaMtkTestingLib",
+    "julia: requires Julia 1.11+ with ModelingToolkit + OrdinaryDiffEq installed in examples/julia/JuliaMtkTestingLib",
     "playwright: browser-driven reporter tests (requires playwright + chromium); until D97 this marker did not exist and -m 'not playwright' was a no-op filter",
 ]
 filterwarnings = [
@@ -151,6 +158,9 @@ files = [
     "src/dstf/plugins.py",
     "src/dstf/storage",
     "src/dstf/config.py",
+    "src/dstf/config_shape.py",
+    "src/dstf/json_types.py",
+    "src/dstf/backends/locate.py",
     "src/dstf/pipeline.py",
     "src/dstf/reporting/rows.py",
 ]

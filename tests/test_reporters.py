@@ -171,7 +171,7 @@ def _scored(tree: dict) -> TestComparison:
     values = np.array([1.0, 2.0, 3.0])
     test = TestModel(
         model_id="Lib.Examples.T",
-        source_file=Path(""),
+        source_file=None,
         source_package="Lib.Examples",
         short_name="T",
         n_vars=0,
@@ -207,7 +207,7 @@ def _flat(overrides: dict, *, default_points: bool = False, reference: dict = No
     values = np.array([1.0, 2.0, 3.0])
     test = TestModel(
         model_id="Lib.Examples.T",
-        source_file=Path(""),
+        source_file=None,
         source_package="Lib.Examples",
         short_name="T",
         n_vars=0,
@@ -1144,6 +1144,8 @@ def _fake_config(work_dir: Path):
     return types.SimpleNamespace(
         work_dir=work_dir,
         config_file=None,
+        config_found=None,
+        overrides=frozenset(),
         source_path=None,
         reference_root=None,
         theme="default",
@@ -1156,6 +1158,7 @@ def _output_report(comparisons, args, config, results) -> int:
     from dstf.cli.common import _exit_code
     from dstf.cli.run_cmds import _show_reports
 
+    args = types.SimpleNamespace(command="compare", **vars(args))
     _show_reports(comparisons, results, [], None, config, args)
     return _exit_code(comparisons)
 
@@ -1263,7 +1266,7 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     """The flat-override unknown-mode sentinel resolved no mode at all.
 
     ``VariableComparison.mode`` defaults to "nrmse", so this leaf used to
-    read "nrmse leaf not scored — unknown comparison mode 'tubee'" and
+    read "nrmse criterion not scored — unknown comparison mode 'tubee'" and
     named a metric the user never wrote (H4).
     """
     import numpy as np
@@ -1276,7 +1279,7 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     time = np.linspace(0.0, 1.0, 5)
     test = TestModel(
         model_id="Test.Model",
-        source_file=Path(""),
+        source_file=None,
         source_package="Test",
         short_name="Model",
         n_vars=1,
@@ -1303,14 +1306,14 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     _score, criterion = summary.display, summary.criterion
     # The caption names no metric — only the error text does (and it lists
     # the valid mode names, so "nrmse" legitimately appears further in).
-    assert criterion.startswith("leaf not scored")
-    assert not criterion.startswith("nrmse leaf")
+    assert criterion.startswith("criterion not scored")
+    assert not criterion.startswith("nrmse criterion")
     assert "tubee" in criterion
 
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_verdict.py — regression tests for the
-# 2026-07-06 review, Theme 1: verdict integrity (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, Theme 1: verdict integrity.
 #
 # Decision encoded here:
 #

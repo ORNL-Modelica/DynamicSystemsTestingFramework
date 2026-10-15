@@ -95,7 +95,7 @@ class JsonDriverBackend(Backend):
     #: generic non-zero-return message ("julia", "python").
     stdio_prefix: ClassVar[str]
     #: Extension of the user's source file, incl. the dot (".jl", ".py").
-    source_suffix: ClassVar[str]
+    source_suffix: str
     #: Name the driver writes its JSON result under, inside the test dir.
     result_filename: ClassVar[str] = "result.json"
 
@@ -145,11 +145,8 @@ class JsonDriverBackend(Backend):
                 model_id=test.model_id,
                 test_key=test_key,
                 success=False,
-                error_message=(
-                    f"{self.tool_label} source not found for {test.model_id}. "
-                    f"Ensure the test_spec.json entry has a 'source' field "
-                    f"resolving to an existing {self.source_suffix} file under "
-                    f"source_path."
+                error_message=source_not_found(
+                    test, self.config, self.source_suffix, self.tool_label
                 ),
             )
 
@@ -454,8 +451,8 @@ def resolve_source_file(test: TestModel, config, suffix: str) -> Path | None:
     Module-level rather than backend-only because the persistent Julia worker
     resolves the same file without being a backend.
     """
-    if test.source_file is not None and str(test.source_file):
-        p = Path(test.source_file)
+    if test.source_file is not None:
+        p = test.source_file
         if not p.is_absolute() and config.source_path:
             p = config.source_path / p
         return p
@@ -463,6 +460,30 @@ def resolve_source_file(test: TestModel, config, suffix: str) -> Path | None:
     if config.source_path:
         return config.source_path / f"{test.model_id}{suffix}"
     return None
+
+
+def source_not_found(test: TestModel, config, suffix: str, label: str) -> str:
+    """Why ``test`` cannot run: :func:`resolve_source_file` names no file
+    that is there. The sentence names the path it looked for, and, for an
+    entry with no ``source``, both ways out: name the file, or put it
+    where the fallback looks. The Julia worker and ``--batch`` say it."""
+    head = f"{label} source not found for {test.model_id}."
+    looked = resolve_source_file(test, config, suffix)
+    if test.source_file is not None:
+        return (
+            f"{head} Its test_spec.json entry's 'source' is {looked}, where "
+            f"there is no file."
+        )
+    if looked is None:
+        return (
+            f"{head} Its test_spec.json entry has no 'source', and there is no "
+            f"source_path to look in: add a 'source' naming its {suffix} file."
+        )
+    return (
+        f"{head} Its test_spec.json entry has no 'source', and there is no "
+        f"file at {looked}: add a 'source' naming its {suffix} file, or put "
+        f"the file at that path."
+    )
 
 
 def _read_failure_error(result_path: Path) -> str | None:
@@ -481,4 +502,4 @@ def _read_failure_error(result_path: Path) -> str | None:
     return None
 
 
-__all__ = ["JsonDriverBackend", "resolve_source_file"]
+__all__ = ["JsonDriverBackend", "resolve_source_file", "source_not_found"]

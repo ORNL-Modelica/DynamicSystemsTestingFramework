@@ -21,41 +21,44 @@ from ..reporting.status import (
     nothing_ran,
 )
 
+#: The flags that reach :class:`Config`, by the attribute each parses to:
+#: the Config field it sets, and whether its value is a path. A command
+#: offers the ones it reads (`cli.parser`), so one the command line did not
+#: have is simply absent here.
+_CONFIG_FLAGS: dict[str, tuple[str, bool]] = {
+    "source_path": ("source_path", True),
+    "config": ("config_file", True),
+    "reference_root": ("reference_root", True),
+    "test_spec": ("test_spec_file", True),
+    "backend": ("backend_name", False),
+    "backend_path": ("backend_path", False),
+    "work_dir": ("work_dir", True),
+    "parallel": ("parallel", False),
+    "tolerance": ("tolerance", False),
+    "timeout": ("timeout", False),
+}
+
 
 def _build_config(args: argparse.Namespace) -> Config:
-    """Build Config from parsed CLI arguments."""
-    kwargs = {}
-    if args.source_path:
-        kwargs["source_path"] = Path(args.source_path)
-    if hasattr(args, "config") and args.config:
-        kwargs["config_file"] = Path(args.config)
-    if hasattr(args, "reference_root") and args.reference_root:
-        kwargs["reference_root"] = Path(args.reference_root)
-    if hasattr(args, "backend") and args.backend:
-        kwargs["backend_name"] = args.backend
-    if hasattr(args, "backend_path") and args.backend_path:
-        kwargs["backend_path"] = args.backend_path
-    if hasattr(args, "show_ide") and args.show_ide:
-        kwargs["show_ide"] = True
-    if hasattr(args, "work_dir") and args.work_dir:
-        kwargs["work_dir"] = Path(args.work_dir)
-    if hasattr(args, "parallel") and args.parallel:
-        kwargs["parallel"] = args.parallel
-    if hasattr(args, "batch_size") and args.batch_size is not None:
-        kwargs["batch_size"] = args.batch_size
-    if hasattr(args, "dymola_interface") and args.dymola_interface:
-        kwargs["dymola_interface_path"] = Path(args.dymola_interface)
-    # `is not None`, NOT truthiness — `--tolerance 0` is the strictest
-    # possible setting and Config/comparator honor an explicit 0.0
-    # (comparator.py resolve chain, config.py file-tolerance precedence).
-    if hasattr(args, "tolerance") and args.tolerance is not None:
-        kwargs["tolerance"] = args.tolerance
-    if hasattr(args, "default_points") and args.default_points:
-        kwargs["default_points"] = args.default_points
-    if hasattr(args, "timeout") and args.timeout:
-        kwargs["timeout"] = args.timeout
-    if hasattr(args, "test_spec") and args.test_spec:
-        kwargs["test_spec_file"] = Path(args.test_spec)
+    """Build Config from parsed CLI arguments.
+
+    A project with no testing.json is read on defaults, and none is written
+    beside it — unless the command declared, in the tree, that it may
+    create a file of the project (``cli.parser``: ``creates=True``, which
+    the parser puts on the namespace). Only such a command starts one.
+
+    A flag that was given is passed on whatever its value — ``is not
+    None``, NOT truthiness: ``--tolerance 0`` is the strictest possible
+    setting and Config/comparator honor an explicit 0.0, and a value that
+    cannot be meant (``--timeout 0``) is the parser's to refuse, never this
+    function's to drop."""
+    kwargs: dict = {"write_default": getattr(args, "may_create_project", False)}
+    for attr, (field, is_path) in _CONFIG_FLAGS.items():
+        value = getattr(args, attr, None)
+        if value is not None:
+            kwargs[field] = Path(value) if is_path else value
+    if getattr(args, "default_points", False):
+        kwargs["default_points"] = True
     return Config(**kwargs)
 
 
@@ -121,7 +124,7 @@ def _filter_tests(
 ) -> list[TestModel]:
     """Filter tests by glob/list/file on model_id, plus optional package prefix."""
     filtered = tests
-    if package:
+    if package is not None:
         # review 2026-07-06 finding 65: match the package itself or children
         # across a dot boundary — "MyLib.Fluid" must not also select
         # "MyLib.FluidExperimental.*" (raw startswith did).
@@ -130,7 +133,7 @@ def _filter_tests(
             for t in filtered
             if t.model_id == package or t.model_id.startswith(package + ".")
         ]
-    if pattern:
+    if pattern is not None:
         patterns = _resolve_filter_patterns(pattern)
         # review 2026-07-06 finding 63: fnmatchcase — fnmatch.fnmatch is
         # case-insensitive on Windows, so the same filter selected different
@@ -194,6 +197,10 @@ def _exit_code(comparisons: Iterable[TestComparison]) -> int:
 def _parse_review_filter(filter_str: str) -> set[str]:
     """Parse and validate the review filter string."""
     filters = {f.strip() for f in filter_str.split(",") if f.strip()}
+    if not filters:
+        raise argparse.ArgumentTypeError(
+            f"{filter_str!r} names nothing: there is no category between its commas"
+        )
     invalid = filters - _VALID_REVIEW_FILTERS
     if invalid:
         raise argparse.ArgumentTypeError(

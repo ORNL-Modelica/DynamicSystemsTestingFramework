@@ -100,7 +100,7 @@ def test_update_metadata_noop_without_base_metadata(tmp_path):
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Finding 25 — the progress snapshot is taken inside the write lock, so a
 # stale snapshot can never overwrite a newer one.

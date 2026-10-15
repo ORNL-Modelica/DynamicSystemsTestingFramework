@@ -21,6 +21,7 @@ rather than a process-level crash.
 
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 import json
 import sys
@@ -33,7 +34,13 @@ def _load_user_module(user_file: Path):
     parent = str(user_file.parent.resolve())
     if parent not in sys.path:
         sys.path.insert(0, parent)
-    spec = importlib.util.spec_from_file_location("_user_test", user_file)
+    # The loader is named: unnamed, one is chosen by the suffix, compared
+    # with its case, and `Ramp.PY` — a .py file, as `spec add` takes it —
+    # had none.
+    loader = importlib.machinery.SourceFileLoader("_user_test", str(user_file))
+    spec = importlib.util.spec_from_file_location(
+        "_user_test", user_file, loader=loader
+    )
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load {user_file}")
     module = importlib.util.module_from_spec(spec)

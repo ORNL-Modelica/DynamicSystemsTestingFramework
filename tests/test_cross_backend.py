@@ -66,7 +66,7 @@ def _seed_primary_baseline(store_dir: Path, model_id: str) -> None:
 def _make_chain_test(model_id: str = "BouncingBall") -> TestModel:
     return TestModel(
         model_id=model_id,
-        source_file=Path(""),  # set by chain to the exported FMU
+        source_file=None,  # set by chain to the exported FMU
         source_package="",
         short_name=model_id,
         n_vars=1,
@@ -179,7 +179,7 @@ def test_chain_returns_false_when_export_fails(tmp_path):
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Finding 76-part — a ValueError from ``add_soft_check`` (name collision) is
 # logged and skipped, not raised out of the chain.

@@ -266,10 +266,8 @@ class TestIsBaseTolerance:
     """A test's base tolerance is ONE finite number: what ``parse_sides``
     reads as a number, and nothing else."""
 
-    @pytest.mark.parametrize(
-        "ok", [0, 0.0, -0.0, 1e-4, -1, -0.5, 10**300, 5e-324], ids=repr
-    )
-    def test_a_finite_number_is_one_zero_and_negative_included(self, ok):
+    @pytest.mark.parametrize("ok", [0, 0.0, -0.0, 1e-4, 10**300, 5e-324], ids=repr)
+    def test_a_finite_number_of_0_or_more_is_one(self, ok):
         from dstf.comparison.sides import is_base_tolerance
 
         assert is_base_tolerance(ok) is True
@@ -282,6 +280,10 @@ class TestIsBaseTolerance:
             -float("inf"),
             10**400,
             -(10**400),
+            # every nrmse test would fail against a negative ceiling
+            -1,
+            -0.5,
+            -5e-324,
             True,
             False,
             "0.5",
@@ -297,6 +299,13 @@ class TestIsBaseTolerance:
         from dstf.comparison.sides import is_base_tolerance
 
         assert is_base_tolerance(bad) is False
+
+    def test_a_negative_number_is_refused_as_one(self):
+        from dstf.comparison.sides import base_tolerance_refused
+
+        assert base_tolerance_refused("--tolerance", -1.0) == (
+            "the base tolerance must be 0 or more (--tolerance is -1.0)"
+        )
 
     def test_a_numpy_scalar_is_judged_as_the_number_it_is(self):
         import numpy as np

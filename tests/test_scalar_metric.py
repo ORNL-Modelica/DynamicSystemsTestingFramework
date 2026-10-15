@@ -8,8 +8,6 @@ display the page renders, sentinels included).
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -602,7 +600,7 @@ class TestScalarLeafEvaluation:
 
         test = TestModel(
             model_id="Test.Model",
-            source_file=Path(""),
+            source_file=None,
             source_package="Test",
             short_name="Model",
             n_vars=0,
@@ -741,7 +739,7 @@ class TestQuantityGate:
         time = np.linspace(0.0, 1.0, 11)
         test = TestModel(
             model_id="Test.Model",
-            source_file=Path(""),
+            source_file=None,
             source_package="Test",
             short_name="Model",
             n_vars=1,
@@ -895,7 +893,7 @@ class TestScalarReporterSurfaces:
         summary = summarize(vc)
         assert summary.display == "not scored"
         assert error in summary.criterion
-        assert summary.criterion.strip() != "Scalar leaf not scored — x"
+        assert summary.criterion.strip() != "Scalar criterion not scored — x"
 
     def test_a_non_finite_reference_reduction_names_the_reference(self):
         from dstf.comparison.registry import summarize

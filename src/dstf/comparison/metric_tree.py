@@ -1,6 +1,6 @@
 """MetricTree: composition of metric results with Boolean / weighted combinators.
 
-See docs/vision.md "Metric composition" and docs/extensibility.md §6.
+See docs/vision.md "Metric composition" and docs/guides/criteria.md.
 
 A spec with no ``metrics`` tree collapses to a degenerate flat-AND over
 per-variable ``VariableComparison`` results (``implicit_and_tree``), which is
@@ -32,23 +32,14 @@ from .sides import as_written
 
 @dataclass
 class MetricResult:
-    """Uniform shape produced by both leaves and combinators.
+    """A node's verdict in a criteria tree, as a combinator reads and returns it.
 
-    ``VariableComparison`` is a richer, reporting-friendly leaf result; this
-    is the narrow type combinators pass around. A leaf is adapted to a
-    ``MetricResult`` on the way in via :func:`leaf_from_variable`.
-
-    Fields:
-      passed      — overall pass/fail after combinator logic.
-      score       — numeric score; interpretation is combinator-dependent
-                    (min NRMSE for AND, max NRMSE for OR, etc.). Not normalized
-                    in general. A value of ``None`` means "no meaningful score"
-                    (e.g. after a ``warn`` wrapper).
-      label       — short human-readable tag for reports (e.g. a variable name
-                    or a combinator name + children count).
-      diagnostics — open-ended structured extras. Reports render these.
-      children    — empty for leaves; populated for combinator nodes so the
-                    tree shape is reconstructible.
+    Attributes:
+        passed: Whether the node passes.
+        score: Its score, whose meaning is the node's; None for none.
+        label: A short name for reports.
+        diagnostics: What else the report shows of it.
+        children: A group's children's results; empty for a criterion.
     """
 
     passed: bool
@@ -64,13 +55,26 @@ class MetricResult:
 
 
 class Combinator(ABC):
-    """Strategy interface for combining child metric results into one."""
+    """How a group of a criteria tree combines its children's verdicts: what a
+    :class:`~dstf.comparison.registry.CombinatorDescriptor` builds.
+
+    Attributes:
+        name: The name the group is registered under.
+    """
 
     #: Short identifier used in config / diagnostics.
     name: str = ""
 
     @abstractmethod
-    def combine(self, children: list[MetricResult]) -> MetricResult: ...
+    def combine(self, children: list[MetricResult]) -> MetricResult:
+        """Combine the verdicts of a group's children into the group's.
+
+        Args:
+            children: The children's results, in the tree's order.
+
+        Returns:
+            The group's result, with whether it passes, its score and the children.
+        """
 
 
 class AndCombinator(Combinator):

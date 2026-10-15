@@ -1,4 +1,4 @@
-"""UI schema derived from a mode's Config dataclass — what ``export-schema``
+"""UI schema derived from a mode's Config dataclass — what ``spec schema``
 writes as JSON-Schema and the authoring tool's form emitter renders.
 
 Each :class:`ComparisonMode`'s Config is a frozen dataclass with strictly
@@ -43,6 +43,22 @@ SIDE_LABELS = ("−", "+")
 
 @dataclass
 class FieldSpec:
+    """One field of a mode's settings, as :func:`derive_schema` reads it.
+
+    Attributes:
+        name: The key a criterion writes.
+        type: Its kind: ``float``, ``int``, ``bool``, ``str``, ``enum``,
+            ``sides`` or ``passthrough``.
+        default: Its value when the criterion does not write it.
+        optional: Whether it may be null.
+        choices: A choice's values.
+        label: Its name in a form.
+        help: What it does.
+        ui_min: The lowest a form offers.
+        ui_max: The highest a form offers at first; a larger value raises it.
+        side_labels: A two-sided tolerance's names for its sides.
+    """
+
     name: str
     type: str  # one of FIELD_TYPES
     default: Any = None
@@ -61,6 +77,13 @@ class FieldSpec:
 
 @dataclass
 class Schema:
+    """A mode's settings as :func:`derive_schema` reads them.
+
+    Attributes:
+        mode: The mode's name.
+        fields: Its fields, in order.
+    """
+
     mode: str | None = None
     fields: list[FieldSpec] = field(default_factory=list)
 
@@ -77,19 +100,31 @@ class Schema:
 
 
 def derive_schema(config_cls: type, *, mode: str | None = None) -> Schema:
-    """Inspect a dataclass and return its UI schema.
+    """The fields of a mode's settings dataclass, as the forms of the authoring
+    tool and the published JSON schema show them.
 
-    Handles ``float``, ``int``, ``bool``, ``str``, ``Optional[X]``,
-    ``Literal[...]``, and ``Optional[Literal[...]]``. Unknown shapes
-    (``list[dict]``, nested dataclasses, etc.) degrade to
-    ``type="passthrough"`` so callers can render a raw-JSON fallback
-    without crashing.
+    Each field's type gives its kind: ``float``, ``int``, ``bool``, ``str``, a
+    ``Literal`` of strings (a choice), :class:`~dstf.comparison.sides.Sides`
+    (a tolerance with two sides), each optional with ``| None``; any other type
+    is shown as raw JSON. Its ``metadata`` gives the rest:
 
-    Reads ``metadata`` from :func:`dataclasses.field` for display hints:
-      - ``label``: human-readable label (defaults to a titleized name)
-      - ``help``: tooltip text
-      - ``side_labels``: what a ``sides`` field's two sides are called,
-        lower first (defaults to :data:`SIDE_LABELS`)
+    - ``label``: the field's name in a form;
+    - ``help``: what it does, in a sentence for the person writing it — the
+      reference page and the schema's ``description``;
+    - ``ui_min`` / ``ui_max``: a number field's range in a form;
+    - ``side_labels``: what a two-sided tolerance's sides are called;
+    - ``columns`` and ``column_help``: for a list of rows, each row's keys
+      with their kinds, and what each holds.
+
+    Args:
+        config_cls: The dataclass.
+        mode: The mode's name, carried into the result.
+
+    Returns:
+        The fields, in order, with their kinds, defaults and metadata.
+
+    Raises:
+        TypeError: ``config_cls`` is not a dataclass.
     """
     if not dataclasses.is_dataclass(config_cls):
         raise TypeError(f"{config_cls!r} is not a dataclass")
@@ -120,6 +155,19 @@ def derive_schema(config_cls: type, *, mode: str | None = None) -> Schema:
             )
         )
     return Schema(mode=mode, fields=fields_out)
+
+
+def column_help(config_cls: type) -> dict[str, dict[str, str]]:
+    """``{table field: {column: what it holds}}`` for a config's row tables,
+    from each field's ``column_help`` metadata — beside its ``columns``,
+    which say the columns' names and kinds."""
+    if not dataclasses.is_dataclass(config_cls):
+        return {}
+    return {
+        f.name: dict(f.metadata["column_help"])
+        for f in dataclasses.fields(config_cls)
+        if f.metadata.get("column_help")
+    }
 
 
 def _classify_type(hint: Any) -> tuple[str, bool, list[str] | None]:

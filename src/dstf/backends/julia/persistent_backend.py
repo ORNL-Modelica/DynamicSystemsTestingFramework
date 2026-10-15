@@ -22,10 +22,10 @@ is just compile/solve of the user model, not the one-time package load
 that would have happened regardless of the test set.
 
 This is the default backend; pass ``--batch`` to opt out. There is no
-automatic fallback: if Julia's dependencies aren't ready (no Manifest.toml,
-failed `using`), ``preflight`` raises RuntimeError and the CLI aborts with
-a message naming both fixes — same pattern as Dymola and OpenModelica (see
-``backends.select_backend``).
+automatic fallback: a ``julia`` that was not found is refused before the
+run starts, as every backend's is (``backends.select_backend``), and a
+project that is not ready (no Manifest.toml, a failed `using`) fails the
+worker's start.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
-from ..common.json_driver import resolve_source_file
+from ..common.json_driver import resolve_source_file, source_not_found
 from ..persistent import STARTUP_TIMEOUT_HINT, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult, timeout_message
 from .backend import JuliaBackend, JuliaConfig
@@ -195,9 +195,11 @@ class JuliaWorker(Worker):
                 model_id=test.model_id,
                 test_key=test_key,
                 success=False,
-                error_message=(
-                    f"Julia source not found for {test.model_id}. "
-                    f"Ensure the test_spec.json 'source' field resolves to a .jl file."
+                error_message=source_not_found(
+                    test,
+                    self.config,
+                    JuliaBackend.source_suffix,
+                    JuliaBackend.tool_label,
                 ),
             )
 
@@ -504,23 +506,6 @@ class PersistentJuliaBackend(PersistentBackendBase, JuliaBackend):
 
     worker_cls = JuliaWorker
     backend_label = "Julia"
-
-    @classmethod
-    def preflight(cls, config) -> None:
-        # Cheap probe: does `julia` resolve on PATH? Subsequent failures
-        # (toml errors, missing packages, MTK compile failures) still
-        # bubble up from worker.start() inside run_tests.
-        import shutil
-
-        if not shutil.which("julia"):
-            raise RuntimeError(
-                "Julia binary not found on PATH. The persistent-worker Julia "
-                "backend spawns a long-lived `julia --project=...` subprocess "
-                "and needs `julia` available.\n"
-                "\n"
-                "Install Julia from https://julialang.org/downloads/ "
-                "(or use a version manager like `juliaup`)."
-            )
 
     def make_worker(self, worker_id: int) -> JuliaWorker:
         return JuliaWorker(worker_id, self.config, self.julia_config)

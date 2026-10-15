@@ -1,44 +1,14 @@
-"""Baseline-role commands (D66): companion, soft-check, import-baseline."""
+"""Baseline-role commands (D66): the `companion` and `soft-check` groups,
+one handler per action."""
 
 import argparse
 from pathlib import Path
 
-from ..config import ConfigError
 from .common import _build_config
 
-# Positionals each action needs, in CLI order. The parser declares them all
-# ``nargs="?"`` because they're per-action — argparse can't express "required
-# for add/freeze/remove, optional for list" — so the requirement is enforced
-# here and reported as a usage error (exit 2), not a TypeError traceback out
-# of the store call.
-_COMPANION_REQUIRED = {
-    "add": ("model_id", "name", "path"),
-    "freeze": ("model_id", "name"),
-    "remove": ("model_id", "name"),
-    "list": (),
-}
-_SOFT_CHECK_REQUIRED = {
-    "remove": ("model_id", "name"),
-    "list": (),
-}
-
-
-def _require_positionals(
-    args: argparse.Namespace,
-    command: str,
-    required: dict[str, tuple[str, ...]],
-) -> None:
-    """Raise :class:`ConfigError` naming the missing positionals for
-    ``<command> <action>``. No-op when everything the action needs is set."""
-    names = required.get(args.action, ())
-    missing = [n for n in names if getattr(args, n, None) is None]
-    if not missing:
-        return
-    usage = " ".join(f"<{n}>" for n in names)
-    raise ConfigError(
-        f"{command} {args.action}: missing required argument(s): "
-        f"{', '.join(missing)}. Usage: dstf {command} {args.action} {usage}"
-    )
+#: What `soft-check add` records as a soft_check's origin when its source
+#: file names none.
+SOFT_CHECK_ORIGIN = "soft-check add"
 
 
 class _MapError(Exception):
@@ -133,176 +103,161 @@ def _print_companions(companions: dict) -> None:
             print(f"  {'':<30} {test_var} -> {companion_var}")
 
 
-def cmd_companion(args: argparse.Namespace) -> int:
-    """Manage plot-only companion references (D66).
+def _store(args: argparse.Namespace):
+    """The reference store of the partition the command line names."""
+    from ..storage.reference_store import ReferenceStore
+
+    return ReferenceStore(_build_config(args))
+
+
+def cmd_companion_add(args: argparse.Namespace) -> int:
+    """Register a file as a plot-only companion of a test (D66).
 
     Companions are experimental / analytical / rig data shown as plot
-    overlays but never scored against. Four actions:
-      add <model> <name> <path> [--format csv|json] [--map TEST=COMPANION]
-      list [<model>]
-      freeze <model> <name>
-      remove <model> <name>
-
-    ``--map`` is repeatable and records which of the companion's variables
-    draws on which of the test's — the answer the report reads instead of
-    guessing from spellings. Two test variables may name one companion
-    variable; one test variable may not be named twice. Only ``add``
-    writes the record, so only ``add`` accepts ``--map``.
+    overlays but never scored against. ``--map`` is repeatable and records
+    which of the companion's variables draws on which of the test's — the
+    answer the report reads instead of guessing from spellings. Two test
+    variables may name one companion variable; one test variable may not be
+    named twice. Only ``add`` writes the record, so only ``add`` has
+    ``--map``.
     """
-    _require_positionals(args, "companion", _COMPANION_REQUIRED)
-    if args.action != "add" and getattr(args, "variable_map", None):
-        # argparse cannot scope an option to one value of a positional
-        # choice, so the refusal lives here — silently ignoring it would
-        # leave the user believing a mapping had been recorded.
-        raise ConfigError(
-            f"companion {args.action}: --map is only accepted by "
-            f"`companion add`, which writes the mapping. To change one, "
-            f"re-add the companion with the --map you want."
-        )
-    config = _build_config(args)
-    from ..storage.reference_store import ReferenceStore
     from ..storage.roles import infer_companion_format
 
-    store = ReferenceStore(config)
-    action = args.action
-
-    if action == "add":
-        path = Path(args.path)
-        fmt = getattr(args, "format", None) or infer_companion_format(str(path))
-        try:
-            mapping = _parse_variable_map(getattr(args, "variable_map", None))
-            _check_variable_map(store, args.model_id, path, fmt, mapping)
-            ok = store.add_companion(
-                args.model_id,
-                args.name,
-                path=path,
-                format=getattr(args, "format", None),
-                variables=mapping,
-            )
-        except (_MapError, ValueError, FileNotFoundError) as e:
-            print(f"Error: {e}")
-            return 1
-        print(
-            f"Registered companion {args.name!r} → {args.path}"
-            if ok
-            else f"Failed to register companion {args.name!r}"
+    store = _store(args)
+    path = Path(args.path)
+    fmt = args.format if args.format is not None else infer_companion_format(str(path))
+    try:
+        mapping = _parse_variable_map(args.variable_map)
+        _check_variable_map(store, args.model_id, path, fmt, mapping)
+        ok = store.add_companion(
+            args.model_id,
+            args.name,
+            path=path,
+            format=args.format,
+            variables=mapping,
         )
-        return 0 if ok else 1
+    except (_MapError, ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}")
+        return 1
+    if ok:
+        store.config.write_default_file()
+    print(
+        f"Registered companion {args.name!r} → {args.path}"
+        if ok
+        else f"Failed to register companion {args.name!r}"
+    )
+    return 0 if ok else 1
 
-    if action == "list":
-        model_id = getattr(args, "model_id", None)
-        if model_id:
-            companions = store.get_companions(model_id)
-            if not companions:
-                print(f"No companions registered for {model_id}")
-                return 0
-            print(f"Companions for {model_id}:")
+
+def cmd_companion_list(args: argparse.Namespace) -> int:
+    """List one test's companions, or every test's."""
+    store = _store(args)
+    if args.model_id is not None:
+        companions = store.get_companions(args.model_id)
+        if not companions:
+            print(f"No companions registered for {args.model_id}")
+            return 0
+        print(f"Companions for {args.model_id}:")
+        _print_companions(companions)
+        return 0
+    total = 0
+    for _tid, entry in sorted(store.index.all_tests().items()):
+        if entry["status"] == "obsolete":
+            continue
+        companions = store.get_companions(entry["model_id"])
+        if companions:
+            print(f"{entry['model_id']}:")
             _print_companions(companions)
+            total += len(companions)
+    if total == 0:
+        print("No companions registered.")
+    return 0
+
+
+def cmd_companion_freeze(args: argparse.Namespace) -> int:
+    """Copy an external companion's data into the reference storage."""
+    store = _store(args)
+    if args.name not in store.get_companions(args.model_id):
+        print(f"Companion {args.name!r} not found on {args.model_id}")
+        return 1
+    try:
+        ok = store.freeze_companion(args.model_id, args.name)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return 1
+    if ok:
+        store.config.write_default_file()
+        print(f"Frozen companion {args.name!r} for {args.model_id}")
+    else:
+        print(f"Companion {args.name!r} of {args.model_id} is already frozen")
+    return 0
+
+
+def cmd_companion_remove(args: argparse.Namespace) -> int:
+    """Deregister a companion."""
+    ok = _store(args).remove_companion(args.model_id, args.name)
+    if ok:
+        print(f"Removed companion {args.name!r} from {args.model_id}")
+    else:
+        print(f"Companion {args.name!r} not found on {args.model_id}")
+    return 0 if ok else 1
+
+
+def _print_soft_checks(checks: dict) -> None:
+    """One line per soft_check: its name, variable count and origin."""
+    for name, bl in checks.items():
+        origin = bl.provenance.get("source") or bl.provenance.get("origin") or "-"
+        print(f"  {name:<30} n_vars={len(bl.variables):<4} origin={origin}")
+
+
+def cmd_soft_check_list(args: argparse.Namespace) -> int:
+    """List one test's soft_checks (advisory cross-checks), or every test's."""
+    store = _store(args)
+    if args.model_id is not None:
+        checks = store.get_soft_checks(args.model_id)
+        if not checks:
+            print(f"No soft_checks registered for {args.model_id}")
             return 0
-        # All models
-        total = 0
-        for _tid, entry in sorted(store.index.all_tests().items()):
-            if entry["status"] == "obsolete":
-                continue
-            companions = store.get_companions(entry["model_id"])
-            if companions:
-                print(f"{entry['model_id']}:")
-                _print_companions(companions)
-                total += len(companions)
-        if total == 0:
-            print("No companions registered.")
+        print(f"Soft_checks for {args.model_id}:")
+        _print_soft_checks(checks)
         return 0
-
-    if action == "freeze":
-        try:
-            ok = store.freeze_companion(args.model_id, args.name)
-        except FileNotFoundError as e:
-            print(f"Error: {e}")
-            return 1
-        if ok:
-            print(f"Frozen companion {args.name!r} for {args.model_id}")
-        else:
-            print(f"Companion {args.name!r} is already frozen or does not exist")
-        return 0
-
-    if action == "remove":
-        ok = store.remove_companion(args.model_id, args.name)
-        if ok:
-            print(f"Removed companion {args.name!r} from {args.model_id}")
-        else:
-            print(f"Companion {args.name!r} not found on {args.model_id}")
-        return 0 if ok else 1
-
-    return 1
+    total = 0
+    for _tid, entry in sorted(store.index.all_tests().items()):
+        if entry["status"] == "obsolete":
+            continue
+        checks = store.get_soft_checks(entry["model_id"])
+        if checks:
+            print(f"{entry['model_id']}:")
+            _print_soft_checks(checks)
+            total += len(checks)
+    if total == 0:
+        print("No soft_checks registered.")
+    return 0
 
 
-def cmd_soft_check(args: argparse.Namespace) -> int:
-    """Manage soft_check baselines (advisory cross-checks)."""
-    _require_positionals(args, "soft-check", _SOFT_CHECK_REQUIRED)
-    config = _build_config(args)
-    from ..storage.reference_store import ReferenceStore
-
-    store = ReferenceStore(config)
-    action = args.action
-
-    if action == "list":
-        model_id = getattr(args, "model_id", None)
-        if model_id:
-            checks = store.get_soft_checks(model_id)
-            if not checks:
-                print(f"No soft_checks registered for {model_id}")
-                return 0
-            print(f"Soft_checks for {model_id}:")
-            for name, bl in checks.items():
-                origin = (
-                    bl.provenance.get("source") or bl.provenance.get("origin") or "-"
-                )
-                print(f"  {name:<30} n_vars={len(bl.variables):<4} origin={origin}")
-            return 0
-        total = 0
-        for _tid, entry in sorted(store.index.all_tests().items()):
-            if entry["status"] == "obsolete":
-                continue
-            checks = store.get_soft_checks(entry["model_id"])
-            if checks:
-                print(f"{entry['model_id']}:")
-                for name, bl in checks.items():
-                    origin = (
-                        bl.provenance.get("source")
-                        or bl.provenance.get("origin")
-                        or "-"
-                    )
-                    print(f"  {name:<30} n_vars={len(bl.variables):<4} origin={origin}")
-                total += len(checks)
-        if total == 0:
-            print("No soft_checks registered.")
-        return 0
-
-    if action == "remove":
-        ok = store.remove_soft_check(args.model_id, args.name)
-        if ok:
-            print(f"Removed soft_check {args.name!r} from {args.model_id}")
-        else:
-            print(f"Soft_check {args.name!r} not found on {args.model_id}")
-        return 0 if ok else 1
-
-    return 1
+def cmd_soft_check_remove(args: argparse.Namespace) -> int:
+    """Deregister a soft_check."""
+    ok = _store(args).remove_soft_check(args.model_id, args.name)
+    if ok:
+        print(f"Removed soft_check {args.name!r} from {args.model_id}")
+    else:
+        print(f"Soft_check {args.name!r} not found on {args.model_id}")
+    return 0 if ok else 1
 
 
-def cmd_import_baseline(args: argparse.Namespace) -> int:
-    """Import another regression system's primary as a soft_check (D66).
+def cmd_soft_check_add(args: argparse.Namespace) -> int:
+    """Store another regression system's primary as a soft_check (D66).
 
-    Reads a reference-shape JSON from ``source_path`` (same schema a
+    Reads a reference-shape JSON from ``source`` (same schema a
     ``ref_NNNN.json`` file uses at its top level) and stores it under
     the local model's soft_checks with the given name.
     """
     import json as json_mod
 
-    config = _build_config(args)
-    from ..storage.reference_store import ReferenceStore, read_reference_file
+    from ..storage.reference_store import read_reference_file
 
-    store = ReferenceStore(config)
-    source = Path(args.import_source)
+    store = _store(args)
+    source = Path(args.source)
     if not source.exists():
         print(f"File not found: {source}")
         return 1
@@ -310,6 +265,12 @@ def cmd_import_baseline(args: argparse.Namespace) -> int:
         data = read_reference_file(source)
     except (json_mod.JSONDecodeError, OSError) as e:
         print(f"Failed to read {source}: {e}")
+        return 1
+    if not isinstance(data, dict):
+        kind = {list: "list", str: "string", bool: "boolean"}.get(
+            type(data), "null" if data is None else "number"
+        )
+        print(f"Failed to read {source}: it holds a JSON {kind}, not an object")
         return 1
 
     time = data.get("time") or []
@@ -319,7 +280,7 @@ def cmd_import_baseline(args: argparse.Namespace) -> int:
         return 1
 
     provenance = dict(data.get("provenance") or {})
-    provenance.setdefault("origin", "import-baseline")
+    provenance.setdefault("origin", SOFT_CHECK_ORIGIN)
     provenance.setdefault("imported_from", str(source))
 
     try:
@@ -337,5 +298,6 @@ def cmd_import_baseline(args: argparse.Namespace) -> int:
         print(f"Error: {e}")
         return 1
     if ok:
+        store.config.write_default_file()
         print(f"Imported {source} → soft_check {args.name!r} on {args.model_id}")
     return 0 if ok else 1

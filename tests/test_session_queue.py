@@ -481,7 +481,7 @@ def test_a_running_test_s_simulation_settings_are_locked(h):
     )
     assert h.session.spec.pending == []
     # A queued test is not locked. `/simulation` is not stageable for ANY
-    # test today — `patch_apply`'s whitelist, the `spec-update` seam — so
+    # test today — `patch_apply`'s whitelist, the `spec update` seam — so
     # this is the whitelist's refusal, not the queue's.
     with pytest.raises(PatchError, match="whitelist"):
         h.session.stage([PatchOp(B, "replace", "/simulation/stop_time", 2.0)])
@@ -875,7 +875,8 @@ def _stub_backend(h, monkeypatch, tmp_path):
         )
     )
     monkeypatch.setattr(
-        "dstf.authoring.session.select_backend", lambda config, persistent: stub
+        "dstf.authoring.session.select_backend",
+        lambda config, persistent, to_run: stub,
     )
     return stub
 
@@ -932,7 +933,10 @@ def test_a_backend_that_cannot_be_queued_on_disables_queue_with_its_sentence(
 ):
     sentence = "Persistent-worker Python unavailable."
 
-    def unavailable(config, persistent):
+    def unavailable(config, persistent, to_run):
+        # The queue's backend is the one that RUNS: one that was not found
+        # is refused here, by the check every run starts with.
+        assert persistent and to_run
         raise BackendUnavailableError(sentence)
 
     monkeypatch.setattr("dstf.authoring.session.select_backend", unavailable)

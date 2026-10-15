@@ -52,7 +52,13 @@ def describe_om_session() -> dict:
         import OMPython  # type: ignore[import-not-found]
 
         info["ompython_installed"] = True
-        info["version"] = getattr(OMPython, "__version__", "unknown")
+        # OMPython carries no `__version__`: its distribution says it.
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            info["version"] = version("OMPython")
+        except PackageNotFoundError:
+            info["version"] = getattr(OMPython, "__version__", None)
         from OMPython import (
             OMCSessionZMQ,  # type: ignore[import-not-found]  # noqa: F401
         )

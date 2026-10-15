@@ -37,7 +37,6 @@ def _run_spec_update(spec_path: Path, update_json_path: Path) -> int:
         source_path=None,
         reference_root=str(cfg_dir),
         test_spec=str(spec_path),
-        dymola_interface=None,
         json_file=str(update_json_path),
     )
     return cmd_spec_update(ns)
@@ -161,7 +160,7 @@ class TestNonEnvelopeRejected:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_reporter.py — 2026-07-06 review,
-# reporter batch (CODE_REVIEW_2026-07-06.md).
+# reporter batch.
 #
 # Finding 41 — ``cmd_spec_update`` materializes the implicit metric tree
 # before applying reporter-emitted per-leaf ops to a flat-override entry
@@ -182,6 +181,53 @@ def _write_patch(tmp_path: Path, model: str, ops: list[dict]) -> Path:
     patch = tmp_path / "spec_patch.json"
     patch.write_text(json.dumps({"model": model, "patch": ops}), encoding="utf-8")
     return patch
+
+
+def test_an_edit_in_a_folder_without_the_soft_check_is_written_and_says_so(
+    tmp_path, capsys
+):
+    """The FMU example's tree warns against the soft check `experiment`,
+    stored for FMPy/linux only. In FMPy/macos an edit of another criterion
+    is written, with one line saying the soft check is not scored there —
+    not refused, which left no edit of that test possible in any folder but
+    the one the soft check was imported into."""
+    (tmp_path / "testing.json").write_text(
+        json.dumps(
+            {
+                "source_type": "fmu",
+                "backend": "FMPy",
+                "os": "macos",
+                "reference_root": ".",
+            }
+        ),
+        encoding="utf-8",
+    )
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
+            {
+                "combinator": "warn",
+                "children": [
+                    {
+                        "metric": "nrmse",
+                        "variable": "h",
+                        "against": "experiment",
+                        "tolerance": 0.2,
+                    }
+                ],
+            },
+        ],
+    }
+    spec = _write_spec(tmp_path, {"model": "BouncingBall", "metrics": tree})
+    op = {"op": "replace", "path": "/metrics/children/0/tolerance", "value": 2e-3}
+    assert _run_spec_update(spec, _write_patch(tmp_path, "BouncingBall", [op])) == 0
+    out = capsys.readouterr().out
+    assert "'experiment' is not stored for FMPy/macos: it is not scored here" in (
+        out.splitlines()
+    ), out
+    (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
+    assert entry["metrics"]["children"][0]["tolerance"] == 2e-3
 
 
 class TestSpecUpdateMaterialization:
@@ -469,7 +515,7 @@ class TestMultiModelEnvelope:
 class TestABaseToleranceThatIsNoNumberIsNotWritten:
     """``comparison.tolerance`` is ONE finite number: a patch that would
     leave the entry holding anything else there is refused with the
-    comparison's sentence and applies nothing — ``spec-update`` and the
+    comparison's sentence and applies nothing — ``spec update`` and the
     tool's Save alike (`apply_validated_patches`)."""
 
     WHERE = "test_spec.json comparison.tolerance"
@@ -536,13 +582,27 @@ class TestABaseToleranceThatIsNoNumberIsNotWritten:
         assert "Applied" not in out
         assert spec.read_bytes() == before
 
-    @pytest.mark.parametrize("value", [0, -1, 0.5, None])
+    @pytest.mark.parametrize("value", [0, 0.5, None])
     def test_a_number_or_null_is_applied(self, tmp_path, capsys, value):
         spec = self._spec(tmp_path, {"comparison": {"tolerance": 1e-4}})
         ops = [{"op": "replace", "path": "/comparison/tolerance", "value": value}]
         assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 0
         (entry,) = json.loads(spec.read_text(encoding="utf-8"))["tests"]
         assert entry["comparison"]["tolerance"] == value
+
+    def test_a_negative_number_is_refused_and_nothing_is_applied(
+        self, tmp_path, capsys
+    ):
+        spec = self._spec(tmp_path, {"comparison": {"tolerance": 1e-4}})
+        before = spec.read_bytes()
+        ops = [{"op": "replace", "path": "/comparison/tolerance", "value": -1}]
+        assert _run_spec_update(spec, self._patch(tmp_path, ops)) == 1
+        out = capsys.readouterr().out
+        assert (
+            "the base tolerance must be 0 or more (test_spec.json "
+            "comparison.tolerance is -1)"
+        ) in out
+        assert spec.read_bytes() == before
 
     @pytest.mark.parametrize(
         "before,after", [(1, True), (0, False), (1.0, True)], ids=repr

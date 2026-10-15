@@ -25,6 +25,18 @@ The two environment names are GitHub environments of this repository
 (Settings → Environments). They are created on first use; adding a required
 reviewer to `pypi` there makes every release wait for a person's approval.
 
+## Once, on Read the Docs
+
+The documentation site is built by Read the Docs from `.readthedocs.yaml`:
+Ubuntu 24.04, Python 3.12, the project installed with its `docs` extra, and
+`docs/conf.py` with every warning an error. Import the repository on
+readthedocs.org under the account that will own the project, and under
+**Versions** activate the tags (a rule "activate new tags as they come"
+saves doing it per release); `stable` then follows the newest tag. The site
+publishes the two JSON schemas at `schemas/testing.schema.json` and
+`schemas/test_spec.schema.json` under each version's root, which is what a
+user's `$schema` points at.
+
 ## Each release
 
 1. Set `version` in `pyproject.toml`, then `uv lock` (the lock records the
@@ -43,7 +55,19 @@ reviewer to `pypi` there makes every release wait for a person's approval.
    from PyPI.) A version can be uploaded to an index **once** — a second
    rehearsal of the same version is refused, so rehearse a change of the
    packaging, not every release.
-3. Tag the commit on `main` and push the tag by name:
+3. The documentation builds with every warning an error: the `docs` job of
+   the `quality` workflow is green on the commit, or locally
+
+   ```bash
+   uv sync --extra dev --extra docs --locked --inexact
+   uv run sphinx-build -W --keep-going -b html docs docs/_build/html
+   ```
+
+4. Read `README.md` as the project page it becomes, on the commit to be
+   tagged: the index freezes the page with the version, and a broken image
+   or a link that only works inside the repository stays on that version's
+   page for good. An image is an absolute URL; so is every link.
+5. Tag the commit on `main` and push the tag by name:
 
    ```bash
    git tag -a v1.0.1 -m "DSTF v1.0.1" <commit>
@@ -53,6 +77,8 @@ reviewer to `pypi` there makes every release wait for a person's approval.
    The workflow builds, refuses a tag that does not name the built version,
    checks that the page renders, installs the wheel in a clean environment
    and starts it, then publishes to PyPI.
+6. Read the Docs builds the tag: check that the new version is listed on the
+   site, builds green, and is what `stable` shows.
 
 ## What is published
 

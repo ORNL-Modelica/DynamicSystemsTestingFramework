@@ -155,7 +155,7 @@ details summary:hover { color: var(--dstf-text); }
    No form controls — editing a spec is the authoring tool's job, not the
    report's. #}
 {% macro status_pill(passed) %}{% if passed is sameas true %}<span class="node-status pass">PASS</span>{% elif passed is sameas false %}<span class="node-status fail">FAIL</span>{% else %}<span class="node-status pending">—</span>{% endif %}{% endmacro %}
-{% macro advisory_chip(count, vidx=None) %}<span class="advisory-chip"{% if vidx is not none %} data-vidx="{{ vidx }}"{% endif %} title="{% if count == 1 %}One failing leaf sits under a warn wrapper — advisory only; it does not fail the test.{% else %}{{ count }} failing leaves sit under a warn wrapper — advisory only; they do not fail the test.{% endif %}">{% if count == 1 %}1 advisory{% else %}{{ count }} advisory{% endif %}</span>{% endmacro %}
+{% macro advisory_chip(count, vidx=None) %}<span class="advisory-chip"{% if vidx is not none %} data-vidx="{{ vidx }}"{% endif %} title="{% if count == 1 %}One failing criterion sits under a warn group — advisory only; it does not fail the test.{% else %}{{ count }} failing criteria sit under a warn group — advisory only; they do not fail the test.{% endif %}">{% if count == 1 %}1 advisory{% else %}{{ count }} advisory{% endif %}</span>{% endmacro %}
 {% macro node(n) %}
 {%- set combinator_help = {
       'and': 'All children must pass.',
@@ -208,7 +208,7 @@ details summary:hover { color: var(--dstf-text); }
 {% elif sim_failed %}
   <span class="fail"><strong>Simulation failed</strong></span>
 {% else %}
-  {% if tree_summary %}<span id="summary-text" class="{{ 'pending' if tree_summary.root_passed is not sameas true and tree_summary.root_passed is not sameas false else ('pass' if tree_summary.root_passed else 'fail') }}"><strong>{{ tree_summary.n_pass }}</strong> / <strong>{{ tree_summary.n_total }}</strong> leaves passed{% if tree_summary.root_passed is not sameas true and tree_summary.root_passed is not sameas false %} · root verdict pending — run dstf run to evaluate{% endif %}{% if tree_summary.n_advisory_failed %}{{ advisory_chip(tree_summary.n_advisory_failed) }}{% endif %}</span>{% else %}<span id="summary-text"></span>{% endif %}
+  {% if tree_summary %}<span id="summary-text" class="{{ 'pending' if tree_summary.root_passed is not sameas true and tree_summary.root_passed is not sameas false else ('pass' if tree_summary.root_passed else 'fail') }}"><strong>{{ tree_summary.n_pass }}</strong> / <strong>{{ tree_summary.n_total }}</strong> criteria passed{% if tree_summary.root_passed is not sameas true and tree_summary.root_passed is not sameas false %} · root verdict pending — run dstf run to evaluate{% endif %}{% if tree_summary.n_advisory_failed %}{{ advisory_chip(tree_summary.n_advisory_failed) }}{% endif %}</span>{% else %}<span id="summary-text"></span>{% endif %}
 {% endif %}
 </div>
 
@@ -339,7 +339,7 @@ details summary:hover { color: var(--dstf-text); }
 {# === METRIC TREE (Stage 3 — full unfiltered SpecNodeView mount) === #}
 {% if tree_view %}
 <details class="metric-tree-section" open>
-  <summary>Metric Tree <span class="node-tree-hint">— every leaf + combinator, as the CLI scored it</span></summary>
+  <summary>Metric Tree <span class="node-tree-hint">— every criterion and group, as the CLI scored it</span></summary>
   <div class="node-tree" id="nodes-full">{{ node(tree_view) }}</div>
 </details>
 {% endif %}
@@ -376,7 +376,7 @@ details summary:hover { color: var(--dstf-text); }
   </div>
   {% endif %}
   {% if plot.overlays %}
-  <div class="overlay-picker" data-plot-id="plot-{{ plot.index }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
+  <div class="overlay-picker" data-plot-id="plot-{{ plot.index }}" title="Companion + soft_check overlays (view-only; never scored unless a criterion under a warn group names it)">
     <span class="ov-label">Overlays:</span>
     {% for ov in plot.overlays %}
     <label class="ov-item"><input type="checkbox" class="overlay-toggle" data-ov-name="{{ ov.name }}" data-ov-role="{{ ov.role }}"> <span class="ov-role ov-{{ ov.role }}">{{ ov.role }}</span> {{ ov.name }}</label>

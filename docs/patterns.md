@@ -80,6 +80,7 @@
 - `get_backend(config)` factory looks up the backend by `config.backend` and instantiates it
 - Built-in backends are lazy-imported on first use via `_import_builtin_backend()` — avoids loading all backends at startup
 - `DymolaBackend` extracts Dymola-specific settings into an immutable `DymolaConfig` dataclass at init
+- Each backend declares its `settings` table (its block of `testing.json`'s `backends`) and finds its own install: `Backend.locate(settings)` is the one place a backend is looked for (`backends/locate.py`), and says by which rule each part was found
 
 ### Variable naming from UnitTests expressions (D132)
 - A variable's NAME is the one its result file gives it. For the `UnitTests`
@@ -159,7 +160,7 @@
 - `interactive.html` uses a vendored Plotly.js (cartesian bundle, one copy per report suite at reports/plotly.min.js — offline-capable) for interactive charts — zoom, pan, hover tooltips on all data points
 - One chart per plot of the test (D140: one per scored variable or array family, then the watch plots): actual vs reference, plus the overlays the picker toggles
 - Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart — signed and absolute error on the right axis "Error [signal units]", NRMSE on its own "NRMSE [–]", each shown while a series on it is visible
-- `dstf spec-update` applies a patch file, from the authoring tool's Export or written by hand — the page itself edits nothing (D125)
+- `dstf spec update` applies a patch file, from the authoring tool's Export or written by hand — the page itself edits nothing (D125)
 
 ## Anti-Patterns
 
@@ -192,7 +193,7 @@
 - Lenient timeout: the watchdog kills but then checks disk; a sim that completed just past the deadline gets credit rather than being wasted
 
 ### Persistent Dymola workers via Python interface
-- `backends/dymola/interface_loader.py` auto-discovers the `dymola` archive (`.whl` for ≥2025, `.egg` for older) under platform install roots (`C:\Program Files\Dymola *\Modelica\Library\python_interface/`). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via `--dymola-interface` / `dymola_interface_path` / `DYMOLA_INTERFACE_PATH`. Diagnose with `dstf check-dymola`
+- `backends/dymola/interface_loader.py` finds the `dymola` archive (`.whl` for ≥2025, `.egg` for older) in the install of the Dymola executable that was found (`<install>/Modelica/Library/python_interface/`) and nowhere else; only where that install cannot be determined does it look under platform install roots (`C:\Program Files\Dymola *\...`), newest first, and say so. One archive is loaded per process: a second install's is refused (restart the tool). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via the Dymola block's `interface` in `testing.json` / `DYMOLA_INTERFACE_PATH`. Diagnose with `dstf check Dymola`
 - `PersistentDymolaBackend` subclasses `PersistentBackendBase` *and* `DymolaBackend` (in that MRO order, so the base's `run_tests` template wins). It overrides no `run_tests` of its own — only the template hooks `preflight` / `setup_before_workers` / `make_worker`, the `_probe_*` version probes, and `export_fmu`; `read_result` and config extraction come from `DymolaBackend`. Each worker is a `DymolaWorker` wrapping one `DymolaInterface` instance
 - Reliable per-worker PID tracking: pulled directly from `DymolaInterface._dymola_process.pid` (the internal `subprocess.Popen` handle), so we own the kill target without snapshot diffs
 - Parallel startup: monkey-patch Dymola's `dymola_interface_internal.dymola_lock` to a no-op (broad lock that holds for the whole `__init__` including `_check_dymola`'s ~7s ping wait), and add a narrow lock around `_find_available_port` so two workers can't pick the same random port. Without this patch, N workers serialize on Dymola's lock and startup is N×7s
@@ -211,7 +212,7 @@
 ### Index-page batch actions feed the CLI filter
 - Index template (`reporting/templates/dashboard.html`) has a checkbox column + a selection footer. All selection state lives client-side in the DOM
 - The count pills and the column filters narrow the rows; the header checkbox selects the rows they show
-- Two exports: a downloaded `selected.txt` (one model_id per line — directly consumable by `--filter @file`), and a copyable command string that auto-switches between inline `"A,B,C"` (≤3 models) and `@selected.txt` (more). A Command menu picks what the string asks for: `run` (with `--merge --report`), `compare`, `compare --accept`, `run --rerun failed,sim-failed` or `author`
+- Two exports: a downloaded `selected.txt` (one model_id per line — directly consumable by `--filter @file`), and a copyable command string that auto-switches between inline `"A,B,C"` (≤3 models) and `@selected.txt` (more). A Command menu picks what the string asks for: `run` (with `--merge --report`), `compare`, `compare --accept`, `run --rerun failed,sim-failed` or `author`. The run's flags follow the command — `--config` and everything the run did not take from it or the defaults (`Config.overrides`: the places, absolute, and `--backend-path`, `--tolerance`, `--timeout`, `--default-points`), each command carrying the ones it reads (`cli.parser.reads`) — so the command does what the run did from any directory; `author` is offered only when it reads every one
 - Live command preview in a read-only field so users see exactly what they'll get before clicking Copy
 - No server, no API — composes with the static HTML report design (works over `file://`)
 
@@ -221,7 +222,7 @@
 - `--rerun` always sets `args.merge = True` since rerunning failed tests in isolation defeats the goal (you want to see them in context of the whole suite)
 
 ### Configurable batch size with queue dispatch
-- `Config.batch_size` (CLI: `--batch-size N`), read by Dymola's `--batch` path only — a persistent worker takes one test at a time. Unset → one big batch per worker (current behavior, minimizes library reloads). Set → many small batches, all submitted to the `ThreadPoolExecutor`; workers pull next batch as they free up
+- `batch_size` in the Dymola block of `testing.json`'s `backends` (`DymolaConfig.batch_size`), read by Dymola's `--batch` path only — a persistent worker takes one test at a time. Unset → one big batch per worker (current behavior, minimizes library reloads). Set → many small batches, all submitted to the `ThreadPoolExecutor`; workers pull next batch as they free up
 - Crash/timeout blast radius is bounded by `batch_size` — a hung test only takes down its batch, not its worker's whole share
 - `worker_id` for the dashboard comes from the actual pool thread slot via `threading.current_thread().name` (regex-matched suffix), not the batch index — stable attribution across many batches per worker
 - Tradeoff: smaller batches reload Dymola's library more often. Sweet spot is ~3-10 depending on per-test runtime
@@ -243,9 +244,10 @@
 - Causes false comparison errors for identical signals with events
 - Use `_dedup_time_series()` to select pre- or post-event values explicitly
 
-### Don't put `--reference-root` on both parent parser and subcommands
-- argparse subcommand defaults (`None`) override the parent parser's value
-- Top-level args that apply globally should only be on the parent parser
+### Don't give a flag a plain default on both the top-level parser and a command
+- argparse copies a sub-parser's whole namespace over the parent's, so a command's default (`None`) erases a value given before the command
+- The four project flags (`--config`, `--source-path`, `--reference-root`, `--test-spec`) are on both, the command's copy with `default=argparse.SUPPRESS` (`cli/parser.py`); a command offers only the ones it reads
+- A flag written before a command that does not read it is seen by no sub-parser: the top-level parser refuses it after parsing (`_Root.parse_known_args`)
 
 ## Forward hooks
 

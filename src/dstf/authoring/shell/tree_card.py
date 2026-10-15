@@ -307,7 +307,7 @@ def leaf_readout(leaf: dict) -> str:
     to — which ALREADY carries the score ("NRMSE 1.531e-01 vs tolerance
     1.000e-02 → FAIL"), so the display beside it said the number twice (the
     first screenshot) — else the display alone. A sentinel's criterion says
-    the reason itself ("scalar leaf not scored — …"), so the error is not a
+    the reason itself ("scalar criterion not scored — …"), so the error is not a
     branch of its own. The trailing verdict is not stripped: `tube` and
     `range` do not end with it ("… → FAIL (requires 0)"), so a strip would
     read the string wrong for half the modes."""

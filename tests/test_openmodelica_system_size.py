@@ -227,8 +227,8 @@ def test_a_baseline_accepted_before_this_says_no_change():
 
 
 def test_every_shipped_openmodelica_baseline_records_its_state_count():
-    """The README says a changed state count is a structural warning on
-    OpenModelica; against a baseline with no count it is none, and the
+    """The OpenModelica setup page says a changed state count is a warning
+    on OpenModelica; against a baseline with no count it is none, and the
     example's shipped ones had none. They were accepted again."""
     refs = EXAMPLE / "Resources" / "ReferenceResults" / "OpenModelica" / "linux"
     counts = {}

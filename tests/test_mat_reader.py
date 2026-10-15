@@ -396,7 +396,6 @@ def _backend(tmp_path, backend: str):
     if backend == "Dymola":
         return DymolaBackend(
             SimpleNamespace(
-                show_ide=False,
                 backend_setup=[],
                 diagnostic_variables=[],
                 work_dir=tmp_path / "work",

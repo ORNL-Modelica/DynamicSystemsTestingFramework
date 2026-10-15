@@ -2,12 +2,15 @@
 routing they share."""
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 from ..backends import dataset_kind_for
-from ..backends.progress import recorded_backend
-from ..config import DEFAULT_STOP_TIME, ConfigError
+from ..backends.progress import recorded_backend, refuse_unregistered
+from ..config import ConfigError
+from ..config_shape import default
+from ..discovery.spec_shape import SIMULATION
 from ..discovery.test_registry import discover_tests
 from ..pipeline import run_pipeline, wipe_stale_state_for_scope, write_id_mapping
 from .common import (
@@ -20,6 +23,17 @@ from .common import (
 )
 from .review import _interactive_review
 
+logger = logging.getLogger(__name__)
+
+#: `--report-format`: each format and the file it is written to, in the
+#: current directory, when no --output names one (``console`` writes none).
+#: The first is the default.
+REPORT_FILES: dict[str, str | None] = {
+    "console": None,
+    "junit": "test-results.xml",
+    "html": "test-report.html",
+}
+
 
 def _notify_orphans(config, all_tests: list) -> None:
     """One-line notice if orphan manifest entries exist."""
@@ -31,7 +45,7 @@ def _notify_orphans(config, all_tests: list) -> None:
         )
 
 
-def _get_backend(config, persistent: bool = False):
+def _get_backend(config, persistent: bool = False, *, to_run: bool = False):
     """The CLI's wrapper over :func:`backends.select_backend`.
 
     The choice itself — persistent variant when the backend declares
@@ -48,10 +62,36 @@ def _get_backend(config, persistent: bool = False):
     from ..backends import BackendUnavailableError, select_backend
 
     try:
-        return select_backend(config, persistent=persistent)
+        return select_backend(config, persistent=persistent, to_run=to_run)
     except BackendUnavailableError as exc:
+        if exc.batch_runs:
+            # The command line's own way out, which the tool does not have.
+            exc = BackendUnavailableError(
+                f"{exc}\n\nOr re-run with `--batch` to use the per-test "
+                f"subprocess backend instead."
+            )
         print(f"{exc} Aborting.", file=sys.stderr)
         sys.exit(1)
+
+
+def _refuse_batch_without_workers(config) -> None:
+    """``--batch`` asks for the backend's script mode INSTEAD of its workers
+    that stay alive. A backend with no such workers (FMPy, Python) runs its
+    tests one way, and the flag chose nothing there: a flag that does not
+    apply is an error, said before anything simulates. An unregistered
+    backend name is :func:`_get_backend`'s to say."""
+    from ..backends import Capability, get_backend_class
+
+    try:
+        cls = get_backend_class(config)
+    except ValueError:
+        return
+    if Capability.PERSISTENT_WORKERS not in cls.capabilities:
+        raise ConfigError(
+            f"--batch does not apply to the {config.backend} backend: it has "
+            f"no workers that stay alive for --batch to turn off, and runs "
+            f"its tests one way. Run without --batch."
+        )
 
 
 def _report_accept(
@@ -90,10 +130,7 @@ def _say_removed_pages(n: int) -> None:
     """One line for the per-test report pages a run or compare removed and
     is not writing again. The removal is intended — a stale page must not
     survive the run that outdated it — but silent, it read as lost work.
-    `compare --report` is what writes them again from EVERY caller: under
-    `--accept --report` and `-i … --report` the line used to say "--report
-    writes them again", of the flag that had just been given and wrote
-    none."""
+    `compare --report` is what writes them again from every caller."""
     if n:
         pages, them = ("page", "it") if n == 1 else ("pages", "them")
         print(
@@ -115,12 +152,12 @@ def _default_stop_time_notes(tests: list, config) -> list[str]:
       "the model's annotation gives no stop time" was false of it;
     - any other source type, which has no annotation layer: the entry
       gives none. Every backend runs such a test to the same default."""
-    ran = f"it runs to the default, {DEFAULT_STOP_TIME:g} s."
+    ran = f"it runs to the default, {default('stop_time', SIMULATION):g} s."
 
     def why(test) -> str:
         if config.source_type != "modelica":
             return "test_spec.json gives no stop time"
-        if test.source_file == Path(""):
+        if test.source_file is None:
             return (
                 "not found under source_path, so its experiment annotation was not read"
             )
@@ -139,6 +176,13 @@ def _default_stop_time_notes(tests: list, config) -> list[str]:
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
+    if config.passed_over:
+        # The first entry of `backends` that is here runs; the ones before
+        # it that are not are said, never skipped in silence.
+        logger.info("%s", config.passed_over)
+        print(config.passed_over)
+    if args.batch:
+        _refuse_batch_without_workers(config)
     all_tests = discover_tests(config)
     tests = _filter_tests(all_tests, args.filter, args.package)
     _notify_orphans(config, all_tests)
@@ -159,14 +203,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         refuse_stored_overrides(all_tests if merged else tests, store)
     write_id_mapping(store, config)
 
-    backend = _get_backend(config, persistent=not getattr(args, "batch", False))
+    backend = _get_backend(config, persistent=not args.batch, to_run=True)
 
     # --rerun selects tests by status from prior comparisons (no new sim yet).
     # Default category: failed. Implies --merge so the report covers the full suite.
     if getattr(args, "rerun", None) is not None:
         from ..comparison.comparator import compare_all
 
-        rerun_filter = args.rerun or "failed"
+        rerun_filter = args.rerun
         rerun_categories = _parse_review_filter(rerun_filter)
         prior_results = backend.read_last_results(all_tests)
         if not prior_results:
@@ -198,12 +242,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             # empty user --filter below. Still refresh the merged report so
             # the dashboard reflects the (unchanged) full-suite state.
             print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
+            config.write_default_file()
             config.work_dir.mkdir(parents=True, exist_ok=True)
-            from ..reporting.dashboard_render import build_rerun_prefix, render_final
+            from ..reporting.dashboard_render import build_rerun_flags, render_final
 
             render_final(
                 config.work_dir,
-                rerun_prefix=build_rerun_prefix(config),
+                rerun_flags=build_rerun_flags(config),
                 theme=config.theme,
                 comparisons=prior_comps,
                 results=prior_results,
@@ -218,6 +263,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not tests:
         print("No tests matched the filter.")
         return 1
+    # Past the run's checks: the project's testing.json, if this run is
+    # the one that starts it, before the dashboard that names it.
+    config.write_default_file()
 
     for line in _default_stop_time_notes(tests, config):
         print(line)
@@ -231,7 +279,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     # The page has to exist before the tab opens on it — run_pipeline paints
     # it again a moment later, which is idempotent.
     from ..reporting.dashboard_render import (
-        build_rerun_prefix,
+        build_rerun_flags,
         render_final,
         render_live,
     )
@@ -239,7 +287,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     config.work_dir.mkdir(parents=True, exist_ok=True)
     render_live(
-        config.work_dir, rerun_prefix=build_rerun_prefix(config), theme=config.theme
+        config.work_dir, rerun_flags=build_rerun_flags(config), theme=config.theme
     )
     # A path that scores renders the final page itself, with its
     # comparisons, before the work that follows (the review, the report
@@ -274,9 +322,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         for line in outcome.notices:
             print(line)
         results, scope_tests = outcome.results, outcome.scope_tests
-        # Only the scoring route below writes pages; --accept and -i return
-        # without, whatever --report says.
-        if not (args.report and not args.accept and args.interactive is None):
+        # Only the scoring route below writes pages (--report is refused
+        # beside --accept and -i: `cli.parser.UNREAD`).
+        if not args.report:
             _say_removed_pages(outcome.report_pages_removed)
 
         if args.accept:
@@ -303,7 +351,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             render_final(
                 config.work_dir,
-                rerun_prefix=build_rerun_prefix(config),
+                rerun_flags=build_rerun_flags(config),
                 theme=config.theme,
                 comparisons=comparisons,
                 results=results,
@@ -338,7 +386,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             # is the sidecar's, and stays empty.
             render_final(
                 config.work_dir,
-                rerun_prefix=build_rerun_prefix(config),
+                rerun_flags=build_rerun_flags(config),
                 theme=config.theme,
                 comparisons=comparisons,
                 results=results,
@@ -354,7 +402,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             try:
                 render_final(
                     config.work_dir,
-                    rerun_prefix=build_rerun_prefix(config),
+                    rerun_flags=build_rerun_flags(config),
                     theme=config.theme,
                     comparisons=comparisons or (),
                     results=results,
@@ -375,29 +423,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # reporting SIM_FAIL for every test. The work dir knows what produced it:
     # prefer the run's own recorded backend. An explicit --backend still
     # wins, and a work dir with no metadata keeps the auto-detect behaviour.
-    if not getattr(args, "backend", None):
+    if getattr(args, "backend", None) is None:
         work_dir = config.work_dir
         recorded, warning = recorded_backend(work_dir)
         if warning:
             print(warning, file=sys.stderr)
         if recorded and recorded != config.backend_name:
+            refuse_unregistered(recorded, work_dir)
             args.backend = recorded
             config = _build_config(args)
-            # status.json is data, and data can name a backend this install
-            # can't resolve — a plug-in that isn't loaded here, a snapshot
-            # copied from another machine. get_backend_class raises a bare
-            # ValueError that main() doesn't catch, so translate it before it
-            # becomes a traceback.
-            from ..backends import get_backend_class
-
-            try:
-                get_backend_class(config)
-            except ValueError as exc:
-                raise ConfigError(
-                    f"The last run in {work_dir} recorded backend "
-                    f"'{recorded}', which is not registered here: {exc} "
-                    f"Pass --backend to choose one explicitly."
-                ) from exc
             print(
                 f"Using backend '{recorded}' recorded by the last run in "
                 f"{work_dir} (pass --backend to override)."
@@ -417,6 +451,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
         from ..comparison.comparator import refuse_stored_overrides
 
         refuse_stored_overrides(tests, store)
+    # Past compare's checks, before the files that name the project.
+    config.write_default_file()
     write_id_mapping(store, config)
 
     # Pre-compute ref_id_map so the wipe + downstream report rendering can
@@ -434,8 +470,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
         backend.ref_id_map,
         wipe_sim_dirs=False,
     )
-    # --accept returns without a report, whatever --report says.
-    if getattr(args, "accept", False) or not getattr(args, "report", False):
+    # --report is refused beside --accept (`cli.parser.UNREAD`).
+    if not args.report:
         _say_removed_pages(pages_removed)
     # The verdicts status.json holds for these tests are of an earlier
     # compare: cleared here, and stamped again below by a route that scores
@@ -476,11 +512,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # NRMSE, Variables and Warnings come from its comparison, the walls
     # from the run's run_stats.json, a CPU time where it kept none from its
     # result; the Reference link is the sidecar's, and stays empty.
-    from ..reporting.dashboard_render import build_rerun_prefix, render_final
+    from ..reporting.dashboard_render import render_final
 
     render_final(
         config.work_dir,
-        rerun_prefix=build_rerun_prefix(config),
+        rerun_flags=_rerun_flags(config, args),
         theme=config.theme,
         comparisons=comparisons,
         results=results,
@@ -488,6 +524,18 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     _show_reports(comparisons, results, tests, store, config, args)
     return _exit_code(comparisons)
+
+
+def _rerun_flags(config, args) -> dict[str, str]:
+    """The flags the dashboard's commands carry when this command renders
+    it: a ``run``'s own, which made the results; a ``compare``'s, which
+    keeps the run's for every flag it does not read itself
+    (``dashboard_render.compare_rerun_flags``)."""
+    from ..reporting.dashboard_render import build_rerun_flags, compare_rerun_flags
+
+    if args.command == "compare":
+        return compare_rerun_flags(config)
+    return build_rerun_flags(config)
 
 
 def _show_reports(comparisons, results, tests, store, config, args) -> None:
@@ -514,13 +562,26 @@ def _show_reports(comparisons, results, tests, store, config, args) -> None:
     print_report(comparisons)
     if getattr(args, "report", False):
         _generate_report_suite(
-            comparisons, results, tests, store, config, browser=_browser(args)
+            comparisons,
+            results,
+            tests,
+            store,
+            config,
+            browser=_browser(args),
+            rerun_flags=_rerun_flags(config, args),
         )
     _write_report_file(comparisons, args, config, results)
 
 
 def _generate_report_suite(
-    comparisons, results, tests, store, config, *, browser: bool
+    comparisons,
+    results,
+    tests,
+    store,
+    config,
+    *,
+    browser: bool,
+    rerun_flags: dict[str, str],
 ) -> None:
     """Generate per-test reports + refresh the unified dashboard, and open
     it in a browser tab when ``browser``.
@@ -530,13 +591,13 @@ def _generate_report_suite(
     work_dir/reports/. dashboard_render.render_final then reads
     those sidecars and produces the top-level work_dir/dashboard.html.
     """
-    from ..reporting.dashboard_render import build_rerun_prefix, render_final
+    from ..reporting.dashboard_render import render_final
     from ..reporting.report_suite import generate_report_suite, open_in_browser
 
     generate_report_suite(comparisons, results, tests, store, config)
     render_final(
         config.work_dir,
-        rerun_prefix=build_rerun_prefix(config),
+        rerun_flags=rerun_flags,
         theme=config.theme,
         comparisons=comparisons,
         results=results,
@@ -546,30 +607,38 @@ def _generate_report_suite(
     open_in_browser(dashboard_path, launch=browser)
 
 
+def _report_output(args: argparse.Namespace, fmt: str) -> str:
+    """Where ``--report-format fmt`` writes: ``--output``, else the format's
+    own file name in the current directory."""
+    default = REPORT_FILES[fmt]
+    assert default is not None  # a format that writes a file
+    return args.output if args.output is not None else default
+
+
 def _write_report_file(
     comparisons: list, args: argparse.Namespace, config, results: dict
 ) -> None:
     """Write the file ``--report-format junit|html`` asks for (``console``,
     the default, asks for none); ``results`` give the HTML page its CPU
     times, as they gave ``render_final``."""
-    fmt = getattr(args, "report_format", "console")
+    fmt = args.report_format
     if fmt == "junit":
         from ..reporting.junit_report import generate_junit_report
 
-        out = Path(getattr(args, "output", None) or "test-results.xml")
+        out = Path(_report_output(args, fmt))
         generate_junit_report(comparisons, out)
         print(f"JUnit report written to {out}")
     elif fmt == "html":
         # One HTML surface, not three: --report-format html writes the same
         # dashboard page render_final produces (both callers have already
         # refreshed it), just to the requested path.
-        from ..reporting.dashboard_render import build_rerun_prefix, render_final_to
+        from ..reporting.dashboard_render import render_final_to
 
-        out = Path(getattr(args, "output", None) or "test-report.html")
+        out = Path(_report_output(args, fmt))
         render_final_to(
             config.work_dir,
             out,
-            rerun_prefix=build_rerun_prefix(config),
+            rerun_flags=_rerun_flags(config, args),
             theme=config.theme,
             comparisons=comparisons,
             results=results,

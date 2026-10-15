@@ -454,7 +454,7 @@ def _criteria_act(session, metric: str, params: dict):
         (
             "scalar",
             {**MAX, "min_value": 2, "max_value": 2.0},
-            "min_value 2 equals max_value 2; a scalar leaf needs min_value < max_value",
+            "min_value 2 equals max_value 2; a scalar criterion needs min_value < max_value",
         ),
     ],
 )
@@ -974,7 +974,7 @@ async def test_edit_criteria_on_a_combinator_says_it_is_no_leaf(tmp_path):
     )
     sel = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics/children/1")
     async with host(s, EditCriteria(), sel) as (user, errors, _):
-        await user.should_see("this leaf is not in the scored tree")
+        await user.should_see("this criterion is not in the scored tree")
 
 
 async def test_against_keeps_a_value_the_store_no_longer_knows(tmp_path):
@@ -2467,7 +2467,7 @@ def test_accept_names_the_simulate_only_test_it_stored_nothing_for(session):
 
 
 async def test_accept_excludes_a_test_that_declares_nothing_to_score(session):
-    """No pattern, no UnitTests variable, no tree — what `dstf add <model>`
+    """No pattern, no UnitTests variable, no tree — what `dstf spec add <model>`
     writes: simulate-only without a recognizer's mark, and the forecast
     says what the shared accept function does with it."""
     from dstf.authoring.builtin.accept import SIMULATE_ONLY
@@ -4174,7 +4174,9 @@ def test_a_move_the_roles_refuse_says_the_validators_sentence(tmp_path):
         tmp_path, PatchOp(A, "add", "/metrics/children/-", copy.deepcopy(WARN_LEAF))
     )
     before = list(s.spec.pending)
-    with pytest.raises(MoveRefused, match="soft check 'om_cross', which must sit"):
+    with pytest.raises(
+        MoveRefused, match="scores against 'om_cross' outside a 'warn', where only"
+    ):
         _move(s, "/metrics/children/1/children/0", Dest("at", ROOT, None))
     assert s.spec.pending == before
 

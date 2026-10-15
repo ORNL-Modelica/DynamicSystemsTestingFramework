@@ -229,9 +229,13 @@ async def test_only_the_drawn_plots_variables_are_asked_for(live, monkeypatch):
         await _started(shell, page)
         # no plot is drawn: the file is read for how far it has got, alone
         assert all(card.plot is None for card in page.cards)
+        # The first poll, not a count of ticks: the run's directory is keyed
+        # by its worker thread a moment AFTER its start is announced, and
+        # until then there is no file to read — two rounds of ticks came
+        # and went with no poll at all on a slow machine.
+        await _until(shell, lambda: seen, "the first poll")
         await _second(shell)
-        await _second(shell)
-        assert seen and all(names == [] for names in seen)
+        assert len(seen) >= 2 and all(names == [] for names in seen)
 
         page.cards[1].show()  # y scrolls into view
         del seen[:]

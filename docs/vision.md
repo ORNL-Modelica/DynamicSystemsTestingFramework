@@ -99,11 +99,11 @@ Now implemented, and still marked EXPERIMENTAL: `backends/cross_backend.py` expo
 
 ## The two tiers: reporting and authoring (D125)
 
-**The line is mutation.** A surface either changes something or it does not. Reporting is everything that reads: zoom, hover, legend and overlay toggles, error overlays, the test filter, sweeping a selection and copying a command, and reading the metric tree with its verdicts and score text. Authoring is everything that writes: a tolerance, a mode, a window, an `against`, the shape of the tree, accepting results as baselines, running or rerunning tests. The CLI remains the execution surface and keeps its own mutations (`--accept`, `spec-update`, `run -i`); the terminal review loop is not a report.
+**The line is mutation.** A surface either changes something or it does not. Reporting is everything that reads: zoom, hover, legend and overlay toggles, error overlays, the test filter, sweeping a selection and copying a command, and reading the metric tree with its verdicts and score text. Authoring is everything that writes: a tolerance, a mode, a window, an `against`, the shape of the tree, accepting results as baselines, running or rerunning tests. The CLI remains the execution surface and keeps its own mutations (`--accept`, `spec update`, `run -i`); the terminal review loop is not a report.
 
 **The report computes nothing.** Every number it draws comes from an embedded figure dict or a string the server rendered. Geometry is a result of comparison, not a browser re-derivation: each metric emits the primitives that describe its criterion (band, bounds, boxes, event windows, spectrum), the figure layer turns them into traces and shapes, and the page paints them. The page's single script paints figures and toggles the visibility of traces that are already in them.
 
-**Authoring is a Python-side tool**, driven by the same figure layer and the same registry the CLI scores with — so what the author sees is what the CLI will decide, with no second implementation to keep in step. It emits an **RFC 6902 JSON-Patch** against the test spec; `spec-update` applies the patch via read-modify-write, preserving the `description` / `info` / `metadata` conventions for human notes (any other key nothing reads is a spec error that names it). Editing `test_spec.json` by hand stays supported.
+**Authoring is a Python-side tool**, driven by the same figure layer and the same registry the CLI scores with — so what the author sees is what the CLI will decide, with no second implementation to keep in step. It emits an **RFC 6902 JSON-Patch** against the test spec; `spec update` applies the patch via read-modify-write, preserving the `description` / `info` / `metadata` conventions for human notes (any other key nothing reads is a spec error that names it). Editing `test_spec.json` by hand stays supported.
 
 **Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). Forms are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) via `derive_schema`, which also emits the JSON-Schema handoff artifact. Tightening Config types to use `Literal[...]` for enum-like fields is what makes that export first-class.
 
@@ -161,7 +161,7 @@ The tool is a **regression testing** framework. "Does this signal match the stor
 **Soft checks** — warn-wrapped scoring only.
 - Another regression system's primary imported here (e.g., the `dymola-via-fmpy` chain's output; another ecosystem's regression baseline).
 - MetricTree leaves can target soft_checks via `"against": "<name>"`, but the validator enforces that they be inside a `warn` combinator — soft_checks can never hard-fail a test.
-- Commands: produced by cross-backend chains, or `import-baseline <test> <name> <path-to-another-systems-ref>`.
+- Commands: produced by cross-backend chains, or `soft-check add <test> <name> <path-to-another-systems-ref>`.
 
 **Composable regression systems**. To regression-test experimental data itself, run the tool *on* the experimental data as its own tests. That produces its own primary baselines. Then import those baselines into sim tests as soft_checks for cross-checks. One tool, multiple instances, clean composition. This replaces "experiment-as-primary in a sim test" — which would blur the regression identity — with "experiment-has-its-own-regression-tests; sim tests soft-check against them."
 

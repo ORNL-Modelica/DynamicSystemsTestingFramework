@@ -50,11 +50,11 @@ class TestSchemaParsing:
         assert isinstance(rec, JsonRecognizer)
 
     def test_missing_name_raises(self):
-        with pytest.raises(RecognizerSpecError, match="missing required field 'name'"):
+        with pytest.raises(RecognizerSpecError, match='recognizer: has no "name"'):
             parse_recognizer_spec({"match": {"type": "extends", "class_pattern": "*"}})
 
     def test_missing_match_raises(self):
-        with pytest.raises(RecognizerSpecError, match="missing required field 'match'"):
+        with pytest.raises(RecognizerSpecError, match='recognizer: has no "match"'):
             parse_recognizer_spec({"name": "x"})
 
     def test_unknown_match_type_raises(self):
@@ -1028,7 +1028,7 @@ class TestExperimentAnnotationField:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_discovery.py — regression tests for
-# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+# the 2026-07-06 review, Themes 2 & 6.
 #
 # Finding 50: component parameter values are extracted from the ORIGINAL text
 # span so string-valued parameters (algorithm="Dassl") are extractable.

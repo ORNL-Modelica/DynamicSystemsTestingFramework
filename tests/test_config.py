@@ -7,12 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from dstf.backends import backend_family, backend_names
 from dstf.backends.openmodelica.mos_generator import classify_dependency
 from dstf.config import (
-    BACKEND_FAMILIES,
     Config,
     ConfigError,
-    _detect_backend,
     detect_os,
     find_package_dir,
     load_config_file,
@@ -54,6 +53,123 @@ class TestUtilityFunctions:
         parent = sample_models_dir.parent
         result = find_package_dir(parent)
         assert (result / "package.mo").exists()
+
+    def test_a_library_beside_an_ancestor_is_not_adopted(self, tmp_path):
+        """Not a sibling, and not a child of an ancestor: from `a/b/c`, the
+        library `a/Other` is somebody else's."""
+        _make_lib(tmp_path / "a", "Other")
+        start = tmp_path / "a" / "b" / "c"
+        start.mkdir(parents=True)
+        with pytest.raises(FileNotFoundError, match="Could not find a Modelica"):
+            find_package_dir(start)
+        # Nor from the directory beside it.
+        with pytest.raises(FileNotFoundError):
+            find_package_dir(tmp_path / "a" / "b")
+
+    def test_from_inside_a_library_it_is_the_ancestor_that_is_a_package(self, tmp_path):
+        """From `Lib/Resources/Data` the library is `Lib` — not `Lib/Sub`,
+        the sub-package that is a child of that ancestor."""
+        lib = _make_lib(tmp_path, "Lib")
+        (lib / "Sub").mkdir()
+        (lib / "Sub" / "package.mo").write_text("within Lib;\npackage Sub end Sub;")
+        start = lib / "Resources" / "Data"
+        start.mkdir(parents=True)
+        assert find_package_dir(start) == lib.resolve()
+
+    def test_the_library_s_parent_finds_the_library_in_it(self, tmp_path):
+        """The one case a child is taken: the start directory is the
+        library's parent, where its testing.json is kept. Of two, the first
+        by name — not whichever the directory listing gives first."""
+        for name in ("Zeta", "Alpha", "Mid"):
+            _make_lib(tmp_path, name)
+        (tmp_path / "Aaa").mkdir()  # no package.mo: not a library
+        assert find_package_dir(tmp_path) == (tmp_path / "Alpha").resolve()
+
+    def test_a_source_path_that_is_no_package_is_not_the_library_beside_it(
+        self, tmp_path
+    ):
+        """`discover --source-path <a Python library>` listed the Modelica
+        tests of the directory BESIDE it."""
+        _make_lib(tmp_path, "MoLib")
+        (tmp_path / "PyLib").mkdir()
+        with pytest.raises(ConfigError, match="Could not find a Modelica package"):
+            Config(source_path=tmp_path / "PyLib", write_default=False)
+
+    def test_nothing_beside_the_way_up_is_looked_at(self, tmp_path, monkeypatch):
+        """Not adopted, and not asked about either: a directory beside one
+        above — a private directory of the system's temporary one, from
+        anywhere below that — may be one the system will not let us look
+        into."""
+        _make_lib(tmp_path / "a", "Other")
+        start = tmp_path / "a" / "b" / "c"
+        (start / "In").mkdir(parents=True)
+        asked: list[Path] = []
+        for name in ("exists", "is_dir", "is_file", "iterdir", "stat"):
+            real = getattr(Path, name)
+
+            def spy(self, *args, _real=real, **kwargs):
+                asked.append(Path(self))
+                return _real(self, *args, **kwargs)
+
+            monkeypatch.setattr(Path, name, spy)
+        with pytest.raises(FileNotFoundError):
+            find_package_dir(start)
+        monkeypatch.undo()
+        way_up = [start.resolve(), *start.resolve().parents]
+        allowed = {
+            *way_up,
+            *(d / "package.mo" for d in way_up),
+            start.resolve() / "In",
+            start.resolve() / "In" / "package.mo",
+        }
+        assert asked and set(asked) <= allowed, sorted(set(asked) - allowed)
+
+    def test_a_directory_above_that_cannot_be_asked_is_skipped(
+        self, tmp_path, monkeypatch
+    ):
+        lib = _make_lib(tmp_path, "Lib")
+        start = lib / "Resources" / "Data"
+        start.mkdir(parents=True)
+        real = Path.exists
+
+        def exists(self, *args, **kwargs):
+            if self == (lib / "Resources" / "package.mo").resolve():
+                raise PermissionError(13, "Permission denied", str(self))
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "exists", exists)
+        assert find_package_dir(start) == lib.resolve()
+
+    def test_a_directory_in_it_that_cannot_be_read_is_skipped(self, tmp_path):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("running as root — chmod 0 does not block reads")
+        locked = tmp_path / "Aaa"
+        locked.mkdir()
+        lib = _make_lib(tmp_path, "Lib")
+        locked.chmod(0)
+        try:
+            assert find_package_dir(tmp_path) == lib.resolve()
+        finally:
+            locked.chmod(0o755)  # let pytest clean tmp_path up
+
+    def test_the_library_is_looked_for_from_the_working_directory(
+        self, tmp_path, monkeypatch
+    ):
+        _make_lib(tmp_path / "a", "Other")
+        (tmp_path / "a" / "empty").mkdir()
+        monkeypatch.chdir(tmp_path / "a" / "empty")
+        with pytest.raises(ConfigError, match="Could not find a Modelica package"):
+            Config(write_default=False)
+
+    def test_the_default_file_s_writer_takes_what_it_uses(self):
+        import inspect
+
+        from dstf.config import _create_default_config
+
+        assert list(inspect.signature(_create_default_config).parameters) == [
+            "config_dir",
+            "project",
+        ]
 
     def test_load_config_file(self, fixtures_dir):
         """Load testing.json from fixtures."""
@@ -263,74 +379,85 @@ class TestConfig:
 
 
 class TestAutoDetectBackend:
-    """Unit tests for the `_auto_detect_backend` helper + integration
-    through Config.__post_init__ when testing.json omits the `backend` key."""
+    """Which backend a project that names none runs with (`_pick_backend`),
+    and its integration through Config.__post_init__ when testing.json omits
+    the `backend` key."""
 
     def test_looks_like_path_linux(self):
-        from dstf.config import _looks_like_path
+        from dstf.backends.locate import looks_like_path
 
-        assert _looks_like_path("/usr/bin/omc")
-        assert not _looks_like_path("omc")
-        assert not _looks_like_path("dymola.exe")
+        assert looks_like_path("/usr/bin/omc")
+        assert not looks_like_path("omc")
+        assert not looks_like_path("dymola.exe")
 
     def test_looks_like_path_windows(self):
-        from dstf.config import _looks_like_path
+        from dstf.backends.locate import looks_like_path
 
-        assert _looks_like_path("C:\\Program Files\\Dymola.exe")
-        assert _looks_like_path("D:/some/path")
-        assert not _looks_like_path("Dymola")
+        assert looks_like_path("C:\\Program Files\\Dymola.exe")
+        assert looks_like_path("D:/some/path")
+        assert not looks_like_path("Dymola")
 
     def test_auto_detect_picks_first_resolvable(self, tmp_path, monkeypatch):
         """First entry whose binary resolves wins. If an earlier entry has
         pinned absolute paths that don't exist, that entry is skipped (no
         fallback to a same-named binary on PATH)."""
-        from dstf.config import _auto_detect_backend
+        from dstf.config import _pick_backend
 
         # Create a fake "omc" binary on a temp PATH — simulate OM available.
         fake_omc = tmp_path / "omc"
         fake_omc.write_text("#!/bin/sh\n")
         fake_omc.chmod(0o755)
         monkeypatch.setenv("PATH", str(tmp_path))
+        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
 
-        simulators = {
-            "Dymola": [
-                "C:\\nope\\dymola.exe",  # pinned path, doesn't exist
-            ],
-            "OpenModelica": ["omc"],  # bare name → PATH lookup
+        backends = {
+            # pinned path, doesn't exist
+            "Dymola": {"executables": ["C:\\nope\\dymola.exe"]},
+            "OpenModelica": {"executables": ["omc"]},  # bare name → PATH lookup
         }
-        name, path = _auto_detect_backend(simulators)
-        assert name == "OpenModelica"
-        assert path == str(fake_omc)
+        assert _pick_backend(backends, "modelica") == (
+            "OpenModelica",
+            "Dymola not found (the configured executables: C:\\nope\\dymola.exe "
+            "does not exist) — using OpenModelica",
+        )
 
     def test_auto_detect_pinned_paths_block_fallback(self, tmp_path, monkeypatch):
-        """If a simulator's list is entirely pinned absolute paths and NONE
-        exist, we must NOT fall back to a same-named binary on PATH — the
-        pinned list expresses intent to use *that* install."""
-        from dstf.config import _auto_detect_backend
+        """If a backend's list holds pinned absolute paths and NONE exist, we
+        must NOT fall back to a same-named binary on PATH — the pinned list
+        expresses intent to use *that* install."""
+        from dstf.backends.dymola.backend import DymolaBackend
 
         fake_dymola = tmp_path / "dymola"
         fake_dymola.write_text("#!/bin/sh\n")
         fake_dymola.chmod(0o755)
         monkeypatch.setenv("PATH", str(tmp_path))
 
-        simulators = {
-            "Dymola": [
-                "C:\\Program Files\\Dymola\\Dymola.exe",  # pinned, missing
-            ],
-        }
+        pinned = "C:\\Program Files\\Dymola\\Dymola.exe"  # pinned, missing
+        located = DymolaBackend.locate({"executables": [pinned]})
         # Fallback suppressed ⇒ nothing resolves despite `dymola` on PATH.
-        assert _auto_detect_backend(simulators) is None
+        assert not located.found
+        assert located.executable is None
+        assert located.parts[0].detail == (
+            f"the configured executables: {pinned} does not exist"
+        )
 
-    def test_auto_detect_none_if_nothing_resolves(self, tmp_path, monkeypatch):
-        from dstf.config import _auto_detect_backend
+    def test_where_nothing_resolves_the_first_entry_is_the_one_named(
+        self, tmp_path, monkeypatch
+    ):
+        """Nothing found is not a switch to a backend the project did not
+        list (it used to become "Dymola", whatever the map held): the first
+        entry is selected, and it is the one the run says is missing."""
+        from dstf.config import _pick_backend
 
         # Empty PATH and bogus paths — nothing resolves.
         monkeypatch.setenv("PATH", str(tmp_path))
-        simulators = {
-            "Dymola": ["C:\\nope\\dymola.exe"],
-            "OpenModelica": ["/nope/omc"],
+        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+        backends = {
+            "OpenModelica": {"executables": ["/nope/omc"]},
+            "Dymola": {"executables": ["C:\\nope\\dymola.exe"]},
         }
-        assert _auto_detect_backend(simulators) is None
+        # nothing passed over: none was found to be used in its place
+        assert _pick_backend(backends, "modelica") == ("OpenModelica", None)
 
     def test_config_autopicks_when_backend_key_omitted(self, tmp_path, monkeypatch):
         """Config.__post_init__ auto-picks when testing.json omits the
@@ -351,8 +478,10 @@ class TestAutoDetectBackend:
                 {
                     "source_path": str(lib_dir),
                     "backends": {
-                        "Dymola": ["C:\\nope\\dymola.exe"],  # pinned, missing
-                        "OpenModelica": ["omc"],  # PATH lookup → hits fake
+                        # pinned, missing
+                        "Dymola": {"executables": ["C:\\nope\\dymola.exe"]},
+                        # PATH lookup → hits fake
+                        "OpenModelica": {"executables": ["omc"]},
                     },
                 }
             )
@@ -374,7 +503,7 @@ class TestAutoDetectBackend:
                 {
                     "source_path": str(lib_dir),
                     "backend": "Dymola",
-                    "backends": {"Dymola": ["C:\\nope\\dymola.exe"]},
+                    "backends": {"Dymola": {"executables": ["C:\\nope\\dymola.exe"]}},
                 }
             )
         )
@@ -386,7 +515,7 @@ class TestAutoDetectBackend:
 # Folded in from tests/test_review_fixes_config.py — regression tests for the
 # 2026-07-06 review, Theme 2: config values silently ignored or destroyed.
 #
-# Decisions encoded here (see CODE_REVIEW_2026-07-06.md):
+# Decisions encoded here:
 #
 # * Finding 11 — a testing.json that EXISTS but fails to parse (or read)
 #   raises a clear error naming the file; it is never silently replaced by
@@ -429,29 +558,25 @@ class TestRenamedKeysAreRejected:
     Renaming `simulator`/`simulators`/`simulator_setup` with no alias is the
     decision. The hazard it creates is that an untouched testing.json keeps
     PARSING while every setting in it does nothing — which a user experiences
-    as "the tool ignores my config", with no diagnostic anywhere. Erroring is
-    not a compatibility path: the old key never works again, it just says so.
+    as "the tool ignores my config", with no diagnostic anywhere. They are
+    refused as any key nothing reads is (`config_shape.TESTING_JSON`), and
+    so is the top-level `show_ide` that moved into Dymola's block.
     Without this test nothing in the tree fails if a rebase or cherry-pick
     restores an old-key read.
     """
 
     @pytest.mark.parametrize(
-        "key,replacement",
-        [
-            ("simulator", "backend"),
-            ("simulators", "backends"),
-            ("simulator_setup", "backend_setup"),
-        ],
+        "key", ["simulator", "simulators", "simulator_setup", "show_ide"]
     )
-    def test_old_key_raises_and_names_its_replacement(self, tmp_path, key, replacement):
+    def test_old_key_is_an_unknown_field(self, tmp_path, key):
         cfg = tmp_path / "testing.json"
         value = {} if key == "simulators" else "x"
         cfg.write_text(json.dumps({key: value}), encoding="utf-8")
 
-        with pytest.raises(ConfigError, match="renamed key") as exc:
+        with pytest.raises(ConfigError) as exc:
             load_config_file(cfg)
 
-        assert replacement in str(exc.value)
+        assert str(exc.value).startswith(f'{cfg}: unknown field "{key}"')
 
     def test_new_keys_load_clean(self, tmp_path):
         cfg = tmp_path / "testing.json"
@@ -568,7 +693,9 @@ class TestFinding19AutoCreate:
         monkeypatch.chdir(tmp_path)
         lib = _make_lib(tmp_path / "src")
         ref_root = tmp_path / "fresh" / "refs"  # does not exist
-        config = Config(source_path=lib, reference_root=ref_root)
+        config = Config(source_path=lib, reference_root=ref_root, write_default=True)
+        assert not (ref_root / "testing.json").exists()  # until the command says
+        config.write_default_file()
         assert (ref_root / "testing.json").is_file()
         assert config.reference_root == ref_root.resolve()
 
@@ -591,20 +718,92 @@ class TestFinding19AutoCreate:
             return real(self, data, *args, **kwargs)
 
         monkeypatch.setattr(Path, "write_text", spy)
-        Config(source_path=lib, reference_root=tmp_path / "fresh" / "refs")
+        Config(
+            source_path=lib,
+            reference_root=tmp_path / "fresh" / "refs",
+            write_default=True,
+        ).write_default_file()
 
         assert seen["testing.json"] == "\n"
 
     def test_existing_empty_config_not_overwritten(self, tmp_path, monkeypatch):
         """A found config that parses to {} counts as 'found' — auto-create
         must not fire and must not overwrite the user's file."""
+        from dstf.backends.dymola import interface_loader
+
         monkeypatch.chdir(tmp_path)
+        # A machine with no simulator on it, whatever this one has.
+        monkeypatch.setenv("PATH", str(tmp_path))
+        monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+        monkeypatch.setattr(interface_loader, "platform_glob_bases", lambda: [])
         lib = _make_lib(tmp_path)
         cfg = tmp_path / "testing.json"
         cfg.write_text("{}", encoding="utf-8")
-        config = Config(source_path=lib)
+        config = Config(source_path=lib, write_default=True)
         assert cfg.read_text(encoding="utf-8") == "{}"
-        assert config.backend_name == "Dymola"  # historical default still applies
+        # Nothing named, nothing found: the first backend that runs Modelica.
+        assert config.backend_name == "Dymola"
+        assert config.backend_path is None
+
+
+# ---------------------------------------------------------------------------
+# The default testing.json is the project's from any directory
+# ---------------------------------------------------------------------------
+
+#: How a run with no testing.json can name its project, relative to the
+#: directory it starts in: (the library, the reference root, the spec).
+_NAMED = {
+    "--source-path": ("src/Lib", None, None),
+    "--reference-root, a ReferenceResults": (
+        "src/Lib",
+        "src/Lib/Resources/ReferenceResults",
+        None,
+    ),
+    "--reference-root, any directory": ("src/Lib", "refs", None),
+    "--test-spec": ("src/Lib", "refs", "specs/my_spec.json"),
+}
+
+
+class TestTheDefaultFileNamesTheProject:
+    """A command that wrote a default testing.json named the project by
+    flags the file did not record: `dstf --config <it> compare` from another
+    directory was `Could not find a Modelica package from <cwd>`. The file
+    records the library (relative to itself) and, where they are not its
+    defaults, the reference root and the spec."""
+
+    @pytest.mark.parametrize("named", sorted(_NAMED))
+    def test_read_from_elsewhere_it_is_the_same_project(
+        self, named, tmp_path, monkeypatch, capsys
+    ):
+        source, refs, spec = _NAMED[named]
+        _make_lib(tmp_path / "src")
+        monkeypatch.chdir(tmp_path)
+        kwargs: dict = {"source_path": Path(source), "write_default": True}
+        if refs is not None:
+            kwargs["reference_root"] = Path(refs)
+        if spec is not None:
+            kwargs["test_spec_file"] = Path(spec)
+        run = Config(**kwargs)
+        run.write_default_file()
+        assert "Created default testing.json" in capsys.readouterr().out
+        assert run.config_found is not None and run.config_found.is_file()
+        (tmp_path / "elsewhere").mkdir()
+        monkeypatch.chdir(tmp_path / "elsewhere")
+        again = Config(config_file=run.config_found)
+        for name in ("source_path", "reference_root", "spec_path", "library_name"):
+            assert getattr(again, name) == getattr(run, name), name
+
+    def test_it_restates_no_default(self, tmp_path, monkeypatch, capsys):
+        """A reference root that is the file's own directory, named
+        ReferenceResults, is the default: it is not written."""
+        lib = _make_lib(tmp_path / "src")
+        monkeypatch.chdir(tmp_path)
+        refs = lib / "Resources" / "ReferenceResults"
+        Config(
+            source_path=lib, reference_root=refs, write_default=True
+        ).write_default_file()
+        written = json.loads((refs / "testing.json").read_text(encoding="utf-8"))
+        assert written == {"backends": {}, "dependencies": [], "source_path": "../.."}
 
 
 # ---------------------------------------------------------------------------
@@ -698,9 +897,9 @@ class TestTheProjectToleranceIsOneFiniteNumber:
         path = self._write(tmp_path, raw)
         with pytest.raises(ConfigError) as exc:
             Config(config_file=str(path))
-        assert str(exc.value) == self._said("testing.json tolerance", json.loads(raw))
+        assert str(exc.value) == self._said(f"{path}: tolerance", json.loads(raw))
 
-    @pytest.mark.parametrize("raw,value", [("null", 1e-4), ("0", 0.0), ("-1", -1.0)])
+    @pytest.mark.parametrize("raw,value", [("null", 1e-4), ("0", 0.0), ("2", 2.0)])
     def test_null_is_the_default_and_a_number_is_itself(self, tmp_path, raw, value):
         config = Config(config_file=str(self._write(tmp_path, raw)))
         assert config.tolerance == value and type(config.tolerance) is float
@@ -715,7 +914,7 @@ class TestTheProjectToleranceIsOneFiniteNumber:
     @pytest.mark.parametrize(
         "file_raw,flag,said",
         [
-            ('"0.5"', [], 'testing.json tolerance is "0.5"'),
+            ('"0.5"', [], '{path}: tolerance is "0.5"'),
             ("0.5", ["--tolerance", "nan"], "--tolerance is NaN"),
         ],
     )
@@ -732,14 +931,39 @@ class TestTheProjectToleranceIsOneFiniteNumber:
             == 2
         )
         err = capsys.readouterr().err
-        assert f"Config error: {self.RULE} ({said})" in err
+        assert f"Config error: {self.RULE} ({said.format(path=path)})" in err
         assert "Traceback" not in err
+
+    @pytest.mark.parametrize(
+        "file_raw,flag,said",
+        [
+            ("-1", [], "{path}: tolerance is -1"),
+            ("0.5", ["--tolerance", "-1"], "--tolerance is -1.0"),
+            ("0.5", ["--tolerance=-1e-9"], "--tolerance is -1e-09"),
+        ],
+    )
+    def test_a_negative_one_is_refused_as_well(
+        self, tmp_path, capsys, monkeypatch, file_raw, flag, said
+    ):
+        """`--tolerance -1` was taken, and every nrmse test then failed."""
+        from dstf.cli import main
+
+        monkeypatch.chdir(tmp_path)
+        path = self._write(tmp_path, file_raw)
+        work = tmp_path / "work"
+        argv = ["--config", str(path), "compare", *flag, "--work-dir", str(work)]
+        assert main(argv) == 2
+        err = capsys.readouterr().err
+        assert err == (
+            "Config error: the base tolerance must be 0 or more "
+            f"({said.format(path=path)})\n"
+        )
 
     def test_the_tool_refuses_to_open_it(self, tmp_path):
         from dstf.authoring.session import Session
 
         path = self._write(tmp_path, "[1]")
-        with pytest.raises(ConfigError, match=r"testing\.json tolerance is \[1\]"):
+        with pytest.raises(ConfigError, match=r"testing\.json: tolerance is \[1\]"):
             Session().open(path, work_dir=tmp_path / "work")
 
 
@@ -801,7 +1025,7 @@ class TestFinding18BackendPath:
         _make_lib(cfg_dir)
         cfg = {
             "source_path": "Lib",
-            "backends": {"OpenModelica": ["omc"]},  # no "backend" key
+            "backends": {"OpenModelica": {"executables": ["omc"]}},  # no "backend" key
         }
         (cfg_dir / "testing.json").write_text(json.dumps(cfg), encoding="utf-8")
         return cfg_dir
@@ -810,12 +1034,27 @@ class TestFinding18BackendPath:
         """--backend-path without --backend: auto-detect may fill the
         simulator NAME, but the explicit path must win."""
         cfg_dir = self._autodetect_setup(tmp_path, monkeypatch)
+        custom = tmp_path / "custom" / "omc"
+        custom.parent.mkdir()
+        custom.write_text("#!/bin/sh\n")
+        custom.chmod(0o755)
+        config = Config(
+            config_file=str(cfg_dir / "testing.json"),
+            backend_path=str(custom),
+        )
+        assert config.backend_name == "OpenModelica"
+        assert config.backend_path == str(custom)
+
+    def test_a_cli_backend_path_that_is_gone_is_not_the_autodetected_one(
+        self, tmp_path, monkeypatch
+    ):
+        cfg_dir = self._autodetect_setup(tmp_path, monkeypatch)
         config = Config(
             config_file=str(cfg_dir / "testing.json"),
             backend_path="/my/custom/omc",
         )
         assert config.backend_name == "OpenModelica"
-        assert config.backend_path == "/my/custom/omc"
+        assert config.backend_path is None
 
     def test_autodetect_still_fills_path_when_unset(self, tmp_path, monkeypatch):
         """Guard the happy path: with no explicit backend_path, auto-detect
@@ -828,7 +1067,7 @@ class TestFinding18BackendPath:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_cli.py — regression tests for the
-# 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, final CLI/config/manifest batch.
 #
 # Finding 67 — "Python" is a recognized simulator backend prefix, so
 # ``"backend": "Python 3.12"`` resolves.
@@ -836,14 +1075,14 @@ class TestFinding18BackendPath:
 
 
 def test_python_backend_name_resolves():
-    assert "Python" in BACKEND_FAMILIES
-    assert _detect_backend("Python 3.12") == "Python"
-    assert _detect_backend("Python") == "Python"
+    assert "Python" in backend_names()
+    assert backend_family("Python 3.12") == "Python"
+    assert backend_family("Python") == "Python"
 
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_discovery.py — regression tests for
-# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+# the 2026-07-06 review, Themes 2 & 6.
 #
 # Finding 17: bare library names in testing.json `dependencies` pass through
 # Config untouched so classify_dependency routes them to loadModel().
@@ -920,8 +1159,8 @@ def test_spec_path_is_the_configured_file_else_the_reference_root_fallback(tmp_p
 
 def test_config_keeps_the_backends_map_for_the_tools_backend_select(tmp_path):
     """The authoring shell offers testing.json's `backends` names as the
-    backends to switch to (brief §3.6); until now the map was read for the
-    executable path and dropped."""
+    backends to switch to (brief §3.6): the map is kept whole, a settings
+    block per entry."""
     (tmp_path / "testing.json").write_text(
         json.dumps(
             {
@@ -930,8 +1169,13 @@ def test_config_keeps_the_backends_map_for_the_tools_backend_select(tmp_path):
                 "library_name": "L",
                 "backend": "Python",
                 "backends": {
-                    "Python": ["python3"],
-                    "Dymola 2026x": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
+                    "Python": {"executables": ["python3"]},
+                    "Dymola 2026x": {
+                        "executables": [
+                            "C:/Program Files/Dymola 2026x/bin64/Dymola.exe"
+                        ],
+                        "show_ide": True,
+                    },
                 },
             }
         ),
@@ -939,8 +1183,11 @@ def test_config_keeps_the_backends_map_for_the_tools_backend_select(tmp_path):
     )
     config = Config(config_file=tmp_path / "testing.json")
     assert config.backends == {
-        "Python": ["python3"],
-        "Dymola 2026x": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
+        "Python": {"executables": ["python3"]},
+        "Dymola 2026x": {
+            "executables": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
+            "show_ide": True,
+        },
     }
 
 
@@ -971,10 +1218,11 @@ class TestTheme:
     def test_anything_else_is_a_config_error_naming_the_bundled_ones(
         self, tmp_path, raw
     ):
+        path = self._config(tmp_path, raw)
         with pytest.raises(ConfigError) as exc:
-            Config(config_file=self._config(tmp_path, raw))
+            Config(config_file=path)
         assert str(exc.value) == (
-            f"testing.json theme is {raw}: the bundled themes are default, dark"
+            f"{path}: theme is {raw}: the bundled themes are default, dark"
         )
 
     def test_one_set_in_code_is_judged_too(self, tmp_path):
@@ -991,7 +1239,7 @@ class TestTheme:
         work = tmp_path / "work"
         assert main(["--config", str(path), "compare", "--work-dir", str(work)]) == 2
         err = capsys.readouterr().err
-        assert 'Config error: testing.json theme is "solarized"' in err
+        assert f'Config error: {path}: theme is "solarized"' in err
         assert "Traceback" not in err
 
     def test_there_is_no_flag_for_it(self):

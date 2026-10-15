@@ -104,7 +104,7 @@ def test_no_manifest_means_no_refusal(tmp_path):
 
 def test_a_simulate_only_test_is_named_and_is_neither_stored_nor_skipped(tmp_path):
     """`Accepted 0 test baselines` with no word of the test: a test that
-    declares nothing to score — what `dstf add <model>` writes — has no
+    declares nothing to score — what `dstf spec add <model>` writes — has no
     baseline to store, and the accept says that in one line."""
     config, store = _env(tmp_path, {})
     tests = [
@@ -277,3 +277,53 @@ def test_an_unfinished_test_with_a_bad_base_is_listed_once(tmp_path):
     assert "re-run before accepting" in skipped[0][1]
     assert "base tolerance" not in skipped[0][1]
     assert store.get_reference("FakeLib.InFlight") is None
+
+
+# ---------------------------------------------------------------------------
+# A tree wrong in its file
+# ---------------------------------------------------------------------------
+
+
+def test_a_test_refused_for_its_broken_tree_is_skipped_with_the_sentence(tmp_path):
+    """`compare_one` refuses a tree wrong in its file (`broken_roles`): no
+    accept repairs that, so none stores a baseline for it — with a baseline
+    and without — and it is skipped with the refusal's sentence, as a base
+    tolerance that is no number is. The reference file is not touched."""
+    from dstf.comparison.comparator import broken_roles
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    config, store = _env(tmp_path, {})
+    test = make_test_model("FakeLib.A", variable_patterns=["x"])
+    results = {"FakeLib.A": _result("FakeLib.A")}
+    test.metric_tree_spec = parse_metric_tree(
+        {"combinator": "warn", "children": [{"metric": "nrmse", "variable": "x"}]}
+    )
+    sentence = broken_roles(test)
+    assert sentence is not None and sentence.startswith("metrics: Every tree needs")
+
+    assert accept_run_results(store, [test], results, config.work_dir) == (
+        0,
+        [("FakeLib.A", sentence)],
+        [],
+        [],
+    )
+    assert store.get_reference("FakeLib.A") is None
+
+    test.metric_tree_spec = None
+    assert accept_run_results(store, [test], results, config.work_dir)[0] == 1
+    path = _reference_file(config)
+    before = path.read_bytes()
+    test.metric_tree_spec = parse_metric_tree(
+        {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {"metric": "nrmse", "variable": "x", "against": "elsewhere"},
+            ],
+        }
+    )
+    stored, skipped, *_ = accept_run_results(
+        ReferenceStore(config), [test], results, config.work_dir
+    )
+    assert (stored, skipped) == (0, [("FakeLib.A", broken_roles(test))])
+    assert path.read_bytes() == before

@@ -2,7 +2,7 @@
 
 ``dstf author`` said so before it served. ``discover`` / ``run`` /
 ``compare`` logged ``Failed to read test spec …`` and went on with a spec
-of no tests (``No tests found.``, exit 1), ``spec-update`` printed ``Patch
+of no tests (``No tests found.``, exit 1), ``spec update`` printed ``Patch
 failed: cannot read …``, and a UTF-16 or binary file was a traceback out
 of each of them. An entry that could not be a test — no object, no
 ``model``, ``variables`` that is no list of names, a ``simulation`` value
@@ -57,19 +57,19 @@ UNREADABLE = {
     ),
 }
 
-COMMANDS = ["discover", "run", "compare", "spec-update", "author"]
+COMMANDS = ["discover", "run", "compare", "spec update", "author"]
 
 
 def _argv(command: str, cfg: Path, work: Path, tmp_path: Path) -> list[str]:
     if command == "discover":
         return ["--config", str(cfg), "discover"]
-    if command == "spec-update":
+    if command == "spec update":
         patch = tmp_path / "patch.json"
         op = {"op": "add", "path": "/comparison", "value": {"tolerance": 0.5}}
         patch.write_text(
             json.dumps({"patches": [{"model": A, "patch": [op]}]}), encoding="utf-8"
         )
-        return ["--config", str(cfg), "spec-update", str(patch)]
+        return ["--config", str(cfg), "spec", "update", str(patch)]
     extra = ["--port", "8879"] if command == "author" else []
     return ["--config", str(cfg), command, "--no-browser", "--work-dir", str(work)] + (
         extra
@@ -406,7 +406,7 @@ def test_spec_update_refuses_to_patch_an_entry_that_is_no_test(tmp_path, capsys)
     spec = cfg.parent / "test_spec.json"
     spec.write_text(json.dumps({"tests": [_entry(variables="x")]}), encoding="utf-8")
     before = spec.read_bytes()
-    assert main(_argv("spec-update", cfg, work, tmp_path)) == 1
+    assert main(_argv("spec update", cfg, work, tmp_path)) == 1
     assert capsys.readouterr().out.strip() == (
         f"Patch failed: patched entry is invalid: tests[{A}].variables: must be a "
         'list of names or patterns, got "x"'

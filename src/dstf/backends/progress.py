@@ -67,19 +67,24 @@ class ProgressReporter:
         self,
         work_dir: Path,
         total: int,
-        rerun_prefix: str | None = None,
+        rerun_flags: dict[str, str] | None = None,
         metadata: dict | None = None,
         theme: str = "default",
+        run_given: list | None = None,
     ):
         self.work_dir = work_dir
         self.total = total
         # The bundled theme the live page is rendered in (Config.theme).
         self.theme = theme
         # Stashed for inclusion in status.json so the dashboard's rerun-
-        # command builder produces an absolute-path command that works
-        # from any CWD. Computed by callers via dashboard_render.build_
-        # rerun_prefix(config).
-        self.rerun_prefix = rerun_prefix
+        # command builder produces commands that do what the run did from
+        # any CWD: the flags after each command of its menu. Computed by
+        # callers via dashboard_render.build_rerun_flags(config).
+        self.rerun_flags = rerun_flags
+        # What the run was given, by flag (dashboard_render.run_given): a
+        # later `compare` renders the page with the run's own for every flag
+        # it does not read itself (`--timeout`).
+        self.run_given = run_given
         # Run-level provenance (backend family/configured name/os/version). Serialized into
         # status.json under "metadata" and rendered as a banner by the
         # reporters. None → the "metadata" key stays null (backward compat with
@@ -229,7 +234,8 @@ class ProgressReporter:
             "eta_seconds": eta,
             "counts": counts,
             "tests": tests,
-            "rerun_prefix": self.rerun_prefix,
+            "rerun_flags": self.rerun_flags,
+            "run_given": self.run_given,
             "start_wall": self._start_wall,
             "updated_at": time.time(),
             "metadata": metadata,
@@ -363,6 +369,23 @@ def read_status(work_dir: Path) -> dict | None:
     except (ValueError, OSError):
         return None
     return snapshot if isinstance(snapshot, dict) else None
+
+
+def refuse_unregistered(recorded: str, work_dir: Path) -> None:
+    """Raise :class:`~dstf.config.ConfigError` when the backend the last
+    run in *work_dir* recorded is one nothing here is registered under.
+    ``status.json`` is data, and data can name a backend this install
+    cannot resolve — a plug-in that is not loaded here, a snapshot copied
+    from another machine. Said as that run's, before a ``Config`` built on
+    the name says it as a ``--backend`` nobody wrote."""
+    from ..config import ConfigError
+    from . import backend_class, backend_family
+
+    if backend_class(backend_family(recorded)) is None:
+        raise ConfigError(
+            f"The last run in {work_dir} recorded backend '{recorded}', which "
+            "is not registered here. Pass --backend to choose one explicitly."
+        )
 
 
 def recorded_backend(work_dir: Path) -> tuple[str | None, str | None]:

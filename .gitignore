@@ -6,8 +6,9 @@ dist/
 build/
 *.egg
 
-# Virtual environments
+# Virtual environments (.venv-example/: the one docs/guides/first-run.md makes)
 .venv/
+.venv-example/
 venv/
 .env
 
@@ -45,6 +46,9 @@ testing_output/
 
 # Generated reports (dashboard.html, interactive plots, comparison_data.json)
 reports/
+
+# The documentation site, built (sphinx-build docs docs/_build/html)
+docs/_build/
 
 # Reference-FMUs binaries (fetched by scripts/fetch_reference_fmus.py)
 examples/fmu/reference-fmus-binaries/

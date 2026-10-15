@@ -637,7 +637,7 @@ class TestRejectionEdges:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_discovery.py — regression tests for
-# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+# the 2026-07-06 review, Themes 2 & 6.
 #
 # Finding 49: RFC 6902 `add` at an existing array index INSERTS; index == len
 # appends; index > len raises PatchError; auto-creating a dict parent where

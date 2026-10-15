@@ -273,8 +273,8 @@ def test_render_final_strips_refresh(tmp_path):
     assert "DASHBOARD_MODE = 'final'" in out
 
 
-def test_rerun_prefix_flows_to_template(tmp_path):
-    """rerun_prefix from the snapshot (or kwarg override) must end up in the
+def test_rerun_flags_flows_to_template(tmp_path):
+    """rerun_flags from the snapshot (or kwarg override) must end up in the
     rendered HTML so the dashboard's JS rerun-command builder can use it."""
     snapshot = {
         "total": 0,
@@ -283,38 +283,97 @@ def test_rerun_prefix_flows_to_template(tmp_path):
         "counts": {},
         "tests": [],
         "updated_at": 0.0,
-        "rerun_prefix": 'dstf --config "/some/path/testing.json"',
+        "rerun_flags": {"run": '--config "/some/path/testing.json"'},
     }
     _write_status_json(tmp_path, snapshot)
     render_live(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert "RERUN_PREFIX" in out
+    assert "RERUN_FLAGS" in out
     assert "/some/path/testing.json" in out
+    assert '<option value="compare">' not in out, "the snapshot offers run alone"
 
 
-def test_rerun_prefix_carries_no_subcommand():
-    """The prefix is global flags only — the dashboard's command menu owns
-    the subcommand. A prefix that still ended in ``run`` would build
-    ``dstf ... run compare --filter ...``.
+def test_a_1_0_status_json_s_one_flags_string_is_not_read(tmp_path):
+    """status.json of 1.0 held one string of flags for every command: the
+    page offers the commands with no flags, never that string after each."""
+    _write_status_json(
+        tmp_path,
+        {"total": 0, "tests": [], "updated_at": 0.0, "rerun_flags": "--config OLD"},
+    )
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "OLD" not in out
+    assert '<option value="compare --accept">' in out
+    assert '<option value="author">' not in out
+
+
+def test_rerun_flags_carry_no_command():
+    """The flags are the run's only — the dashboard's command menu owns
+    the command, which the page writes before them (`dstf <kind> <flags>`).
+    Flags that still held ``run`` would build ``dstf compare run --filter
+    ...``.
     """
     from types import SimpleNamespace
 
-    from dstf.reporting.dashboard_render import build_rerun_prefix
+    from dstf.reporting.dashboard_render import build_rerun_flags
 
-    with_config = build_rerun_prefix(
-        SimpleNamespace(config_file="/some/path/testing.json")
+    with_config = build_rerun_flags(
+        SimpleNamespace(config_found="/some/path/testing.json", overrides=frozenset())
     )
-    with_paths = build_rerun_prefix(
-        SimpleNamespace(config_file=None, source_path="/lib", reference_root="/refs")
+    with_paths = build_rerun_flags(
+        SimpleNamespace(
+            config_found=None,
+            overrides=frozenset(),
+            source_path="/no/lib",
+            reference_root="/no/refs",
+        )
     )
-    for prefix in (with_config, with_paths):
-        assert prefix.startswith("dstf ")
-        assert prefix.split()[-1] not in {"run", "compare", "discover"}
-        assert " run" not in prefix
+    assert set(with_config.values()) == {"--config /some/path/testing.json"}
+    assert "author" in with_config
+    assert set(with_paths.values()) == {
+        "--source-path /no/lib --reference-root /no/refs"
+    }
+    assert "author" not in with_paths
+    for flags in (*with_config.values(), *with_paths.values()):
+        assert not set(flags.split()) & {"dstf", "run", "compare", "discover"}
 
 
-def test_rerun_prefix_kwarg_overrides_snapshot(tmp_path):
-    """Explicit rerun_prefix kwarg wins over status.json's value."""
+def test_each_command_carries_the_settings_it_reads():
+    """A run given --backend-path, --tolerance, --timeout and
+    --default-points: `run` carries all four; `compare` all but --timeout
+    (it simulates nothing); `compare --accept` only --backend-path (it scores
+    nothing — the parser refuses --tolerance beside --accept); `author`,
+    which reads none, is not offered."""
+    from types import SimpleNamespace
+
+    from dstf.reporting.dashboard_render import build_rerun_flags
+
+    flags = build_rerun_flags(
+        SimpleNamespace(
+            config_found="/p/testing.json",
+            overrides=frozenset(
+                {"backend_path", "tolerance", "timeout", "default_points"}
+            ),
+            backend_path="/venv/bin/python",
+            tolerance=0.5,
+            timeout=37,
+            default_points=True,
+        )
+    )
+    every = (
+        "--config /p/testing.json --backend-path /venv/bin/python "
+        "--tolerance 0.5 --timeout 37 --default-points"
+    )
+    assert flags == {
+        "run": every,
+        "compare": every.replace(" --timeout 37", ""),
+        "compare --accept": "--config /p/testing.json --backend-path /venv/bin/python",
+        "run --rerun failed,sim-failed": every,
+    }
+
+
+def test_rerun_flags_kwarg_overrides_snapshot(tmp_path):
+    """Explicit rerun_flags kwarg wins over status.json's value."""
     snapshot = {
         "total": 0,
         "elapsed": 0.0,
@@ -322,10 +381,10 @@ def test_rerun_prefix_kwarg_overrides_snapshot(tmp_path):
         "counts": {},
         "tests": [],
         "updated_at": 0.0,
-        "rerun_prefix": "dstf STALE",
+        "rerun_flags": {"run": "--config STALE"},
     }
     _write_status_json(tmp_path, snapshot)
-    render_live(tmp_path, rerun_prefix="dstf FRESH")
+    render_live(tmp_path, rerun_flags={"run": "--config FRESH"})
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "FRESH" in out
     assert "STALE" not in out
@@ -2265,3 +2324,54 @@ def test_only_a_refused_test_has_its_reason_as_the_message(tmp_path):
         "tests"
     ]
     assert {r.model_id: r.message for r in rows} == {m: f"said {m}" for m in makers}
+
+
+def test_backend_path_is_carried_as_given_not_through_its_link(tmp_path):
+    """`--backend-path` names an interpreter the way a venv does — a link
+    to the real one — and the commands carry the path the user gave, made
+    absolute, never the link's target: a venv's `bin/python` resolved is
+    the base interpreter, which has none of the venv's packages, and the
+    command would run another Python than the run did."""
+    import sys
+
+    from conftest import python_example_copy
+
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(sys.executable)
+    assert link.resolve() != link
+    from dstf.config import Config
+    from dstf.reporting.dashboard_render import build_rerun_flags
+
+    config, _ = python_example_copy(tmp_path)
+    config = Config(
+        config_file=config.config_file,
+        work_dir=config.work_dir,
+        backend_path=str(link),
+    )
+    flags = build_rerun_flags(config)
+    assert f"--backend-path {link} " in flags["run"] + " ", flags
+    assert str(link.resolve()) not in flags["run"]
+
+
+def test_a_run_given_pair_of_a_flag_no_command_writes_is_not_read(tmp_path):
+    """`status.json`'s ``run_given`` is read back by a later `compare`; a
+    pair whose dest no built command writes — a status file another
+    version wrote, or edited by hand — is left out, not carried onto the
+    page's commands, where ordering the flags would also stop on it."""
+    import json
+
+    from conftest import python_example_copy
+    from dstf.reporting.dashboard_render import compare_rerun_flags
+
+    config, _ = python_example_copy(tmp_path)
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    (config.work_dir / "status.json").write_text(
+        json.dumps(
+            {"run_given": [["no_such_flag", ["x"]], ["timeout", ["7"]]], "tests": []}
+        ),
+        encoding="utf-8",
+    )
+    flags = compare_rerun_flags(config)
+    assert "--timeout 7" in flags["run"], flags
+    assert not any("no-such-flag" in line for line in flags.values()), flags

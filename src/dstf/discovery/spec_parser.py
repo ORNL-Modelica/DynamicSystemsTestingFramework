@@ -2,11 +2,11 @@
 
 import json
 import logging
-import math
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from pathlib import Path
 
-from ..config import ConfigError, baseline_points_refused
+from ..config import ConfigError, baseline_points_refused, json_from_bytes
+from ..json_types import HOLDS, SAID, is_whole
 from ..storage.ref_index import _atomic_write_text
 from . import spec_shape
 from .test_registry import TestModel
@@ -32,7 +32,7 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
 
     ``"simulaton": {"stop_time": 100}`` used to be skipped without a word
     and the test ran for the default second. The known keys are
-    ``spec_shape``'s — the table ``export-schema`` publishes.
+    ``spec_shape``'s — the table ``spec schema`` publishes.
 
     And refuse a block that is no object where one is read — ``simulation``,
     ``comparison``, ``variable_overrides`` and each override in it; a
@@ -97,11 +97,14 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
             # `null` is "not set", as this module's own example writes it.
             if value is None:
                 continue
-            kind = spec_shape.SIMULATION[key]["type"]
-            if not _HOLDS[kind](value):
+            kind = spec_shape.SIMULATION[key].schema["type"]
+            # A whole number written as a float (`500.0`) is still read
+            # here, and reaches the test as an int (`_spec_number`): this
+            # file's reading is pinned, where testing.json's is strict.
+            if not (HOLDS[kind](value) or (kind == "integer" and is_whole(value))):
                 raise EntryKeyError(
                     f"{here}.simulation.{key}",
-                    f"must be {_SAID[kind]}, got {_as_json(value)}",
+                    f"must be {SAID[kind]}, got {_as_json(value)}",
                 )
     comparison = block(here, entry, "comparison")
     if comparison is None:
@@ -118,29 +121,6 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
         if found is not None:
             mode, problem = found
             raise EntryKeyError(where, f"{mode} · {variable}: {problem}")
-
-
-def _is_number(value: object) -> bool:
-    """A JSON number that is one: no bool, no NaN, no infinity — and no
-    integer too large for a float (a 1 and 400 zeros), which no simulator
-    can be handed: ``math.isfinite`` raises on it."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
-
-
-#: A JSON-Schema ``type`` of ``spec_shape.SIMULATION`` → whether a value is
-#: one, and how a refusal says it. An integral float is a whole number, as
-#: it is to JSON Schema.
-_HOLDS: dict[str, Callable[[object], bool]] = {
-    "number": _is_number,
-    "integer": lambda v: _is_number(v) and float(v).is_integer(),  # type: ignore[arg-type]
-    "string": lambda v: isinstance(v, str),
-}
-_SAID = {"number": "a number", "integer": "a whole number", "string": "a string"}
 
 
 def check_root_keys(data: object, label: str) -> list:
@@ -170,26 +150,16 @@ def spec_document_from_bytes(raw: bytes, label: str) -> dict:
     ``label``: bytes that are no UTF-8 text, text that is no JSON, a root
     that cannot hold a ``tests`` list (:func:`check_root_keys`).
 
-    THE one decoder of a ``test_spec.json``. Every reader comes through it —
-    discovery, ``spec-update`` and the edit helpers (:func:`read_spec_document`)
-    and the authoring Session, which hashes the same bytes — so a file is
-    read by all of them or by none, with one sentence. ``discover`` /
-    ``run`` / ``compare`` logged ``Failed to read test spec`` and went on
-    with a spec of no tests (exit 1, ``No tests found.``), and a UTF-16 or
-    binary file was a traceback out of every command but ``dstf author``.
-
-    ``utf-8-sig``: a spec a Windows editor saved keeps a BOM, and a BOM is
-    not a reason to refuse a file that otherwise parses."""
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError as e:
-        raise ConfigError(f"{label}: not UTF-8 text ({e})") from e
-    if not text.strip():
-        raise ConfigError(f"{label}: the file is empty")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ConfigError(f"{label}: not JSON ({e})") from e
+    THE one reader of a ``test_spec.json``'s bytes. Every reader comes
+    through it — discovery, ``spec update`` and the edit helpers
+    (:func:`read_spec_document`) and the authoring Session, which hashes the
+    same bytes — so a file is read by all of them or by none, with one
+    sentence. ``discover`` / ``run`` / ``compare`` logged ``Failed to read
+    test spec`` and went on with a spec of no tests (exit 1, ``No tests
+    found.``), and a UTF-16 or binary file was a traceback out of every
+    command but ``dstf author``. The bytes are decoded as ``testing.json``'s
+    are (``config.json_from_bytes``)."""
+    data = json_from_bytes(raw, label)
     tests = check_root_keys(data, label)
     assert isinstance(data, dict)  # check_root_keys
     data.setdefault("tests", tests)
@@ -301,7 +271,8 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     Variable patterns:
     - Explicit: "pipe.T[1]" — exact variable name
     - Glob: "medium.T*" — matched against .mat variable names after simulation
-    - Empty list [] — simulate only, no variable comparison
+    - Empty list [] — no pattern: the UnitTests variables and those a
+      criterion names are still tracked; with neither, simulate-only
     - Wildcard ["*"] — track all variables
 
     Reads the file (:func:`read_spec_document`: a file that is no spec is
@@ -365,9 +336,9 @@ def spec_models_from_document(
 
         # Optional "source" field: path (relative to spec file) to the
         # simulation source — .jl for Julia, .py for Python, .fmu for FMPy.
-        # Modelica tests omit this and source_file stays empty (the .mo
+        # Modelica tests omit this and source_file stays None (the .mo
         # lives in the package discovered via source_package).
-        source_file = Path("")
+        source_file: Path | None = None
         source_rel = entry.get("source")
         if source_rel:
             source_path_resolved = (base_dir / source_rel).resolve()
@@ -483,8 +454,11 @@ def add_to_test_spec(
     model_id: str,
     variables: list[str],
     overwrite: bool = False,
+    source: str | None = None,
 ) -> bool:
-    """Add or update a test entry in test_spec.json.
+    """Add or update a test entry in test_spec.json. ``source``, given, is
+    the entry's ``source`` (the file the test runs, relative to the spec
+    file); an update sets it too.
 
     Returns True if the entry was added/updated, False if it already existed
     and overwrite was not set.
@@ -504,8 +478,13 @@ def add_to_test_spec(
         entry = data["tests"][matches[0]]
         entry["model"] = model_id
         entry["variables"] = variables
+        if source is not None:
+            entry["source"] = source
     else:
-        data["tests"].append({"model": model_id, "variables": variables})
+        entry = {"model": model_id, "variables": variables}
+        if source is not None:
+            entry["source"] = source
+        data["tests"].append(entry)
 
     _write_spec(spec_path, data)
     return True

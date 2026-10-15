@@ -56,7 +56,7 @@ def read_reference_file(path: Path) -> dict:
     reference of this partition (:meth:`ReferenceStore.get_reference`), of
     a sibling one (the report's overlays), a soft check's file, a JSON
     companion's (another library's reference file, or a frozen copy) and
-    the source of an ``import-baseline`` all come through here. ``OSError`` and
+    the source of a ``soft-check add`` all come through here. ``OSError`` and
     ``json.JSONDecodeError`` are the caller's: each says its own thing
     about a file it could not read.
 
@@ -128,12 +128,11 @@ def _extract_baselines(data: dict) -> dict[str, Baseline]:
 
 
 class ReferenceStore(_RolesMixin):
-    """Manages per-test JSON reference files.
+    """A project's stored baselines, one file per test under
+    ``<reference_root>/<Backend>/<os>/``.
 
-    The soft_check / companion CRUD (``add_soft_check``, ``get_companions``,
-    ``freeze_companion``, ...) is inherited from
-    :class:`~dstf.storage.roles._RolesMixin`; it reaches back only through
-    ``ref_dir`` and :meth:`_ref_file_for_model`.
+    Args:
+        config: The project's configuration, which says where they are.
     """
 
     def __init__(self, config: Config):
@@ -144,6 +143,12 @@ class ReferenceStore(_RolesMixin):
     @property
     def index(self) -> RefIndex:
         return self._index
+
+    @property
+    def folder(self) -> str:
+        """The folder this store reads, as a sentence names it: ``FMPy/macos``
+        for ``<reference_root>/FMPy/macos/``."""
+        return f"{self.config.backend}/{self.config.os_name}"
 
     def _ensure_dir(self):
         self.ref_dir.mkdir(parents=True, exist_ok=True)
@@ -182,7 +187,7 @@ class ReferenceStore(_RolesMixin):
             logger.warning(
                 "%s carries a top-level 'baselines' key — it is ignored. "
                 "Re-add those baselines as soft_checks: "
-                "`dstf import-baseline %s soft_check <name> <source>`.",
+                "`dstf soft-check add %s <name> <source>`.",
                 ref_file,
                 model_id,
             )

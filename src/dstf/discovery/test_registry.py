@@ -7,13 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..config import (
-    DEFAULT_METHOD,
-    DEFAULT_STOP_TIME,
-    DEFAULT_TOLERANCE,
-    Config,
-)
+from ..config import Config
+from ..config_shape import default
 from .recognizer import RecognizerResult, get_recognizers
+from .spec_shape import SIMULATION
 
 if TYPE_CHECKING:
     from ..comparison.tree_spec import SpecNode
@@ -25,10 +22,27 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TestModel:
-    """A fully resolved test model with all metadata needed for simulation."""
+    """One test, resolved: its model, how it is simulated and what it tracks.
+
+    Discovery builds it (:func:`discover_tests`) from the recognizers and
+    ``test_spec.json``; a backend reads it.
+
+    Attributes:
+        model_id: The test's model, by its full name.
+        source_file: The file it was found in, or the entry's ``source``;
+            None when there is neither (a Python or Julia test then runs the
+            file named after its model: ``resolve_source_file``).
+        stop_time: Seconds the simulation runs, from 0.
+        tolerance: The solver's tolerance.
+        method: The solver.
+        number_of_intervals: Output intervals, or None for the simulator's own.
+        output_interval: Seconds between output points, or None.
+        timeout: Seconds the test may run, or None for the run's limit.
+        variable_patterns: The entry's ``variables``: names and patterns.
+    """
 
     model_id: str
-    source_file: Path
+    source_file: Path | None
     source_package: str
     short_name: str
     n_vars: int
@@ -114,7 +128,7 @@ class TestModel:
         rule: a recognizer marked it (``simulate_only``), or it DECLARES
         nothing to score: no UnitTests variable, no ``variables`` pattern,
         no ``metrics`` tree and no ``comparison.variable_overrides`` entry.
-        That is the entry ``dstf add <model>`` writes (``"variables": []``),
+        That is the entry ``dstf spec add <model>`` writes (``"variables": []``),
         which has no key of its own for it.
 
         An override is a declaration: whoever wrote ``{"x": {"mode":
@@ -148,12 +162,13 @@ class TestModel:
         source set (finding 57: spec-only tests used to claim "test_spec"
         provenance for pure framework defaults).
         """
+        # The defaults are the `simulation` block's (`spec_shape.SIMULATION`).
         if self.stop_time is None:
-            self.stop_time = DEFAULT_STOP_TIME
+            self.stop_time = default("stop_time", SIMULATION)
         if self.tolerance is None:
-            self.tolerance = DEFAULT_TOLERANCE
+            self.tolerance = default("tolerance", SIMULATION)
         if self.method is None:
-            self.method = DEFAULT_METHOD
+            self.method = default("method", SIMULATION)
         for fname in (
             "stop_time",
             "tolerance",
@@ -188,7 +203,7 @@ def _build_test_model_from_recognizer_results(
 
     model = TestModel(
         model_id=model_id,
-        source_file=Path(""),
+        source_file=None,
         source_package=source_package,
         short_name=short_name,
         n_vars=0,
@@ -365,8 +380,8 @@ def _fill_from_model(test: TestModel, located: "LocatedClass") -> None:
     """Give a spec-only ``test`` what its model says: the file, and every
     simulation field the entry left unset that the model's ``experiment``
     annotation sets — the two-layer contract a scanned test already gets
-    (docs/usage.md). The entry's own ``simulation.*`` and ``source`` stay."""
-    if test.source_file == Path(""):
+    (the ``simulation`` keys' descriptions in ``spec_shape``). The entry's own ``simulation.*`` and ``source`` stay."""
+    if test.source_file is None:
         test.source_file = located.mo_file
     experiment = located.experiment
     if experiment is None:
@@ -395,7 +410,7 @@ def merge_tests(
         model_id: copy.deepcopy(test) for model_id, test in scanned.items()
     }
 
-    # Merge spec tests. Two-layer contract (docs/usage.md): the model's
+    # Merge spec tests. Two-layer contract (spec_shape.SIMULATION): the model's
     # experiment(...) annotation provides defaults; any field set in
     # simulation.* overrides it. DECISION (review 2026-07-06 finding 13):
     # "explicitly set in the spec" is `is not None` for ALL five sim fields —
@@ -454,27 +469,21 @@ def merge_tests(
 
 
 def discover_tests(config: Config) -> list[TestModel]:
-    """Discover all test models from registered recognizers and/or external spec.
+    """Find a project's tests: what the recognizers find in the library's
+    source files, and every entry of ``test_spec.json``, merged by model.
 
-    Sources (merged by model_id):
-    1. Source-file recognizers (PTA.1+) — for ``source_type == "modelica"``,
-       walks ``*.mo`` and runs every registered Modelica recognizer. Bundled
-       default is the ``UnitTests`` + ``experiment(...)`` recognizer; user-
-       provided recognizers (PTA.3) layer on top.
-    2. External test_spec.json (the configured file, else
-       ``<reference_root>/test_spec.json`` when it exists; overrides
-       recognizer values). A model only the spec names is looked up in the
-       library (:class:`SpecModelLocator`) for its file and its
-       ``experiment`` annotation.
+    An entry adds to the test a recognizer found for the same model, and its
+    simulation settings win. A model only the spec names is looked for in the
+    library, for its file and its ``experiment`` annotation.
 
-    When a model appears in both recognizers and spec, variable patterns
-    from the spec are added alongside the recognizer-derived variables, and
-    the source is marked as "both". Spec simulation parameters override
-    recognizer values when explicitly set.
+    Args:
+        config: The project's configuration.
 
-    The three steps are separable: the authoring Session keeps one
-    :func:`scan_source_tests` result and re-runs :func:`merge_tests` against
-    its in-memory spec document on every edit.
+    Returns:
+        The tests, each with its simulation settings resolved.
+
+    Raises:
+        ConfigError: ``test_spec.json`` cannot be read or holds an error.
     """
     scanned = scan_source_tests(config)
     if config.spec_path.exists():

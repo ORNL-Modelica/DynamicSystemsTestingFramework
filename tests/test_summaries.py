@@ -42,7 +42,7 @@ def test_every_registered_metric_summarizes_a_sentinel_without_raising():
 def test_an_error_sentinel_is_mode_agnostic():
     s = summarize(_vc(mode="tube", diagnostics={"error": "empty window"}))
     assert s.display == "not scored"
-    assert s.criterion == "tube leaf not scored — empty window"
+    assert s.criterion == "tube criterion not scored — empty window"
 
 
 def test_tube_summary_reads_the_inside_fraction():
@@ -756,7 +756,6 @@ class TestADeclaredEventNeverFound:
     def test_both_scoring_paths_name_them(self, flat):
         """The tree evaluator stamps a leaf's geometry ids with its path
         (`/metrics/events/window/1`); the flat path leaves them local."""
-        from pathlib import Path
 
         from dstf.backends.types import TestResult, VariableResult
         from dstf.comparison.comparator import compare_test
@@ -774,7 +773,7 @@ class TestADeclaredEventNeverFound:
         )
         test = TestModel(
             model_id="T.M",
-            source_file=Path(""),
+            source_file=None,
             source_package="T",
             short_name="M",
             n_vars=0,

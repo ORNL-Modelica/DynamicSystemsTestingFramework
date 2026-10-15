@@ -3,7 +3,6 @@ simulation + reference data, and the compare_test integration path.
 """
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -75,7 +74,7 @@ def _test_model(metrics_raw: dict) -> TestModel:
     """Build a TestModel with a parsed MetricTree spec."""
     return TestModel(
         model_id="Test.Model",
-        source_file=Path(""),
+        source_file=None,
         source_package="Test",
         short_name="Model",
         n_vars=0,
@@ -753,7 +752,8 @@ class TestCompareTestIntegration:
         assert comp.metric_tree is not None
         assert comp.metric_tree.label == "x"
         error = comp.metric_tree.diagnostics["variable"].diagnostics["error"]
-        assert "experiment" in error and "baseline not found" in error
+        # No store, no folder to name.
+        assert error == "no soft check 'experiment' is stored"
 
     def test_tree_leaf_scores_against_a_store_soft_check(self):
         """A store's soft_checks feed the tree's ``against:`` lookup (D66).
@@ -770,6 +770,8 @@ class TestCompareTestIntegration:
         _, act_vals = _linear(offset=0.5)  # matches experiment, far from primary
 
         class _StubStore:
+            folder = "Stub/linux"
+
             def get_soft_checks(self, model_id):
                 assert model_id == "Test.Model"
                 return {
@@ -1056,8 +1058,7 @@ class TestSentinelLeavesKeepTheirName:
         vc = tree.diagnostics["variable"]
         assert vc.name == "x"
         error = vc.diagnostics["error"]
-        assert "nonexistent" in error
-        assert "baseline not found" in error
+        assert error == "no soft check 'nonexistent' is stored"
 
     def test_missing_variable_sentinel(self):
         """The variable a leaf names is not in the result at all — the

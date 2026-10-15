@@ -1361,7 +1361,7 @@ def _python_project(tmp_path: Path, work: str):
                     "library_name": "QueueLib",
                     "test_spec": "./test_spec.json",
                     "reference_root": "./",
-                    "backends": {"Python": [sys.executable]},
+                    "backends": {"Python": {"executables": [sys.executable]}},
                     "backend": "Python",
                 }
             )

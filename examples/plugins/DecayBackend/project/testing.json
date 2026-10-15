@@ -1,0 +1,10 @@
+{
+  "source_type": "decay",
+  "backend": "Decay",
+  "backends": {
+    "Decay": {"rate": 0.5}
+  },
+  "reference_root": "ReferenceResults",
+  "test_spec": "test_spec.json",
+  "work_dir": "testing_output"
+}

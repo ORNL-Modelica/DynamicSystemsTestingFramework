@@ -305,7 +305,7 @@ class TestShape:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_reporter.py — 2026-07-06 review,
-# reporter batch (CODE_REVIEW_2026-07-06.md).
+# reporter batch.
 #
 # ``spec_to_raw`` round-trips every parsed tree shape, including the
 # synthesized implicit tree (support for finding 41's materialization).

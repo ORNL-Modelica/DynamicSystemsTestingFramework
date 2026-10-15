@@ -28,7 +28,7 @@ from dstf.storage.roles import _read_variable_mapping
 def _make_test_model(model_id="Lib.Test1"):
     return TestModel(
         model_id=model_id,
-        source_file=Path(""),
+        source_file=None,
         source_package="Lib",
         short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,
@@ -85,7 +85,7 @@ class TestSoftCheckStorage:
         assert data["provenance"] == {"source": "rig-A"}
 
     def test_the_written_entries_carry_an_expression(self, store_with_primary):
-        """`import-baseline` hands this writer the entries of a file someone
+        """`soft-check add` hands this writer the entries of a file someone
         else produced — an older one has no ``expression`` key at all. A
         writer never leaves the field out: the imported entry is written
         with the empty text, in the same key order ``accept`` produces, so
@@ -143,7 +143,7 @@ class TestSoftCheckStorage:
 
     def test_a_null_expression_is_written_as_the_empty_text(self, store_with_primary):
         """JSON someone else wrote may hold `"expression": null` — an
-        `import-baseline` source, a hand-edited file. Every reader of the
+        `soft-check add` source, a hand-edited file. Every reader of the
         field takes `""` for "no expression" (`display_label`, the soft
         check, the migrate hint); `None` is a third value none of them
         tests for, and it would be written back out as `null`."""
@@ -318,6 +318,41 @@ class TestCompanionStorage:
         assert companions["rig"].kind == "frozen"
         assert companions["rig"].data_file == "rig.csv"
         assert companions["rig"].path is None
+
+    def test_the_command_says_a_companion_that_is_not_there(
+        self, store_with_primary, tmp_path, capsys
+    ):
+        """`companion freeze <model> <typo>` exited 0 saying "is already
+        frozen or does not exist". A companion that does not exist is exit
+        1 and says so; one already frozen stays exit 0."""
+        from dstf.cli import main
+
+        store, test = store_with_primary
+        external = tmp_path / "rig_data.csv"
+        external.write_text("time,value\n0,0\n1,1\n")
+        store.add_companion(test.model_id, "rig", path=external)
+        where = [
+            "--source-path",
+            str(store.config.source_path),
+            "--reference-root",
+            str(store.config.reference_root),
+            "--backend",
+            str(store.config.backend_name),
+        ]
+
+        def freeze(name):
+            rc = main(["companion", "freeze", test.model_id, name, *where])
+            return rc, capsys.readouterr().out.strip().splitlines()[-1]
+
+        assert freeze("rgi") == (
+            1,
+            f"Companion 'rgi' not found on {test.model_id}",
+        )
+        assert freeze("rig") == (0, f"Frozen companion 'rig' for {test.model_id}")
+        assert freeze("rig") == (
+            0,
+            f"Companion 'rig' of {test.model_id} is already frozen",
+        )
 
     def test_freeze_json_keeps_data_and_metadata_apart(
         self, store_with_primary, tmp_path
@@ -771,9 +806,14 @@ class TestCompanionMapCLI:
             == 0
         )
         capsys.readouterr()
-        rc = self._run(store, test, *argv, "--map", "x=sensor_b")
-        assert rc == 2
-        assert "--map is only accepted by" in capsys.readouterr().err
+        # `--map` is `companion add`'s flag: no other action's parser has it.
+        with pytest.raises(SystemExit) as exc:
+            self._run(store, test, *argv, "--map", "x=sensor_b")
+        assert exc.value.code == 2
+        assert (
+            f"dstf companion {argv[0]}: error: unrecognized arguments: "
+            "--map x=sensor_b" in capsys.readouterr().err
+        )
         # and nothing was done: the registration still says what it said
         companions = store.get_companions(test.model_id)
         assert companions["rig"].kind == "external"
@@ -789,3 +829,315 @@ class TestCompanionMapCLI:
         capsys.readouterr()
         assert self._run(store, test, "list") == 0
         assert "x -> sensor_a" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# The roles where a test is scored: run, compare, the tool's rescore
+# ---------------------------------------------------------------------------
+
+
+def _leaf(**extra) -> dict:
+    return {"metric": "nrmse", "variable": "x", "tolerance": 0.01, **extra}
+
+
+def _warned(*leaves: dict) -> dict:
+    """The primary criterion, and *leaves* under a ``warn`` beside it."""
+    return {
+        "combinator": "and",
+        "children": [_leaf(), {"combinator": "warn", "children": list(leaves)}],
+    }
+
+
+#: A tree wrong in its FILE — wrong whatever a folder of baselines holds —
+#: and the start of the sentence it is refused with where it is scored.
+_WRONG_IN_THE_FILE = {
+    "a stored soft check outside warn": (
+        {"combinator": "and", "children": [_leaf(), _leaf(against="other")]},
+        "metrics.children[1]: This criterion scores against 'other' outside a 'warn'",
+    ),
+    "a stored companion outside warn": (
+        {"combinator": "and", "children": [_leaf(), _leaf(against="rig")]},
+        "metrics.children[1]: This criterion scores against 'rig' outside a 'warn'",
+    ),
+    "a name nothing holds outside warn": (
+        {"combinator": "and", "children": [_leaf(), _leaf(against="nosuch")]},
+        "metrics.children[1]: This criterion scores against 'nosuch' outside a 'warn'",
+    ),
+    "warnings alone": (
+        {"combinator": "warn", "children": [_leaf()]},
+        "metrics: Every tree needs at least one criterion scored against the primary",
+    ),
+    "a weighted sum of opposite directions": (
+        {
+            "combinator": "weighted",
+            "threshold": 1.0,
+            "weights": [1.0, 1.0],
+            "children": [
+                _leaf(),
+                {"metric": "tube", "variable": "x", "tube_width_mode": "rel"},
+            ],
+        },
+        "metrics: A 'weighted' node cannot mix lower-is-better and higher-is-better",
+    ),
+}
+
+#: A tree whose FILE is right, and which a folder may not hold a baseline
+#: of: a criterion under ``warn`` naming what this folder does not store as
+#: a soft check. Where it is scored it is an advisory criterion not scored,
+#: and the test passes; each says why, in the words this folder's holding
+#: gives (``{folder}`` is this store's). `spec update` and the tool write the
+#: first, and refuse the second: a companion here is known wrong here.
+_RIGHT_IN_THE_FILE = {
+    "a name this folder does not hold, under warn": (
+        "nosuch",
+        "no soft check 'nosuch' is stored for {folder}",
+    ),
+    "a companion under warn": (
+        "rig",
+        "'rig' is a companion here: it is only drawn, never scored",
+    ),
+}
+
+
+class TestRolesWhereATestIsScored:
+    """Where a test is scored, a tree is refused only for what is wrong in
+    its FILE, never for what this ``<Backend>/<os>`` folder happens to hold:
+    the same spec is scored in every folder, and a soft check is imported
+    into one. A tree that is refused fails with every rule it breaks, each
+    with its place in the tree, and no criterion scored."""
+
+    @pytest.fixture
+    def roles(self, store_with_primary, tmp_path):
+        from dstf.backends.types import TestResult
+
+        store, test = store_with_primary
+        time = np.linspace(0, 10, 11)
+        store.add_soft_check(
+            test.model_id,
+            "other",
+            time=list(time),
+            variables=[{"index": 1, "name": "x", "values": list(1.5 * np.sin(time))}],
+        )
+        rig = tmp_path / "rig.csv"
+        rig.write_text("time,x\n0,0\n10,1\n")
+        store.add_companion(test.model_id, "rig", str(rig))
+        result = _make_test_result()
+        assert isinstance(result, TestResult)
+        return store, test, result
+
+    def _compare(self, roles, tree: dict):
+        from dstf.comparison.comparator import compare_one
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        store, test, result = roles
+        test = copy.copy(test)
+        test.metric_tree_spec = parse_metric_tree(tree)
+        return compare_one(test, result, store)
+
+    @pytest.mark.parametrize("broken", sorted(_WRONG_IN_THE_FILE))
+    def test_a_tree_wrong_in_its_file_is_refused(self, roles, broken):
+        from dstf.reporting.status import FAIL, classify, refusal
+
+        tree, sentence = _WRONG_IN_THE_FILE[broken]
+        comp = self._compare(roles, tree)
+        assert classify(comp) == FAIL
+        assert comp.variables == [] and comp.metric_tree is None
+        reason = refusal(comp)
+        assert reason is not None and reason.startswith(sentence), reason
+
+    @pytest.mark.parametrize("case", sorted(_RIGHT_IN_THE_FILE))
+    def test_a_baseline_this_folder_does_not_hold_is_advisory(self, roles, case):
+        from dstf.reporting.status import PASS, classify, refusal
+
+        store, _, _ = roles
+        name, sentence = _RIGHT_IN_THE_FILE[case]
+        comp = self._compare(roles, _warned(_leaf(against=name)))
+        assert classify(comp) == PASS, comp.error_message
+        assert refusal(comp) is None
+        errors = [v.diagnostics.get("error") for v in comp.variables if not v.passed]
+        folder = f"{store.config.backend}/{store.config.os_name}"
+        assert errors == [sentence.format(folder=folder)]
+
+    def test_a_write_names_a_baseline_this_folder_does_not_hold_and_writes(self, roles):
+        """`spec update`'s read-modify-write: a tree whose warn names a soft
+        check this folder does not hold is written; one naming a companion
+        here is refused and the file is untouched."""
+        from dstf.discovery.patch_apply import PatchError
+        from dstf.discovery.spec_update import (
+            apply_validated_patches,
+            not_stored_notes,
+        )
+
+        store, test, _ = roles
+        spec = store.config.reference_root / "spec.json"
+        spec.write_text(json.dumps({"tests": [{"model": test.model_id}]}))
+        tree = _warned(_leaf(against="nosuch"))
+        op = {"op": "add", "path": "/metrics", "value": tree}
+        apply_validated_patches(spec, [(test.model_id, [op])], store.config, store)
+        (entry,) = json.loads(spec.read_text())["tests"]
+        assert entry["metrics"] == tree
+        folder = f"{store.config.backend}/{store.config.os_name}"
+        assert not_stored_notes(entry, test.model_id, store) == [
+            f"'nosuch' is not stored for {folder}: it is not scored here"
+        ]
+        before = spec.read_bytes()
+        op = {"op": "add", "path": "/metrics", "value": _warned(_leaf(against="rig"))}
+        with pytest.raises(PatchError, match="the companion 'rig'"):
+            apply_validated_patches(spec, [(test.model_id, [op])], store.config, store)
+        assert spec.read_bytes() == before
+
+    def test_a_soft_check_under_warn_warns_and_the_test_passes(self, roles):
+        from dstf.reporting.status import refusal
+
+        comp = self._compare(roles, _warned(_leaf(against="other")))
+        assert comp.passed, comp.error_message
+        assert refusal(comp) is None
+        assert comp.metric_tree is not None
+
+    def test_every_rule_the_tree_breaks_is_said(self, roles):
+        """A tree that breaks two rules says both, each where it is."""
+        from dstf.reporting.status import refusal
+
+        tree = {
+            "combinator": "warn",
+            "children": [
+                {
+                    "combinator": "weighted",
+                    "threshold": 1.0,
+                    "weights": [1.0, 1.0],
+                    "children": [
+                        _leaf(),
+                        {"metric": "tube", "variable": "x", "tube_width_mode": "rel"},
+                    ],
+                }
+            ],
+        }
+        reason = refusal(self._compare(roles, tree))
+        assert reason is not None
+        assert "metrics.children[0]: A 'weighted' node cannot mix" in reason
+        assert "metrics: Every tree needs at least one criterion" in reason
+
+    def test_a_tree_wrong_in_its_file_with_no_baseline_is_refused(
+        self, sample_models_dir, tmp_path
+    ):
+        """No accept can repair a tree wrong in its file, so the refusal
+        wins over NO_REF ("accept it"), as a base tolerance that is no
+        number and a result that holds nothing the test tracks do."""
+        from dstf.comparison.comparator import compare_one
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.reporting.status import FAIL, classify, refusal
+
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "r")
+        )
+        test = copy.copy(_make_test_model())
+        tree, sentence = _WRONG_IN_THE_FILE["warnings alone"]
+        test.metric_tree_spec = parse_metric_tree(tree)
+        comp = compare_one(test, _make_test_result(), store)
+        assert store.get_reference(test.model_id) is None
+        assert classify(comp) == FAIL
+        assert (refusal(comp) or "").startswith(sentence)
+        assert comp.has_reference is False
+
+
+class TestWhatEachRuleReads:
+    """Each baseline-role rule reads the file alone or the folder too. The
+    file's rules are the ones a test is refused by where it is scored; the
+    full check (`spec update`, the tool) adds the folder's."""
+
+    def test_the_file_s_rules_read_no_folder(self):
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.comparison.validator import validate_tree
+
+        for tree, sentence in _WRONG_IN_THE_FILE.values():
+            errors = validate_tree(parse_metric_tree(tree))
+            assert errors and str(errors[0]).startswith(sentence), errors
+        for name, _ in _RIGHT_IN_THE_FILE.values():
+            assert validate_tree(parse_metric_tree(_warned(_leaf(against=name)))) == []
+
+    @pytest.mark.parametrize("broken", sorted(_WRONG_IN_THE_FILE))
+    def test_one_rule_is_one_sentence_where_it_is_written_and_scored(self, broken):
+        """What scoring refuses a tree for, `spec update` and the tool refuse
+        it for in the same words: the full check says each file rule as the
+        file's check does — a criterion outside a ``warn`` naming a stored
+        soft check, a stored companion or nothing is ONE rule."""
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.comparison.validator import role_lookup_from_names, validate_tree
+
+        held = role_lookup_from_names(soft_checks=["other"], companions=["rig"])
+        tree = parse_metric_tree(_WRONG_IN_THE_FILE[broken][0])
+        assert [str(e) for e in validate_tree(tree, held)] == [
+            str(e) for e in validate_tree(tree)
+        ]
+
+    def test_the_full_check_refuses_a_companion_here_and_notes_a_name_not_held(
+        self,
+    ):
+        """Where the file is written, a name that IS a companion in this
+        folder is known wrong here and refused; a name this folder does not
+        hold is a soft check of some other folder, and is written, with a
+        note naming it (`not_held_here`)."""
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.comparison.validator import (
+            not_held_here,
+            not_stored_here,
+            role_lookup_from_names,
+            validate_tree,
+        )
+
+        held = role_lookup_from_names(soft_checks=["other"], companions=["rig"])
+        nosuch = parse_metric_tree(_warned(_leaf(against="nosuch")))
+        assert validate_tree(nosuch, held) == []
+        assert not_held_here(nosuch, held) == ["nosuch"]
+        assert not_stored_here("nosuch", "FMPy/macos") == (
+            "'nosuch' is not stored for FMPy/macos: it is not scored here"
+        )
+        rig = parse_metric_tree(_warned(_leaf(against="rig")))
+        (error,) = validate_tree(rig, held)
+        assert error.message == (
+            "This criterion scores against the companion 'rig', and companions "
+            "are only drawn; import it as a soft check (dstf soft-check add) to "
+            "score against it."
+        )
+        assert not_held_here(rig, held) == []
+        other = parse_metric_tree(_warned(_leaf(against="other")))
+        assert validate_tree(other, held) == [] and not_held_here(other, held) == []
+
+
+def test_discover_names_each_test_whose_tree_is_wrong_in_its_file(tmp_path, capsys):
+    """`discover` lists a test that run, compare and the tool will refuse;
+    it says so, in the sentence they refuse it with, one line per test, and
+    exits as it did. A tree right in its file says nothing, whatever this
+    folder stores."""
+    from dstf.cli import main
+
+    (tmp_path / "testing.json").write_text(
+        json.dumps(
+            {
+                "source_type": "python",
+                "source_path": ".",
+                "library_name": "Lib",
+                "test_spec": "test_spec.json",
+                "reference_root": "refs",
+            }
+        )
+    )
+    broken, _ = _WRONG_IN_THE_FILE["a stored soft check outside warn"]
+    entries = [
+        {"model": "Lib.Broken", "variables": ["x"], "metrics": broken},
+        {
+            "model": "Lib.Fine",
+            "variables": ["x"],
+            "metrics": _warned(_leaf(against="nosuch")),
+        },
+    ]
+    (tmp_path / "test_spec.json").write_text(json.dumps({"tests": entries}))
+    assert main(["--config", str(tmp_path / "testing.json"), "discover"]) == 0
+    out = capsys.readouterr().out
+    said = [line for line in out.splitlines() if "will not be scored" in line]
+    assert said == [
+        "Lib.Broken will not be scored: metrics.children[1]: This criterion "
+        "scores against 'other' outside a 'warn', where only the primary "
+        "baseline is scored: a soft check sits under a 'warn', and a companion "
+        "is only drawn."
+    ]

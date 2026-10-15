@@ -23,7 +23,7 @@ from dstf.discovery.test_registry import TestModel
 def _mock_test() -> TestModel:
     return TestModel(
         model_id="MyLib.Tests.Foo",
-        source_file=Path(""),
+        source_file=None,
         source_package="MyLib.Tests",
         short_name="Foo",
         n_vars=1,
@@ -149,7 +149,7 @@ class TestAbstractExportFmuDefault:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
-# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+# backend fixes (findings 20-29 and 73-75).
 #
 # Finding 76-part — the one-shot export worker is torn down through the
 # guarded ``worker.close()`` hard-kill path, not ``worker.dymola.close()``.
@@ -183,11 +183,9 @@ class TestExportFmuCleanup:
         )
 
         cfg = SimpleNamespace(
-            show_ide=False,
             backend_setup=[],
             diagnostic_variables=[],
             work_dir=tmp_path,
-            dymola_interface_path=None,
             backend_path=None,
             dependencies=[],
             library_dir=tmp_path,

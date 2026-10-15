@@ -359,7 +359,7 @@
 ## D58: FMPy backend timeout + phase labels (Phase 4.D cleanup)
 
 - **What**: `FmpyRunner.run_single_test` now (a) honors `test.timeout` / `config.timeout` by running `fmpy.simulate_fmu` inside a single-worker `concurrent.futures.ThreadPoolExecutor` and treating `future.result(timeout=...)` as the deadline, and (b) emits backend-appropriate `on_phase` events (`"loading"` for FMU description read + variable resolution, `"simulating"` for the actual integration). Bonus: fixed a latent kwarg mismatch in the failure path — `progress.on_finish(error=msg)` was wrong (`detail=` is the parameter); call sites only worked because `self.progress` was None in tests.
-- **Why**: Closed three asymmetries flagged in `SESSION_HANDOFF.md`. (1) Per-test timeouts were Dymola-only; the docs warned FMPy "runs to completion regardless." Now both backends honor it. (2) Dashboard phase labels were Dymola-flavored — FMPy tests showed no phase at all. The phase mechanism was already generic (`on_phase(test_key, str)` accepts any label); FMPy just wasn't emitting. Now each backend declares its own phase vocabulary. (3) The bug fix was incidental but real — would have surfaced as `TypeError` the first time a real FMPy progress reporter saw a simulation failure.
+- **Why**: Closed three asymmetries flagged in the handoff notes of the time. (1) Per-test timeouts were Dymola-only; the docs warned FMPy "runs to completion regardless." Now both backends honor it. (2) Dashboard phase labels were Dymola-flavored — FMPy tests showed no phase at all. The phase mechanism was already generic (`on_phase(test_key, str)` accepts any label); FMPy just wasn't emitting. Now each backend declares its own phase vocabulary. (3) The bug fix was incidental but real — would have surfaced as `TypeError` the first time a real FMPy progress reporter saw a simulation failure.
 - **Trade-offs**: The timeout enforcement can't force-kill the C-level FMU computation — when timeout fires, the worker thread is left running until the FMU returns naturally; we just shut down the executor with `wait=False`. For Reference-FMUs (sub-second simulations) this is invisible. A genuinely runaway FMU would leak a thread per timeout — acceptable until someone has one. Subprocess-based isolation would fix it but adds startup cost on every test, defeating the in-process-FMPy advantage. No FMPy timeout test is added — would require either monkeypatching `simulate_fmu` to sleep or a long-running fixture FMU; existing happy-path tests cover that the new plumbing doesn't break normal operation.
 
 ## D59: Pluggable in-source test annotations (Phase 5 / PTA)
@@ -368,7 +368,7 @@
 - **Why**: The hardcoded UnitTests pattern was the single biggest adoption blocker — a library with its own test convention had to either rewrite every model or fork the framework. PTA addresses this without forcing Python on users (declarative JSON map). Doing PTA before 4.B (cross-backend) means the upcoming work doesn't have to retrofit a second authoring path for runtime requests (`requested_fmu_export` lives in the model where the test logic lives, via a recognizer field). The decomposition is the same shape as Phase 3 / 4.A — each sub-phase compiles and tests green independently, so regressions stay isolated.
 - **Match-type vocabulary is per-source-type**: Modelica has `component-instantiation`, `extends`, and (deferred) `class-name-glob` / `annotation`. FMU would declare its own when an FMU recognizer lands. Forcing a unified abstract vocabulary across languages would obscure rather than clarify; each source type owns its parser and its match types. The framework's frame (`name`, `applies_to`, `match`, `fields`) is universal.
 - **Additive-default rationale**: Bundled returns None on files it doesn't recognize, so adding a custom recognizer doesn't introduce false positives. Per-field merge with last-writer-wins lets users override individual fields without disabling. Replacement-as-default would silently delete bundled recognition the moment a user added any custom recognizer — a footgun. Disable mechanism handles the rare "ship-bundled-as-dep but don't discover its examples" case.
-- **What stays out**: Match composition (`all-of` / `any-of`), folder filter (`paths_include` / `paths_exclude`), additional Modelica match types (`class-name-glob`, `annotation`), additional field sources (`annotation`). All four are concrete future hooks captured inline in `discovery/json_recognizer.py` and SESSION_HANDOFF.md; defer until a concrete need pulls them.
+- **What stays out**: Match composition (`all-of` / `any-of`), folder filter (`paths_include` / `paths_exclude`), additional Modelica match types (`class-name-glob`, `annotation`), additional field sources (`annotation`). All four are concrete future hooks captured inline in `discovery/json_recognizer.py`; defer until a concrete need pulls them.
 - **Trade-offs**: The recognizer registry is module-level (auto-registers bundled on import); user recognizers are config-scoped (live on `Config.recognizers`) to prevent cross-test leakage. Two scopes is mild asymmetry but reflects the actual lifecycle (bundled is ambient; user is per-config-load). The `JsonRecognizer.recognize()` reads each `.mo` file once per recognizer invocation — slight perf regression on libraries with thousands of `.mo` files where most don't match (vs. the pre-PTA "substring-check first, parse second" pattern), but the regex used by both bundled and JSON recognizers is fast enough that this hasn't surfaced. If it does, the recognizer interface can grow a `quick_check(content) -> bool` short-circuit.
 
 ## D60: PTA follow-ups — folder filter, match composition, more match types + field sources
@@ -2390,7 +2390,7 @@ headline is deflated by un-runnable simulator code. The real shape:
    aspirational target).
 4. **CI — wire the quality floor now.** New `quality.yml` (lint + mypy
    + ~730 hardware-free tests + coverage) on push/PR; ~1–2 min/run, no
-   simulators. The **FMPy e2e** CI (`PHASE_2_5_CI_PLAN.md`) stays
+   simulators. The **FMPy e2e** CI (fetch the Reference FMUs, run them on a clean runner) stays
    deferred exactly as before — independent concern, cost-gated on
    private-repo minutes. Plus `.pre-commit-config.yaml` for local
    feedback.
@@ -2438,7 +2438,7 @@ lint → types → tests → CI). Outcomes vs spec:
   = 66` in `[tool.coverage.report]`.
 - **CI**: `.github/workflows/quality.yml` (lint + format-check + mypy +
   hardware-free pytest + coverage) on push/PR; `.pre-commit-config.yaml`
-  for local parity. FMPy e2e (`PHASE_2_5_CI_PLAN.md`) untouched.
+  for local parity. FMPy e2e still deferred.
 - **JS quality floor deferred** to its own grill (interactive.js, 4.7k LOC).
 - Follow-up noted: `html_report.py` hard-codes the title "Modelica Test
   Report" — stale post-D81 rename (fixed → "DSTF Test Report").
@@ -2458,7 +2458,7 @@ that local runs could not.
 ## D89 — Full-review fix wave (2026-07-06): 75 findings, 7 batches, verified on TRANSFORM
 
 A whole-codebase review (7 parallel subsystem reviewers + adversarial
-spot-verification; method + findings in `CODE_REVIEW_2026-07-06.md`)
+spot-verification; method and findings in a review note of that date)
 surfaced ~75 real bugs the 768-test suite didn't cover. All fixed the
 same day in 7 batches, each red-first tested:
 
@@ -8882,3 +8882,350 @@ No token is stored: each index trusts this repository's workflow by name
 The source archive holds what the wheel is built from and no more. It had
 carried the tests, the docs and the examples (4.5 MB); they are in the
 repository.
+
+## D157 — `testing.json` is read through one key table, and is strict (2026-10-13)
+
+**Context.** `Config.__post_init__` read twenty keys one by one. A key it
+did not read was skipped without a word: `"tolerence": 0.01` parsed, and
+the project ran on the default. Each default was written twice — on the
+dataclass field and in the page that documents it — and a key's
+description was a `#` comment. `test_spec.json` had already been given
+the other posture (D154): one table of keys (`discovery/spec_shape.py`),
+one check (`comparison/strict_keys.py`).
+
+**Decision.**
+
+1. *One table.* `config_shape.TESTING_JSON` lists every key of
+   `testing.json` as a `Setting`: the JSON-Schema fragment its value must
+   be, its default, and a description written for the person who sets it.
+   It is read three times. `Config` refuses a key that is not in it;
+   `Config`'s fields take their defaults FROM it
+   (`config_shape.default(key)` is the field's default, so a default is
+   written once); and `dstf export-schema --file testing.json` publishes
+   it, descriptions included (`reporting.schema_export.
+   build_config_schema`). `export-schema` with no `--file` writes the
+   `test_spec.json` schema, as it did.
+2. *A key nothing reads is an error that names it* — `Config error:
+   <file>: unknown field "tolerence" — did you mean "tolerance"?`, exit 2,
+   from every command that reads the file: the words, the exit code and
+   the one did-you-mean (`strict_keys.unknown_field`) a `test_spec.json`
+   key is refused with. A value of another type than its key takes is the
+   same error (`max_embedded_samples: must be a whole number, got "abc"`;
+   `json_types.py` is the one table of what holds a JSON type, read by
+   both files). Four keys have a rule of their own with a sentence of its
+   own — `tolerance`, `baseline_points`, `theme`,
+   `worker_startup_timeout` — and the type check leaves each to it.
+   `description` / `info` / `metadata` are for notes, as in the spec, and
+   `$schema` may point an editor at the exported schema.
+3. *No special cases.* The refusal of the renamed keys `simulator`,
+   `simulators`, `simulator_setup` is gone: they are unknown fields like
+   any other.
+4. *A command that only reads writes nothing.* A project with no
+   `testing.json` anywhere had a default one written beside it by every
+   command, `discover` among them. `discover` and `check` now read such a
+   project on defaults (`Config.write_default`); every other command
+   still writes the default file, which is `{"backends": {},
+   "dependencies": []}` — no backend named, so each machine runs with the
+   one it has (D158).
+
+**What it breaks, on purpose.** This is a deliberate break of the 1.0
+config format: a `testing.json` holding a key the tool never read — a
+misspelling, a stray comment key, a value of the wrong type that happened
+to be tolerated — loaded in 1.0 and is a config error now. There is no
+alias and no lenient mode; the error names the key and, where one is a
+slip away, its spelling.
+
+**2026-10-14.** Corrections after an executing review. (a) `testing.json` and `test_spec.json` are decoded by one decoder
+(`config.json_from_bytes`): a UTF-16 file, a number of thousands of digits,
+brackets nested by the ten thousand and a 401-digit `worker_startup_timeout`
+were tracebacks out of every command, the first three in the spec too; each is
+`Config error: <file>: not JSON (…)` / `not UTF-8 text (…)`, a path that is a
+symlink loop names itself, and a key written twice keeps its last value, as it
+did. (b) An entry of `recognizers` is read by a table of its own
+(`config_shape.RECOGNIZER`), and the keys of its `match` and `fields` by what
+their interpreters read: `recognizers[2]: unknown field "feilds" — did you mean
+"fields"?`; the schema describes the entry. (c) A whole number is written as
+one (`3`, not `3.0`) in `testing.json` and a backend's block — `test_spec.json`
+still reads `500.0`; `os` and `source_type` are closed lists, the second the
+registered backends' `source_types` (a plug-in adds one with its backend), and
+the schema carries the enums; the four keys with a rule of their own name the
+file by its path where they said `testing.json …`. (d) A default is written
+once: no description repeats it, the worker's start bound and the two backend
+configs read it from the table, and `Config` reads the table when it is built.
+(e) §4 is one rule now: a command writes a default `testing.json` only if it
+declares, in the command tree, that it may create a file of the project
+(`creates=True`: `run`, `compare`, `spec add`, `spec update`, `soft-check add`,
+`companion add`, `companion freeze`); every other reads on defaults and writes
+none, `Config.write_default` defaults to false, and each `--help` says which
+the command is.
+
+## D158 — A settings block per backend; each backend finds itself (2026-10-13)
+
+**Context.** `"backends"` mapped a name to a list of executable paths, and
+everything else a backend could be told lived somewhere else: `show_ide`
+at the top of `testing.json`, `--batch-size` and `--dymola-interface` on
+the command line. Where a backend's install was looked for was spread
+over `config.py` (`BACKEND_BINARY_NAMES`, `_resolve_backend_path`,
+`_auto_detect_backend`) and each backend's own `shutil.which`. And
+Dymola's Python interface was found by a glob of the standard install
+folders that took the NEWEST Dymola's package whatever executable the
+config named: a project pinned to Dymola 2025 on a machine that also had
+2026 was driven through 2026's interface.
+
+**Decision.**
+
+1. *A block per entry.* `"backends": {"Dymola": {"executables": [...],
+   "show_ide": false, "batch_size": 3, "interface": "..."}}`.
+   `executables` is what the list was; every other key is declared by the
+   backend, in a `settings` table of the same shape as D157's
+   (`Backend.settings`). `Config` checks a block against the table of the
+   backend its entry names — an entry called `"Dymola 2025"` is a Dymola —
+   and an unknown key is `backends.Dymola: unknown field …`. An empty
+   block `{}` is valid: everything is found. `Config.backend_settings`
+   is the selected entry's block; `Backend.settings_of(config)` lays it
+   over the table's defaults.
+2. *What moved.* Top-level `show_ide`, `--show-ide`, `--batch-size` and
+   `--dymola-interface` are deleted; they are `show_ide`, `batch_size` and
+   `interface` of Dymola's block. `DYMOLA_INTERFACE_PATH` stays, as the
+   machine's override. `--batch`, `--backend` and `--backend-path` stay.
+3. *`Backend.locate(settings) -> Located`* is the one place a backend's
+   install is looked for, and its result says for each part — the
+   executable; for Dymola also the Python interface — its path and the
+   RULE that found it. The rules, in order (`backends/locate.py`): the
+   backend's block; an environment variable where the backend has one
+   (`OPENMODELICAHOME` for omc, `DYMOLA_INTERFACE_PATH`); the search —
+   `PATH`, then the backend's standard install folders (Dymola's; Windows'
+   Program Files for OpenModelica; juliaup's folders under the home
+   directory). FMPy has no executable and is found iff `fmpy` is there to
+   import. Python is the interpreter the block names, else the one running
+   the tool — not some other `python` on `PATH`.
+4. *A pinned block never falls back.* A block whose `executables` holds a
+   full path, none of which exists, is NOT FOUND, and the search is not
+   tried (the rule `_auto_detect_backend` already had, now the only one).
+   The same holds for an `interface` setting or a
+   `DYMOLA_INTERFACE_PATH` that holds no archive. A run of a backend that
+   was looked for and not found fails with where it was looked for,
+   instead of starting whatever the simulator's own tooling would pick up.
+5. *Dymola's interface belongs to its executable.* It is looked for (a)
+   where the block's `interface` says, (b) where `DYMOLA_INTERFACE_PATH`
+   says, (c) BESIDE the Dymola executable that was found —
+   `<install>/Modelica/Library/python_interface`, through symlinks, and
+   through Linux's launcher script, which is a few lines of shell outside
+   the install that export `DYMOLA=<install>` — and only then (d) in the
+   standard folders, newest first.
+6. *Which backend runs, when none is named.* The first entry of
+   `backends`, in the order written, that is found; where none is found,
+   the FIRST entry — it used to become `"Dymola"`, whatever the map held.
+   With no `backends`: the same over the registered backends that run the
+   project's `source_type` (`Backend.source_types`), in registration order
+   — for a Modelica library Dymola, then OpenModelica. An empty
+   `testing.json` on a machine with only omc used to select Dymola and
+   end every run at "Dymola not found"; it runs OpenModelica.
+7. *`config.py` knows no backend.* The name → backend rule
+   (`backends.backend_family`), the binaries, the folders and the settings
+   are the backends'. A plug-in brings its own table and its own `locate`
+   and needs no edit outside its package.
+
+**What it breaks, on purpose.** This is a deliberate break of the 1.0
+config format, with no alias: a `backends` entry written as a list is
+`backends.Dymola must be an object — {"executables": [...]} (was a list of
+paths)`, top-level `show_ide` is an unknown field, the three flags are
+argparse errors, and an entry named after no registered backend is
+refused where it used to be carried along.
+
+**2026-10-14.** Corrections after an executing review. (a) `--backend-path` is
+the most pinned path there is and goes through §4's rule: it is the one entry
+`locate` looks at (`locate.with_backend_path`), one that is not there is not
+found — `run --backend-path /nope/omc` used to start the omc on `PATH` — and
+the rule that found it reads `the command line: --backend-path`. (b) A run of a
+backend that was not found starts nothing on EITHER run mode:
+`Backend.require_found` is the one check, asked by `select_backend(…,
+to_run=True)`; the backends' own checks are gone, and `--batch` no longer runs
+on to one failed simulation per test. (c) An executable is a file that can be
+executed: a directory, or a file that is not executable, is "not found" with
+the reason, and `check` and `run` agree on every entry. (d) A path in a block
+is relative to `testing.json` (`Setting.path`; `~` is the home directory; an
+entry with a separator is a path and pins; an empty string is a type error).
+(e) §5 is stricter: once the executable's install is known, the interface is
+looked for THERE and nowhere else, and only where the install cannot be
+determined do the standard folders apply — with one line saying so, which
+`check` prints and a run logs. The launcher is read as the shell reads it
+(last assignment, trailing comment, `;`, `${DYMOLA:-…}`, any length), and a
+line that is not read means "cannot be determined", never an install guessed.
+(f) Dymola's interface class is its archive's: one `dymola` package per
+process, so a second install's interface (the tool's Change backend…) is
+refused with a sentence that says to restart, where it was served the first's.
+(g) A `backend` that is no entry of `backends` and starts with no backend's
+name is a config error that lists both, from every command. (h) Every entry
+still written as a list is named in ONE error, each with the block to write.
+(i) OpenModelica's Program Files folders sort by version, and the schema's
+block patterns take the longest backend name an entry starts with, as the
+loader does.
+
+## D159 — One `check` command (2026-10-13)
+
+**Context.** `check-dymola`, `check-openmodelica` and `check-julia` were
+three commands for three of five backends, each with its own search:
+`check-dymola` looked for the interface and not the executable,
+`check-openmodelica` and `check-julia` asked `PATH` and ignored the
+project's `testing.json`, and none said what a RUN of the project would
+use. `check-julia` printed a version and held it to nothing, while
+`README.md` said 1.11+ and `pyproject.toml`'s marker 1.10+.
+
+**Decision.** `dstf check [backend]`, over D158's `locate`.
+
+- `dstf check`: one line per backend — the project's `backends` entries,
+  then every registered backend it has no entry of — with found / not
+  found, the path and the rule that found it, the backend the project
+  runs with marked; then that one's full diagnosis. `dstf check
+  <backend>`: that backend's diagnosis alone; a name of no registered
+  backend is argparse's `invalid choice` over the registry's names.
+- Exit 0 iff the diagnosed backend is usable; otherwise 1, with what to
+  install or set.
+- The diagnosis is the backend's (`Backend.diagnose`; the default is the
+  `locate` lines, so FMPy, Python and a plug-in have one). Dymola's adds
+  whether the located interface imports; OpenModelica's whether OMPython
+  does; Julia's the version it reports and — for a Julia project with a
+  `Manifest.toml` — whether it is at least the version that manifest was
+  resolved with.
+- It reads `--config` as every command does, works with no `testing.json`
+  at all (the search alone, marking what an empty one would select), and
+  writes none (D157 §4).
+
+The Julia example's `Manifest.toml` was resolved with 1.11.9: 1.11 is the
+minimum the files state, and `pyproject.toml`'s marker text now says so,
+as `README.md` did.
+
+**What it breaks, on purpose.** The three `check-*` commands are gone, a
+deliberate break of the 1.0 command line with no alias.
+
+**2026-10-14.** Corrections after an executing review. `dstf check <name>` takes
+an ENTRY of `backends` by its name as well as a backend's (`check "Dymola
+2026"` was argparse's invalid choice, so a second Dymola entry could not be
+diagnosed); a backend's name is its entry the project runs with, else its
+first; the list shows each entry with the backend it is of where the two
+differ (`Dymola 2025 [Dymola]`); and a name that starts with a backend's and
+is no entry is a config error listing the entries. "No project here" is
+decided by a narrower search: the library is the working directory, a
+directory above it that is a package, or a package in it — never one beside,
+which had made `check` in an empty directory print `Lib on defaults` and, run
+below the system's temporary directory, end at a neighbour it may not read.
+FMPy not found says to install the `fmpy` extra, where it said to set an
+`executables` FMPy does not take.
+
+## D160 — The command line is a tree, and a flag is offered only where it is read (2026-10-13)
+
+**Context.** Thirteen top-level commands had grown one at a time. Three of
+them — `manifest`, `companion`, `soft-check` — took a positional `action`
+with choices, so no action had a `--help` of its own, every action's
+positionals were declared optional and checked at run time, and a flag given
+with the wrong action (`manifest show --orphans`) was silently ignored; one
+such case, `--map` outside `companion add`, had its own runtime refusal. The
+four flags that locate a project were inherited by every command, including
+`author`, which raised on three of them after parsing, `export-schema`, which
+read none, and the rest, most of which never opened the spec `--test-spec`
+names. `--work-dir` and `--backend` existed on `run`, `compare` and `author`
+only, while `export`, `manifest`, `companion` and `soft-check` read the
+reference partition or the work directory with no way to name one.
+`--timeout 0` and `--parallel 0` were dropped by a truthiness test and the
+default used, `--port 0` served on 8080, `--batch` on FMPy or Python did
+nothing, and `--output` beside the console report format was documented as
+"ignored". The help was written for the people who wrote the code: reST
+backticks, decision ids, "legacy", and no example anywhere.
+
+**Decision.**
+
+1. *The tree.* `discover`, `run`, `compare`, `author` and `check` stay at
+   the top. Everything else is noun-verb, each action a real sub-parser
+   with its own positionals, flags and `--help`:
+
+   | Command | Was |
+   |---|---|
+   | `spec add <model> [--variables …]` | `add` |
+   | `spec update <patch.json>` | `spec-update` |
+   | `spec schema [test_spec\|testing]` | `export-schema [--file …]` |
+   | `baseline export [--format json\|csv] [-o FILE]` | `export` |
+   | `soft-check add <model> <name> <source>` | `import-baseline` |
+   | `soft-check list [model]` / `remove <model> <name>` | an action choice |
+   | `companion add` / `list` / `freeze` / `remove` | an action choice |
+   | `manifest show` / `dump` / `cleanup` | an action choice |
+
+   `import-baseline` only ever wrote a soft check, so it is `soft-check
+   add` and nothing keeps its name (it records `"origin": "soft-check
+   add"`). A group given no action prints its whole help and exits 2. The
+   dispatch table is keyed by the command as typed (`"spec add"`).
+2. *Applies, or is an error.* A command offers exactly the flags it reads,
+   and a flag that does not apply to the command or action it is given
+   with is an error, never dropped — the command line's version of D154's
+   "a key nothing reads is an error".
+   - The four project flags (`--config`, `--source-path`,
+     `--reference-root`, `--test-spec`) keep working on either side of the
+     command, for the commands that read them: the top-level parser takes
+     all four, each command's parser the ones it reads (with
+     `default=SUPPRESS`, so a value given before survives). A flag written
+     before a command that does not read it is seen by no sub-parser, so
+     the top-level parser checks it after parsing
+     (`cli.parser._Root.parse_known_args`) and ends in that command's
+     error: `dstf author: error: --test-spec does not apply: …`. What a
+     command does not recognise after its name is also reported as that
+     command's error, with its usage, and not the top level's — whose
+     usage would offer the very flag being refused.
+   - `author` reads `--config` alone of the four; `check`, `baseline
+     export`, `soft-check …`, `companion …` and `manifest show` / `dump`
+     no `--test-spec`; `spec schema` none.
+   - `--backend` is on every command that runs a simulator or reads a
+     reference partition, `--work-dir` on every command that reads or
+     writes the work directory, and neither on any other. `discover` reads
+     neither. Both stay after the command.
+   - `--orphans` / `--apply` are `manifest cleanup`'s, `--show-obsolete`
+     `manifest show`'s, `--map` and `--format` `companion add`'s;
+     positionals are required by each action's parser. The runtime checks
+     these replace are deleted.
+   - `--timeout`, `--parallel` and `--port` take a whole number in range
+     and say what is allowed otherwise. `--batch` on a backend with no
+     persistent workers is a `Config error` naming it, before anything
+     runs. `--output` beside the console report format is an error.
+   - One definition per flag (`cli.parser._FLAGS`): `-o` wherever
+     `--output` is, `--format`'s choices in one order, one `--no-browser`.
+     The three conventions for a list value (`--filter` one comma-separated
+     argument or `@file`; `--variables` space-separated; `--map` repeated)
+     are NOT unified; each flag's help says which is its.
+3. *Help that explains itself.* Every node has a description — what it
+   does, what it writes — and examples that parse; every option and
+   positional has help, with its default taken from the code where one
+   exists; the top-level help lists every command under what it is for.
+   `dstf.cli.build_arg_parser` is public and builds without loading a
+   plug-in or reading a file (`dstf check --help` used to load the
+   plug-ins: argparse iterates an action's choices to print its help).
+4. *Held by tests.* `tests/test_cli_tree.py` walks the tree for (1)–(3),
+   with its own table of what each command reads;
+   `tests/test_docs_commands.py` parses every `dstf …` line in a code block
+   of `README.md`, `docs/usage.md`, `CLAUDE.md`, `docs/releasing.md` and
+   the examples' READMEs through the real tree.
+
+**What it breaks, on purpose.** This is a deliberate break of the 1.0
+command line, with no alias, no hidden spelling and no "renamed" hint: an
+old command name is argparse's `invalid choice`, a flag in a place it no
+longer applies is `unrecognized arguments` or `does not apply`, and
+`export-schema --file testing.json` is `spec schema testing`. A script that
+drives `dstf run`, `dstf compare` or `dstf discover` with flags those
+commands read is unaffected.
+
+**2026-10-14 — what an executing review of the tree corrected.** (1) The
+rule, as it is now true: a flag asks for something; if the command, the
+action or the other flags on the line mean it will not happen, the command
+stops and says so — `--report-format junit does not apply with --accept:
+an accept stores the results and writes no report`. One table,
+`cli.parser.UNREAD`, says per command which flags are not read beside
+which, or only beside which, and drives both the refusal and the deciding
+flag's help; `run --accept --report-format junit -o a.xml`, `-i … --report`
+and `compare --accept --parallel` had exited 0 and done nothing they named.
+The exception: a flag that asks for something NOT to happen
+(`--no-browser`) is always accepted. What a command offers is itself one
+table, `cli.parser.READS`, that the tree is built from, and a test scans
+each handler for a read of every flag it offers. (2) Abbreviations are off
+at every node: `compare --a` was `--accept`. (3) One value per flag: a
+project flag given before and after the command with two values is an
+error naming both; the later used to win. (4) Empty values are refused: one
+argparse type over every flag that takes a value and every positional;
+`--filter ""` had selected every test.

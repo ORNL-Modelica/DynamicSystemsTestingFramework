@@ -192,7 +192,13 @@ def source_stamps(config: Config) -> dict[Path, Stamp] | None:
 
 @dataclass(frozen=True)
 class LibraryChanges:
-    """The files that differ between two states, each list sorted."""
+    """The library's source files that differ from what a worker read.
+
+    Attributes:
+        changed: Files whose content changed.
+        added: Files that are new.
+        removed: Files that are gone.
+    """
 
     #: In both, with another stamp.
     changed: tuple[Path, ...] = ()

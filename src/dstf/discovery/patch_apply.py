@@ -1,6 +1,6 @@
 """RFC 6902 JSON-Patch applier with whitelist + unknown-key preservation.
 
-Used by ``dstf spec-update`` (through :mod:`spec_update`) and the authoring
+Used by ``dstf spec update`` (through :mod:`spec_update`) and the authoring
 Session to apply small, scoped edits to ``test_spec.json`` without
 clobbering hand-authored fields. The ops arrive in the envelope
 :mod:`patch_envelope` reads; one model's ops look like::

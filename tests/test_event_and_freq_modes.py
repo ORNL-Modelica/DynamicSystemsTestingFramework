@@ -354,7 +354,7 @@ class TestEventTimingDeclaredEvents:
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_verdict.py — regression tests for the
-# 2026-07-06 review, Theme 1: verdict integrity (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, Theme 1: verdict integrity.
 #
 # Decisions encoded here:
 #
@@ -697,7 +697,6 @@ class TestPeakSides:
 def _through(leaf, flat, time, values):
     """``leaf`` scored through ``compare_test``: as a metrics leaf, or with
     ``flat`` as the same keys in ``variable_overrides``."""
-    from pathlib import Path
 
     from dstf.backends.types import TestResult, VariableResult
     from dstf.comparison.comparator import compare_test
@@ -706,7 +705,7 @@ def _through(leaf, flat, time, values):
 
     kw = dict(
         model_id="T.M",
-        source_file=Path(""),
+        source_file=None,
         source_package="T",
         short_name="M",
         n_vars=0,

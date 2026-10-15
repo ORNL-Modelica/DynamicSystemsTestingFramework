@@ -378,7 +378,7 @@ def test_validator_for_joins_the_validators_messages():
     with pytest.raises(MoveRefused) as e:
         VALIDATE(raw)
     text = str(e.value)
-    assert "soft check 'sc'" in text and "'co'" in text
+    assert "'sc' outside a 'warn'" in text and "'co' outside a 'warn'" in text
     assert ".metrics" not in text and "metrics." not in text
 
 

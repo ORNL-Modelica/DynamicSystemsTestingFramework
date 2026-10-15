@@ -107,8 +107,11 @@ class TestValidatorRules:
             role_lookup_from_names(soft_checks=["experiment"]),
         )
         assert len(errors) == 1
-        assert "must sit under a 'warn'" in errors[0].message
-        assert "warn" in errors[0].message
+        assert errors[0].message == (
+            "This criterion scores against 'experiment' outside a 'warn', where "
+            "only the primary baseline is scored: a soft check sits under a "
+            "'warn', and a companion is only drawn."
+        )
 
     def test_companion_target_is_rejected(self):
         tree = _parse(
@@ -138,7 +141,12 @@ class TestValidatorRules:
         assert "companion" in errors[0].message
         assert "companions are only drawn" in errors[0].message
 
-    def test_unknown_baseline_is_rejected(self):
+    def test_unknown_baseline_under_warn_is_written_and_named(self):
+        """A name this folder does not hold is a soft check of another
+        folder: no error where the file is written, and named by
+        `not_held_here` for the writer to say."""
+        from dstf.comparison.validator import not_held_here
+
         tree = _parse(
             {
                 "combinator": "and",
@@ -158,10 +166,9 @@ class TestValidatorRules:
                 ],
             }
         )
-        errors = validate_tree(tree, role_lookup_from_names())
-        assert len(errors) == 1
-        assert "is not a baseline of this test" in errors[0].message
-        assert "typo-name" in errors[0].message
+        lookup = role_lookup_from_names()
+        assert validate_tree(tree, lookup) == []
+        assert not_held_here(tree, lookup) == ["typo-name"]
 
     def test_primary_inside_warn_counts_against_tree_level_rule(self):
         """A tree where EVERY primary leaf is warn-wrapped still fails the

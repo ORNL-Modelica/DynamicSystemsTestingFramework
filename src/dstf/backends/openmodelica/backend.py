@@ -19,16 +19,21 @@ maintain a separate ``testing.linux.json`` for the OpenModelica run.
 from __future__ import annotations
 
 import logging
-import shutil
+import os
+import re
 import subprocess
+import sys
 import time
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ...config import Config
+from ...config_shape import default
 from ...discovery.test_registry import TestModel
 from .. import register
-from ..base import Backend
+from ..base import Backend, Diagnosis
 from ..common import result_files
 from ..common.mat_reader import mat_reaches_time, read_result_mat
 from ..common.proc_output import decode_output
@@ -38,6 +43,7 @@ from ..common.result_variables import (
     fold_diagnostics_into_statistics,
     unfinished_result,
 )
+from ..locate import Located, find_executable
 from ..types import (
     Capability,
     DatasetType,
@@ -56,9 +62,13 @@ logger = logging.getLogger(__name__)
 class OpenModelicaConfig:
     """OpenModelica-specific settings extracted from the universal Config."""
 
-    omc_path: str
+    #: The ``omc`` to run, or None: not found on this machine
+    #: (``OpenModelicaBackend.locate``).
+    omc_path: str | None
     backend_setup: tuple[str, ...] = ()
-    diagnostic_variables: tuple[str, ...] = ("CPUtime", "EventCounter")
+    diagnostic_variables: tuple[str, ...] = field(
+        default_factory=lambda: tuple(default("diagnostic_variables"))
+    )
     std_version: str = "latest"
     #: Write each output row to the result file as it is produced
     #: (``Config.live_results``).
@@ -66,17 +76,39 @@ class OpenModelicaConfig:
 
     @classmethod
     def from_config(cls, config: Config) -> OpenModelicaConfig:
-        # Config.__post_init__ now resolves backend_path via
-        # BACKEND_BINARY_NAMES, so the Config-supplied value is authoritative.
-        # Fall through to `omc` on PATH only if the config didn't set one at
-        # all (e.g., stubbed tests that bypass __post_init__).
-        omc_path = config.backend_path or shutil.which("omc") or "omc"
         return cls(
-            omc_path=omc_path,
+            omc_path=OpenModelicaBackend.executable_of(config),
             backend_setup=tuple(config.backend_setup),
             diagnostic_variables=tuple(config.diagnostic_variables),
             mat_sync=config.live_results,
         )
+
+
+#: Where OpenModelica's own tools — OMPython among them — look for it.
+HOME_VARIABLE = "OPENMODELICAHOME"
+
+
+def _omc_under(home: str) -> list[Path]:
+    """The ``omc`` of an OpenModelica install directory."""
+    return [Path(home) / "bin" / name for name in ("omc", "omc.exe")]
+
+
+def _install_folders() -> list[tuple[Path, str]]:
+    """OpenModelica's standard install folders, as ``find_executable``
+    takes them. Only Windows has any: its installer puts each version in
+    its own folder of Program Files and need not put ``omc`` on ``PATH``."""
+    if not sys.platform.startswith("win"):
+        return []
+    program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+    return [(Path(program_files), "OpenModelica*/bin/omc.exe")]
+
+
+def _newest_first(omc: Path) -> tuple:
+    """Sort key: the newest OpenModelica first, by the numbers of its
+    folder's name (``OpenModelica1.25.0-64bit``) — as numbers: read as
+    text, 1.9.0 sorts above 1.25.0."""
+    folder = omc.parent.parent.name
+    return (*(-int(n) for n in re.findall(r"\d+", folder)), folder)
 
 
 @register("OpenModelica")
@@ -93,6 +125,8 @@ class OpenModelicaBackend(Backend):
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
+    source_types = frozenset({"modelica"})
+    binaries = ("omc",)
     artifact_files = (
         ("simulate.mos", "Simulation script"),
         ("result_res.mat", "Result file"),
@@ -109,6 +143,55 @@ class OpenModelicaBackend(Backend):
     def __init__(self, config: Config):
         super().__init__(config)
         self.om_config = OpenModelicaConfig.from_config(config)
+
+    @classmethod
+    def locate(cls, settings: Mapping[str, Any]) -> Located:
+        """``omc``: the block's ``executables``, then the install
+        ``OPENMODELICAHOME`` names, then ``PATH`` and Windows' Program
+        Files, the newest version first."""
+        return Located(
+            (
+                find_executable(
+                    settings,
+                    cls.binaries,
+                    environment=[(HOME_VARIABLE, _omc_under)],
+                    folders=_install_folders(),
+                    best_first=_newest_first,
+                ),
+            )
+        )
+
+    @classmethod
+    def diagnose(
+        cls, located: Located, *, entry: str = "", config: Config | None = None
+    ) -> Diagnosis:
+        """The located ``omc``, then whether OMPython imports: the
+        persistent workers drive ``omc`` through it."""
+        from .session_loader import describe_om_session
+
+        info = describe_om_session()
+        lines = located.lines(entry)
+        lines.append(f"  OMPython installed: {info['ompython_installed']}")
+        if info["ompython_installed"]:
+            lines.append(f"  OMPython version: {info['version'] or '(unknown)'}")
+        lines.append(f"  import ok: {info['import_ok']}")
+        if info["error"]:
+            lines.append(f"  error: {info['error']}")
+        fixes: list[str] = []
+        if not located.found:
+            fixes.append(
+                'Install OpenModelica and put `omc` on PATH, or set "executables" '
+                'in the OpenModelica block of testing.json\'s "backends"'
+            )
+        if not info["import_ok"]:
+            fixes.append(
+                "Install OMPython: reinstall dstf with the [om] extra "
+                "(from a checkout: uv sync --extra om --locked --inexact) — "
+                "or run with --batch, which needs only omc"
+            )
+        return Diagnosis(
+            tuple(lines), located.found and bool(info["import_ok"]), tuple(fixes)
+        )
 
     @classmethod
     def persistent_backend_cls(cls):
@@ -129,6 +212,10 @@ class OpenModelicaBackend(Backend):
     ) -> TestRunResult:
         test_dir = self.config.work_dir / test_key
         test_dir.mkdir(parents=True, exist_ok=True)
+
+        # A run starts with a backend that was found (`require_found`).
+        omc = self.om_config.omc_path
+        assert omc is not None
 
         if self.progress:
             self.progress.on_start(test_key)
@@ -165,7 +252,7 @@ class OpenModelicaBackend(Backend):
         wall_start = time.monotonic()
         try:
             proc = subprocess.run(
-                [self.om_config.omc_path, self.MOS_FILENAME],
+                [omc, self.MOS_FILENAME],
                 cwd=test_dir,
                 capture_output=True,
                 text=True,

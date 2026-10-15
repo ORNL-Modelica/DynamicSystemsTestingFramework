@@ -169,13 +169,43 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
         return (
             "variable_overrides key(s) name no variable this test tracks "
             f"({_named_few(list(test.variable_overrides))}) — an override changes "
-            'how a tracked variable is scored, and "variables" (or a "metrics" '
-            "leaf) is what tracks one; nothing was scored"
+            'how a tracked variable is scored, and "variables" (or a criterion '
+            'of "metrics") is what tracks one; nothing was scored'
         )
     return (
         "the result holds none of the variables this test tracks "
         f"({_named_few(tracked)}) — nothing was scored"
     )
+
+
+def broken_roles(test: TestModel) -> str | None:
+    """Why the test's ``metrics`` tree is wrong in its FILE, as the
+    validator's sentences (:func:`.validator.validate_tree` with no lookup)
+    each led by its place in the tree, or ``None``: no criterion against the primary outside every ``warn``; a
+    criterion outside a ``warn`` that names anything but the primary; a
+    ``weighted`` that sums scores of opposite directions. A test with no
+    tree breaks none — its criteria are the primary's, outside any ``warn``.
+
+    THE one decision where a test is scored. It reads the file and never
+    the folder: a soft check is imported into one ``<Backend>/<os>`` folder
+    and the same spec is scored in every one, so a criterion under ``warn``
+    naming a baseline this folder does not hold is an advisory criterion
+    not scored (``tree_eval``), not a broken tree — "a soft check can warn,
+    never fail". ``spec update`` and the tool, which write the file and
+    hold the store, refuse a name the folder does not hold as well. A tree
+    wrong in its file fails the test with these sentences and scores
+    nothing (``reporting.status.refusal``), as a base tolerance that is no
+    number does."""
+    if test.metric_tree_spec is None:
+        return None
+    from .validator import validate_tree
+
+    errors = validate_tree(test.metric_tree_spec)
+    # Every rule the tree breaks, each led by where it is in the tree, as
+    # `spec update` says it (`metrics.children[1]: This criterion ...`): a
+    # tree of many criteria names the one to fix. Each message is a
+    # sentence that ends in its own full stop.
+    return " ".join(str(e) for e in errors) or None
 
 
 def stored_override_problem(
@@ -419,6 +449,22 @@ def _named_baseline_expression_warnings(
                 baseline.variables, result, against=name, only=variables
             )
     return out
+
+
+def _named_companions(
+    test: TestModel, store: ReferenceStore | None, held: set[str]
+) -> frozenset[str]:
+    """The names ``test``'s tree scores against that this folder stores no
+    baseline of (``held``) and does store as a companion: a leaf naming one
+    says it is a companion here, not that no soft check of its name is
+    stored. The store is asked only when a leaf names a missing baseline."""
+    from .tree_spec import collect_variables_by_baseline
+
+    assert test.metric_tree_spec is not None
+    missing = set(collect_variables_by_baseline(test.metric_tree_spec)) - held
+    if store is None or not missing:
+        return frozenset()
+    return frozenset(store.get_companions(test.model_id)) & missing
 
 
 #: Where an override key was read from, for the message below. The two
@@ -670,6 +716,8 @@ def compare_test(
                 diagnostics=result.diagnostics,
             ),
             model_id=test.model_id,
+            held_in=store.folder if store is not None else "",
+            companions=_named_companions(test, store, set(baselines)),
         )
         unscored = _tracked_but_not_scored(test, result)
         return TestComparison(
@@ -1117,6 +1165,16 @@ def compare_one(
             test_id=(reference or {}).get("test_id"),
             has_reference=reference is not None,
             error_message=nothing,
+        )
+    # Nor when its tree is wrong in its file: no accept repairs that.
+    broken = broken_roles(test)
+    if broken is not None:
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            test_id=(reference or {}).get("test_id"),
+            has_reference=reference is not None,
+            error_message=broken,
         )
     # simulate_only tests don't need a baseline — their pass criterion
     # is "did it simulate successfully?". Dispatch to compare_test with

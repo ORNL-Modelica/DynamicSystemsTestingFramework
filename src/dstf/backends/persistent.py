@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import Config
+from ..config_shape import default
 from ..discovery.library_state import LibraryChanges, LibraryState
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import BatchManifest
@@ -58,17 +59,15 @@ logger = logging.getLogger(__name__)
 
 
 class LibraryReloadError(RuntimeError):
-    """The live tool could not read the library again (:meth:`Worker.reload`);
-    ``str()`` is the tool's own message. The test in hand fails with it and
-    the worker stays up, holding what it held — so the next test asks
-    again."""
+    """The running simulator could not read the library again; ``str()`` is
+    the simulator's message. The test fails with it and the worker stays up.
+    """
 
 
 class WorkerStartError(RuntimeError):
-    """A worker could not start. ``str()`` is the reason in the backend's own
-    words — what its ``start()`` raised, or what :meth:`Worker.start_within`
-    saw (the process gone, the bound passed) with
-    :meth:`Worker.process_detail` beside it."""
+    """A worker could not start; ``str()`` is the reason, in the backend's
+    words.
+    """
 
 
 #: Why a start was given up when the test it was for was cancelled.
@@ -95,46 +94,43 @@ def start_timed_out_message(bound: float, detail: str = "") -> str:
 
 
 class Worker(ABC):
-    """One long-lived simulator subprocess wrapped as a test-running unit.
+    """One simulator process that stays open between tests, as a persistent
+    backend runs it.
 
-    Each persistent-worker backend (Dymola / OpenModelica / Julia today)
-    has its own concrete subclass that owns a real OS process — a Dymola
-    instance, an ``OMCSessionZMQ``, a ``julia --project=...`` subprocess.
-    The shape declared here is what :class:`PersistentBackendBase` (Phase 4)
-    will rely on to orchestrate them generically.
+    A persistent backend subclasses this for its own tool and supplies
+    :meth:`start`, :meth:`is_alive` and :meth:`run_test`. The rest is done
+    here, the same for every backend: a start bounded in time
+    (:meth:`start_within`), a watchdog around each test
+    (:meth:`run_test_with_timeout`) that kills the simulator at the test's time
+    limit and when a cancel asks, the kill of the whole process tree
+    (:meth:`close`), and the restart of a worker whose simulator died. The
+    backend tells the framework what it knows through the hooks below; each has
+    a default.
 
-    Subclasses extend ``__init__`` with backend-specific config (e.g.
-    ``DymolaConfig``, an interface class to instantiate). They must always
-    call ``super().__init__(worker_id, config)`` so the framework's
-    invariants (worker_id stable across restarts; ``self.config`` available
-    to dispatch logic; ``self.pids`` and the restart counter present for
-    the watchdog and the dispatch loop) hold.
+    The framework guarantees the order: ``__init__``, :meth:`start_within`,
+    :meth:`run_test_with_timeout` once per test, :meth:`close` — and
+    :meth:`close` on every worker, started or not. A worker whose start was
+    given up is never started again: the framework makes a new one.
 
-    Lifecycle contract:
-        ``__init__`` → ``start_within()`` → ``run_test_with_timeout()`` × N
-            → ``close()``
-    ``start_within`` is ``start()`` bounded (``worker_startup_timeout``): the
-    pool never calls ``start()`` bare, since a tool that died or stopped
-    answering while loading would be waited on for good.
-    ``close()`` MUST be idempotent — :class:`PersistentBackendBase`'s teardown
-    calls it on every worker including ones that never started successfully.
-
-    On failure, ``start()`` raises (typically :class:`RuntimeError`); the
-    backend records the failure and excludes that worker from the live pool.
-    Inside the dispatch loop, ``run_test_with_timeout`` MUST NOT raise on
-    test-level failures — return a ``TestRunResult`` with ``success=False``
-    instead. Reserve raises for worker-level catastrophes (subprocess died,
-    pipe broken) so the caller's restart logic can intervene.
-
-    ``run_test_with_timeout`` and ``close`` are template methods implemented
-    here: the watchdog thread, the timeout kill, the disk rescue and the
-    restart-accounting flags are identical across backends and only the
-    backend-specific pieces are hooks (``run_test``, ``_evaluate_from_disk``,
-    ``_shutdown_interface``, ``_detach_interface``, ``_quiet``). A backend
-    whose execution model doesn't fit a blocking call on a thread (Julia
-    polls a response queue against a deadline) overrides
-    ``run_test_with_timeout`` wholesale but still uses the shared
-    ``close`` / ``_kill_tracked_pids``.
+    Attributes:
+        worker_id: The worker's slot, from 0; stable across restarts.
+        config: The project's configuration.
+        pids: The processes this worker's simulator runs as. :meth:`start` puts
+            the simulator's there through :meth:`_track_launch`; the kill and
+            the watchdog read it.
+        kill_name_hint: Part of the simulator's process name (``"omc"``). A
+            tracked process whose name no longer holds it is another program
+            by now, and is not killed. None checks nothing.
+        timeout_kill_grace: Seconds the simulator gets to shut down by itself
+            at a test's time limit, before it is killed.
+        exec_thread_prefix: The start of the name of the thread a test runs on,
+            ``<prefix>-exec-<worker_id>``.
+        startup_timeout: Seconds a start gets when ``testing.json`` sets no
+            ``worker_startup_timeout``.
+        launch_grace: Seconds a start given up before its process was on
+            record waits for :meth:`_track_launch` to hand it over.
+        cancel_grace: Seconds :meth:`run_test` gets to return after
+            :meth:`cancel_running` answered True, before the worker is killed.
     """
 
     #: PID name guard for :func:`kill_process_tree` — a tracked PID may have
@@ -150,12 +146,13 @@ class Worker(ABC):
     #: shutdown runs, looking for children spawned inside that window.
     _ORPHAN_POLL_SECONDS: float = 0.25
     #: Seconds a start gets when ``testing.json`` sets no
-    #: ``worker_startup_timeout``. The bound is for a tool that hangs: one
+    #: ``worker_startup_timeout``: that key's default, from its table. The
+    #: bound is for a tool that hangs: one
     #: that DIED is failed at once, whatever this says (:meth:`start_within`
     #: watches the process). So it is generous — a large library is minutes
     #: of ``loadFile`` in a live omc, and a bound below that fails a run that
     #: only had to wait. A backend with a reason for another sets its own.
-    startup_timeout: float = 600.0
+    startup_timeout: float = float(default("worker_startup_timeout"))
     #: How often :meth:`start_within` looks at a start in flight.
     _START_POLL_SECONDS: float = 0.25
     #: A start given up with NO process on record may be inside its launch
@@ -177,6 +174,14 @@ class Worker(ABC):
     cancel_grace: float = 10.0
 
     def __init__(self, worker_id: int, config: Config):
+        """Set up the worker's state; start nothing.
+
+        A subclass extends it with what its tool needs, and calls it first.
+
+        Args:
+            worker_id: The worker's slot, from 0.
+            config: The project's configuration.
+        """
         self.worker_id = worker_id
         self.config = config
         #: PIDs attributed to this worker's simulator process.
@@ -214,26 +219,39 @@ class Worker(ABC):
 
     @abstractmethod
     def start(self) -> None:
-        """Bring the worker process up and apply startup (library loads,
-        framework settings). Raise on failure.
+        """Start the simulator and load what every test needs: the libraries,
+        the ``backend_setup`` commands.
+
+        May block: the framework runs it on a thread of its own, bounded by
+        :meth:`startup_bound`. Hand the simulator's process to
+        :meth:`_track_launch` the moment it exists, before the first wait on it —
+        a start given up from another thread kills only what is on record. Name the
+        call in flight in ``self._step`` (``loadFile("...")``): the queue and the
+        error messages show it.
+
+        Raises:
+            Exception: The simulator did not start; the message says why, and the
+                worker is left out of the run.
         """
 
     @abstractmethod
     def is_alive(self) -> bool:
-        """True iff the worker can accept another test: it holds its tool's
-        handle AND that tool still runs (``not self.tool_gone()``). The
-        handle alone says only that nobody closed the worker — a tool that
-        died while the worker sat idle leaves it in place, and the next
-        test would be failed for a death it had no part in. Backends
-        without watchable subprocess state can implement this as
-        ``self._handle is not None``.
+        """Whether the worker can take another test.
+
+        Returns:
+            True when the worker holds its connection to the simulator and the
+            simulator still runs: ``self._handle is not None and not
+            self.tool_gone()``. The handle alone is not enough — a simulator that
+            died while the worker sat idle would fail the next test.
         """
 
     def tool_gone(self) -> bool:
-        """True when the process this worker tracks is no longer its tool:
-        it exited, or its PID is another process's by now
-        (:attr:`kill_name_hint`, the guard of the kill). ``False`` for a
-        worker that tracks none — closed, or its PID never learnt."""
+        """Whether the simulator this worker tracks has gone.
+
+        Returns:
+            True when its process exited, or its process ID now belongs to another
+            program (:attr:`kill_name_hint`); False for a worker that tracks none.
+        """
         return process_gone(self.pids, name_hint=self.kill_name_hint)
 
     # -- template-method hooks ----------------------------------------
@@ -244,16 +262,26 @@ class Worker(ABC):
         test_key: str,
         progress: Optional["object"] = None,
     ) -> "TestRunResult":
-        """Run one test to completion in this worker, blocking.
+        """Run one test in the open simulator, blocking until it ends.
 
-        The hook the shared ``run_test_with_timeout`` executes on its
-        watchdog thread. Backends that override ``run_test_with_timeout``
-        wholesale never reach this.
+        The framework calls it on a thread of its own, under the watchdog of
+        :meth:`run_test_with_timeout`; have the simulator work in the test's
+        directory, ``config.work_dir / test_key``.
 
-        *progress* is the optional :class:`ProgressReporter` so the worker
-        can emit ``on_phase`` updates (translation vs simulation) for the
-        live dashboard. Backends that don't have meaningful sub-phases
-        accept and ignore the parameter.
+        Args:
+            test: The test, its simulation settings resolved.
+            test_key: The name of the test's directory in the work directory.
+            progress: The live dashboard's reporter, for a backend that reports
+                phases (translation, simulation); may be ignored.
+
+        Returns:
+            How the run went. A test-level failure is a result with
+            ``success=False``, not an exception.
+
+        Raises:
+            Exception: Only for a failure of the worker itself — the connection to
+                the simulator lost. The test then fails, and the worker is closed
+                and restarted.
         """
         raise NotImplementedError(
             f"{type(self).__name__} must implement run_test() or override "
@@ -261,30 +289,22 @@ class Worker(ABC):
         )
 
     def reload(self, changes: LibraryChanges | None) -> None:
-        """Make this worker hold the library as it is on disk now. Asked
-        before a test queued against a state of the source files newer than
-        the one this worker read (the tool's queue); *changes* are the
-        files that differ from what it read, ``None`` when that is not
-        known.
+        """Make the worker hold the library as it is on disk now.
 
-        The default is right for any tool: restart it — a start reads
-        everything. It runs on the dispatch thread, as the restart of a
-        worker that died does: bounded by the start's own bound and given
-        up by :meth:`abandon_start`, not by the test's watchdog (which
-        watches the very process this replaces).
+        The authoring tool's queue asks it before a test whose source files
+        changed since this worker read them. The default closes and restarts the
+        worker, which is right for any simulator. Override it only to read the
+        files again in the running simulator: the override runs under the test's
+        watchdog, so a reload that hangs is the test's time limit.
 
-        A backend whose live tool can read files again OVERRIDES this, and
-        an override is a promise to leave the process in place: it is
-        called on the test's exec thread, under its watchdog (``before`` of
-        :meth:`run_test_with_timeout`) — a reload that hangs is the test's
-        timeout, a cancel during it is the test's. It raises
-        :class:`LibraryReloadError` with the tool's message when the
-        library does not load: the test fails with the message, and since
-        nobody then knows which of the changed files the tool took, the
-        next reload is asked with ``None`` — everything, whatever has
-        changed by then (:meth:`WorkerRunner._reload`). An override
-        therefore keeps no account of its own of a reload that failed. It
-        sets ``self._step`` as it goes — what :meth:`reloading` shows."""
+        Args:
+            changes: The files that changed, or None when that is not known — read
+                everything.
+
+        Raises:
+            LibraryReloadError: The library no longer loads; the message is the
+                simulator's. The test fails with it and the worker stays up.
+        """
         self.close()
         self.start_within()
 
@@ -309,32 +329,45 @@ class Worker(ABC):
         test_key: str,
         elapsed: float,
     ) -> "TestRunResult | None":
-        """Rebuild a result from on-disk artifacts after the in-process flow
-        couldn't finish (timeout / worker exception).
+        """Rebuild a test's result from the files its run left, after a time limit
+        or a failure of the worker cut the run short.
 
-        A simulation often completes and writes its result file just before
-        (or during) the kill, so the watchdog trusts disk over the abandoned
-        call. ``None`` means the backend has no disk evidence to offer.
+        A simulation often finishes writing its result just before the kill. The
+        default has no such evidence.
+
+        Args:
+            test: The test.
+            test_key: The name of the test's directory.
+            elapsed: The seconds the test ran.
+
+        Returns:
+            The result the files show, or None.
         """
         return None
 
     def _detach_interface(self) -> object | None:
-        """Clear the live-handle attribute and return what it held.
+        """Let go of the connection to the simulator, for :meth:`close`.
 
-        Runs synchronously inside ``close()`` — before the graceful attempt
-        — so ``is_alive()`` reports dead the instant close() is entered and
-        an abandoned exec thread can tell "my interface" from the restarted
-        worker's. ``None`` means there was nothing live to shut down.
+        Override it on a worker that holds one: clear the attribute that holds it,
+        so that :meth:`is_alive` answers False from then on, and return what it
+        held.
+
+        Returns:
+            The connection, which :meth:`_shutdown_interface` is then given; None
+            when there is nothing to shut down.
         """
         return None
 
     def _shutdown_interface(self, handle: object, grace: float) -> None:
-        """Ask *handle* to shut down gracefully (``close()``, ``quit()``, …).
+        """Ask the simulator to shut down by itself (``quit()``, ``close()``).
 
-        Runs on a daemon thread that ``close()`` abandons after *grace*
-        seconds, so it may still be in-flight when the PID kill lands.
-        Only reached when ``_detach_interface`` handed back a handle, so a
-        backend that overrides one owes the other.
+        Required of a worker whose :meth:`_detach_interface` returns a connection.
+        It runs on a thread that :meth:`close` stops waiting for after ``grace``
+        seconds, when the processes are killed.
+
+        Args:
+            handle: What :meth:`_detach_interface` returned.
+            grace: The seconds it has.
         """
         raise NotImplementedError(
             f"{type(self).__name__} detached a live handle but implements no "
@@ -342,55 +375,66 @@ class Worker(ABC):
         )
 
     def _quiet(self) -> "AbstractContextManager[object]":
-        """Context manager wrapping the watchdog's teardown calls.
+        """A context manager around the teardown at a time limit.
 
-        Backends whose interface spews connection noise while its process
-        is being killed return a suppressor here.
+        Override it for a simulator interface that prints connection errors while
+        its process is killed; the default changes nothing.
+
+        Returns:
+            The context manager.
         """
         return contextlib.nullcontext()
 
     def process_detail(self) -> str:
-        """What the backend itself can say about its process when a start or
-        a test did not come back: its exit code or that it still runs, the
-        step it was in, its log's tail. Read BEFORE the kill. ``""`` when it
-        has nothing to add.
+        """What the backend can say of its simulator when a start or a test did not
+        come back: its exit code, the step it was in, the end of its log.
+
+        Read before the kill. The default says nothing.
+
+        Returns:
+            The words, or ``""``.
         """
         return ""
 
     def cancel_running(self, test_key: str) -> bool:
-        """Stop only the simulation of the running test, leaving the tool
-        alive: ``True`` when that was asked of it and ``run_test`` will
-        return on its own (the watchdog gives it :attr:`cancel_grace`),
-        ``False`` when there is no such stop right now — the watchdog then
-        kills the worker, and the dispatch loop restarts it uncharged.
+        """Stop the running simulation alone, and leave the simulator open.
 
-        Called on the watchdog's thread while ``run_test`` is parked on the
-        exec thread. Only reached on a backend that declares
-        :attr:`Capability.CANCEL`.
+        Called when a cancel is asked, on the watchdog's thread. The default has no
+        such stop, so the worker is killed and restarted.
+
+        Args:
+            test_key: The test being cancelled.
+
+        Returns:
+            True when the stop was asked and :meth:`run_test` will return within
+            :attr:`cancel_grace`; False to have the worker killed.
         """
         return False
 
     # -- template methods ---------------------------------------------
 
     def startup_bound(self) -> float:
-        """Seconds a start of this worker gets: ``worker_startup_timeout``
-        from ``testing.json``, else the class's :attr:`startup_timeout`."""
+        """The seconds a start of this worker gets.
+
+        Returns:
+            ``worker_startup_timeout`` from ``testing.json``, else
+            :attr:`startup_timeout`.
+        """
         configured = getattr(self.config, "worker_startup_timeout", None)
         return float(configured) if configured is not None else self.startup_timeout
 
     def start_within(self, timeout: float | None = None) -> None:
-        """:meth:`start`, bounded by *timeout* seconds (default
-        :meth:`startup_bound`). Raises :class:`WorkerStartError` — and leaves
-        the worker closed — when ``start()`` raises, when the tracked process
-        is gone while ``start()`` still waits on it (at once, not at the
-        bound), or when the bound passes.
+        """Run :meth:`start`, bounded in time. Not to be overridden.
 
-        ``start()`` runs on a daemon thread. One given up on is closed again
-        if it ever returns, and this object is not started a second time: a
-        thread still inside ``start()`` writes its state. The process it
-        launched is killed at the give-up when it is on record by then, by
-        :meth:`_track_launch` when it comes on record later — which the
-        give-up waits for, :attr:`launch_grace` at most.
+        A simulator that died during the start fails it at once, not at the bound.
+        A start given up is closed if it ever returns.
+
+        Args:
+            timeout: The bound in seconds; None for :meth:`startup_bound`.
+
+        Raises:
+            WorkerStartError: :meth:`start` raised, the simulator died, or the
+                bound passed; the worker is left closed.
         """
         if self._start_abandoned:
             raise WorkerStartError("its previous start never returned")
@@ -479,18 +523,16 @@ class Worker(ABC):
         raise WorkerStartError(str(exc)) from exc
 
     def _track_launch(self, pid: int | None) -> None:
-        """The process this start launched EXISTS: record it. ``start()``
-        calls this the moment it does — before the first wait on the tool,
-        not when the launch call hands back a finished session — because a
-        start is given up from another thread, and the give-up can only
-        kill what is on record.
+        """Record the simulator's process, the moment :meth:`start` has launched it.
 
-        And the other way round: when the start was given up BEFORE the
-        process existed, nobody is left to kill it, so this kills it and
-        raises :class:`WorkerStartError`. (``_start_abandoned`` is set
-        before the give-up reads ``pids``, and ``pids`` is written here
-        before the flag is read: one of the two always sees the process.)
-        *pid* is ``None`` when the backend could not learn it.
+        When the start was already given up, it kills the process instead and
+        raises.
+
+        Args:
+            pid: The process ID, or None when the backend could not learn it.
+
+        Raises:
+            WorkerStartError: The start was given up.
         """
         self.pids = {int(pid)} if pid else set()
         if self._start_abandoned:
@@ -540,13 +582,17 @@ class Worker(ABC):
             )
 
     def request_cancel(self, test_key: str, *, hard: bool = False) -> bool:
-        """Ask the watchdog to stop *test_key*, from any thread. ``False``
-        when this worker is not running it (nothing is asked). *hard* skips
-        :meth:`cancel_running` and kills the worker.
+        """Ask the watchdog to stop a test, from any thread. Not to be overridden.
 
-        The test's result then comes back ``cancelled`` from
-        :meth:`run_test_with_timeout` — unless the simulation finished
-        anyway, which stays the result it is.
+        The test's result then comes back with ``cancelled=True`` — unless the
+        simulation finished anyway, which stays its result.
+
+        Args:
+            test_key: The test to stop.
+            hard: Kill the worker without asking :meth:`cancel_running`.
+
+        Returns:
+            Whether this worker was running that test.
         """
         with self._run_lock:
             if self._running_key != test_key or self._wake is None:
@@ -557,12 +603,11 @@ class Worker(ABC):
             return True
 
     def close(self, grace: float = 5.0) -> None:
-        """Tear the worker down: graceful first, then kill tracked PIDs.
+        """Shut the worker down: the simulator is asked to quit, then every process
+        it ran as is killed. Not to be overridden; safe to call again.
 
-        The graceful attempt runs on a daemon thread — a wedged interface
-        must not block the pool's teardown — and is abandoned after *grace*
-        seconds. Idempotent: ``_detach_interface`` hands back the handle
-        once, and killing an already-dead PID is a no-op.
+        Args:
+            grace: The seconds the simulator gets to quit by itself.
         """
         handle = self._detach_interface()
         if handle is not None:
@@ -690,39 +735,28 @@ class Worker(ABC):
         progress: Optional["object"] = None,
         before: Callable[[], None] | None = None,
     ) -> "TestRunResult":
-        """Run *test* with a watchdog. On timeout, hard-kill the worker
-        process and return ``TestRunResult(timed_out=True, success=False)``.
-        Test-level failures (sim error, missing variable) return a
-        ``success=False`` result, not a raise. Worker-level catastrophes
-        (subprocess died, pipe broken) MAY raise so the caller restarts.
+        """Run a test under the watchdog.
 
-        *before*, when given, runs first — on the thread the test runs on and
-        under the same watchdog, so one that hangs is the test's timeout and
-        a cancel during it is the test's. A :class:`LibraryReloadError` from
-        it is the test's failure and nothing else: the test does not run and
-        the worker is as it was. An override of this method owes that call
-        too (:meth:`_run_before`).
+        Implemented here; override it only when a test is not one blocking call
+        (the Julia worker polls its replies against a deadline). An override still
+        calls ``before`` through ``self._run_before``, returns ``timed_out=True``
+        and ``worker_killed=True`` after a kill at the time limit, kills through
+        ``self._kill_tracked_pids()``, and returns ``cancelled=True`` when
+        ``self._cancel`` is set.
 
-        ``run_test`` executes on a daemon thread the watchdog abandons on
-        expiry; ``self`` is closed and its PIDs killed, then
-        ``_evaluate_from_disk`` gets a chance to rescue a simulation that
-        finished just before the kill. Either way the worker is dead, so
-        the result carries ``worker_killed=True``: the dispatch loop keys
-        its benign-restart accounting on ``timed_out or worker_killed``,
-        and we killed a *healthy* worker because the test was slow.
+        At the time limit the worker is closed and its processes killed, then
+        :meth:`_evaluate_from_disk` may rescue a result the run wrote just before.
 
-        Two more things end the wait. A cancel (:meth:`request_cancel`)
-        returns a ``cancelled`` result: after :meth:`cancel_running` and the
-        tool's own return when the backend has a soft stop (the worker is
-        reused), else after the same kill as a timeout's — with no disk
-        rescue, since a cancelled run is not a result whatever it left. And
-        the tracked process being gone (looked at every
-        :attr:`_CHILD_WATCH_SECONDS`) fails the test and closes the worker,
-        which kills the children recorded while it was alive: a tool that
-        dies by itself orphans its simulation process, and nothing reaches
-        an orphan through a parent that no longer exists. A child born
-        after the last look is found by its mark where the platform allows
-        (:meth:`_record_orphans`, which also says what stays out of reach).
+        Args:
+            test: The test.
+            test_key: The name of the test's directory.
+            timeout: The test's time limit, in seconds.
+            progress: The live dashboard's reporter, passed to :meth:`run_test`.
+            before: Run first, on the same thread and under the same watchdog: the
+                in-place :meth:`reload` the test needs, if any.
+
+        Returns:
+            How the run went. A test-level failure is a result, not an exception.
         """
         result_box: list[TestRunResult | None] = [None]
         exc_box: list[BaseException | None] = [None]
@@ -979,12 +1013,20 @@ class Worker(ABC):
             return False
 
     def export_fmu(self, test: TestModel, output_dir: "Path") -> "Path":
-        """Export *test*'s model as an FMU into *output_dir*.
+        """Export a test's model as an FMU from the open simulator.
 
-        Backends that declare :attr:`Capability.FMU_EXPORT` on their
-        :class:`Backend` MUST override this; the default raises
-        :class:`NotImplementedError`. Used by 4.B's cross-backend chain
-        (e.g. Dymola export → FMPy simulate as a second baseline).
+        Override it on a worker whose backend declares
+        :attr:`~dstf.backends.types.Capability.FMU_EXPORT`; the default raises.
+
+        Args:
+            test: The test whose model to export.
+            output_dir: The directory to write the FMU into.
+
+        Returns:
+            The absolute path of the FMU written.
+
+        Raises:
+            NotImplementedError: The worker does not export FMUs.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support FMU export. "
@@ -1352,36 +1394,30 @@ class WorkerRunner(ItemRunner):
 
 
 class PersistentBackendBase(Backend):
-    """Template-method class for persistent-worker backends.
+    """A backend whose simulator stays open between tests, run by a pool of
+    :class:`Worker` objects.
 
-    Owns the orchestration shared by Dymola / OpenModelica / Julia persistent
-    backends — so adding a new persistent backend is a one-class job, not a
-    250-line copy-paste of the dispatch loop.
+    A persistent backend subclasses this before its batch backend
+    (``class PersistentAcme(PersistentBackendBase, AcmeBackend)``), sets
+    :attr:`worker_cls` and :attr:`backend_label`, and returns the class from
+    the batch backend's
+    :meth:`~dstf.backends.base.Backend.persistent_backend_cls`. The run is
+    implemented here: :meth:`setup_before_workers`, then ``--parallel`` workers
+    made by :meth:`make_worker` and started together, then the tests handed
+    out to the live ones, a worker that dies restarted within
+    :attr:`max_restarts_per_worker`, and every worker closed at the end. A run
+    in which no worker starts fails every test with each worker's reason.
 
-    Subclass contract:
-
-      - Set ``worker_cls`` to your :class:`Worker` subclass.
-      - Set ``backend_label`` (e.g. ``"Dymola"``) — used in headers and
-        thread names. Read by both the run-header line and the final
-        completion message.
-      - Override :meth:`make_worker` if your worker constructor needs
-        backend-specific args beyond ``(worker_id, config)``. Use
-        :meth:`setup_before_workers` to populate any class state your
-        ``make_worker`` reads.
-      - Override :meth:`setup_before_workers` if your backend has runtime
-        patches that must apply before any worker spawns (Dymola: log
-        filter + parallel-startup lock).
-      - Override :meth:`preflight` (already declared on ``Backend``)
-        to add a cheap dependency probe — see :func:`backends.select_backend`.
-
-    The :meth:`run_tests` template enforces the lifecycle:
-
-        setup_before_workers → _prepare_run (progress + keys + manifest)
-            → make_worker × N → start in parallel
-            → filter live workers (raise if zero) → dispatch with restart
-            → close all workers → finalize progress
-
-    Subclasses generally don't need to touch :meth:`run_tests` itself.
+    Attributes:
+        worker_cls: The :class:`Worker` subclass to make; required unless
+            :meth:`make_worker` is overridden.
+        backend_label: The backend's name in the run's messages and its
+            threads' names.
+        max_restarts_per_worker: How many times a worker that failed is
+            restarted before its slot gives up. A restart after a time limit
+            or a cancel is not counted.
+        restart_retry_backoff_seconds: The pause before the one retry of a
+            restart that failed.
     """
 
     #: Worker subclass to instantiate per slot. MUST be set by subclasses.
@@ -1415,19 +1451,24 @@ class PersistentBackendBase(Backend):
         return cls  # we ARE the persistent variant; stop recursing
 
     def setup_before_workers(self) -> None:
-        """Hook for runtime patches that must take effect before any worker
-        spawns. Default no-op. Dymola uses this to install its log filter
-        and narrow the parallel-startup lock; OpenModelica uses it to
-        cache its session class; Julia today needs nothing here.
+        """Prepare what every worker needs before the first one starts; the default
+        does nothing.
+
+        Raises:
+            Exception: A precondition of the run fails; the run stops before any
+                test is recorded.
         """
         return None
 
     def make_worker(self, worker_id: int) -> "Worker":
-        """Construct one :class:`Worker`. Default calls
-        ``self.worker_cls(worker_id, self.config)``. Backends with extra
-        construction args (e.g. ``DymolaConfig`` + interface class) override
-        this — typically reading state stashed by
-        :meth:`setup_before_workers`.
+        """Make one worker. The default is ``worker_cls(worker_id, self.config)``;
+        override it when the worker's constructor takes more.
+
+        Args:
+            worker_id: The worker's slot, from 0.
+
+        Returns:
+            The worker, not started.
         """
         if self.worker_cls is None:
             raise NotImplementedError(
@@ -1437,10 +1478,13 @@ class PersistentBackendBase(Backend):
         return self.worker_cls(worker_id, self.config)
 
     def starting_workers_message(self, n_workers: int) -> str:
-        """The "Starting N <backend> worker(s)..." line printed before
-        worker startup. Override to add backend-specific guidance — e.g.
-        Julia's warmup notice that the first run does several minutes of
-        JIT compilation. Default uses :attr:`backend_label`.
+        """The line printed before the workers start.
+
+        Args:
+            n_workers: How many are started.
+
+        Returns:
+            The line; the default names the count and :attr:`backend_label`.
         """
         return f"Starting {n_workers} {self.backend_label} worker(s)..."
 
@@ -1469,13 +1513,15 @@ class PersistentBackendBase(Backend):
         return {**super().run_versions(), **self._worker_versions}
 
     def _probe_worker_version(self, live_workers: list["Worker"]) -> str | None:
-        """Best-effort actual tool version, asked of a live worker.
+        """The simulator's version, asked of a live worker once the workers are up.
 
-        The persistent template calls this once workers are up (before
-        dispatch) to stamp run provenance. Default returns ``None``; backends
-        whose session can name its version (Dymola's ``DymolaVersion()``,
-        omc's ``getVersion()``) override this. MUST NOT raise — the template
-        wraps it in :meth:`_safe_probe_worker_version`.
+        The default asks nothing. It must not raise.
+
+        Args:
+            live_workers: The workers that started.
+
+        Returns:
+            The version, or None.
         """
         return None
 
@@ -1491,12 +1537,17 @@ class PersistentBackendBase(Backend):
             return None
 
     def _probe_library_versions(self, live_workers: list["Worker"]) -> dict | None:
-        """Best-effort loaded-library versions (e.g. ``{"Modelica": "4.1.0"}``)
-        asked of a live worker. Default ``None``; Modelica backends override
-        (Dymola reads the bundled MSL under ``$DYMOLA``; omc uses
-        ``getVersion(Modelica)``). The MSL version is the second drift suspect
-        after the tool version itself. MUST NOT raise — wrapped by
-        :meth:`_safe_probe_library_versions`."""
+        """The versions of the libraries the workers loaded
+        (``{"Modelica": "4.1.0"}``), asked of a live worker.
+
+        The default asks nothing. It must not raise.
+
+        Args:
+            live_workers: The workers that started.
+
+        Returns:
+            The versions by library, or None.
+        """
         return None
 
     def _safe_probe_library_versions(self, live_workers: list["Worker"]) -> dict | None:

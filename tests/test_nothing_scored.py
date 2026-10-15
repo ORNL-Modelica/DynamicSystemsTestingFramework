@@ -41,7 +41,7 @@ def _untracked(keys: str) -> str:
     return (
         f"variable_overrides key(s) name no variable this test tracks ({keys}) — "
         'an override changes how a tracked variable is scored, and "variables" '
-        '(or a "metrics" leaf) is what tracks one; nothing was scored'
+        '(or a criterion of "metrics") is what tracks one; nothing was scored'
     )
 
 
@@ -60,7 +60,12 @@ class _Store:
     def get_reference(self, model_id):
         return self.reference
 
+    folder = "Stub/linux"
+
     def get_soft_checks(self, model_id):
+        return {}
+
+    def get_companions(self, model_id):
         return {}
 
     def reference_path(self, model_id):
@@ -117,7 +122,7 @@ DECLARES = {
 @pytest.mark.parametrize("baseline", [True, False], ids=["baseline", "no baseline"])
 def test_a_test_that_declares_nothing_to_score_is_simulate_only(baseline):
     """No tracked variable, no UnitTests variable, no criteria — the entry
-    `dstf add <model>` writes: it passes by having run, as a test a
+    `dstf spec add <model>` writes: it passes by having run, as a test a
     recognizer marked `simulate_only` does. Not the FAIL of a test that
     tracks variables its result does not hold."""
     test = make_test_model()
@@ -338,14 +343,25 @@ def test_a_loss_with_no_baseline_is_no_ref_as_before():
 
 
 def test_a_warn_over_a_lost_variable_is_an_advisory_failure():
-    """A tree that is only a `warn`: the test passes, and the criterion
-    that was not scored is counted where advisory failures are."""
+    """A `warn` over the lost variable, beside a criterion that holds (a
+    tree of warnings alone is refused: `broken_roles`): the test passes, and
+    the criterion that was not scored is counted where advisory failures
+    are."""
     from dstf.reporting.status import advisory_failures
 
     tree = parse_metric_tree(
-        {"combinator": "warn", "children": [{"metric": "nrmse", "variable": "y"}]}
+        {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "x"},
+                {
+                    "combinator": "warn",
+                    "children": [{"metric": "nrmse", "variable": "y"}],
+                },
+            ],
+        }
     )
-    test = make_test_model(variable_patterns=["y"], metric_tree_spec=tree)
+    test = make_test_model(variable_patterns=["x", "y"], metric_tree_spec=tree)
     comp = compare_one(test, _result("x"), _Store(BOTH))
     assert classify(comp) == PASS
     (leaf,) = advisory_failures(comp)
@@ -431,7 +447,7 @@ def test_accept_stores_no_baseline_of_a_result_that_holds_nothing_tracked(
 
 
 def test_an_entry_with_no_variables_passes_by_having_run(project, tmp_path, capsys):
-    """`dstf add <model>` writes `"variables": []`: a simulate-only test.
+    """`dstf spec add <model>` writes `"variables": []`: a simulate-only test.
     It read FAIL `this test tracks no variable and has no criteria` on
     every run."""
     _track(project, RAMP)
@@ -449,7 +465,7 @@ def test_an_entry_with_no_variables_passes_by_having_run(project, tmp_path, caps
 
 
 def _override_only(project: Project, model_id: str) -> None:
-    """What `dstf add <model>` writes, and an override added by hand."""
+    """What `dstf spec add <model>` writes, and an override added by hand."""
     _track(project, model_id)
     data = json.loads(project.spec.read_text(encoding="utf-8"))
     (entry,) = [e for e in data["tests"] if e["model"] == model_id]

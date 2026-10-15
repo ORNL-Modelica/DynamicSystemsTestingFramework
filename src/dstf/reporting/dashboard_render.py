@@ -27,7 +27,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -84,31 +84,155 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
         return None
 
 
-def build_rerun_prefix(config) -> str:
-    """Build the CLI prefix the dashboard uses in its rerun-command builder.
+#: Each of `Config.overrides` by the flag it is given back by (its dest on
+#: the command line), in the order a built command writes them.
+_OVERRIDE_FLAGS = (
+    ("source_path", "source_path"),
+    ("reference_root", "reference_root"),
+    ("test_spec_file", "test_spec"),
+    ("work_dir", "work_dir"),
+    ("backend_name", "backend"),
+    ("backend_path", "backend_path"),
+    ("tolerance", "tolerance"),
+    ("timeout", "timeout"),
+    ("default_points", "default_points"),
+)
 
-    Produces e.g. `dstf --config "/abs/path/testing.json"` — the global
-    flags only, NO subcommand: the dashboard's command menu picks the
-    subcommand (`run`, `compare`, `compare --accept`,
-    `run --rerun failed,sim-failed`) and appends ` --filter ...`, so the
-    user can paste the result into any terminal regardless of CWD.
-    Prefers --config when available; otherwise falls back to
-    --source-path (+ optional --reference-root).
-    """
+#: The dashboard's Command menu, in its order: each command's words after
+#: `dstf`, the command they run, and the flags its builder writes on the
+#: line besides the run's (`dashboard.js`: ``--filter`` always, ``--merge
+#: --report`` after a plain `run`).
+COMMAND_KINDS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("run", "run", frozenset({"filter", "merge", "report"})),
+    ("compare", "compare", frozenset({"filter"})),
+    ("compare --accept", "compare", frozenset({"filter", "accept"})),
+    ("run --rerun failed,sim-failed", "run", frozenset({"filter", "rerun"})),
+    ("author", "author", frozenset({"filter"})),
+)
 
-    def q(p) -> str:
-        s = str(p)
+#: The commands offered only when the run had a testing.json and they read
+#: EVERY flag the run was given: `author` simulates and scores by its
+#: testing.json alone, so a run given a place or a setting it does not read
+#: is not the project it would open.
+_WHOLE = frozenset({"author"})
+
+
+def _settings_given(config) -> list[tuple[str, list[str]]]:
+    """What a command was given that a command built for the dashboard must
+    say again, each by its dest with its words after the flag, in the order
+    a built command writes them: the testing.json it read or wrote, then
+    every one of `Config.overrides` (a flag it was given, or a place the
+    current directory decided), each path absolute."""
+
+    def q(value) -> str:
+        s = str(value)
         return f'"{s}"' if " " in s else s
 
-    if getattr(config, "config_file", None):
-        return f"dstf --config {q(config.config_file)}"
+    names = set(config.overrides)
+    given: list[tuple[str, list[str]]] = []
+    if config.config_found is not None:
+        given.append(("config", [q(Path(config.config_found).resolve())]))
+    else:
+        names |= {"source_path", "reference_root"}
+    for name, dest in _OVERRIDE_FLAGS:
+        if name not in names:
+            continue
+        value = getattr(config, name)
+        if value is None:  # a source the Config could not place
+            continue
+        if name in ("source_path", "reference_root", "test_spec_file", "work_dir"):
+            value = Path(value).resolve()
+        # backend_path is what `locate` found, absolute, and is not resolved:
+        # a venv's python is a link whose target has none of its packages.
+        given.append((dest, [] if value is True else [q(value)]))
+    return given
 
-    parts = ["dstf"]
-    if getattr(config, "source_path", None):
-        parts += ["--source-path", q(config.source_path)]
-    if getattr(config, "reference_root", None):
-        parts += ["--reference-root", q(config.reference_root)]
-    return " ".join(parts)
+
+def run_given(config) -> list[list]:
+    """What the run was given, as :func:`build_rerun_flags` reads it back
+    (``ran``): ``[[dest, [words]], ...]``. ``status.json`` holds it under
+    ``run_given`` (``ProgressReporter``), for the ``compare`` that scores
+    the run's results later."""
+    return [[dest, words] for dest, words in _settings_given(config)]
+
+
+def _ran(snapshot_given) -> list[tuple[str, list[str]]] | None:
+    """``status.json``'s ``run_given`` as :func:`build_rerun_flags` takes
+    it, or None where the snapshot holds none (one written before it did):
+    only a pair of a dest a built command writes and its words is read."""
+    if not isinstance(snapshot_given, list):
+        return None
+    order = {dest for _, dest in _OVERRIDE_FLAGS} | {"config"}
+    return [
+        (pair[0], list(pair[1]))
+        for pair in snapshot_given
+        if isinstance(pair, list)
+        and len(pair) == 2
+        and pair[0] in order
+        and isinstance(pair[1], list)
+        and all(isinstance(w, str) for w in pair[1])
+    ]
+
+
+def compare_rerun_flags(config) -> dict[str, str]:
+    """The flags a ``compare`` renders the dashboard with:
+    :func:`build_rerun_flags` with the run's own settings (``status.json``'s
+    ``run_given``) kept for every flag ``compare`` does not read. The
+    results are the run's, and so are the commands that would make them
+    again: a ``run --timeout 7`` compared later still offers its ``run``
+    with ``--timeout 7``."""
+    from ..backends.progress import read_status
+
+    snapshot = read_status(config.work_dir) or {}
+    return build_rerun_flags(config, ran=_ran(snapshot.get("run_given")))
+
+
+def build_rerun_flags(
+    config, ran: Sequence[tuple[str, list[str]]] | None = None
+) -> dict[str, str]:
+    """The flags the dashboard's command builder writes after each command
+    of its Command menu (:data:`COMMAND_KINDS`), by the command — `dstf
+    <kind> <flags> --filter ...` — so that the command does the same thing
+    to the same project the run did, pasted into a terminal in any
+    directory.
+
+    They name the testing.json the run read or wrote, and everything the
+    run did not take from it or the defaults (`Config.overrides`: a flag it
+    was given, or a place the current directory decided), each path
+    absolute. They go after the command because `--work-dir` and
+    `--backend` are offered there only. Each command carries the ones it
+    reads (`cli.parser.reads`): `compare` simulates nothing and reads no
+    `--timeout`, and `compare --accept` scores nothing and reads no
+    `--tolerance`. `author` is left out where it would not read one
+    (:data:`_WHOLE`) — as it is for a Config built with no testing.json
+    (`run_pipeline` called as a library), which is named by its library and
+    reference root instead.
+
+    ``ran`` is what the RUN that made the results was given, for a
+    ``compare`` that renders the page after it (:func:`compare_rerun_flags`):
+    a flag ``compare`` reads is the compare's own — it scored with it — and
+    every other is the run's."""
+    from ..cli.parser import reads
+
+    given = _settings_given(config)
+    if ran is not None:
+        order = ["config", *(dest for _, dest in _OVERRIDE_FLAGS)]
+        given = sorted(
+            [(d, v) for d, v in given if reads("compare", d)]
+            + [(d, v) for d, v in ran if not reads("compare", d)],
+            key=lambda pair: order.index(pair[0]),
+        )
+    flags = {}
+    for kind, path, beside in COMMAND_KINDS:
+        carried = [(d, v) for d, v in given if reads(path, d, beside)]
+        if kind in _WHOLE and (
+            config.config_found is None or len(carried) < len(given)
+        ):
+            continue
+        flags[kind] = " ".join(
+            w for d, v in carried for w in ("--" + d.replace("_", "-"), *v)
+        )
+    return flags
 
 
 def format_run_metadata(meta: dict | None) -> dict | None:
@@ -272,7 +396,7 @@ def _manifest_rows(work_dir: Path) -> dict[str, tuple[TestRow, float | None]]:
 def build_dashboard_context(
     work_dir: Path,
     mode: str,
-    rerun_prefix: str | None = None,
+    rerun_flags: Mapping[str, str] | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
 ) -> dict:
@@ -379,11 +503,14 @@ def build_dashboard_context(
             row = replace(row, sim_cpu=cpu)
         rows.append(row)
 
-    # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf"
-    # fallback. The kwarg path lets the CLI override the snapshot prefix even
-    # when status.json was written by a prior run with a different config
-    # (e.g. dstf compare reading work_dir from a different invocation).
-    prefix = rerun_prefix or snapshot.get("rerun_prefix") or "dstf"
+    # rerun_flags precedence: explicit kwarg > snapshot's flags > none.
+    # The kwarg path lets the CLI override the snapshot's flags even when
+    # status.json was written by a prior run with a different config (e.g.
+    # dstf compare reading work_dir from a different invocation). A
+    # status.json of 1.0 holds one string for every command: none is read.
+    flags = rerun_flags or snapshot.get("rerun_flags")
+    if not isinstance(flags, Mapping) or not flags:
+        flags = {kind: "" for kind, _, _ in COMMAND_KINDS if kind not in _WHOLE}
 
     return {
         "mode": mode,
@@ -404,7 +531,9 @@ def build_dashboard_context(
         # word a person reads]. The class is the pill's key and the row's
         # data-status.
         "statuses": [[STATUS_CLASSES[s], STATUS_LABELS[s]] for s in PILL_STATUSES],
-        "rerun_prefix": prefix,
+        # The Command menu: each command offered, and the flags after it.
+        "rerun_flags": dict(flags),
+        "offers_author": "author" in flags,
         "updated_at": snapshot.get("updated_at", time.time()),
         # Wall-clock anchor for the dashboard's live elapsed clock. JS reads
         # SNAPSHOT_WALL (= updated_at, when the snapshot was written) and
@@ -458,7 +587,7 @@ def _atomic_write(path: Path, text: str) -> None:
 def _render(
     work_dir: Path,
     mode: str,
-    rerun_prefix: str | None = None,
+    rerun_flags: Mapping[str, str] | None = None,
     output_path: Path | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
@@ -467,7 +596,7 @@ def _render(
     ctx = build_dashboard_context(
         work_dir,
         mode=mode,
-        rerun_prefix=rerun_prefix,
+        rerun_flags=rerun_flags,
         comparisons=comparisons,
         results=results,
     )
@@ -482,15 +611,15 @@ def _render(
 
 
 def render_live(
-    work_dir: Path, rerun_prefix: str | None = None, theme: str = "default"
+    work_dir: Path, rerun_flags: Mapping[str, str] | None = None, theme: str = "default"
 ) -> None:
     """Render dashboard.html in live mode (auto-refreshes via meta tag)."""
-    _render(work_dir, mode="live", rerun_prefix=rerun_prefix, theme=theme)
+    _render(work_dir, mode="live", rerun_flags=rerun_flags, theme=theme)
 
 
 def render_final(
     work_dir: Path,
-    rerun_prefix: str | None = None,
+    rerun_flags: Mapping[str, str] | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",
@@ -501,7 +630,7 @@ def render_final(
     _render(
         work_dir,
         mode="final",
-        rerun_prefix=rerun_prefix,
+        rerun_flags=rerun_flags,
         comparisons=comparisons,
         results=results,
         theme=theme,
@@ -511,7 +640,7 @@ def render_final(
 def render_final_to(
     work_dir: Path,
     output_path: Path,
-    rerun_prefix: str | None = None,
+    rerun_flags: Mapping[str, str] | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",
@@ -526,7 +655,7 @@ def render_final_to(
     _render(
         work_dir,
         mode="final",
-        rerun_prefix=rerun_prefix,
+        rerun_flags=rerun_flags,
         output_path=output_path,
         comparisons=comparisons,
         results=results,

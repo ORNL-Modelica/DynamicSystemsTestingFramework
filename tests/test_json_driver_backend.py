@@ -104,7 +104,8 @@ class TestSourceResolution:
 
         assert result.success is False
         assert result.error_message.startswith("Fake source not found for Lib.A.")
-        assert ".ext file under source_path" in result.error_message
+        looked = cfg.source_path / "Lib.A.ext"
+        assert f"there is no file at {looked}: add a 'source'" in result.error_message
 
     def test_spec_source_field_wins_over_the_model_id_fallback(self, tmp_path):
         cfg = _config(tmp_path)

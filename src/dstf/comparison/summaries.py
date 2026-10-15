@@ -211,7 +211,7 @@ def summarize_scalar(vc: VariableComparison) -> ScoreSummary:
         # builds one stamps ``diagnostics["error"]``.
         reason = diag.get("error") or "quantity could not be resolved"
         return ScoreSummary(
-            display="not scored", criterion=f"Scalar leaf not scored — {reason}"
+            display="not scored", criterion=f"Scalar criterion not scored — {reason}"
         )
     lo, hi = diag.get("min_value"), diag.get("max_value")
     if lo is not None or hi is not None:
@@ -326,7 +326,7 @@ def summarize_dominant_frequency(vc: VariableComparison) -> ScoreSummary:
         return ScoreSummary(
             display="no peaks declared",
             criterion=(
-                "No peaks declared — declare them in the leaf's `peaks` "
+                "No peaks declared — declare them in the criterion's `peaks` "
                 "list; the reference's detected peaks are in the "
                 "diagnostics as `detected_reference_peaks_hz`"
             ),

@@ -61,6 +61,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..config_shape import RECOGNIZER, default, refused
 from .mo_parser import (
     _extract_balanced_braces,
     _extract_model_name,
@@ -519,14 +520,19 @@ class JsonRecognizer(Recognizer):
     """Recognizer configured by a JSON spec."""
 
     def __init__(self, spec: dict):
+        # What the entry does not say is its key's default (`RECOGNIZER`).
+        said = {
+            key: spec.get(key, default(key, RECOGNIZER))
+            for key in ("applies_to", "fields", "paths_include", "paths_exclude")
+        }
         self.name: str = spec["name"]
-        self.applies_to = frozenset(spec.get("applies_to", ["modelica"]))
+        self.applies_to = frozenset(said["applies_to"])
         self._match_spec: dict = spec["match"]
-        self._field_specs: dict = spec.get("fields", {})
+        self._field_specs: dict = said["fields"]
         # PTA-follow.1: optional path filters. Globs match against the path
         # relative to the discovery base (config.library_dir for modelica).
-        self._paths_include: list[str] = list(spec.get("paths_include", []))
-        self._paths_exclude: list[str] = list(spec.get("paths_exclude", []))
+        self._paths_include: list[str] = list(said["paths_include"])
+        self._paths_exclude: list[str] = list(said["paths_exclude"])
 
     def applies_to_path(self, source_file: Path, base: Path) -> bool:
         if not self._paths_include and not self._paths_exclude:
@@ -600,103 +606,142 @@ class JsonRecognizer(Recognizer):
         return result
 
 
-def _validate_match_spec(rec_name: str, match: dict) -> None:
-    """Validate a (possibly composite) match spec, raising on error."""
+#: The keys each match type reads, and each field source: a key that is not
+#: among them is an error that names it, as in every other block.
+_MATCH_KEYS = {
+    "component-instantiation": ("type", "component_name"),
+    "extends": ("type", "class_pattern"),
+    "class-name-glob": ("type", "class_pattern"),
+    "all-of": ("type", "matchers"),
+    "any-of": ("type", "matchers"),
+}
+_FIELD_KEYS = {
+    "parameter": ("from", "name", "shape"),
+    "constant": ("from", "value"),
+    "annotation": ("from", "annotation", "name", "shape"),
+    "experiment-annotation": ("from", "name", "shape"),
+}
+
+
+def _refuse_unknown(where: str, block: dict, known: tuple[str, ...] | None) -> None:
+    """Raise for a key of ``block`` that nothing reads. ``known`` is None
+    for a match type or a source with no table here: not checked."""
+    # Here, not at the top: `comparison` imports the backends, which import
+    # `config`, which imports this package.
+    from ..comparison.strict_keys import unknown_field
+
+    problem = unknown_field(block, known) if known is not None else None
+    if problem is not None:
+        raise RecognizerSpecError(f"{where}: {problem}")
+
+
+def _validate_match_spec(rec_name: str, match: dict, where: str) -> None:
+    """Validate a (possibly composite) match spec, raising on error.
+    ``where`` names its place: ``recognizers[2].match``."""
     if not isinstance(match, dict) or "type" not in match:
         raise RecognizerSpecError(
-            f"recognizer '{rec_name}' has malformed match (missing 'type')"
+            f"{where}: recognizer '{rec_name}' has malformed match (missing 'type')"
         )
     mtype = match["type"]
     if mtype not in _MATCH_INTERPRETERS:
         raise RecognizerSpecError(
-            f"recognizer '{rec_name}' has unknown match type '{mtype}'. "
+            f"{where}: recognizer '{rec_name}' has unknown match type '{mtype}'. "
             f"Known: {sorted(_MATCH_INTERPRETERS)}"
         )
+    _refuse_unknown(where, match, _MATCH_KEYS.get(mtype))
     if mtype in ("all-of", "any-of"):
         children = match.get("matchers")
         if not isinstance(children, list) or not children:
             raise RecognizerSpecError(
-                f"recognizer '{rec_name}' match.{mtype} requires 'matchers' (non-empty list)"
+                f"{where}: recognizer '{rec_name}' match.{mtype} requires "
+                "'matchers' (non-empty list)"
             )
-        for child in children:
-            _validate_match_spec(rec_name, child)
+        for i, child in enumerate(children):
+            _validate_match_spec(rec_name, child, f"{where}.matchers[{i}]")
         return
     if mtype == "component-instantiation" and "component_name" not in match:
         raise RecognizerSpecError(
-            f"recognizer '{rec_name}' match.component-instantiation requires 'component_name'"
+            f"{where}: recognizer '{rec_name}' match.component-instantiation "
+            "requires 'component_name'"
         )
     if mtype == "extends" and "class_pattern" not in match:
         raise RecognizerSpecError(
-            f"recognizer '{rec_name}' match.extends requires 'class_pattern'"
+            f"{where}: recognizer '{rec_name}' match.extends requires 'class_pattern'"
         )
     if mtype == "class-name-glob" and "class_pattern" not in match:
         raise RecognizerSpecError(
-            f"recognizer '{rec_name}' match.class-name-glob requires 'class_pattern'"
+            f"{where}: recognizer '{rec_name}' match.class-name-glob requires "
+            "'class_pattern'"
         )
 
 
-def parse_recognizer_spec(spec: dict) -> Recognizer:
-    """Validate and parse a JSON recognizer spec into a Recognizer instance."""
+def parse_recognizer_spec(spec: object, where: str = "recognizer") -> Recognizer:
+    """Validate and parse a JSON recognizer spec into a Recognizer instance.
+
+    ``where`` names the entry in every refusal — ``recognizers[2]`` for
+    the third of ``testing.json``'s. The entry is read as every other block
+    of that file is: by a table of its keys (``config_shape.RECOGNIZER``),
+    so a key nothing reads and a value of another type than its key takes
+    are errors that name their place — as are the keys of its ``match`` and
+    of each of its ``fields``."""
+    # Here, not at the top: see `_refuse_unknown`.
+    from ..comparison.sides import _as_json
+
     if not isinstance(spec, dict):
-        raise RecognizerSpecError(
-            f"recognizer spec must be a dict, got {type(spec).__name__}"
-        )
-    if "name" not in spec:
-        raise RecognizerSpecError("recognizer spec missing required field 'name'")
+        raise RecognizerSpecError(f"{where}: must be an object, got {_as_json(spec)}")
+    problem = refused(where, spec, RECOGNIZER)
+    if problem is not None:
+        raise RecognizerSpecError(problem)
+    for required in ("name", "match"):
+        if required not in spec:
+            raise RecognizerSpecError(f'{where}: has no "{required}"')
     name = spec["name"]
-    if "match" not in spec:
-        raise RecognizerSpecError(f"recognizer '{name}' missing required field 'match'")
     match = spec["match"]
-    _validate_match_spec(name, match)
+    _validate_match_spec(name, match, f"{where}.match")
     match_type = match["type"]
     fields = spec.get("fields", {})
-    if not isinstance(fields, dict):
-        raise RecognizerSpecError(f"recognizer '{name}' fields must be a dict")
     allowed_sources = _allowed_sources_for(match)
+    said = f"{where}: recognizer '{name}'"
     for fname, fspec in fields.items():
         if fname not in _VALID_FIELDS:
             raise RecognizerSpecError(
-                f"recognizer '{name}' targets unknown field '{fname}'. "
+                f"{said} targets unknown field '{fname}'. "
                 f"Known: {sorted(_VALID_FIELDS)}"
             )
         if not isinstance(fspec, dict) or "from" not in fspec:
-            raise RecognizerSpecError(
-                f"recognizer '{name}' field '{fname}' missing 'from'"
-            )
+            raise RecognizerSpecError(f"{said} field '{fname}' missing 'from'")
         source = fspec["from"]
         if source not in _FIELD_INTERPRETERS:
             raise RecognizerSpecError(
-                f"recognizer '{name}' field '{fname}' uses unknown source '{source}'. "
+                f"{said} field '{fname}' uses unknown source '{source}'. "
                 f"Known: {sorted(_FIELD_INTERPRETERS)}"
             )
         if source not in allowed_sources:
             raise RecognizerSpecError(
-                f"recognizer '{name}' field '{fname}' source '{source}' isn't compatible "
+                f"{said} field '{fname}' source '{source}' isn't compatible "
                 f"with match type '{match_type}'. Allowed for this match type: "
                 f"{sorted(allowed_sources)}"
             )
+        _refuse_unknown(f"{where}.fields.{fname}", fspec, _FIELD_KEYS.get(source))
         if source == "parameter" and "name" not in fspec:
             raise RecognizerSpecError(
-                f"recognizer '{name}' field '{fname}' (source=parameter) requires 'name'"
+                f"{said} field '{fname}' (source=parameter) requires 'name'"
             )
         if source == "constant" and "value" not in fspec:
             raise RecognizerSpecError(
-                f"recognizer '{name}' field '{fname}' (source=constant) requires 'value'"
+                f"{said} field '{fname}' (source=constant) requires 'value'"
             )
         if source == "experiment-annotation" and "name" not in fspec:
             raise RecognizerSpecError(
-                f"recognizer '{name}' field '{fname}' "
-                f"(source=experiment-annotation) requires 'name'"
+                f"{said} field '{fname}' (source=experiment-annotation) requires 'name'"
             )
         if source == "annotation":
             if "annotation" not in fspec:
                 raise RecognizerSpecError(
-                    f"recognizer '{name}' field '{fname}' "
-                    f"(source=annotation) requires 'annotation'"
+                    f"{said} field '{fname}' (source=annotation) requires 'annotation'"
                 )
             if "name" not in fspec:
                 raise RecognizerSpecError(
-                    f"recognizer '{name}' field '{fname}' "
-                    f"(source=annotation) requires 'name'"
+                    f"{said} field '{fname}' (source=annotation) requires 'name'"
                 )
     return JsonRecognizer(spec)

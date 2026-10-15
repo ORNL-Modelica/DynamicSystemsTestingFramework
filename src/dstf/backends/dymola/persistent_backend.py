@@ -252,8 +252,8 @@ class DymolaWorker(Worker):
             # libgit2/Qt6/Qtitan libs. Pointing at bin64/dymola directly fails
             # with confusing "shared library not found" + "Mismatching Dymola
             # version" errors — DymolaInterface only sees an unstartable child
-            # process. Surface this as a friendlier check at config-resolution
-            # time once we have a Linux-aware backend-path validator.
+            # process. `DymolaBackend.locate` finds the wrapper where it does
+            # the looking; a path the config names is taken as written.
             kwargs["dymolapath"] = str(self.config.backend_path)
 
         self.dymola = self._launch(kwargs)
@@ -873,7 +873,7 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         # take effect here.
         from .interface_loader import load_dymola_interface as _load
 
-        _load(config.dymola_interface_path)
+        _load(cls.interface_of(config))
 
     def setup_before_workers(self) -> None:
         # Cache the DymolaInterface class for make_worker, then apply
@@ -884,7 +884,11 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         #   * _patch_dymola_for_parallel_startup — narrows DymolaInterface's
         #     module-level startup lock so workers can launch concurrently
         #     (~7s × N serialized → all workers in ~7s wall).
-        self._di_cls = load_dymola_interface(self.config.dymola_interface_path)
+        found = self.interface_of(self.config)
+        if found.path is not None and found.detail:
+            # Not the interface of the executable's own install: say whose.
+            logger.warning("Dymola's Python interface was %s", found.detail)
+        self._di_cls = load_dymola_interface(found)
         _install_dymola_log_filter()
         _patch_dymola_for_parallel_startup()
 
@@ -925,7 +929,7 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         license option. Cannot be exercised in CI on Linux WSL; tests use
         a mock DymolaInterface.
         """
-        di_cls = load_dymola_interface(self.config.dymola_interface_path)
+        di_cls = load_dymola_interface(self.interface_of(self.config))
         _patch_dymola_for_parallel_startup()
         worker = DymolaWorker(
             worker_id=-1,

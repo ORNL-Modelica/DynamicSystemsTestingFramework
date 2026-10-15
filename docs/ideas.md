@@ -686,7 +686,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   lookup explaining the vocabulary — NRMSE, tube/band/rel/abs, points,
   event-timing, dominant-frequency, PASS vs FAIL vs SIM_FAIL vs NO_REF,
   primary/soft_check/companion baseline roles, warn-wrapping. Content largely
-  exists in docs/usage.md + the mode field metadata (label/help already flow
+  exists in the guides + the mode field metadata (label/help already flow
   into the UI via mode_controls); surface it as a "?"-panel keyed by the mode
   each variable uses.
 
@@ -867,7 +867,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   Scope, in two tiers:
   (a) Free to rename — package `simulators/` → `backends/`, `SimulatorRunner`
       and the `Persistent*Runner` classes, internal variables and docstrings,
-      `docs/extensibility.md` §3 and the `plugins.py` docstring (see also the
+      the plug-in guide and the `plugins.py` docstring (see also the
       E01a follow-up: those two still justify the single entry-point group
       with the backend+metrics pairing rather than the recognizer+backend one).
   (b) Coordinated change, not a refactor — `testing.json`'s `"simulator"` and
@@ -1300,8 +1300,7 @@ planning.
   - This file's older entries still describe the browser editors and the
     parity test in the present tense (the reporter-as-IDE vocabulary); they
     are history now and the entry that proposed the cut is done. A
-    docs-only sweep, together with `docs/CODE_REVIEW_2026-07-06.md`'s two
-    mentions if that dated review is ever edited.
+    docs-only sweep.
   - `figures/` is outside mypy's scoped file list and type-checks clean;
     one line in `pyproject.toml` adds it.
 
@@ -1453,7 +1452,7 @@ planning.
   - The committed browser test compares both axis ranges after an x-only
     zoom; that holds only because its band edit does not grow the data's y
     extent (an x-only zoom leaves y on autorange).
-  - `docs/extensibility.md` still describes the interactive report's live
+  - The extensibility notes (now gone) still described the interactive report's live
     re-scoring and add-leaf dropdown, and `docs/patterns.md` future editing
     through JS templates — both predate the split.
 - **After the foundations corrections plan (2026-09-16), follow-ups** — noted
@@ -1651,7 +1650,7 @@ planning.
     TRANSFORM.
   - The report's per-variable badge reads the plain label beside the muted
     name; the tool's multi-series pill reads the disambiguated text — two
-    surfaces, one rule, but worth one sentence in usage.md if it confuses.
+    surfaces, one rule, but worth one sentence in a guide if it confuses.
   - The tree-path migrate hint is logged once per (baseline, variable); the
     flat path's override warning once per compare — `run --merge` repeats it.
   - Process: a LOOK screenshot cannot show a hover; a UI rule that puts text
@@ -2031,8 +2030,6 @@ planning.
   - A Suite view stored in the browser with values of the wrong TYPE (a
     number where a list is read) still empties the table; no page version
     writes one. Clearing the site data restores it.
-  - `dstf add` on a Python-source library writes no `source`, and the test
-    then fails to load; the entry needs its `source` by hand.
   - OpenModelica refuses a library whose root directory is a link of
     ANOTHER name (`Expected the package to have name …`); a link of the
     same name works.
@@ -2081,3 +2078,10 @@ planning.
   tool side by side, before anything is planned. (A reading, not the
   owner's words: the prototype is the editable report page from before
   editing moved into `dstf author`, D125.) Grill before planning.
+
+**The run-a-suite function scores and writes `verdicts.json` (owner,
+2026-10-14).** `dstf.pipeline.run_pipeline` is the documented Python way to
+run a suite, but it only simulates: scoring and `verdicts.json` happen in
+`dstf run`. The owner ruled that a script reads results as files, so the
+public function should do what `dstf run` does and write the same
+`verdicts.json`. Agreed for after 1.1.0 (a new behaviour, not a fix).

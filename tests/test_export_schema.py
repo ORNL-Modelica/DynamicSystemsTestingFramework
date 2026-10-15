@@ -103,7 +103,7 @@ class TestSchemaBuilder:
 class TestCli:
     def test_cli_emits_to_stdout(self, tmp_path):
         result = subprocess.run(
-            [sys.executable, "-m", "dstf", "export-schema"],
+            [sys.executable, "-m", "dstf", "spec", "schema"],
             capture_output=True,
             text=True,
         )
@@ -114,7 +114,7 @@ class TestCli:
     def test_cli_writes_to_output_file(self, tmp_path):
         out = tmp_path / "schema.json"
         result = subprocess.run(
-            [sys.executable, "-m", "dstf", "export-schema", "--output", str(out)],
+            [sys.executable, "-m", "dstf", "spec", "schema", "--output", str(out)],
             capture_output=True,
             text=True,
         )
@@ -131,7 +131,7 @@ class TestCli:
         compiles the CRLF write translation in rather than reading
         os.linesep — so pin the argument at the call site instead.
         """
-        from dstf.cli.spec_cmds import cmd_export_schema
+        from dstf.cli.spec_cmds import cmd_spec_schema
 
         seen: dict[str, object] = {}
         real = Path.write_text
@@ -142,7 +142,10 @@ class TestCli:
 
         monkeypatch.setattr(Path, "write_text", spy)
         out = tmp_path / "schema.json"
-        assert cmd_export_schema(argparse.Namespace(output=str(out))) == 0
+        assert (
+            cmd_spec_schema(argparse.Namespace(schema="test_spec", output=str(out)))
+            == 0
+        )
 
         assert seen["schema.json"] == "\n"
 
@@ -239,7 +242,7 @@ def test_leaf_identity_rule_matches_the_parser(payload, valid):
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_cli.py — regression tests for the
-# 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, final CLI/config/manifest batch.
 #
 # Finding 72 — the exported JSON-Schema wires the per-mode ``$defs`` into
 # the leaf spec via if/then. Its posture was lenient (unknown keys valid)
@@ -396,8 +399,24 @@ def test_a_two_sided_tolerance_exports_as_a_number_or_a_pair(
     defs = build_schema()["$defs"]
     node = dict(defs[mode]["properties"][name])
     assert node.pop("description")
+    # The pair's two sides are described too (`test_descriptions.py`); the
+    # shape is what this asserts.
+    node["oneOf"] = _without_descriptions(node["oneOf"])
     assert node == {"oneOf": NUMBER_OR_PAIR, "default": default, "title": title}
     json.dumps(defs)
+
+
+def _without_descriptions(node):
+    """``node`` with every ``description`` in it removed."""
+    if isinstance(node, dict):
+        return {
+            key: _without_descriptions(value)
+            for key, value in node.items()
+            if key != "description"
+        }
+    if isinstance(node, list):
+        return [_without_descriptions(value) for value in node]
+    return node
 
 
 def test_nrmse_tolerance_exports_as_one_number():

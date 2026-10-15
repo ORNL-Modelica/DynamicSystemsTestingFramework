@@ -13,30 +13,21 @@ from ..config import ConfigError
 #: names (`test_author_checks_every_package_of_the_extra`).
 _AUTHOR_MODULES = ("nicegui", "regex")
 
+#: The port the tool is served on when ``--port`` names none.
+DEFAULT_PORT = 8080
+
 
 def cmd_author(args: argparse.Namespace) -> int:
     """Open the authoring shell on this project and serve until Quit."""
     # The Session builds the Config itself, from the file it will save
-    # beside. Nothing is resolved before these checks: a full Config
-    # resolution can WRITE a default testing.json next to a package.mo.
-    if not getattr(args, "config", None):
+    # beside: `dstf author` opens the project a testing.json names, and
+    # looks for none.
+    # --source-path, --reference-root and --test-spec are not offered (the
+    # tool edits and saves the spec testing.json names; an override here
+    # would save to a different file than it shows), so the parser has
+    # already refused them.
+    if args.config is None:
         raise ConfigError("dstf author needs --config <testing.json>")
-    dropped = [
-        flag
-        for attr, flag in (
-            ("source_path", "--source-path"),
-            ("reference_root", "--reference-root"),
-            ("test_spec", "--test-spec"),
-            ("dymola_interface", "--dymola-interface"),
-        )
-        if getattr(args, attr, None)
-    ]
-    if dropped:
-        raise ConfigError(
-            f"dstf author reads {', '.join(dropped)} from testing.json; the tool "
-            "edits and saves the spec that file names, so an override here "
-            "would save to a different file than it shows"
-        )
     try:
         for module in _AUTHOR_MODULES:
             importlib.import_module(module)
@@ -54,8 +45,8 @@ def cmd_author(args: argparse.Namespace) -> int:
         filter=args.filter,
         package=args.package,
         port=args.port,
-        work_dir=Path(args.work_dir) if getattr(args, "work_dir", None) else None,
-        backend=args.backend if getattr(args, "backend", None) else None,
+        work_dir=Path(args.work_dir) if args.work_dir is not None else None,
+        backend=args.backend,
         show=not args.no_browser,
     )
     return 0

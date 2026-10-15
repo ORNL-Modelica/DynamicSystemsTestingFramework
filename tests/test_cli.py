@@ -421,45 +421,65 @@ def test_the_review_does_not_count_an_advisory_failure_as_a_failure(
 
 
 def test_argparse_subcommands_match_dispatch_table():
-    """Every subcommand registered with argparse must have a handler in
-    ``_COMMANDS``, and vice versa. Catches drift when adding a new
-    subcommand to one site but forgetting the other."""
-    from dstf.cli.main import _COMMANDS, build_arg_parser
+    """Every command of the tree has a handler in ``_COMMANDS`` and every
+    handler a command, by the name the command is typed with (``spec add``).
+    Catches drift when a command is added to one site and not the other —
+    and a group that names an action no parser has."""
+    from dstf.cli.main import _COMMANDS
 
     parser = build_arg_parser()
-    # subparsers action holds the subcommand registry
-    subparsers_action = next(
-        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    assert set(parser.commands) == set(_COMMANDS), (
+        f"the command tree and _COMMANDS drifted:\n"
+        f"  in the tree but not _COMMANDS: {set(parser.commands) - set(_COMMANDS)}\n"
+        f"  in _COMMANDS but not the tree: {set(_COMMANDS) - set(parser.commands)}"
     )
-    parser_commands = set(subparsers_action.choices.keys())
-    dispatch_commands = set(_COMMANDS.keys())
-    assert parser_commands == dispatch_commands, (
-        f"argparse subcommands and _COMMANDS dispatch table drifted:\n"
-        f"  in argparse but not _COMMANDS: {parser_commands - dispatch_commands}\n"
-        f"  in _COMMANDS but not argparse: {dispatch_commands - parser_commands}"
-    )
+    # The tree as argparse holds it, walked: what `parser.commands` records
+    # is what a command line can actually reach.
+    reachable: set[str] = set()
+
+    def walk(node: argparse.ArgumentParser, path: str) -> None:
+        subs = [a for a in node._actions if isinstance(a, argparse._SubParsersAction)]
+        if not subs:
+            reachable.add(path)
+        for sub in subs:
+            for name, child in sub.choices.items():
+                walk(child, f"{path} {name}".strip())
+
+    walk(parser, "")
+    assert reachable == set(_COMMANDS)
 
 
-def test_author_refuses_the_global_flags_it_would_drop(tmp_path, capsys):
+def test_author_offers_only_the_project_flag_it_reads(tmp_path, capsys):
     """The tool edits and saves the spec testing.json names; an override
-    here would show one file and save another. And no Config is built before
-    the refusal — a full resolution can write a default testing.json."""
+    here would show one file and save another. The three flags are refused
+    by the parser, on either side of the command — so before any Config is
+    built: a full resolution can write a default testing.json."""
     lib = tmp_path / "lib"
     lib.mkdir()
     (lib / "package.mo").write_text("package X\nend X;\n", encoding="utf-8")
-    rc = main(["author", "--source-path", str(lib), "--test-spec", "/x/spec.json"])
-    err = capsys.readouterr().err
-    assert rc == 2 and "needs --config" in err
+    cfg = str(tmp_path / "t.json")
+    for flag, value in (
+        ("--source-path", str(lib)),
+        ("--reference-root", str(tmp_path)),
+        ("--test-spec", "/x/spec.json"),
+    ):
+        for argv in (
+            ["--config", cfg, "author", flag, value],
+            [flag, value, "author", "--config", cfg],
+        ):
+            with pytest.raises(SystemExit) as exc:
+                main(argv)
+            assert exc.value.code == 2
+            assert flag in capsys.readouterr().err
     # A Config build with --source-path writes its default testing.json in
-    # the library's PARENT; the refusal must come before any build.
+    # the library's PARENT; nothing was built.
     assert not list(tmp_path.rglob("testing.json"))
-    for flag in ("--source-path", "--reference-root", "--dymola-interface"):
-        rc = main(["--config", str(tmp_path / "t.json"), "author", flag, str(tmp_path)])
-        assert rc == 2 and flag in capsys.readouterr().err
-    rc = main(
-        ["--config", str(tmp_path / "t.json"), "author", "--test-spec", "/x/spec.json"]
-    )
-    assert rc == 2 and "--test-spec" in capsys.readouterr().err
+
+
+def test_author_without_a_config_says_it_needs_one(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert main(["author"]) == 2
+    assert "needs --config" in capsys.readouterr().err
 
 
 def test_author_without_the_extra_says_how_to_install_it(monkeypatch, capsys, tmp_path):
@@ -632,25 +652,23 @@ def test_omitted_tolerance_falls_back_to_default(tmp_path):
     assert config.tolerance == DEFAULT_COMPARISON_TOLERANCE
 
 
-def test_import_baseline_source_does_not_shadow_the_global_source_path():
-    """`import-baseline`'s positional is dest='import_source', NOT
-    'source_path' — that name is the global --source-path option, and the
-    collision made _build_config treat the ref JSON as the library root
-    (find_package_dir iterdir()s a file → NotADirectoryError; found live
-    while importing the demo soft_check, D103)."""
-    from dstf.cli.main import build_arg_parser
-
+def test_soft_check_add_s_source_does_not_shadow_the_source_path_flag():
+    """`soft-check add`'s positional is dest='source', NOT 'source_path' —
+    that name is the --source-path option, and the collision made
+    _build_config treat the ref JSON as the library root (find_package_dir
+    iterdir()s a file → NotADirectoryError; found live while importing the
+    demo soft_check, D103)."""
     args = build_arg_parser().parse_args(
-        ["import-baseline", "Lib.M", "openmodelica", "ref_0001.json"]
+        ["soft-check", "add", "Lib.M", "openmodelica", "ref_0001.json"]
     )
-    assert args.import_source == "ref_0001.json"
-    # The global option must remain unset so _build_config ignores it.
+    assert args.source == "ref_0001.json"
+    # The option must remain unset so _build_config ignores it.
     assert args.source_path is None
 
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_cli.py — regression tests for the
-# 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
+# 2026-07-06 review, final CLI/config/manifest batch.
 #
 # Decisions encoded here:
 #
@@ -686,7 +704,7 @@ def test_import_baseline_source_does_not_shadow_the_global_source_path():
 def _mk_test(model_id: str, **kw) -> TestModel:
     return TestModel(
         model_id=model_id,
-        source_file=Path(""),
+        source_file=None,
         source_package=model_id.split(".")[0],
         short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,
@@ -759,7 +777,8 @@ def run_env(tmp_config_dir, tmp_path, monkeypatch):
             "dstf.cli.run_cmds.discover_tests", lambda config: list(tests)
         )
         monkeypatch.setattr(
-            "dstf.cli.run_cmds._get_backend", lambda config, persistent=False: backend
+            "dstf.cli.run_cmds._get_backend",
+            lambda config, persistent=False, to_run=False: backend,
         )
         return backend
 
@@ -849,7 +868,7 @@ class TestRerunEmptySetIsSuccess:
     ):
         called = {}
 
-        def fake_suite(comparisons, results, tests, store, config, *, browser):
+        def fake_suite(comparisons, results, tests, store, config, **_):
             called["comparisons"] = list(comparisons)
 
         monkeypatch.setattr("dstf.cli.run_cmds._generate_report_suite", fake_suite)
@@ -881,7 +900,7 @@ class TestTheDashboardGetsTheComparisons:
         # The results ride along: the page's Sim (s) takes a CPU time
         # from them where no wall time was kept.
         def final(
-            work_dir, rerun_prefix=None, comparisons=(), results=None, theme="default"
+            work_dir, rerun_flags=None, comparisons=(), results=None, theme="default"
         ):
             seen["final"] = [c.model_id for c in comparisons]
             seen["final_results"] = sorted(results or {})
@@ -889,7 +908,7 @@ class TestTheDashboardGetsTheComparisons:
         def final_to(
             work_dir,
             output_path,
-            rerun_prefix=None,
+            rerun_flags=None,
             comparisons=(),
             results=None,
             theme="default",
@@ -1186,11 +1205,11 @@ class TestAcceptExitCodeAndScope:
         self, run_env, capsys, command
     ):
         """`Accepted 0 test baselines to …`, exit 0, and no word of the
-        test: what `dstf add <model>` then `run --accept` printed, and
+        test: what `dstf spec add <model>` then `run --accept` printed, and
         `compare --accept` after it. Not a warning and not a skip — the
         exit code is what it was."""
         tank = _mk_test("Lib.Tank")
-        tank.variable_patterns = []  # the entry `dstf add` writes
+        tank.variable_patterns = []  # the entry `dstf spec add` writes
         assert tank.is_simulate_only and not tank.simulate_only
         results = {"Lib.Tank": _mk_result("Lib.Tank")}
         run_env.make([tank], results=results, prior_results=results)
@@ -1254,8 +1273,10 @@ class TestAcceptExitCodeAndScope:
         assert _stored_model_ids(run_env) == set()
 
     def test_accept_with_merge_stores_only_this_runs_tests(self, run_env, capsys):
-        """--merge expands the report scope, but stale on-disk results for
-        out-of-scope tests must never become baselines."""
+        """A merge expands the report scope, but stale on-disk results for
+        out-of-scope tests must never become baselines. `--merge` beside
+        `--accept` is the parser's error; `--rerun` implies a merge, so the
+        accept is held to its own tests all the same."""
         t1, t2 = _mk_test("Lib.T1"), _mk_test("Lib.T2")
         run_env.make(
             [t1, t2],
@@ -1268,7 +1289,9 @@ class TestAcceptExitCodeAndScope:
                 "test_0002": {"model_id": "Lib.T2", "ref_id": None},
             },
         )
-        rc = cmd_run(_run_args(run_env, "--filter", "Lib.T1", "--merge", "--accept"))
+        args = _run_args(run_env, "--filter", "Lib.T1", "--accept")
+        args.merge = True  # as `--rerun` sets it
+        rc = cmd_run(args)
         assert rc == 0
         assert _stored_model_ids(run_env) == {"Lib.T1"}
 
@@ -1822,7 +1845,45 @@ class TestConfigErrorCleanExit:
         bad.write_text("{ nope", encoding="utf-8")
         rc = main(["--config", str(bad), "discover"])
         assert rc == 2
-        assert "Malformed JSON" in capsys.readouterr().err
+        assert f"Config error: {bad.resolve()}: not JSON (" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# --batch on a backend with one way to run is an error, not a no-op
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source_type", "backend"), [("fmu", "FMPy"), ("python", "Python")]
+)
+def test_batch_on_a_backend_with_no_workers_is_a_config_error(
+    tmp_path, capsys, monkeypatch, source_type, backend
+):
+    """`--batch` turns the workers that stay alive off. FMPy and Python have
+    none, and the flag was silently dropped there. Said before the library
+    is scanned or anything simulates."""
+    cfg = tmp_path / "testing.json"
+    cfg.write_text(
+        json.dumps({"source_type": source_type, "backend": backend}), encoding="utf-8"
+    )
+
+    def scanned(config):
+        raise AssertionError("the refusal comes before discovery")
+
+    monkeypatch.setattr("dstf.cli.run_cmds.discover_tests", scanned)
+    work = tmp_path / "work"
+    rc = main(["run", "--config", str(cfg), "--batch", "--work-dir", str(work)])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"Config error: --batch does not apply to the {backend} ")
+    assert not work.exists()
+
+
+def test_batch_stays_on_a_backend_that_has_workers(tmp_path):
+    from dstf.cli.run_cmds import _refuse_batch_without_workers
+
+    for backend in ("Dymola", "OpenModelica", "Julia"):
+        _refuse_batch_without_workers(SimpleNamespace(backend=backend))
 
 
 # ---------------------------------------------------------------------------
@@ -1833,10 +1894,12 @@ class TestConfigErrorCleanExit:
 class TestExportOutputPath:
     def test_json_export_to_string_path(self, tmp_config_dir, tmp_path):
         out = tmp_path / "exports" / "refs.json"
+        out.parent.mkdir()  # a directory that is not there is refused
         rc = main(
             [
                 "--config",
                 str(tmp_config_dir),
+                "baseline",
                 "export",
                 "--format",
                 "json",
@@ -1850,10 +1913,12 @@ class TestExportOutputPath:
 
     def test_csv_export_to_string_path(self, tmp_config_dir, tmp_path):
         out = tmp_path / "exports" / "refs.csv"
+        out.parent.mkdir()  # a directory that is not there is refused
         rc = main(
             [
                 "--config",
                 str(tmp_config_dir),
+                "baseline",
                 "export",
                 "--format",
                 "csv",
@@ -1880,80 +1945,32 @@ class TestExportOutputPath:
 # =========================================================================
 
 
-# --- 1. global flags after the subcommand --------------------------------
-
-_GLOBAL_FLAGS = [
-    ("--source-path", "source_path"),
-    ("--config", "config"),
-    ("--reference-root", "reference_root"),
-    ("--test-spec", "test_spec"),
-    ("--dymola-interface", "dymola_interface"),
-]
-
-
-@pytest.mark.parametrize(("flag", "dest"), _GLOBAL_FLAGS)
-def test_global_flags_accepted_before_and_after_the_subcommand(flag, dest):
-    """`dstf run --config X` used to be a usage error while
-    `dstf --config X run` worked — the single biggest first-contact stumble.
-    Both positions must now parse to the same value."""
-    parser = build_arg_parser()
-    before = parser.parse_args([flag, "VALUE", "run"])
-    after = parser.parse_args(["run", flag, "VALUE"])
-    assert getattr(before, dest) == "VALUE"
-    assert getattr(after, dest) == "VALUE"
+# --- 1. the project flags, on either side of the command ------------------
+# (which command reads which flag, and that both sides agree for every
+# command, is tests/test_cli_tree.py)
 
 
 def test_subcommand_global_flag_does_not_erase_the_pre_subcommand_value():
     """argparse copies the subparser's whole namespace onto the top-level
-    one, so the inherited copies default to SUPPRESS. Without that, a
+    one, so the copies a command offers default to SUPPRESS. Without that, a
     subparser default of None would wipe a value given before the
     subcommand (silently, with no usage error to notice)."""
     parser = build_arg_parser()
     args = parser.parse_args(["--config", "X", "run", "--filter", "A"])
     assert args.config == "X"
-    # And an explicit value after the subcommand still wins.
-    assert parser.parse_args(["--config", "X", "run", "--config", "Y"]).config == "Y"
+    # (a second, different value after the command is an error: one value
+    # per flag, tests/test_cli_tree.py)
 
 
 def test_global_flags_default_to_none_when_given_nowhere():
-    """SUPPRESS is only on the inherited copies; the top-level parser still
-    guarantees the attribute exists so _build_config's reads are safe."""
-    args = build_arg_parser().parse_args(["discover"])
-    for _flag, dest in _GLOBAL_FLAGS:
-        assert getattr(args, dest) is None
+    """SUPPRESS is only on the commands' copies; the top-level parser still
+    guarantees the attribute exists, whatever the command offers."""
+    from dstf.cli.parser import PROJECT_FLAGS
 
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "discover",
-        "run",
-        "compare",
-        "export",
-        "manifest",
-        "add",
-        "spec-update",
-        "companion",
-        "soft-check",
-        "import-baseline",
-        "export-schema",
-        "check-dymola",
-        "check-openmodelica",
-        "check-julia",
-    ],
-)
-def test_every_subcommand_help_lists_the_global_flags(command, capsys):
-    """`dstf <cmd> --help` must show the flags it now accepts — a flag that
-    parses but isn't documented is not discoverable."""
-    parser = build_arg_parser()
-    subparsers_action = next(
-        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
-    )
-    with pytest.raises(SystemExit):
-        subparsers_action.choices[command].parse_args(["--help"])
-    out = capsys.readouterr().out
-    for flag, _dest in _GLOBAL_FLAGS:
-        assert flag in out, f"{command} --help omits {flag}"
+    for argv in (["discover"], ["author"], ["spec", "schema"]):
+        args = build_arg_parser().parse_args(argv)
+        for dest in PROJECT_FLAGS:
+            assert getattr(args, dest) is None
 
 
 def test_config_after_subcommand_reaches_the_built_config(tmp_path):
@@ -1996,13 +2013,10 @@ def test_missing_filter_file_is_a_config_error(tmp_path, capsys):
 def test_missing_modelica_package_is_a_config_error(tmp_path, capsys):
     """A source path with no package.mo anywhere used to surface
     find_package_dir's FileNotFoundError as a traceback."""
-    # Nest deeper than find_package_dir's 10-level walk so the search is
-    # guaranteed to exhaust inside tmp_path — otherwise an unrelated
-    # package.mo somewhere above the pytest tmp root could rescue it.
-    deep = tmp_path.joinpath(*[f"d{i}" for i in range(12)])
-    deep.mkdir(parents=True)
+    empty = tmp_path / "empty"
+    empty.mkdir()
     (tmp_path / "testing.json").write_text(
-        json.dumps({"source_path": str(deep)}), encoding="utf-8"
+        json.dumps({"source_path": str(empty)}), encoding="utf-8"
     )
     rc = main(["discover", "--config", str(tmp_path / "testing.json")])
     assert rc == 2
@@ -2015,30 +2029,35 @@ def test_missing_modelica_package_is_a_config_error(tmp_path, capsys):
 @pytest.mark.parametrize(
     ("argv", "missing"),
     [
-        (["companion", "add"], "model_id, name, path"),
+        (["companion", "add"], "model, name, path"),
         (["companion", "add", "Lib.M"], "name, path"),
         (["companion", "freeze", "Lib.M"], "name"),
-        (["soft-check", "remove"], "model_id, name"),
+        (["companion", "remove"], "model, name"),
+        (["soft-check", "add", "Lib.M", "om"], "source"),
+        (["soft-check", "remove"], "model, name"),
+        (["spec", "add"], "model"),
+        (["spec", "update"], "patch.json"),
     ],
 )
-def test_missing_baseline_positionals_are_a_clean_usage_error(
+def test_missing_positionals_are_the_parser_s_usage_error(
     argv, missing, tmp_path, capsys
 ):
-    """These positionals are nargs='?' (they're required per-action, which
-    argparse can't express), so omitting one used to reach the store call
-    and raise TypeError/ValueError with a traceback."""
-    rc = main(["--source-path", str(_fake_library(tmp_path)), *argv])
-    assert rc == 2
+    """Each action is its own parser, so what it needs is required BY the
+    parser: the usage line of that action, the names missing, exit 2 — and
+    no Config built (a build can write a default testing.json)."""
+    with pytest.raises(SystemExit) as exc:
+        main(["--source-path", str(_fake_library(tmp_path)), *argv])
+    assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert err.startswith("Config error: ")
-    assert missing in err
-    assert "Usage: dstf" in err
-    assert "Traceback" not in err
+    assert f"usage: dstf {' '.join(argv[:2])} " in err
+    assert f"the following arguments are required: {missing}" in err
+    assert not list(tmp_path.rglob("testing.json"))
 
 
-def test_companion_list_still_works_without_positionals(tmp_path, capsys):
-    """The requirement is per-action: `list` legitimately takes none."""
-    rc = main(["--source-path", str(_fake_library(tmp_path)), "companion", "list"])
+@pytest.mark.parametrize("group", ["companion", "soft-check"])
+def test_a_list_still_works_without_positionals(group, tmp_path, capsys):
+    """`list` legitimately takes none: every test's."""
+    rc = main(["--source-path", str(_fake_library(tmp_path)), group, "list"])
     assert rc == 0
     assert "Config error" not in capsys.readouterr().err
 
@@ -2572,12 +2591,11 @@ class TestRemovedReportPagesAreSaid:
     def test_an_accept_writes_no_pages_and_says_so_too(
         self, scored, run_env, capsys, command
     ):
-        """`--accept` returns before any report: with `--report` beside it
-        the pages are still gone, and the line still says so — naming
-        `compare --report`, not the `--report` just given."""
+        """`--accept` writes no report (`--report` beside it is the parser's
+        error): the pages are gone, and the line says so."""
         scored("run", "--report")
         capsys.readouterr()
-        scored(command, "--accept", "--report")
+        scored(command, "--accept")
         assert _pages(run_env) == 0
         assert _removed_lines(capsys.readouterr().out) == [
             _REMOVED.format(n=2, s="s", them="them")
@@ -2589,7 +2607,7 @@ class TestRemovedReportPagesAreSaid:
         scored("run", "--report")
         capsys.readouterr()
         monkeypatch.setattr("builtins.input", lambda prompt="": "s")
-        scored("run", "-i", "all", "--report")
+        scored("run", "-i", "all")
         assert _pages(run_env) == 0
         assert _removed_lines(capsys.readouterr().out) == [
             _REMOVED.format(n=2, s="s", them="them")
@@ -2677,3 +2695,35 @@ class TestRunSaysWhenAStopTimeIsTheDefault:
         assert self._said(capsys.readouterr().out) == [
             f"{model}: test_spec.json gives no stop time; it runs to the default, 1 s."
         ]
+
+
+def test_compare_reads_backend_path_for_a_backend_built_from_its_executable(
+    tmp_path, capsys
+):
+    """`compare` starts no simulator, but the Python and Julia backends are
+    not built without their executable: with the configured interpreter
+    gone, `compare` is refused, and `--backend-path` names one that is
+    there. The flag is read on `compare` for them."""
+    import json
+    import shutil
+
+    from conftest import python_example_copy
+
+    config, _ = python_example_copy(tmp_path)
+    cfg = Path(config.config_file)
+    work = ["--work-dir", str(config.work_dir)]
+    assert main(["run", "--config", str(cfg), *work, "--no-browser"]) == 0
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    data["backends"]["Python"] = {"executables": [str(tmp_path / "gone" / "python")]}
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as refused:
+        main(["compare", "--config", str(cfg), *work, "--no-browser"])
+    assert refused.value.code == 1
+    assert "Python binary not found" in capsys.readouterr().err
+    python = shutil.which("python3") or sys.executable
+    rc = main(
+        ["compare", "--config", str(cfg), *work, "--no-browser"]
+        + ["--backend-path", python]
+    )
+    assert rc == 0

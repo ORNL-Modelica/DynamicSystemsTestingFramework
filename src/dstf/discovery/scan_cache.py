@@ -94,13 +94,14 @@ def _to_json(test: TestModel) -> dict:
     if test.metric_tree_spec is not None:
         raise ValueError(f"{test.model_id}: a scanned test carries no metric tree")
     data = dataclasses.asdict(test)
-    data["source_file"] = str(test.source_file)
+    data["source_file"] = None if test.source_file is None else str(test.source_file)
     return data
 
 
 def _from_json(data: dict) -> TestModel:
     data = dict(data)
-    data["source_file"] = Path(data["source_file"])
+    if data["source_file"] is not None:
+        data["source_file"] = Path(data["source_file"])
     return TestModel(**data)
 
 

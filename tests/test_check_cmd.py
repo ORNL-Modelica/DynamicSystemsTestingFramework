@@ -1,0 +1,618 @@
+"""`dstf check [backend]`: one command says where each backend is on this
+machine and by which rule it was found, and whether the one the project
+runs with is ready. It reads a project and writes nothing — and neither
+does `discover`.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+from dstf.backends.dymola import interface_loader
+from dstf.backends.dymola.backend import DymolaBackend
+from dstf.backends.julia.backend import JuliaBackend, manifest_julia_version
+from dstf.backends.locate import EXECUTABLE, SEARCH, Found, Located, Rule
+from dstf.backends.openmodelica.backend import OpenModelicaBackend
+from dstf.cli import main
+from dstf.config import Config
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def no_installs(tmp_path, monkeypatch):
+    """A machine with nothing installed (see `test_backend_locate`)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.delenv("OPENMODELICAHOME", raising=False)
+    monkeypatch.delenv("DYMOLA_INTERFACE_PATH", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(interface_loader, "platform_glob_bases", lambda: [])
+    return bin_dir
+
+
+def _program(path: Path, text: str = "#!/bin/sh\n") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    path.chmod(0o755)
+    return path
+
+
+def _python_project(directory: Path, **config) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "testing.json"
+    path.write_text(json.dumps({"source_type": "python", **config}), encoding="utf-8")
+    return path
+
+
+class TestTheList:
+    def test_one_line_per_backend_the_selected_one_marked(
+        self, no_installs, tmp_path, capsys
+    ):
+        path = _python_project(tmp_path / "proj", backends={"Python": {}})
+        assert main(["--config", str(path), "check"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"Backends (testing.json: {path})"
+        # The config's entries first, then every other registered backend.
+        assert [line[4:].split()[0] for line in out[1:6]] == [
+            "Python",
+            "Dymola",
+            "OpenModelica",
+            "FMPy",
+            "Julia",
+        ]
+        assert out[1] == (
+            f"  * Python        found      {sys.executable}  (search: the running interpreter)"
+        )
+        assert out[2] == "    Dymola        not found  looked for dymola on PATH"
+        assert out[3] == "    OpenModelica  not found  looked for omc on PATH"
+        assert out[5].startswith(
+            "    Julia         not found  looked for julia on PATH, "
+        )
+        assert out[6] == "  * the backend this project runs with"
+
+    def test_the_rule_names_the_config_s_block(self, no_installs, tmp_path, capsys):
+        python = _program(no_installs / "python3")
+        path = _python_project(
+            tmp_path / "proj", backends={"Python": {"executables": ["python3"]}}
+        )
+        assert main(["--config", str(path), "check"]) == 0
+        out = capsys.readouterr().out
+        assert f"{python}  (testing.json: backends.Python.executables)" in out
+        # …and the full diagnosis of the selected one follows the list.
+        assert (
+            f"\nPython\n  executable: {python}\n"
+            "    found by: testing.json: backends.Python.executables\n"
+            "\nOK — Python is ready.\n"
+        ) in out
+
+    def test_an_entry_named_after_a_version_is_listed_by_its_name(
+        self, no_installs, tmp_path, capsys
+    ):
+        path = _python_project(tmp_path / "proj", backends={"Python 3.12": {}})
+        assert main(["--config", str(path), "check"]) == 0
+        out = capsys.readouterr().out
+        assert "  * Python 3.12 [Python]  found" in out
+        # No second line for the backend that entry is of.
+        assert out.count("the running interpreter") == 2  # the list, the diagnosis
+        assert "\nPython 3.12\n  executable:" in out
+
+    def test_the_selected_backend_not_found_is_exit_1_and_says_what_to_do(
+        self, no_installs, tmp_path, capsys
+    ):
+        gone = str(tmp_path / "venv" / "bin" / "python")
+        path = _python_project(
+            tmp_path / "proj", backends={"Python": {"executables": [gone]}}
+        )
+        assert main(["--config", str(path), "check"]) == 1
+        out = capsys.readouterr().out
+        assert (
+            "  * Python        not found  the configured executables: "
+            f"{gone} does not exist"
+        ) in out
+        assert (
+            "\nFAIL — Python is not ready. Fix one of:\n"
+            '  1. Install Python, or set "executables" in its block of testing.json\'s '
+            '"backends" to where it is\n'
+        ) in out
+
+    def test_a_backend_named_and_no_class_for_it(self, no_installs, tmp_path, capsys):
+        """A config error like any other the file holds, not a line of the
+        list."""
+        path = _python_project(tmp_path / "proj", backend="Simulink")
+        assert main(["--config", str(path), "check"]) == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.startswith(
+            f'Config error: {path}: backend: "Simulink" is no entry of backends '
+        )
+
+
+def _no_project(tmp_path: Path) -> Path:
+    """A directory with no project: empty, and no directory above it is a
+    library."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    return empty
+
+
+class TestWithNoTestingJson:
+    def test_the_search_alone_and_nothing_written(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        """A directory with no project: the backends are still where they
+        are. What a Modelica project with an empty testing.json would run
+        with is marked — with only omc on PATH, OpenModelica."""
+        empty = _no_project(tmp_path)
+        monkeypatch.chdir(empty)
+        omc = _program(no_installs / "omc")
+        from dstf.backends.openmodelica import session_loader
+
+        monkeypatch.setattr(
+            session_loader,
+            "describe_om_session",
+            lambda: {
+                "ompython_installed": True,
+                "version": "3.6.0",
+                "import_ok": True,
+                "error": None,
+            },
+        )
+        assert main(["check"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == "Backends (no testing.json here: the search alone)"
+        assert out[1].split()[:2] == ["Dymola", "not"]
+        assert out[2] == f"  * OpenModelica  found      {omc}  (search: PATH)"
+        assert (
+            out[6]
+            == "  * the backend a Modelica project with no testing.json runs with"
+        )
+        assert list(empty.iterdir()) == []
+
+    def test_a_reference_root_that_is_not_there_is_a_config_error(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        """`check` reads --reference-root only to look for testing.json in
+        it: a directory that is not there holds none, and the search went
+        on as if the flag had not been given."""
+        monkeypatch.chdir(_no_project(tmp_path))
+        missing = tmp_path / "nowhere"
+        assert main(["check", "--reference-root", str(missing)]) == 2
+        err = capsys.readouterr().err
+        assert err == (
+            f"Config error: --reference-root {missing}: no such directory "
+            "(check reads it only to look for testing.json in it)\n"
+        )
+
+    def test_a_library_beside_the_directory_is_not_this_project(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        """`check` in an empty directory used to print `Lib on defaults`:
+        it adopted a library it found beside a directory above."""
+        lib = tmp_path / "Lib"
+        lib.mkdir()
+        (lib / "package.mo").write_text("package Lib end Lib;")
+        monkeypatch.chdir(_no_project(tmp_path))
+        main(["check"])
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == "Backends (no testing.json here: the search alone)"
+
+    def test_nothing_installed_is_exit_1_with_the_fix(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        empty = _no_project(tmp_path)
+        monkeypatch.chdir(empty)
+        assert main(["check"]) == 1
+        out = capsys.readouterr().out
+        assert "  * Dymola        not found  looked for dymola on PATH" in out
+        assert (
+            "\nFAIL — Dymola is not ready. Fix one of:\n  1. Install Dymola, or set "
+            in out
+        )
+        assert list(empty.iterdir()) == []
+
+    def test_a_library_with_no_testing_json_gets_none_written(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        """`check` and `discover` read; they used to leave a default
+        testing.json beside the library as a side effect of looking."""
+        lib = tmp_path / "work" / "Lib"
+        lib.mkdir(parents=True)
+        (lib / "package.mo").write_text("package Lib end Lib;")
+        monkeypatch.chdir(tmp_path / "work")
+        assert main(["check", "Python"]) == 0
+        assert main(["discover"]) == 1  # no tests in it
+        out = capsys.readouterr().out
+        assert "Created default" not in out
+        assert not list(tmp_path.rglob("testing.json"))
+        # Nor does a Config that was not told to…
+        Config(source_path=lib)
+        assert not list(tmp_path.rglob("testing.json"))
+        # …which is what a command that may create the project's files
+        # tells it (`test_cli_tree`: run, spec add, companion add, …).
+        Config(source_path=lib, write_default=True).write_default_file()
+        assert "Created default testing.json" in capsys.readouterr().out
+        assert (tmp_path / "work" / "testing.json").is_file()
+
+
+class TestOneBackend:
+    def test_a_named_backend_is_diagnosed_alone(self, no_installs, tmp_path, capsys):
+        path = _python_project(tmp_path / "proj", backends={"Python": {}})
+        assert main(["--config", str(path), "check", "Julia"]) == 1
+        out = capsys.readouterr().out
+        assert out.startswith(
+            "Julia\n  executable: not found — looked for julia on PATH"
+        )
+        assert "Backends (" not in out
+        assert "FAIL — Julia is not ready. Fix one of:\n  1. Install Julia from " in out
+
+    def _two_pythons(self, no_installs, tmp_path) -> tuple[Path, Path, Path]:
+        older = _program(no_installs / "python3.11")
+        newer = _program(no_installs / "python3.12")
+        path = _python_project(
+            tmp_path / "proj",
+            backends={
+                "Python 3.11": {"executables": ["python3.11"]},
+                "Python 3.12": {"executables": ["python3.12"]},
+            },
+        )
+        return path, older, newer
+
+    def test_an_entry_is_diagnosed_by_its_name(self, no_installs, tmp_path, capsys):
+        """`check "Python 3.12"` was argparse's invalid choice, and `check
+        Python` diagnosed the first entry: the second could not be."""
+        path, _, newer = self._two_pythons(no_installs, tmp_path)
+        assert main(["--config", str(path), "check", "Python 3.12"]) == 0
+        assert capsys.readouterr().out == (
+            f"Python 3.12\n  executable: {newer}\n"
+            "    found by: testing.json: backends.Python 3.12.executables\n"
+            "\nOK — Python 3.12 is ready.\n"
+        )
+
+    def test_a_backend_s_name_is_the_entry_the_project_runs_else_its_first(
+        self, no_installs, tmp_path, capsys
+    ):
+        path, older, newer = self._two_pythons(no_installs, tmp_path)
+        assert main(["--config", str(path), "check", "Python"]) == 0
+        assert capsys.readouterr().out.startswith(
+            f"Python 3.11\n  executable: {older}\n"
+        )
+        config = json.loads(path.read_text())
+        config["backend"] = "Python 3.12"
+        path.write_text(json.dumps(config))
+        assert main(["--config", str(path), "check", "Python"]) == 0
+        assert capsys.readouterr().out.startswith(
+            f"Python 3.12\n  executable: {newer}\n"
+        )
+
+    def test_the_list_names_each_entry_and_its_backend(
+        self, no_installs, tmp_path, capsys
+    ):
+        path, older, newer = self._two_pythons(no_installs, tmp_path)
+        assert main(["--config", str(path), "check"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[1] == (
+            f"  * Python 3.11 [Python]  found      {older}  "
+            "(testing.json: backends.Python 3.11.executables)"
+        )
+        assert out[2] == (
+            f"    Python 3.12 [Python]  found      {newer}  "
+            "(testing.json: backends.Python 3.12.executables)"
+        )
+        # Then the backends with no entry, by their own names.
+        assert [line.split()[0] for line in out[3:7]] == [
+            "Dymola",
+            "OpenModelica",
+            "FMPy",
+            "Julia",
+        ]
+
+    def test_a_name_that_is_no_entry_is_refused_with_the_entries(
+        self, no_installs, tmp_path, capsys
+    ):
+        """It starts with a backend's name, so the parser lets it by: the
+        project then says it has no such entry."""
+        path, _, _ = self._two_pythons(no_installs, tmp_path)
+        assert main(["--config", str(path), "check", "Python 3.13"]) == 2
+        assert capsys.readouterr().err == (
+            'Config error: check: "Python 3.13" is no entry of backends '
+            "(Python 3.11, Python 3.12) and no backend's name (Dymola, "
+            "OpenModelica, FMPy, Julia, Python)\n"
+        )
+
+    def test_an_unknown_name_is_argparse_s_invalid_choice(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            main(["check", "Dymolla"])
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "argument backend: invalid choice: 'Dymolla' (choose from " in err
+        # How argparse writes the choices differs between Python releases
+        # (3.12.3 quotes each, 'Dymola', 'OpenModelica', …; 3.12.12 does not):
+        # every backend is named, in order, either way.
+        listed = err.split("(choose from ", 1)[1].replace("'", "")
+        assert listed.startswith("Dymola, OpenModelica, FMPy, Julia, Python")
+
+    def test_the_named_backend_s_entry_gives_its_settings(
+        self, no_installs, tmp_path, capsys
+    ):
+        """`check Python` in a project whose entry is called "Python 3.12"
+        diagnoses that entry, by its settings."""
+        python = _program(no_installs / "python3.12")
+        path = _python_project(
+            tmp_path / "proj",
+            backend="Dymola",
+            backends={"Dymola": {}, "Python 3.12": {"executables": ["python3.12"]}},
+        )
+        assert main(["--config", str(path), "check", "Python"]) == 0
+        out = capsys.readouterr().out
+        assert out.startswith(
+            f"Python 3.12\n  executable: {python}\n"
+            "    found by: testing.json: backends.Python 3.12.executables\n"
+        )
+
+
+class TestTheBackendsOwnDiagnoses:
+    def test_julia_says_its_version_and_whether_the_project_s_minimum_is_met(
+        self, no_installs, tmp_path, capsys
+    ):
+        """The minimum is the one the files state: the Julia the project's
+        Manifest.toml was resolved with."""
+        project = tmp_path / "proj"
+        path = _python_project(project, source_type="julia", backends={"Julia": {}})
+        (project / "Manifest.toml").write_text(
+            '# machine-generated\n\njulia_version = "1.11.9"\nmanifest_format = "2.0"\n'
+        )
+        julia = _program(
+            no_installs / "julia", '#!/bin/sh\necho "julia version 1.10.4"\n'
+        )
+        assert main(["--config", str(path), "check"]) == 1
+        out = capsys.readouterr().out
+        assert "  version: julia version 1.10.4\n" in out
+        assert (
+            f"  needed: Julia 1.11 or newer — {project / 'Manifest.toml'} "
+            "was resolved with 1.11.9: NOT met\n"
+        ) in out
+        assert "  1. Install Julia 1.11 or newer, or resolve the project again" in out
+
+        julia.write_text('#!/bin/sh\necho "julia version 1.12.0"\n')
+        assert main(["--config", str(path), "check"]) == 0
+        out = capsys.readouterr().out
+        assert "was resolved with 1.11.9: met\n" in out
+        assert out.endswith("\nOK — Julia is ready.\n")
+
+    def test_julia_with_no_project_says_only_the_version(self, no_installs, capsys):
+        julia = _program(
+            no_installs / "julia", '#!/bin/sh\necho "julia version 1.10.4"\n'
+        )
+        located = JuliaBackend.locate({})
+        diagnosis = JuliaBackend.diagnose(located)
+        assert diagnosis.usable
+        assert diagnosis.lines[:3] == (
+            f"  executable: {julia}",
+            "    found by: search: PATH",
+            "  version: julia version 1.10.4",
+        )
+        assert not any("needed" in line for line in diagnosis.lines)
+
+    def test_the_julia_example_states_its_minimum(self):
+        """What the Julia setup page and pyproject.toml's `julia` marker say
+        the Julia example needs is what its Manifest.toml was resolved with."""
+        needed = manifest_julia_version(
+            REPO / "examples" / "julia" / "JuliaMtkTestingLib"
+        )
+        assert needed is not None
+        minimum = ".".join(needed.split(".")[:2])
+        page = REPO / "docs" / "guides" / "simulators" / "julia.md"
+        assert f"Install Julia {minimum} or newer" in page.read_text(encoding="utf-8")
+        pyproject = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+        assert f'"julia: requires Julia {minimum}+ ' in pyproject
+
+    def test_dymola_needs_its_interface_to_import(self, no_installs, monkeypatch):
+        dymola = _program(no_installs / "dymola")
+        located = DymolaBackend.locate({})
+        assert located.found and not located.complete
+        diagnosis = DymolaBackend.diagnose(located, entry="Dymola")
+        assert not diagnosis.usable
+        assert diagnosis.lines[0] == f"  executable: {dymola}"
+        assert diagnosis.lines[2].startswith("  Python interface: not found — ")
+        assert "  import ok: False" in diagnosis.lines
+        assert (
+            len(diagnosis.fixes) == 1 and "DYMOLA_INTERFACE_PATH" in diagnosis.fixes[0]
+        )
+
+    def test_dymola_ready_when_the_located_interface_imports(
+        self, no_installs, monkeypatch
+    ):
+        seen = []
+
+        def describe(found):
+            seen.append(found)
+            return {
+                "archive": found.path,
+                "format": "whl",
+                "discovered_dirs": [],
+                "sys_path_entry": "/cache/dymola",
+                "import_ok": True,
+                "error": None,
+                "dymola_interface_module": "dymola.dymola_interface",
+            }
+
+        monkeypatch.setattr(interface_loader, "describe_dymola_interface", describe)
+        located = Located(
+            (
+                Found(EXECUTABLE, "/opt/dymola/bin64/dymola.sh", Rule(SEARCH, "PATH")),
+                Found(
+                    interface_loader.INTERFACE,
+                    "/opt/dymola/x.whl",
+                    Rule(SEARCH, "beside the executable"),
+                ),
+            )
+        )
+        diagnosis = DymolaBackend.diagnose(located)
+        assert diagnosis.usable and diagnosis.fixes == ()
+        assert [found.path for found in seen] == ["/opt/dymola/x.whl"]
+        assert diagnosis.lines == (
+            "  executable: /opt/dymola/bin64/dymola.sh",
+            "    found by: search: PATH",
+            "  Python interface: /opt/dymola/x.whl",
+            "    found by: search: beside the executable",
+            "  interface format: .whl",
+            "  sys.path entry: /cache/dymola",
+            "  import ok: True",
+            "  module: dymola.dymola_interface",
+        )
+
+    def test_openmodelica_needs_ompython_as_well_as_omc(self, no_installs, monkeypatch):
+        from dstf.backends.openmodelica import session_loader
+
+        omc = _program(no_installs / "omc")
+        located = OpenModelicaBackend.locate({})
+
+        def describe(import_ok):
+            return lambda: {
+                "ompython_installed": import_ok,
+                "version": "3.6.0" if import_ok else None,
+                "import_ok": import_ok,
+                "error": None
+                if import_ok
+                else "ModuleNotFoundError: No module named 'OMPython'",
+            }
+
+        monkeypatch.setattr(session_loader, "describe_om_session", describe(True))
+        ready = OpenModelicaBackend.diagnose(located)
+        assert ready.usable
+        assert ready.lines == (
+            f"  executable: {omc}",
+            "    found by: search: PATH",
+            "  OMPython installed: True",
+            "  OMPython version: 3.6.0",
+            "  import ok: True",
+        )
+        monkeypatch.setattr(session_loader, "describe_om_session", describe(False))
+        missing = OpenModelicaBackend.diagnose(located)
+        assert not missing.usable
+        assert len(missing.fixes) == 1 and "[om] extra" in missing.fixes[0]
+        assert "--batch" in missing.fixes[0]
+
+    def test_fmpy_not_found_says_what_is_true(
+        self, no_installs, tmp_path, capsys, monkeypatch
+    ):
+        """It said `set "executables" in its block`, which for FMPy — a
+        Python library, with no setting at all — is itself a config error."""
+        import importlib.util
+
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+        path = _python_project(tmp_path / "proj", source_type="fmu")
+        assert main(["--config", str(path), "check"]) == 1
+        out = capsys.readouterr().out
+        assert "executables" not in out
+        assert out.endswith(
+            "\nFAIL — FMPy is not ready. Fix one of:\n"
+            "  1. Install fmpy: reinstall dstf with the [fmpy] extra "
+            "(from a checkout: uv sync --extra fmpy --locked --inexact)\n"
+        )
+
+    def test_a_backend_with_no_executables_setting_is_not_told_to_set_one(self):
+        from dstf.backends.fmpy.backend import FmpyBackend
+        from dstf.cli.diag_cmds import _default_fixes
+
+        assert _default_fixes("Acme", FmpyBackend) == ("Install Acme",)
+        assert "executables" in _default_fixes("Python", DymolaBackend)[0]
+
+    def test_a_backend_that_says_no_more_gets_the_locate_lines(self, no_installs):
+        """FMPy and Python override nothing: a new backend has a diagnosis
+        for free."""
+        from dstf.backends.python.backend import PythonBackend
+
+        located = PythonBackend.locate({})
+        diagnosis = PythonBackend.diagnose(located, entry="")
+        assert diagnosis.usable
+        assert diagnosis.lines == (
+            f"  executable: {sys.executable}",
+            "    found by: search: the running interpreter",
+        )
+
+
+class TestAnEntryPassedOverIsSaid:
+    """A project that names no backend runs with the first entry of
+    `backends` found here. An entry pinned to a path that is no executable
+    was passed over without a word: `run` ran the next one and `check`
+    exited 0. Both now say, in one line, which entry was passed over and
+    why."""
+
+    @pytest.fixture
+    def project(self, tmp_path):
+        from conftest import python_example_copy
+
+        config, _ = python_example_copy(tmp_path)
+        cfg = Path(config.config_file)
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        del data["backend"]
+        pinned = tmp_path / "opt"
+        pinned.mkdir()
+        data["backends"] = {
+            "Python": {"executables": [str(pinned)]},
+            "Python here": {},
+        }
+        cfg.write_text(json.dumps(data), encoding="utf-8")
+        line = (
+            f"Python not found (the configured executables: {pinned} is a "
+            "directory) — using Python here"
+        )
+        return cfg, config.work_dir, line
+
+    def test_the_config_says_it(self, project):
+        cfg, work, line = project
+        config = Config(config_file=cfg, work_dir=work)
+        assert config.backend_name == "Python here"
+        assert config.passed_over == line
+
+    def test_none_is_said_where_the_first_is_found(self, project):
+        cfg, work, _ = project
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        data["backends"]["Python"] = {}
+        cfg.write_text(json.dumps(data), encoding="utf-8")
+        assert Config(config_file=cfg, work_dir=work).passed_over is None
+
+    def test_run_says_it(self, project, capsys):
+        cfg, work, line = project
+        main(["run", "--config", str(cfg), "--work-dir", str(work)])
+        out = capsys.readouterr().out
+        assert out.count(line) == 1, out
+
+    def test_check_says_it(self, project, capsys):
+        cfg, _work, line = project
+        assert main(["check", "--config", str(cfg)]) == 0
+        out = capsys.readouterr().out
+        assert out.count(line) == 1, out
+
+
+@pytest.mark.parametrize("command", ["check", "discover"])
+def test_a_source_path_that_is_not_there_is_one_sentence(
+    command, tmp_path, monkeypatch, capsys
+):
+    """`check --source-path /nonexistent` ran an OSError's text into the
+    hint after it: `[Errno 2] No such file or directory: '/nonexistent' Set
+    'source_path' in testing.json, …`."""
+    monkeypatch.chdir(tmp_path)
+    missing = tmp_path / "nonexistent"
+    assert main([command, "--source-path", str(missing)]) == 2
+    err = capsys.readouterr().err
+    assert err.strip() == f"Config error: --source-path {missing}: no such directory"
+
+
+def test_a_testing_json_source_path_that_is_not_there_names_the_file(tmp_path, capsys):
+    cfg = tmp_path / "testing.json"
+    cfg.write_text('{"source_path": "gone"}')
+    assert main(["discover", "--config", str(cfg)]) == 2
+    err = capsys.readouterr().err
+    assert err.strip() == (
+        f"Config error: {cfg}: source_path {tmp_path / 'gone'}: no such directory"
+    )

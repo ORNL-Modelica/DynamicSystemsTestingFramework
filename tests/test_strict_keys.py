@@ -1,7 +1,7 @@
 """A key nobody reads is an error that names it.
 
 A ``range`` leaf written ``"max_val": 0.5`` (for ``max_value``) used to be
-accepted by ``spec-update``, written to ``test_spec.json`` and scored as if
+accepted by ``spec update``, written to ``test_spec.json`` and scored as if
 it had no upper bound: PASS. The same hole took a point row's
 ``tolerence``, a peak row's ``frq``, an override's ``tube_rell``, a
 window's ``strt``, a leaf's ``agianst`` (then scored against the PRIMARY
@@ -335,7 +335,7 @@ def test_every_key_a_builtin_reads_is_still_taken():
 
 
 def test_quantity_on_a_trajectory_metric_stays_the_documented_inert_param():
-    """docs/extensibility.md, the Metric contract: "an unrecognized
+    """The Metric contract (``MetricDescriptor.accepts_quantity``): "an unrecognized
     `quantity` stays an inert param — a trajectory metric keeps scoring
     trajectories". Kept by name; no other key is inert."""
     for desc in registry.metrics():
@@ -595,8 +595,14 @@ def _named(name: str) -> list[Path]:
 #: The shipped projects: each example's testing.json. (`tests/fixtures/
 #: testing.json` is a template the fixtures copy beside a library — where it
 #: lies its `source_path` names nothing, so it opens no project; its
-#: `test_spec.json` is walked with the others.)
-_PROJECTS = [p for p in _named("testing.json") if "examples" in p.parts]
+#: `test_spec.json` is walked with the others.) A plug-in's example project
+#: runs on its plug-in's backend, which only an installed plug-in registers:
+#: `test_plugin_example.py` installs it and runs that project.
+_PROJECTS = [
+    p
+    for p in _named("testing.json")
+    if "examples" in p.parts and "plugins" not in p.parts
+]
 
 
 class TestNoShippedFileBreaks:
@@ -828,7 +834,7 @@ def test_spec_update_refuses_to_write_a_null_tree(example, tmp_path, capsys):
         ),
         encoding="utf-8",
     )
-    assert main(["--config", str(example), "spec-update", str(patch)]) == 1
+    assert main(["--config", str(example), "spec", "update", str(patch)]) == 1
     assert capsys.readouterr().out.strip() == (
         "Patch failed: patched metric tree is invalid: metrics: must be an "
         "object, got null"
@@ -971,7 +977,14 @@ class TestAStoredBaselinesOverride:
         )
 
     @pytest.mark.parametrize(
-        "flags", [[], ["--merge"], ["--rerun", "failed"], ["-i", "failed"]]
+        "flags",
+        [
+            [],
+            # a merge scores every test, the ones its filter leaves out too
+            ["--merge", "--filter", "NoSuch.*"],
+            ["--rerun", "failed"],
+            ["-i", "failed"],
+        ],
     )
     def test_a_run_that_scores_refuses_before_it_simulates(
         self, tmp_path, capsys, flags
@@ -1076,7 +1089,7 @@ class TestAStoredBaselinesOverride:
 
 
 # ---------------------------------------------------------------------------
-# the commands: spec-update refuses and writes nothing; run / compare /
+# the commands: spec update refuses and writes nothing; run / compare /
 # discover stop at the spec
 # ---------------------------------------------------------------------------
 
@@ -1107,7 +1120,7 @@ class TestSpecUpdateRefuses:
         spec = example.parent / "test_spec.json"
         before = spec.read_bytes()
         capsys.readouterr()
-        assert main(["--config", str(example), "spec-update", str(patch)]) == 1
+        assert main(["--config", str(example), "spec", "update", str(patch)]) == 1
         assert spec.read_bytes() == before
         out = capsys.readouterr().out
         assert out.startswith("Patch failed: ") and "Applied" not in out
@@ -1221,7 +1234,7 @@ class TestSpecUpdateRefuses:
                 "value": {"variable_overrides": {"unitTests.x[1]": {"mode": "range"}}},
             },
         )
-        assert main(["--config", str(example), "spec-update", str(patch)]) == 0
+        assert main(["--config", str(example), "spec", "update", str(patch)]) == 0
 
     def test_the_place_is_written_as_a_parse_error_writes_it(
         self, example, tmp_path, capsys
@@ -1271,7 +1284,7 @@ class TestSpecUpdateRefuses:
                 }
             ),
         )
-        assert main(["--config", str(example), "spec-update", str(patch)]) == 0
+        assert main(["--config", str(example), "spec", "update", str(patch)]) == 0
         assert "Applied 1 op(s)" in capsys.readouterr().out
         spec = json.loads(
             (example.parent / "test_spec.json").read_text(encoding="utf-8")
@@ -1307,7 +1320,7 @@ class TestOnlyTheWriteThatMakesAnUnscorableCriterionIsRefused:
             json.dumps({"patches": [{"model": model, "patch": list(ops)}]}),
             encoding="utf-8",
         )
-        return main(["--config", str(example), "spec-update", str(patch)])
+        return main(["--config", str(example), "spec", "update", str(patch)])
 
     def _entry(self, spec, model) -> dict:
         data = json.loads(spec.read_text(encoding="utf-8"))

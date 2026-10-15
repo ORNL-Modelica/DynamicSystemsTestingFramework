@@ -548,6 +548,13 @@ class LocatedClass:
 
     mo_file: Path
     experiment: ExperimentInfo | None
+    #: The keyword it is declared with: ``model``, ``block``, ``class``,
+    #: ``package``, ``function``, ``record`` or ``connector``. Only the
+    #: first three can be a test: a package holds models and is none, and
+    #: no run simulates a function, a record or a connector.
+    kind: str
+    #: Declared ``partial``: no run can simulate it, whatever its kind.
+    partial: bool = False
 
 
 @dataclass(frozen=True)
@@ -558,6 +565,8 @@ class _ClassSpan:
     that ends its one statement."""
 
     name: str
+    #: Its keyword: one of :data:`_CLASS_TOKEN_RE`'s.
+    kind: str
     start: int
     body: int
     end: int
@@ -567,17 +576,27 @@ class _ClassSpan:
     #: (``Pipe p(redeclare model HT = Ideal);``) is no class of the body the
     #: statement stands in (:func:`_named`).
     depth: int = 0
+    #: Declared ``partial``.
+    partial: bool = False
 
 
 #: A Modelica name: an identifier, or a quoted one (``'in ner'``).
 _NAME = r"(\w+|'(?:[^'\\]|\\.)*')"
 
 #: A class declaration or an ``end Name;``, in comment/string-stripped text.
-#: The kinds are :data:`_CLASS_DECL_RE`'s — the ones that can hold a model.
-#: Group 2 marks a SHORT class (``model A = B(...)``), which has no body and
-#: no ``end``; ``model extends A`` is named by what it extends.
+#: Group ``partial`` marks a ``partial`` class (``partial model``, ``partial
+#: expandable connector``), ``kind`` is its keyword, ``name`` its name and
+#: ``short`` marks a SHORT class (``model A = B(...)``), which has no body
+#: and no ``end``; ``model extends A`` is named by what it extends. A
+#: function, a record and a connector are tracked as well as the classes
+#: that can hold a model: so that a test that names one is told what it
+#: is, and so that their ``end`` closes them. ``operator`` and ``type`` are
+#: not: an ``operator record`` is a record, and the ``end`` of an operator
+#: closes nothing on the stack.
 _CLASS_TOKEN_RE = re.compile(
-    rf"\b(?:model|block|class|package)\s+(?:extends\s+)?{_NAME}(\s*=)?"
+    r"\b(?:(?P<partial>partial)\s+(?:(?:pure|impure|operator|expandable)\s+)?)?"
+    r"(?P<kind>model|block|class|package|function|record|connector)\s+"
+    rf"(?:extends\s+)?{_NAME}(?P<short>\s*=)?"
     rf"|\bend\s+{_NAME}\s*;"
 )
 
@@ -615,7 +634,7 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
 
     A stack of open declarations, closed by the ``end`` that names the top
     one: ``end if;`` / ``end for;`` and the ``end`` of a kind not tracked
-    here (a function, a record) name nothing on it and close nothing. A
+    here (an operator, a type) name nothing on it and close nothing. A
     short class opens nothing: it is one statement, and its span runs to
     that statement's ``;`` — it carries an ``annotation(...)`` of its own,
     which is not the enclosing class's.
@@ -628,24 +647,41 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
     class redeclared in a sibling short class's modification.
     """
     out: list[_ClassSpan] = []
-    stack: list[tuple[str, int, int]] = []
+    stack: list[tuple[str, str, int, int, bool]] = []
     depth, at = 0, start
     for m in _CLASS_TOKEN_RE.finditer(stripped, start, end):
         for found in _BRACKET_RE.finditer(stripped, at, m.start()):
             if found.group(1):
                 depth += 1 if found.group(1) in _OPENERS else -1
         at = m.end()
-        closed = m.group(3)
+        # `end Name;` has no keyword; a declaration has its kind and name.
+        closed, kind, name = m.group(5), m.group("kind"), m.group(3)
+        partial = m.group("partial") is not None
         if closed is not None:
             if stack and stack[-1][0] == closed:
-                name, opened, body = stack.pop()
+                opened_name, opened_kind, opened, body, was_partial = stack.pop()
                 if not stack:
-                    out.append(_ClassSpan(name, opened, body, m.end()))
-        elif m.group(2) is None:
-            stack.append((m.group(1), m.start(), m.end()))
+                    out.append(
+                        _ClassSpan(
+                            opened_name,
+                            opened_kind,
+                            opened,
+                            body,
+                            m.end(),
+                            partial=was_partial,
+                        )
+                    )
+        elif m.group("short") is None:
+            # A class with a body is never declared inside a bracket: there
+            # it is a function partial application (`f(function g(a=1))`),
+            # which has no `end` and would hold every class after it.
+            if depth == 0:
+                stack.append((name, kind, m.start(), m.end(), partial))
         elif not stack:
             after = _statement_end(stripped, m.end(), end)
-            out.append(_ClassSpan(m.group(1), m.start(), m.end(), after, True, depth))
+            out.append(
+                _ClassSpan(name, kind, m.start(), m.end(), after, True, depth, partial)
+            )
     return out
 
 
@@ -724,7 +760,10 @@ def _class_in_file(
             if own[i] != "\n":
                 own[i] = " "
     return LocatedClass(
-        mo_file=path, experiment=_parse_experiment("".join(own), source=path)
+        mo_file=path,
+        experiment=_parse_experiment("".join(own), source=path),
+        kind=span.kind,
+        partial=span.partial,
     )
 
 
