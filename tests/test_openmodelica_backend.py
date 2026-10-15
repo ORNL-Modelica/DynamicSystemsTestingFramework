@@ -5,6 +5,7 @@ Integration tests at the bottom exercise real omc and are gated on
 ``shutil.which("omc")`` so CI / machines without omc still pass.
 """
 
+import dataclasses
 import shutil
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -244,6 +245,9 @@ class TestOpenModelicaBackendUnit:
             work_dir=tmp_path / "work",
         )
         backend = OpenModelicaBackend(cfg)
+        # A run starts with an omc that was found; this machine's is not
+        # asked (CI has none) — subprocess.run is faked below.
+        backend.om_config = dataclasses.replace(backend.om_config, omc_path="omc")
         test = TestModel(
             model_id="Lib.DoesNotExist",
             source_file=None,

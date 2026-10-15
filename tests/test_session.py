@@ -177,11 +177,19 @@ def _add_bar(tmp_path: Path) -> None:
 
 
 def _snapshot(work: Path) -> list[tuple[str, bytes]]:
-    return sorted(
-        (str(p.relative_to(work)), p.read_bytes())
-        for p in work.rglob("*")
-        if p.is_file()
-    )
+    """The work dir's files and their bytes. A write in flight is left out:
+    a file is written as ``<name>.<pid>.<hex>.tmp`` and renamed, so a running
+    worker's temp file can be listed here and gone before it is read (CI saw
+    exactly that, FileNotFoundError on ``batch_manifest.json.….tmp``)."""
+    files = []
+    for p in work.rglob("*"):
+        if p.suffix == ".tmp" or not p.is_file():
+            continue
+        try:
+            files.append((str(p.relative_to(work)), p.read_bytes()))
+        except FileNotFoundError:  # removed between the listing and the read
+            continue
+    return sorted(files)
 
 
 def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:

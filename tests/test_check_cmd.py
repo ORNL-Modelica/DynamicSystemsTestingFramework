@@ -333,7 +333,11 @@ class TestOneBackend:
         assert exc.value.code == 2
         err = capsys.readouterr().err
         assert "argument backend: invalid choice: 'Dymolla' (choose from " in err
-        assert "Dymola, OpenModelica, FMPy, Julia, Python" in err
+        # How argparse writes the choices differs between Python releases
+        # (3.12.3 quotes each, 'Dymola', 'OpenModelica', …; 3.12.12 does not):
+        # every backend is named, in order, either way.
+        listed = err.split("(choose from ", 1)[1].replace("'", "")
+        assert listed.startswith("Dymola, OpenModelica, FMPy, Julia, Python")
 
     def test_the_named_backend_s_entry_gives_its_settings(
         self, no_installs, tmp_path, capsys
