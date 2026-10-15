@@ -13,6 +13,7 @@ from dstf.comparison.algorithms import (
 )
 from dstf.comparison.registry import metrics, summarize
 from dstf.comparison.types import ScoreSummary, VariableComparison
+from dstf.storage.baseline_codec import decode_reference
 
 
 def _vc(**kw) -> VariableComparison:
@@ -791,11 +792,12 @@ class TestADeclaredEventNeverFound:
         )
         reference = {
             "test_id": "0001",
-            "variables": [
-                {"index": 1, "name": "e", "time": time.tolist(), "values": [0.0] * 8}
-            ],
+            "time": time.tolist(),
+            "variables": [{"index": 1, "name": "e", "values": [0.0] * 8}],
         }
-        (vc,) = compare_test(test, result, reference, default_tolerance=1e-4).variables
+        (vc,) = compare_test(
+            test, result, decode_reference(reference), default_tolerance=1e-4
+        ).variables
         if not flat:
             assert vc.geometry[0].id.startswith("/")  # stamped
         s = summarize(vc)

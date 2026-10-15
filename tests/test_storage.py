@@ -10,18 +10,31 @@ import numpy as np
 import pytest
 
 import dstf.storage.ref_index as ri_mod
+from conftest import series
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
 from dstf.storage.baseline import PRIMARY_BASELINE, Baseline
+from dstf.storage.baseline_codec import decode_reference
 from dstf.storage.ref_index import RefIndex, _atomic_write_text
-from dstf.storage.reference_store import (
-    ReferenceStore,
-    _downsample,
-    _extract_baselines,
-)
+from dstf.storage.reference_store import ReferenceStore, _downsample
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def _file(store: ReferenceStore, model_id: str) -> dict:
+    """A model's reference FILE as JSON — what the writer put on disk."""
+    return json.loads(store.reference_file(model_id).read_text(encoding="utf-8"))
+
+
+def _set_status(store: ReferenceStore, model_id: str, status: str) -> None:
+    """Rewrite a reference file's ``status`` by hand (no writer of the
+    package does) and refresh the store's index."""
+    ref_file = store.reference_file(model_id)
+    data = json.loads(ref_file.read_text(encoding="utf-8"))
+    data["status"] = status
+    ref_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    store.index._loaded = False
 
 
 # ---------------------------------------------------------------------------
@@ -224,10 +237,10 @@ class TestReferenceStore:
 
         ref = store.get_reference(test.model_id)
         assert ref is not None
-        assert ref["model_id"] == test.model_id
-        assert ref["n_vars"] == 2
-        assert len(ref["variables"]) == 2
-        assert ref["variables"][0]["name"] == "x"
+        assert ref.model_id == test.model_id
+        assert _file(store, test.model_id)["n_vars"] == 2
+        assert len(ref.baseline.variables) == 2
+        assert ref.baseline.variables[0].name == "x"
 
     def test_status_and_dates_stored(self, sample_models_dir, tmp_path):
         """status, date_added, and last_updated are in stored reference."""
@@ -242,9 +255,9 @@ class TestReferenceStore:
         store.store_reference(test, result)
         ref = store.get_reference(test.model_id)
 
-        assert ref["status"] == "active"
-        assert "date_added" in ref
-        assert "last_updated" in ref
+        assert ref.status == "active"
+        assert ref.date_added is not None
+        assert ref.last_updated is not None
 
     def test_date_added_preserved_on_update(self, sample_models_dir, tmp_path):
         """date_added stays the same when a reference is updated."""
@@ -258,12 +271,12 @@ class TestReferenceStore:
 
         store.store_reference(test, result)
         ref1 = store.get_reference(test.model_id)
-        original_date = ref1["date_added"]
+        original_date = ref1.date_added
 
         # Store again (update)
         store.store_reference(test, result)
         ref2 = store.get_reference(test.model_id)
-        assert ref2["date_added"] == original_date
+        assert ref2.date_added == original_date
 
     def test_diagnostics_stored(self, sample_models_dir, tmp_path):
         """Diagnostics are stored as a scalar summary, not a full trajectory.
@@ -282,7 +295,7 @@ class TestReferenceStore:
         result = self._make_test_result()
 
         store.store_reference(test, result)
-        ref = store.get_reference(test.model_id)
+        ref = _file(store, test.model_id)
 
         assert "diagnostics" in ref
         assert len(ref["diagnostics"]) == 1
@@ -307,8 +320,8 @@ class TestReferenceStore:
         store.store_reference(test, result)
         ref = store.get_reference(test.model_id)
 
-        assert ref["statistics"]["CPUtime"] == 1.0
-        assert ref["statistics"]["EventCounter"] == 5
+        assert ref.baseline.statistics["CPUtime"] == 1.0
+        assert ref.baseline.statistics["EventCounter"] == 5
 
     def test_failed_result_not_stored(self, sample_models_dir, tmp_path):
         """Failed simulations are not stored as references."""
@@ -323,22 +336,6 @@ class TestReferenceStore:
         stored = store.store_reference(test, result)
         assert stored is False
 
-    def test_set_status(self, sample_models_dir, tmp_path):
-        """set_status updates the status field in the ref file."""
-        config = Config(
-            source_path=sample_models_dir,
-            reference_root=tmp_path / "refs",
-        )
-        store = ReferenceStore(config)
-        test = self._make_test_model()
-        result = self._make_test_result()
-
-        store.store_reference(test, result)
-        store.set_status(test.model_id, "skip")
-
-        ref = store.get_reference(test.model_id)
-        assert ref["status"] == "skip"
-
     def test_cleanup_obsolete(self, sample_models_dir, tmp_path):
         """cleanup_obsolete removes files with obsolete status."""
         config = Config(
@@ -350,7 +347,7 @@ class TestReferenceStore:
         result = self._make_test_result()
 
         store.store_reference(test, result)
-        store.set_status(test.model_id, "obsolete")
+        _set_status(store, test.model_id, "obsolete")
 
         removed = store.cleanup_obsolete()
         assert removed == 1
@@ -375,8 +372,8 @@ class TestReferenceStore:
         ref = store.get_reference(test.model_id)
 
         # Should derive: 101 unique times - 1 = 100 intervals
-        assert ref["simulation"]["number_of_intervals"] == 100
-        assert ref["simulation"]["output_interval"] is None
+        assert ref.baseline.simulation["number_of_intervals"] == 100
+        assert ref.baseline.simulation["output_interval"] is None
 
     def test_output_interval_preserved(self, sample_models_dir, tmp_path):
         """output_interval is stored when explicitly set."""
@@ -392,8 +389,8 @@ class TestReferenceStore:
         store.store_reference(test, result)
         ref = store.get_reference(test.model_id)
 
-        assert ref["simulation"]["output_interval"] == 0.5
-        assert ref["simulation"]["number_of_intervals"] is None
+        assert ref.baseline.simulation["output_interval"] == 0.5
+        assert ref.baseline.simulation["number_of_intervals"] is None
 
     def test_json_field_order(self, sample_models_dir, tmp_path):
         """Metadata fields come before data fields in reference JSON."""
@@ -446,7 +443,7 @@ class TestReferenceStore:
         )
         store.store_reference(self._make_test_model(), result)
 
-        ref = store.get_reference("ModelicaTestingLib.Examples.Test1")
+        ref = _file(store, "ModelicaTestingLib.Examples.Test1")
         assert [(v["name"], v["expression"]) for v in ref["variables"]] == [
             ("unitTests.x[1]", "cat(1, a, b)[1]"),
             ("plain", ""),
@@ -468,7 +465,7 @@ class TestReferenceStore:
         store2 = ReferenceStore(config)
         ref = store2.get_reference(test.model_id)
         assert ref is not None
-        assert ref["model_id"] == test.model_id
+        assert ref.model_id == test.model_id
 
 
 # ---------------------------------------------------------------------------
@@ -477,11 +474,11 @@ class TestReferenceStore:
 
 
 class TestBaselineView:
-    """Legacy flat files and forward multi-baseline files must present the
-    same ``Baseline`` view to readers."""
+    """A reference file's primary baseline, as every reader sees it."""
 
-    def test_extract_baselines_flat(self):
-        """Legacy flat schema → single synthetic ``primary`` baseline."""
+    def test_a_flat_file_reads_as_its_primary_baseline(self):
+        """The file's top-level fields are its ``primary`` baseline; an old
+        ``{name, values}`` diagnostic is summarized on read."""
         flat = {
             "model_id": "MyLib.Test1",
             "date_added": "2026-01-15T10:00:00+00:00",
@@ -493,98 +490,47 @@ class TestBaselineView:
             "variables": [{"index": 1, "name": "x", "values": [0.0, 1.0, 2.0]}],
             "diagnostics": [{"name": "CPUtime", "values": [0.1, 0.2, 0.3]}],
         }
-        baselines = _extract_baselines(flat)
-        assert list(baselines.keys()) == [PRIMARY_BASELINE]
-        b = baselines[PRIMARY_BASELINE]
+        ref = decode_reference(flat)
+        b = ref.baseline
         assert isinstance(b, Baseline)
+        assert b.name == PRIMARY_BASELINE
         assert b.time == [0.0, 1.0, 2.0]
         assert b.simulation["stop_time"] == 10.0
-        assert b.comparison["tolerance"] == 0.01
+        assert ref.comparison["tolerance"] == 0.01
         assert b.statistics["CPUtime"] == 2.5
         assert len(b.variables) == 1
-        assert len(b.diagnostics) == 1
-        # Provenance synthesized from file metadata
-        assert b.provenance["origin"] == "flat"
-        assert b.provenance["captured_at"] == "2026-01-15T10:00:00+00:00"
-        assert b.provenance["last_updated"] == "2026-02-20T12:30:00+00:00"
+        (d,) = b.diagnostics
+        assert (d.name, d.final, d.min, d.max) == ("CPUtime", 0.3, 0.1, 0.3)
 
-    def test_extract_baselines_no_last_updated_diff(self):
-        """When last_updated == date_added, don't duplicate in provenance."""
-        flat = {
-            "date_added": "2026-01-15T10:00:00+00:00",
-            "last_updated": "2026-01-15T10:00:00+00:00",
-            "time": [],
-            "variables": [],
-        }
-        b = _extract_baselines(flat)[PRIMARY_BASELINE]
-        assert "captured_at" in b.provenance
-        assert "last_updated" not in b.provenance
-
-    def test_extract_baselines_ignores_a_stray_baselines_key(self):
-        """D66: named baselines live in soft_checks/, never in the ref file."""
-        data = {
-            "model_id": "MyLib.Test1",
-            "date_added": "2026-01-15T10:00:00+00:00",
-            "simulation": {"stop_time": 10.0},
-            "time": [0.0, 1.0],
-            "variables": [{"index": 1, "name": "x", "values": [0.0, 1.0]}],
-            "baselines": {
-                "experiment": {
-                    "time": [0.0, 0.5, 1.0],
-                    "variables": [
-                        {"index": 1, "name": "x", "values": [0.0, 0.6, 1.05]}
-                    ],
-                },
-                "primary": {"simulation": {"stop_time": 999.0}},
-            },
-        }
-        baselines = _extract_baselines(data)
-        assert set(baselines.keys()) == {"primary"}
-        # Primary comes from the flat top-level fields, not the stray map.
-        assert baselines["primary"].simulation["stop_time"] == 10.0
-        assert baselines["primary"].time == [0.0, 1.0]
-
-    def test_get_baseline_returns_primary_by_default(self, sample_models_dir, tmp_path):
-        """End-to-end: store a ref, then read it back via the Baseline view."""
+    def test_a_stored_reference_reads_back_as_its_primary(
+        self, sample_models_dir, tmp_path
+    ):
+        """End-to-end: store a ref, then read it back."""
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         result = TestReferenceStore()._make_test_result()
         store.store_reference(test, result)
 
-        b = store.get_baseline(test.model_id)
-        assert b is not None
+        b = store.get_reference(test.model_id).baseline
         assert b.name == PRIMARY_BASELINE
         assert len(b.variables) == 2
-        assert b.provenance["origin"] == "flat"
+        assert store.get_soft_checks(test.model_id) == {}
 
-    def test_get_baseline_unknown_name_returns_none(self, sample_models_dir, tmp_path):
+    def test_no_reference(self, sample_models_dir, tmp_path):
+        """No ref file → None and no soft checks (not an error)."""
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        store = ReferenceStore(config)
+        assert store.get_reference("MyLib.Nonexistent") is None
+        assert store.get_soft_checks("MyLib.Nonexistent") == {}
+
+    def test_store_reference_drops_a_stray_baselines_key(
+        self, sample_models_dir, tmp_path
+    ):
+        """Writers never carry the deleted key forward."""
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
-        store.store_reference(test, TestReferenceStore()._make_test_result())
-
-        assert store.get_baseline(test.model_id, name="experiment") is None
-
-    def test_list_baseline_names_without_soft_checks(self, sample_models_dir, tmp_path):
-        """A ref file with no soft_checks exposes exactly ``["primary"]``."""
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        test = TestReferenceStore()._make_test_model()
-        store.store_reference(test, TestReferenceStore()._make_test_result())
-
-        assert store.list_baseline_names(test.model_id) == [PRIMARY_BASELINE]
-
-    def test_get_baselines_no_reference(self, sample_models_dir, tmp_path):
-        """No ref file → empty dict (not None, not error)."""
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        assert store.get_baselines("MyLib.Nonexistent") == {}
-        assert store.list_baseline_names("MyLib.Nonexistent") == []
-        assert store.get_baseline("MyLib.Nonexistent") is None
-
-    def _ref_with_stray_baselines(self, store, test) -> Path:
-        """Store a primary, then inject a pre-D66 top-level `baselines` map."""
         store.store_reference(test, TestReferenceStore()._make_test_result())
         ref_file = store.ref_dir / "ref_0001.json"
         data = json.loads(ref_file.read_text(encoding="utf-8"))
@@ -596,56 +542,11 @@ class TestBaselineView:
             }
         }
         ref_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        return ref_file
-
-    def test_store_reference_drops_a_stray_baselines_key(
-        self, sample_models_dir, tmp_path
-    ):
-        """Writers never carry the deleted key forward."""
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        test = TestReferenceStore()._make_test_model()
-        ref_file = self._ref_with_stray_baselines(store, test)
 
         store.store_reference(test, TestReferenceStore()._make_test_result())
 
         data_after = json.loads(ref_file.read_text(encoding="utf-8"))
         assert "baselines" not in data_after
-
-    def test_reading_a_stray_baselines_key_warns(
-        self, sample_models_dir, tmp_path, caplog
-    ):
-        """Old data is tolerated, but loudly — it names the file and the fix."""
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        test = TestReferenceStore()._make_test_model()
-        ref_file = self._ref_with_stray_baselines(store, test)
-
-        with caplog.at_level(logging.WARNING, logger="dstf.storage.reference_store"):
-            baselines = store.get_baselines(test.model_id)
-
-        assert set(baselines) == {PRIMARY_BASELINE}
-        warnings = [
-            r.getMessage() for r in caplog.records if "baselines" in r.getMessage()
-        ]
-        assert len(warnings) == 1
-        assert str(ref_file) in warnings[0]
-        assert "soft_check" in warnings[0]
-
-    def test_reading_a_clean_ref_file_warns_nothing(
-        self, sample_models_dir, tmp_path, caplog
-    ):
-        """The tolerance warning must not fire on the normal path."""
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        test = TestReferenceStore()._make_test_model()
-        store.store_reference(test, TestReferenceStore()._make_test_result())
-
-        with caplog.at_level(logging.WARNING, logger="dstf.storage.reference_store"):
-            baselines = store.get_baselines(test.model_id)
-
-        assert set(baselines) == {PRIMARY_BASELINE}
-        assert not [r for r in caplog.records if "baselines" in r.getMessage()]
 
 
 class TestExports:
@@ -875,15 +776,21 @@ class TestAtomicWrites:
         monkeypatch.setattr(Path, "write_text", spy)
 
         store.store_reference(test, _mk_result())  # update existing ref
+        # A new model: its ID is claimed with the codec's stub, then replaced.
+        store.store_reference(_mk_model("Lib.New"), _mk_result("Lib.New"))
         store.add_soft_check(
             test.model_id,
             "experiment",
-            time=[0.0, 1.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            series(
+                "experiment",
+                time=[0.0, 1.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            ),
         )
         store.add_companion(test.model_id, "rig", path=ext)
         store.freeze_companion(test.model_id, "rig")
-        store.set_status(test.model_id, "skip")
+        store.export_json(store.ref_dir / "export.json")
+        store.export_csv(store.ref_dir / "export.csv")
 
         ref_root = str(store.ref_dir)
         direct_json_writes = [
@@ -919,9 +826,9 @@ class TestIdAllocation:
         fresh = ReferenceStore(config)
         ref_a = fresh.get_reference("Lib.A")
         ref_b = fresh.get_reference("Lib.B")
-        assert ref_a is not None and ref_a["model_id"] == "Lib.A"
-        assert ref_b is not None and ref_b["model_id"] == "Lib.B"
-        assert ref_a["test_id"] != ref_b["test_id"]
+        assert ref_a is not None and ref_a.model_id == "Lib.A"
+        assert ref_b is not None and ref_b.model_id == "Lib.B"
+        assert ref_a.test_id != ref_b.test_id
 
     def test_register_skips_id_taken_on_disk_but_missing_from_index(self, tmp_path):
         """An unindexed (e.g. mid-write, unreadable) ref file still blocks
@@ -940,8 +847,11 @@ class TestIdAllocation:
         store.add_soft_check(
             test.model_id,
             "experiment",
-            time=[0.0, 1.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            series(
+                "experiment",
+                time=[0.0, 1.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            ),
         )
         ext = tmp_path / "rig.csv"
         ext.write_text("time,x\n0,1\n", encoding="utf-8")
@@ -952,7 +862,7 @@ class TestIdAllocation:
         co_dir = store.ref_dir / "companions" / "ref_0001"
         assert sc_dir.is_dir() and co_dir.is_dir()
 
-        store.set_status(test.model_id, "obsolete")
+        _set_status(store, test.model_id, "obsolete")
         assert store.cleanup_obsolete() == 1
         assert not sc_dir.exists()
         assert not co_dir.exists()
@@ -971,15 +881,15 @@ class TestIdHighWaterMark:
         store = _mk_store(sample_models_dir, tmp_path)
         store.store_reference(_mk_model("Lib.A"), _mk_result("Lib.A"))
         store.store_reference(_mk_model("Lib.B"), _mk_result("Lib.B"))
-        assert store.get_reference("Lib.B")["test_id"] == "0002"
+        assert store.get_reference("Lib.B").test_id == "0002"
 
-        store.set_status("Lib.B", "obsolete")
+        _set_status(store, "Lib.B", "obsolete")
         assert store.cleanup_obsolete() == 1
 
         # Fresh process, fresh scan: 0002 is gone from disk but still spent.
         fresh = ReferenceStore(config)
         fresh.store_reference(_mk_model("Lib.C"), _mk_result("Lib.C"))
-        assert fresh.get_reference("Lib.C")["test_id"] == "0003"
+        assert fresh.get_reference("Lib.C").test_id == "0003"
 
     def test_high_water_file_is_not_indexed_as_a_ref(self, tmp_path):
         index = RefIndex(tmp_path)
@@ -1131,8 +1041,11 @@ class TestRoleNameValidation:
             store.add_soft_check(
                 test.model_id,
                 bad,
-                time=[0.0],
-                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                series(
+                    bad,
+                    time=[0.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                ),
             )
         assert repr(bad) in str(exc.value) or bad in str(exc.value)
 
@@ -1160,8 +1073,11 @@ class TestRoleNameValidation:
             store.add_soft_check(
                 test.model_id,
                 "../../evil",
-                time=[0.0],
-                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                series(
+                    "../../evil",
+                    time=[0.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                ),
             )
         assert not (store.ref_dir / "evil.json").exists()
         assert not (store.ref_dir.parent / "evil.json").exists()
@@ -1172,17 +1088,23 @@ class TestRoleNameValidation:
             store.add_soft_check(
                 test.model_id,
                 "a/b",
-                time=[0.0],
-                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                series(
+                    "a/b",
+                    time=[0.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                ),
             )
 
     def test_good_names_still_accepted(self, store_with_primary):
         store, test = store_with_primary
         ok = store.add_soft_check(
             test.model_id,
-            "dymola-via-fmpy",  # cross_backend.py's constant must stay legal
-            time=[0.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            "dymola-via-fmpy",
+            series(
+                "dymola-via-fmpy",
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            ),
         )
         assert ok is True
 

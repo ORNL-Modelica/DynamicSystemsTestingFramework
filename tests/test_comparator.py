@@ -13,6 +13,7 @@ from dstf.comparison.comparator import (
     _split_segments,
 )
 from dstf.comparison.sides import Sides
+from dstf.storage.baseline_codec import decode_reference
 
 # ---------------------------------------------------------------------------
 # Event boundary detection
@@ -348,7 +349,7 @@ class TestStructuralChanges:
                 "EventCounter": 42,
             },
         )
-        warnings = _check_structural_changes(ref, result)
+        warnings = _check_structural_changes(decode_reference(ref), result)
         assert len(warnings) == 0
 
     def test_continuous_states_change(self):
@@ -358,7 +359,7 @@ class TestStructuralChanges:
             success=True,
             statistics={"translation": {"continuous_time_states": 6}},
         )
-        warnings = _check_structural_changes(ref, result)
+        warnings = _check_structural_changes(decode_reference(ref), result)
         assert len(warnings) == 1
         assert "Continuous" in warnings[0].field
 
@@ -369,7 +370,7 @@ class TestStructuralChanges:
             success=True,
             statistics={"translation": {"nonlinear_count": 5}},
         )
-        warnings = _check_structural_changes(ref, result)
+        warnings = _check_structural_changes(decode_reference(ref), result)
         assert len(warnings) == 1
         assert "Nonlinear" in warnings[0].field
         assert warnings[0].reference_value == "3"
@@ -382,7 +383,7 @@ class TestStructuralChanges:
             success=True,
             statistics={"EventCounter": 50},
         )
-        warnings = _check_structural_changes(ref, result)
+        warnings = _check_structural_changes(decode_reference(ref), result)
         assert len(warnings) == 1
         assert "Event" in warnings[0].field
 
@@ -390,13 +391,13 @@ class TestStructuralChanges:
         """Missing statistics on either side should not crash."""
         ref = {"statistics": {}}
         result = TestResult(model_id="Test", success=True, statistics=None)
-        warnings = _check_structural_changes(ref, result)
+        warnings = _check_structural_changes(decode_reference(ref), result)
         assert len(warnings) == 0
 
     def test_no_statistics_key(self):
         ref = {}
         result = TestResult(model_id="Test", success=True, statistics={})
-        warnings = _check_structural_changes(ref, result)
+        warnings = _check_structural_changes(decode_reference(ref), result)
         assert len(warnings) == 0
 
 
@@ -458,7 +459,7 @@ class TestToleranceResolution:
         """Config tolerance used when no overrides."""
         test = _make_test()
         result, ref = _make_result_and_ref(offset=0.001)
-        comp = compare_test(test, result, ref, default_tolerance=1e-4)
+        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
         # offset=0.001 on range=2.0 → NRMSE=5e-4, exceeds 1e-4
         assert not comp.passed
         assert comp.variables[0].tolerance_used == Sides(1e-4, 1e-4)
@@ -467,7 +468,7 @@ class TestToleranceResolution:
         """Per-test comparison_tolerance overrides config.tolerance."""
         test = _make_test(comparison_tolerance=0.01)
         result, ref = _make_result_and_ref(offset=0.001)
-        comp = compare_test(test, result, ref, default_tolerance=1e-4)
+        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
         # NRMSE=5e-4, tolerance=0.01 → passes
         assert comp.passed
         assert comp.variables[0].tolerance_used == Sides(0.01, 0.01)
@@ -479,7 +480,7 @@ class TestToleranceResolution:
             variable_overrides={"x": {"tolerance": 0.01}},  # But x is loose
         )
         result, ref = _make_result_and_ref(offset=0.001)
-        comp = compare_test(test, result, ref, default_tolerance=1e-4)
+        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
         # Per-variable 0.01 used for x → passes despite tight per-test
         assert comp.passed
         assert comp.variables[0].tolerance_used == Sides(0.01, 0.01)
@@ -489,7 +490,7 @@ class TestToleranceResolution:
         test = _make_test()  # No comparison_tolerance set
         result, ref = _make_result_and_ref(offset=0.001)
         ref["comparison"] = {"tolerance": 0.01}
-        comp = compare_test(test, result, ref, default_tolerance=1e-4)
+        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
         # ref comparison tolerance 0.01 used → passes
         assert comp.passed
         assert comp.variables[0].tolerance_used == Sides(0.01, 0.01)
@@ -501,7 +502,7 @@ class TestToleranceResolution:
         ref["comparison"] = {
             "variable_overrides": {"x": {"tolerance": 0.01}},
         }
-        comp = compare_test(test, result, ref, default_tolerance=1e-4)
+        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
         assert comp.passed
         assert comp.variables[0].tolerance_used == Sides(0.01, 0.01)
 
@@ -512,7 +513,7 @@ class TestToleranceResolution:
         ref["comparison"] = {
             "variable_overrides": {"x": {"tolerance": 0.1}},  # Loose in ref
         }
-        comp = compare_test(test, result, ref, default_tolerance=1e-4)
+        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
         # Spec override (1e-6) takes precedence over reference (0.1)
         assert not comp.passed
         assert comp.variables[0].tolerance_used == Sides(1e-6, 1e-6)
@@ -738,7 +739,7 @@ class TestTubeComparison:
             }
         )
         result, ref = _make_result_and_ref(offset=0.005)
-        comp = compare_test(test, result, ref, default_tolerance=1e-4)
+        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
         assert comp.passed
         assert comp.variables[0].mode == "tube"
         assert comp.variables[0].tube_points_inside == 1.0
@@ -1033,7 +1034,11 @@ class TestCompareTestWithModes:
         )
         result, ref = _make_result_and_ref(offset=0.005)
         comp = compare_test(
-            test, result, ref, default_tolerance=1e-4, default_points=True
+            test,
+            result,
+            decode_reference(ref),
+            default_tolerance=1e-4,
+            default_points=True,
         )
         assert comp.passed
         assert comp.variables[0].mode == "tube"
@@ -1045,7 +1050,11 @@ class TestCompareTestWithModes:
         # default_points compares only last values: ref=3.0, act=3.005
         # relative error = 0.005/3.0 ≈ 0.00167, tolerance=0.01 → pass
         comp = compare_test(
-            test, result, ref, default_tolerance=0.01, default_points=True
+            test,
+            result,
+            decode_reference(ref),
+            default_tolerance=0.01,
+            default_points=True,
         )
         assert comp.passed
 
@@ -1536,17 +1545,19 @@ class TestTreeConfigErrorIsALeafFailure:
             """Minimal ReferenceStore stand-in serving one flat primary."""
 
             def get_reference(self, _model_id):
-                return {
-                    "test_id": "0001",
-                    "time": [0.0, 0.25, 0.5, 0.75, 1.0],
-                    "variables": [
-                        {
-                            "index": 1,
-                            "name": "x",
-                            "values": [0.1, 0.5, 1.0, 1.5, 1.9],
-                        }
-                    ],
-                }
+                return decode_reference(
+                    {
+                        "test_id": "0001",
+                        "time": [0.0, 0.25, 0.5, 0.75, 1.0],
+                        "variables": [
+                            {
+                                "index": 1,
+                                "name": "x",
+                                "values": [0.1, 0.5, 1.0, 1.5, 1.9],
+                            }
+                        ],
+                    }
+                )
 
             folder = "Stub/linux"
 
@@ -1747,16 +1758,16 @@ class TestEmptyDataFails:
         test = _mk_test(metric_tree_spec=spec)
         result = _mk_result()
         reference = {
+            "time": [0.0, 5.0, 10.0],
             "variables": [
                 {
                     "index": 1,
                     "name": "x",
-                    "time": [0.0, 5.0, 10.0],
                     "values": [1.0, 1.0, 1.0],
                 }
-            ]
+            ],
         }
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert not comp.passed
 
 
@@ -1815,16 +1826,16 @@ class TestExplicitZeroTolerance:
         test = _mk_test(comparison_tolerance=0.0, variable_patterns=["x"])
         result = _mk_result(values=np.ones(11) + 1e-6)
         reference = {
+            "time": list(np.linspace(0.0, 10.0, 11)),
             "variables": [
                 {
                     "index": 1,
                     "name": "x",
-                    "time": list(np.linspace(0.0, 10.0, 11)),
                     "values": [1.0] * 11,
                 }
-            ]
+            ],
         }
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert not comp.passed
         assert comp.variables[0].tolerance_used == Sides(0.0, 0.0)
 
@@ -1833,16 +1844,16 @@ class TestExplicitZeroTolerance:
         result = _mk_result(values=np.ones(11) + 1e-6)
         reference = {
             "comparison": {"tolerance": 0.0},
+            "time": list(np.linspace(0.0, 10.0, 11)),
             "variables": [
                 {
                     "index": 1,
                     "name": "x",
-                    "time": list(np.linspace(0.0, 10.0, 11)),
                     "values": [1.0] * 11,
                 }
             ],
         }
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert not comp.passed
 
 
@@ -1889,7 +1900,7 @@ class TestStructuralWarnings:
                 "EventCounter": 3,
             },
         )
-        assert _check_structural_changes({}, result) == []
+        assert _check_structural_changes(decode_reference({}), result) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1902,10 +1913,11 @@ class TestNameBasedPairing:
         """Baseline stored with [a, b]; 'a' later removed from the spec.
         'b' (now index 1) must score against ref 'b', not ref 'a'."""
         reference = {
+            "time": [0.0, 1.0],
             "variables": [
-                {"index": 1, "name": "a", "time": [0.0, 1.0], "values": [0.0, 0.0]},
-                {"index": 2, "name": "b", "time": [0.0, 1.0], "values": [10.0, 10.0]},
-            ]
+                {"index": 1, "name": "a", "values": [0.0, 0.0]},
+                {"index": 2, "name": "b", "values": [10.0, 10.0]},
+            ],
         }
         result = TestResult(
             model_id="MyLib.Test",
@@ -1922,7 +1934,9 @@ class TestNameBasedPairing:
         # The test tracks `b`: before a test that scores nothing stopped
         # being a PASS this one tracked no variable of its result, scored
         # nothing and passed whatever `b` was paired with.
-        comp = compare_test(_mk_test(variable_patterns=["b"]), result, reference)
+        comp = compare_test(
+            _mk_test(variable_patterns=["b"]), result, decode_reference(reference)
+        )
         assert comp.passed and [v.name for v in comp.variables] == ["b"]
         assert comp.variables[0].nrmse == 0.0
 
@@ -1944,16 +1958,16 @@ class TestUnknownMode:
         )
         result = _mk_result()
         reference = {
+            "time": list(np.linspace(0.0, 10.0, 11)),
             "variables": [
                 {
                     "index": 1,
                     "name": "x",
-                    "time": list(np.linspace(0.0, 10.0, 11)),
                     "values": [1.0] * 11,
                 }
-            ]
+            ],
         }
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert not comp.passed
 
 
@@ -2069,7 +2083,7 @@ class TestCompareOne:
 
         class _Store:
             def get_reference(self, model_id):
-                return ref if model_id == "Test.Model" else None
+                return decode_reference(ref) if model_id == "Test.Model" else None
 
             folder = "Stub/linux"
 
@@ -2158,7 +2172,7 @@ def _vi_reference(expression=VI_EXPR, name=VI_NAME, with_expression=True) -> dic
 
 class TestVariableIdentity:
     def test_the_flat_path_scores_the_name_and_carries_the_expression(self):
-        comp = compare_test(_vi_test(), _vi_result(), _vi_reference())
+        comp = compare_test(_vi_test(), _vi_result(), decode_reference(_vi_reference()))
         assert comp.passed
         (vc,) = comp.variables
         assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
@@ -2167,7 +2181,9 @@ class TestVariableIdentity:
     def test_a_tree_leaf_scores_the_name_and_carries_the_expression(self):
         spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
         comp = compare_test(
-            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(),
+            decode_reference(_vi_reference()),
         )
         assert comp.passed
         (vc,) = comp.variables
@@ -2183,13 +2199,13 @@ class TestVariableIdentity:
         by_name = compare_test(
             _vi_test(variable_overrides={VI_NAME: loose}),
             _vi_result(off),
-            _vi_reference(),
+            decode_reference(_vi_reference()),
         )
         assert by_name.passed and by_name.variables[0].tolerance_used == Sides(0.5, 0.5)
         by_expression = compare_test(
             _vi_test(variable_overrides={VI_EXPR: loose}),
             _vi_result(off),
-            _vi_reference(),
+            decode_reference(_vi_reference()),
         )
         assert not by_expression.passed
         assert by_expression.variables[0].tolerance_used != Sides(0.5, 0.5)
@@ -2205,7 +2221,7 @@ class TestVariableIdentity:
                 variable_overrides={"pipe.p": {"tolerance": 0.5}},
             ),
             _vi_result(_VI_T * 1.05, expression="pipe.p"),
-            _vi_reference(expression="pipe.p"),
+            decode_reference(_vi_reference(expression="pipe.p")),
         )
         assert not comp.passed
 
@@ -2222,7 +2238,7 @@ class TestVariableIdentity:
         comp = compare_test(
             _vi_test(metric_tree_spec=spec),
             _vi_result(expression="b.Q"),
-            _vi_reference(expression="a.Q"),
+            decode_reference(_vi_reference(expression="a.Q")),
         )
         assert comp.passed and classify(comp) == PASS
         (warning,) = comp.warnings
@@ -2250,7 +2266,9 @@ class TestVariableIdentity:
             else _vi_reference(expression=stored)
         )
         comp = compare_test(
-            _vi_test(metric_tree_spec=spec), _vi_result(expression=measured), reference
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(expression=measured),
+            decode_reference(reference),
         )
         assert comp.passed and comp.warnings == []
 
@@ -2261,7 +2279,9 @@ class TestVariableIdentity:
             comp = compare_test(
                 _vi_test(x_expressions=["pipe.T[1]"]),
                 _vi_result(expression="pipe.T[1]"),
-                _vi_reference(name="pipe.T[1]", with_expression=False),
+                decode_reference(
+                    _vi_reference(name="pipe.T[1]", with_expression=False)
+                ),
             )
         assert not comp.passed
         assert any(STORED_HINT in record.getMessage() for record in caplog.records)
@@ -2273,7 +2293,7 @@ class TestVariableIdentity:
             comp = compare_test(
                 _vi_test(variable_overrides={"nowhere.near": {"tolerance": 0.5}}),
                 _vi_result(),
-                _vi_reference(),
+                decode_reference(_vi_reference()),
             )
         assert comp.passed
         (record,) = [
@@ -2292,7 +2312,7 @@ class TestVariableIdentity:
             compare_test(
                 _vi_test(variable_overrides={VI_EXPR: {"tolerance": 0.5}}),
                 _vi_result(),
-                _vi_reference(),
+                decode_reference(_vi_reference()),
             )
         (record,) = [
             r for r in caplog.records if "variable_overrides" in r.getMessage()
@@ -2311,7 +2331,7 @@ class TestVariableIdentity:
             compare_test(
                 _vi_test(variable_overrides={"in.the.spec": {}}),
                 _vi_result(),
-                reference,
+                decode_reference(reference),
             )
         (record,) = [
             r for r in caplog.records if "variable_overrides" in r.getMessage()
@@ -2325,7 +2345,9 @@ class TestVariableIdentity:
         reference["comparison"] = {"variable_overrides": {"nowhere": {}}}
         with caplog.at_level(logging.WARNING):
             compare_test(
-                _vi_test(variable_overrides={"nowhere": {}}), _vi_result(), reference
+                _vi_test(variable_overrides={"nowhere": {}}),
+                _vi_result(),
+                decode_reference(reference),
             )
         (record,) = [
             r for r in caplog.records if "variable_overrides" in r.getMessage()
@@ -2355,7 +2377,7 @@ class TestVariableIdentity:
         )
         test.variable_overrides = {"a": {"tolerance": 0.5}}
         with caplog.at_level(logging.WARNING):
-            compare_test(test, result, _vi_reference())
+            compare_test(test, result, decode_reference(_vi_reference()))
         (record,) = [
             r for r in caplog.records if "variable_overrides" in r.getMessage()
         ]
@@ -2368,7 +2390,7 @@ class TestVariableIdentity:
             comp = compare_test(
                 _vi_test(variable_overrides={VI_NAME: {"tolerance": 0.5}}),
                 _vi_result(),
-                _vi_reference(),
+                decode_reference(_vi_reference()),
             )
         assert comp.passed and comp.variables[0].tolerance_used == Sides(0.5, 0.5)
         assert not [r for r in caplog.records if "variable_overrides" in r.getMessage()]
@@ -2441,7 +2463,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
             comp = compare_test(
                 _vi_test(metric_tree_spec=spec, x_expressions=[WRAPPED_EXPR]),
                 _vi_result(expression=WRAPPED_EXPR),
-                self._wrapped_reference(stored),
+                decode_reference(self._wrapped_reference(stored)),
             )
         assert not comp.passed
         assert any(STORED_HINT in r.getMessage() for r in caplog.records)
@@ -2498,7 +2520,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
                     x_expressions=["pipe.T[1]"],
                 ),
                 result,
-                reference,
+                decode_reference(reference),
             )
         assert not any(HINT in r.getMessage() for r in caplog.records)
 
@@ -2507,14 +2529,14 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
         the same variable missing from the PRIMARY and from a soft_check is
         two baselines to rename it in, and one line naming only one of them
         leaves the other un-migrated with nothing said about it."""
-        from dstf.storage.baseline import Baseline
+        from conftest import series
 
         class _Store:
             folder = "Stub/linux"
 
             def get_soft_checks(self, model_id):
                 return {
-                    "fmpy": Baseline(
+                    "fmpy": series(
                         name="fmpy",
                         time=list(_VI_T),
                         variables=[
@@ -2549,7 +2571,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
             compare_test(
                 _vi_test(metric_tree_spec=spec, x_expressions=[WRAPPED_EXPR]),
                 _vi_result(expression=WRAPPED_EXPR),
-                self._wrapped_reference(),
+                decode_reference(self._wrapped_reference()),
                 store=_Store(),
             )
         hinted = [r.getMessage() for r in caplog.records if HINT in r.getMessage()]
@@ -2567,7 +2589,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
             compare_test(
                 _vi_test(metric_tree_spec=spec, x_expressions=[WRAPPED_EXPR]),
                 _vi_result(expression=WRAPPED_EXPR),
-                self._wrapped_reference(),
+                decode_reference(self._wrapped_reference()),
             )
         (hinted,) = [r.getMessage() for r in caplog.records if HINT in r.getMessage()]
         assert hinted.startswith("MyLib.Test: ")
@@ -2589,7 +2611,7 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
             comp = compare_test(
                 _vi_test(metric_tree_spec=spec, x_expressions=[WRAPPED_EXPR]),
                 _vi_result(expression=WRAPPED_EXPR),
-                self._wrapped_reference(),
+                decode_reference(self._wrapped_reference()),
             )
         hinted = [r for r in caplog.records if HINT in r.getMessage()]
         assert len(hinted) == 1
@@ -2652,7 +2674,7 @@ class TestTheExpressionRidesOnEveryComparison:
         comp = compare_test(
             _vi_test(metric_tree_spec=spec),
             _vi_result(),
-            {"test_id": "0001", "time": list(_VI_T), "variables": []},
+            decode_reference({"test_id": "0001", "time": list(_VI_T), "variables": []}),
         )
         vc = self._leaf(comp)
         assert not vc.passed
@@ -2663,7 +2685,9 @@ class TestTheExpressionRidesOnEveryComparison:
             {"metric": "nrmse", "variable": VI_NAME, "against": "nope"}
         )
         comp = compare_test(
-            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(),
+            decode_reference(_vi_reference()),
         )
         vc = self._leaf(comp)
         assert not vc.passed
@@ -2680,7 +2704,9 @@ class TestTheExpressionRidesOnEveryComparison:
             }
         )
         comp = compare_test(
-            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(),
+            decode_reference(_vi_reference()),
         )
         vc = self._leaf(comp)
         assert not vc.passed and vc.diagnostics.get("config_error")
@@ -2693,7 +2719,9 @@ class TestTheExpressionRidesOnEveryComparison:
         must carry the expression like every other one."""
         spec = parse_metric_tree({"metric": "range", "variable": VI_NAME})
         comp = compare_test(
-            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(),
+            decode_reference(_vi_reference()),
         )
         vc = self._leaf(comp)
         assert not vc.passed and vc.diagnostics.get("config_error")
@@ -2719,7 +2747,9 @@ class TestTheExpressionRidesOnEveryComparison:
         carry — the bare name is all the leaf has."""
         spec = parse_metric_tree({"metric": "nrmse", "variable": "not.there"})
         comp = compare_test(
-            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(),
+            decode_reference(_vi_reference()),
         )
         vc = self._leaf(comp)
         assert not vc.passed and (vc.name, vc.expression) == ("not.there", "")
@@ -2728,7 +2758,9 @@ class TestTheExpressionRidesOnEveryComparison:
         """Guards the post-loop stamping: the flat path appends one
         comparison per result variable and pairs them by position, so a
         rotation there puts every expression on the wrong variable."""
-        comp = compare_test(_vi_test(n_vars=2), _vi_two_result(), _vi_two_reference())
+        comp = compare_test(
+            _vi_test(n_vars=2), _vi_two_result(), decode_reference(_vi_two_reference())
+        )
         assert comp.passed
         assert [(vc.name, vc.expression) for vc in comp.variables] == [
             (VI_NAME, VI_EXPR),
@@ -2742,7 +2774,9 @@ class TestTheExpressionCheckPairsByName:
         re-accept after an `x={...}` edit can reorder them. Pairing the
         check by position then reports every variable as changed."""
         comp = compare_test(
-            _vi_test(n_vars=2), _vi_two_result(), _vi_two_reference(order=(1, 0))
+            _vi_test(n_vars=2),
+            _vi_two_result(),
+            decode_reference(_vi_two_reference(order=(1, 0))),
         )
         assert comp.passed and comp.warnings == []
 
@@ -2754,21 +2788,21 @@ class TestTheExpressionCheckPairsByName:
         reference["variables"].append(
             {"index": 2, "name": VI_NAME, "expression": "STALE", "values": list(_VI_T)}
         )
-        comp = compare_test(_vi_test(), _vi_result(), reference)
+        comp = compare_test(_vi_test(), _vi_result(), decode_reference(reference))
         assert comp.warnings == []
 
     def test_a_named_baselines_expression_is_checked_once_per_variable(self):
         """`against: fmpy` scores a leaf on another baseline — with its own
         recorded expression, which the primary's check never reads. Two
         leaves on the same variable and baseline still say it once."""
-        from dstf.storage.baseline import Baseline
+        from conftest import series
 
         class _Store:
             folder = "Stub/linux"
 
             def get_soft_checks(self, model_id):
                 return {
-                    "fmpy": Baseline(
+                    "fmpy": series(
                         name="fmpy",
                         time=list(_VI_T),
                         variables=[
@@ -2814,7 +2848,7 @@ class TestTheExpressionCheckPairsByName:
         comp = compare_test(
             _vi_test(metric_tree_spec=spec),
             _vi_result(),
-            _vi_reference(),
+            decode_reference(_vi_reference()),
             store=_Store(),
         )
         assert comp.passed
@@ -2828,14 +2862,14 @@ class TestTheExpressionCheckPairsByName:
         it, so a difference between those two expressions is not a finding
         about this run: it said `unitTests.x[2]` changed while the only leaf
         naming `fmpy` scored `unitTests.x[1]`."""
-        from dstf.storage.baseline import Baseline
+        from conftest import series
 
         class _Store:
             folder = "Stub/linux"
 
             def get_soft_checks(self, model_id):
                 return {
-                    "fmpy": Baseline(
+                    "fmpy": series(
                         name="fmpy",
                         time=list(_VI_T),
                         variables=[
@@ -2862,7 +2896,7 @@ class TestTheExpressionCheckPairsByName:
         comp = compare_test(
             _vi_test(n_vars=2, metric_tree_spec=spec),
             _vi_two_result(),
-            _vi_two_reference(),
+            decode_reference(_vi_two_reference()),
             store=_Store(),
         )
         assert [w.field for w in comp.warnings] == [
@@ -2876,14 +2910,14 @@ class TestTheExpressionCheckPairsByName:
         share here — into the set of quantities scored against `fmpy`, and
         the soft_check's entry for it was then compared with an expression
         nothing had measured against that baseline."""
-        from dstf.storage.baseline import Baseline
+        from conftest import series
 
         class _Store:
             folder = "Stub/linux"
 
             def get_soft_checks(self, model_id):
                 return {
-                    "fmpy": Baseline(
+                    "fmpy": series(
                         name="fmpy",
                         time=list(_VI_T),
                         variables=[
@@ -2921,7 +2955,10 @@ class TestTheExpressionCheckPairsByName:
         result = _vi_result()
         result.statistics = {"CPUtime": 1.0}
         comp = compare_test(
-            _vi_test(metric_tree_spec=spec), result, _vi_reference(), store=_Store()
+            _vi_test(metric_tree_spec=spec),
+            result,
+            decode_reference(_vi_reference()),
+            store=_Store(),
         )
         assert comp.warnings == []
 
@@ -2937,14 +2974,16 @@ class TestPairingIsByNameOnly:
             success=True,
             variables=[VariableResult(index=1, time=_VI_T, values=_VI_T, name="")],
         )
-        comp = compare_test(_vi_test(), result, _vi_reference())
+        comp = compare_test(_vi_test(), result, decode_reference(_vi_reference()))
         assert comp.variables == []
 
     def test_a_baseline_holding_the_name_at_another_index_still_scores(self):
         """Pairing is by name, so a reordered baseline scores as it did
         before the reorder."""
         comp = compare_test(
-            _vi_test(n_vars=2), _vi_two_result(), _vi_two_reference(order=(1, 0))
+            _vi_test(n_vars=2),
+            _vi_two_result(),
+            decode_reference(_vi_two_reference(order=(1, 0))),
         )
         assert comp.passed
         assert [vc.nrmse for vc in comp.variables] == [0.0, 0.0]
@@ -2957,7 +2996,7 @@ class TestTheMigrationHintIsSharedByBothPaths:
         return compare_test(
             _vi_test(x_expressions=["pipe.T[1]"], **kw),
             _vi_result(expression="pipe.T[1]"),
-            _vi_reference(name="pipe.T[1]", with_expression=False),
+            decode_reference(_vi_reference(name="pipe.T[1]", with_expression=False)),
         )
 
     def test_the_tree_path_says_the_name_to_store(self, caplog):
@@ -2983,7 +3022,7 @@ class TestTheMigrationHintIsSharedByBothPaths:
             comp = compare_test(
                 _vi_test(metric_tree_spec=spec),
                 _vi_result(),
-                _vi_reference(name="somewhere.else"),
+                decode_reference(_vi_reference(name="somewhere.else")),
             )
         assert not comp.passed
         messages = [record.getMessage() for record in caplog.records] + [
@@ -3031,7 +3070,10 @@ class TestTheFlatPathScoresWhatTheTestTracks:
     def test_an_untracked_extra_is_not_scored(self):
         test = _make_test()  # tracks ["x"]
         comp = compare_test(
-            test, _tracked_result("x", "w"), _tracked_reference("x"), 1e-4
+            test,
+            _tracked_result("x", "w"),
+            decode_reference(_tracked_reference("x")),
+            1e-4,
         )
         assert [vc.name for vc in comp.variables] == ["x"]
         assert comp.passed
@@ -3049,7 +3091,10 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         )
         names = ("unitTests.x[1]", "pipe.T[1]", "pipe.T[2]", "w")
         comp = compare_test(
-            test, _tracked_result(*names), _tracked_reference(*names[:3]), 1e-4
+            test,
+            _tracked_result(*names),
+            decode_reference(_tracked_reference(*names[:3])),
+            1e-4,
         )
         assert [vc.name for vc in comp.variables] == list(names[:3])
         assert comp.passed
@@ -3058,7 +3103,10 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         test = _make_test()
         test.variable_patterns = ["*"]
         comp = compare_test(
-            test, _tracked_result("x", "w"), _tracked_reference("x", "w"), 1e-4
+            test,
+            _tracked_result("x", "w"),
+            decode_reference(_tracked_reference("x", "w")),
+            1e-4,
         )
         assert [vc.name for vc in comp.variables] == ["x", "w"]
 
@@ -3076,7 +3124,7 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         comp = compare_test(
             test,
             _tracked_result("pipe.T1", "pipe.T12"),
-            _tracked_reference("pipe.T1"),
+            decode_reference(_tracked_reference("pipe.T1")),
             1e-4,
         )
         assert [vc.name for vc in comp.variables] == ["pipe.T1"]
@@ -3095,7 +3143,10 @@ def test_a_tree_warns_only_of_the_tracked_variables_it_does_not_score():
         {"combinator": "and", "children": [{"metric": "nrmse", "variable": "x"}]}
     )
     comp = compare_test(
-        test, _tracked_result("x", "y", "w"), _tracked_reference("x", "y"), 1e-4
+        test,
+        _tracked_result("x", "y", "w"),
+        decode_reference(_tracked_reference("x", "y")),
+        1e-4,
     )
     (warning,) = comp.warnings
     assert warning.text == "Tracked but not scored by any criterion: y"
@@ -3168,15 +3219,18 @@ def _sides_compare(
     )
     reference = {
         "test_id": "0001",
+        "time": time.tolist(),
         "variables": [
-            {"index": i + 1, "name": n, "time": time.tolist(), "values": ref.tolist()}
+            {"index": i + 1, "name": n, "values": ref.tolist()}
             for i, n in enumerate(names)
         ],
     }
     if ref_comparison is not None:
         reference["comparison"] = ref_comparison
     if test is not None:
-        return compare_test(test, result, reference, default_tolerance=1e-4)
+        return compare_test(
+            test, result, decode_reference(reference), default_tolerance=1e-4
+        )
     test = _make_test(comparison_tolerance=comparison_tolerance)
     test.variable_patterns = names
 
@@ -3193,7 +3247,9 @@ def _sides_compare(
         if extra is not None:
             tree = {"combinator": "and", "children": [tree, {**extra, "variable": "y"}]}
         test.metric_tree_spec = parse_metric_tree(tree)
-    return compare_test(test, result, reference, default_tolerance=1e-4)
+    return compare_test(
+        test, result, decode_reference(reference), default_tolerance=1e-4
+    )
 
 
 def _leaves(result):
@@ -3414,15 +3470,16 @@ def test_flat_a_baseline_free_modes_compare_time_error_is_a_config_error():
     )
     reference = {
         "test_id": "0001",
-        "variables": [
-            {"index": 2, "name": "y", "time": time.tolist(), "values": act.tolist()}
-        ],
+        "time": time.tolist(),
+        "variables": [{"index": 2, "name": "y", "values": act.tolist()}],
     }
     test = _make_test(
         variable_overrides={"x": {"mode": "event-timing", "events": [{"time": "a"}]}}
     )
     test.variable_patterns = ["x", "y"]
-    x, y = compare_test(test, result, reference, default_tolerance=0.5).variables
+    x, y = compare_test(
+        test, result, decode_reference(reference), default_tolerance=0.5
+    ).variables
     assert x.diagnostics == {
         "error": "could not convert string to float: 'a'",
         "config_error": True,
@@ -3877,7 +3934,10 @@ class TestABaseToleranceIsANumber:
             variables=[VariableResult(index=1, name="x", time=time, values=act)],
         )
         comp = compare_test(
-            test, result, {"test_id": "0001"}, default_tolerance=float("nan")
+            test,
+            result,
+            decode_reference({"test_id": "0001"}),
+            default_tolerance=float("nan"),
         )
         self._refused(comp, "the project's tolerance", float("nan"))
 
@@ -3898,10 +3958,10 @@ class TestABaseToleranceIsANumber:
         test = _make_test(comparison_tolerance="abc")
         test.simulate_only = True
         result = TestResult(model_id="Test.Model", success=True, variables=[])
-        comp = compare_test(test, result, {"test_id": "0001"})
+        comp = compare_test(test, result, decode_reference({"test_id": "0001"}))
         self._refused(comp, self.SPEC, "abc")
         test.comparison_tolerance = 0.5
-        assert compare_test(test, result, {"test_id": "0001"}).passed
+        assert compare_test(test, result, decode_reference({"test_id": "0001"})).passed
 
     def test_a_failed_simulation_and_no_result_keep_their_own_status(self):
         """Nothing ran, so nothing was refused: SIM_FAIL and NOT RUN say what

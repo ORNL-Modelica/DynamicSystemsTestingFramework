@@ -21,6 +21,7 @@ from dstf.reporting.rows import (
     row_from_status,
     summary_fields,
 )
+from dstf.storage.baseline_codec import decode_reference
 
 
 def _var(name, *, passed=True, nrmse=1e-6):
@@ -195,7 +196,7 @@ def test_the_criteria_column_counts_criteria_not_variables():
         "time": list(t),
         "variables": [{"name": n, "values": list(t)} for n in names],
     }
-    comp = compare_test(test, result, reference)
+    comp = compare_test(test, result, decode_reference(reference))
     assert comp.passed and len({v.name for v in comp.variables}) == 4
     s = summary_fields(comp)
     assert (s["n_vars"], s["n_vars_passed"]) == (6, 5)

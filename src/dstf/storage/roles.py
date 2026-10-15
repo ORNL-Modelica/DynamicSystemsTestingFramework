@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from .baseline import PRIMARY_BASELINE, Baseline
+from .baseline_codec import read_series, write_soft_check
 from .ref_index import _atomic_write_text
 
 logger = logging.getLogger(__name__)
@@ -93,44 +94,6 @@ def _frozen_data_basename(name: str, fmt: str) -> str:
     if _COMPANION_FORMAT_EXT.get(fmt, ".json") == ".json":
         return f"{name}{_FROZEN_JSON_DATA_SUFFIX}"
     return f"{name}{_COMPANION_FORMAT_EXT[fmt]}"
-
-
-#: ``accept``'s key order for a variable entry
-#: (:meth:`ReferenceStore.accept`). Any other key an entry carries follows,
-#: in its own order.
-_ENTRY_KEY_ORDER = ("index", "name", "expression", "values")
-
-
-def _with_expression(variable: dict) -> dict:
-    """A COPY of a variable entry as this store writes one: ``expression``
-    present, and ``accept``'s key order — index, name, expression, values.
-
-    ``add_soft_check`` is handed entries someone else produced —
-    ``soft-check add`` reads a file that may predate the key, and a
-    cross-backend chain builds its own. A writer never leaves the field out
-    (an entry without it is one no writer of this version made), so the
-    missing key becomes the empty text.
-
-    The order is imposed rather than patched in beside whatever ``name``
-    it found: an entry that already carried ``expression``, or one whose
-    ``name`` came after its ``values``, kept its own order and two
-    soft_check files written by the same command read differently. The
-    input is never mutated — the caller's entry may be a live result's.
-
-    A null ``expression`` becomes the empty text, like a missing one: JSON
-    someone else wrote may hold it, and every reader of this field takes
-    ``""`` for "no expression" (``display_label``, the soft check, the
-    migrate hint) — ``None`` would be a third value none of them tests for.
-    """
-    out: dict = {
-        key: (variable.get(key) or "") if key == "expression" else variable[key]
-        for key in _ENTRY_KEY_ORDER
-        if key in variable or key == "expression"
-    }
-    for key, value in variable.items():
-        if key not in out:
-            out[key] = value
-    return out
 
 
 @dataclass(frozen=True)
@@ -233,9 +196,6 @@ class _RolesMixin:
         Empty dict if the model has no primary baseline or no
         soft_checks are registered.
         """
-        # Late: `reference_store` builds its class on this mixin.
-        from .reference_store import read_reference_file
-
         sc_dir = self._soft_check_dir_for(model_id)
         if sc_dir is None or not sc_dir.is_dir():
             return {}
@@ -243,39 +203,24 @@ class _RolesMixin:
         for sc_file in sorted(sc_dir.glob("*.json")):
             name = sc_file.stem
             try:
-                # The one reader of a reference-shape file: a soft check is
-                # one, and a `single` file's numbers are its run's only
-                # through it.
-                entry = read_reference_file(sc_file)
+                # The codec reads it: a soft check is reference-shape, and a
+                # `single` file's numbers are its run's only through it.
+                out[name] = read_series(sc_file, name)
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning("Skipping unreadable soft_check %s: %s", sc_file, e)
                 continue
-            out[name] = Baseline(
-                name=name,
-                time=entry.get("time", []),
-                variables=entry.get("variables", []),
-                diagnostics=entry.get("diagnostics", []),
-                simulation=entry.get("simulation", {}),
-                comparison=entry.get("comparison", {}),
-                statistics=entry.get("statistics", {}),
-                provenance=entry.get("provenance", {}),
-            )
         return out
 
     def add_soft_check(
         self,
         model_id: str,
         name: str,
-        time: list[float],
-        variables: list[dict],
+        baseline: Baseline,
         *,
-        diagnostics: list[dict] | None = None,
-        provenance: dict | None = None,
-        simulation: dict | None = None,
-        statistics: dict | None = None,
         overwrite: bool = True,
     ) -> bool:
-        """Register a soft_check baseline for a model.
+        """Register ``baseline`` as the soft_check ``name`` of a model (the
+        caller names the baseline ``name``).
 
         The model must already have a primary baseline on disk.
         Name collision with an existing companion is rejected.
@@ -309,22 +254,9 @@ class _RolesMixin:
         if not overwrite and sc_file.exists():
             return False
 
-        entry: dict[str, Any] = {
-            "time": list(time),
-            "variables": [_with_expression(v) for v in variables],
-        }
-        if diagnostics:
-            entry["diagnostics"] = list(diagnostics)
-        if simulation:
-            entry["simulation"] = dict(simulation)
-        if statistics:
-            entry["statistics"] = dict(statistics)
-        if provenance:
-            entry["provenance"] = dict(provenance)
-
         sc_dir.mkdir(parents=True, exist_ok=True)
         # review 2026-07-06 (finding 31): atomic — no partial soft_check files.
-        _atomic_write_text(sc_file, json.dumps(entry, indent=2) + "\n")
+        write_soft_check(sc_file, baseline)
         return True
 
     def remove_soft_check(self, model_id: str, name: str) -> bool:

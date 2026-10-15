@@ -16,6 +16,7 @@ pytest.importorskip("nicegui")
 from nicegui import ui  # noqa: E402
 
 from capability_host import host  # noqa: E402
+from conftest import series
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.accept import Accept  # noqa: E402
@@ -905,7 +906,13 @@ def _session_with_soft_check(tmp_path, *ops):
     s.open(cfg, work_dir=work)
     t = [i / 4 for i in range(5)]
     s.project.store.add_soft_check(
-        A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
+        A,
+        "om_cross",
+        series(
+            "om_cross",
+            time=list(t),
+            variables=[{"index": 1, "name": "x", "values": list(t)}],
+        ),
     )
     s._reload_results()
     if ops:

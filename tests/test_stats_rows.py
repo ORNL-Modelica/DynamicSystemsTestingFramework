@@ -11,6 +11,7 @@ import numpy as np
 from dstf.backends.types import VariableResult
 from dstf.reporting.context_builder import _build_statistics_sections
 from dstf.reporting.stats_rows import changed, statistics_rows
+from dstf.storage.baseline import DiagnosticSummary
 
 RUN = {
     "translation": {
@@ -252,7 +253,7 @@ def test_an_extra_diagnostic_path_no_row_holds_reads_the_diagnostics():
         {},
         {},
         run_diagnostics=[cpu],
-        baseline_diagnostics=[{"name": "CPUtime", "final": 0.8}],
+        baseline_diagnostics=[DiagnosticSummary(name="CPUtime", final=0.8)],
         extra_paths=["CPUtime.final"],
     )
     (row,) = rows

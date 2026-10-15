@@ -7,6 +7,7 @@ import numpy as np
 from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_test
 from dstf.discovery.test_registry import TestModel
+from dstf.storage.baseline_codec import decode_reference
 
 
 def _make_test(simulate_only: bool) -> TestModel:
@@ -44,7 +45,9 @@ class TestSimulateOnly:
         # Reference is intentionally garbage — simulate_only should ignore it.
         garbage_ref = {"test_id": "0001", "variables": [{"NONSENSE": True}]}
         comp = compare_test(
-            _make_test(simulate_only=True), _make_successful_result(), garbage_ref
+            _make_test(simulate_only=True),
+            _make_successful_result(),
+            decode_reference(garbage_ref),
         )
         assert comp.passed is True
         assert comp.variables == []
@@ -53,7 +56,9 @@ class TestSimulateOnly:
 
     def test_fails_when_sim_fails(self):
         # Same path as any failed sim — error_message propagates, passed=False.
-        comp = compare_test(_make_test(simulate_only=True), _make_failed_result(), {})
+        comp = compare_test(
+            _make_test(simulate_only=True), _make_failed_result(), decode_reference({})
+        )
         assert comp.passed is False
         assert comp.sim_success is False
         assert "boom" in (comp.error_message or "")
@@ -65,7 +70,7 @@ class TestSimulateOnly:
         comp = compare_test(
             _make_test(simulate_only=False),
             _make_successful_result(),
-            {"test_id": "0001", "variables": []},
+            decode_reference({"test_id": "0001", "variables": []}),
         )
         # Without simulate_only, the comparator falls into per-variable mode
         # and the missing ref-variable yields a failed VariableComparison.
@@ -163,11 +168,20 @@ def test_the_report_page_names_what_its_two_counts_count(tmp_path):
     from dstf.reporting.context_builder import _build_ref_info
 
     def rows(comparisons, ref_data) -> dict:
-        info = _build_ref_info(comparisons, ref_data, None, None)
+        ref = None if ref_data is None else decode_reference(ref_data)
+        info = _build_ref_info(comparisons, ref, None, None)
         return {row["label"]: row["value"] for row in info}
 
-    three, reference = [object()] * 3, {"n_vars": 2}
-    assert rows(three, reference) == {"Criteria": "3", "Reference Variables": "2"}
+    three = [object()] * 3
+    reference = {
+        "status": "active",
+        "variables": [{"name": "a", "values": []}, {"name": "b", "values": []}],
+    }
+    assert rows(three, reference) == {
+        "Status": "active",
+        "Criteria": "3",
+        "Reference Variables": "2",
+    }
     assert rows(three, None) == {"Criteria": "3"}
-    assert rows([], reference) == {"Reference Variables": "2"}
-    assert rows([], {}) == {} and rows([], None) == {}
+    assert rows([], reference) == {"Status": "active", "Reference Variables": "2"}
+    assert rows([], None) == {}

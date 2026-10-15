@@ -27,6 +27,7 @@ from dstf.comparison.tree_spec import (
     spec_to_view,
     synthesize_implicit_tree,
 )
+from dstf.storage.baseline import StoredVariable
 
 
 def _var(time, values, index=1, name="x"):
@@ -42,7 +43,7 @@ def _baseline(time, values, name="primary"):
     return BaselineView(
         name=name,
         ref_vars_by_name={
-            "x": {"index": 1, "name": "x", "values": list(values)},
+            "x": StoredVariable(index=1, name="x", expression="", values=list(values)),
         },
         shared_ref_time=np.asarray(time, dtype=float),
     )

@@ -436,7 +436,7 @@ def test_review_accepting_added_variables_keeps_the_runs_statistics(
     stored = store.get_reference(SIMPLE_RAMP)
     assert stored is not None
     kept = _kept(config, _keys(config)[SIMPLE_RAMP])
-    assert stored["statistics"]["timing"] == {
+    assert stored.baseline.statistics["timing"] == {
         "sim_wall": round(kept["sim_wall"], 2),
         "total_wall": round(kept["elapsed"], 2),
     }

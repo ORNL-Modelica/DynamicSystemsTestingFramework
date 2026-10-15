@@ -48,7 +48,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      sides.py (Sides — the ONE place a tolerance's number-or-pair is read or written),
 │   │                             #      snap.py (the one snap rule: a value the pointer placed is written at a readable step, D149),
 │   │                             #      strict_keys.py (a key nothing reads is an error that names it — the ONE check, from each metric's config)
-│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
+│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path),
+│   │                             #      baseline_codec (THE reader/writer of a baseline file; the rest sees storage.baseline types)
 │   ├── authoring/                # Session, capability contract, spec document (its pending ops, counted by act: edit_counts, D155) — the tool's core;
 │   │                             #      layout.py (the plot extras' edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),

@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from conftest import make_test_model
+from conftest import make_test_model, series
 from dstf.authoring.capabilities import Artifact, OpenProject, Patch, StoreWrite
 from dstf.authoring.session import (
     NO_TREE,
@@ -2393,12 +2393,17 @@ class TestSessionView:
             pv.tests = ()
         with pytest.raises(TypeError):
             pv.results[A] = None
-        assert pv.reference(A) is not None and pv.reference(B) is None
         assert pv.baseline_names(A) == ("primary",)
         assert pv.baseline_names(B) == ()
         t = [i / 4 for i in range(5)]
         session.project.store.add_soft_check(
-            A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
+            A,
+            "om_cross",
+            series(
+                "om_cross",
+                time=list(t),
+                variables=[{"index": 1, "name": "x", "values": list(t)}],
+            ),
         )
         assert pv.baseline_names(A) == ("primary", "om_cross")
         # Each baseline's role, as `stage` validates a tree against it: what
@@ -4903,7 +4908,13 @@ class TestABaselineThisFolderDoesNotHold:
     def test_a_stored_soft_check_is_no_note(self, session):
         t = [i / 4 for i in range(5)]
         session.project.store.add_soft_check(
-            A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
+            A,
+            "om_cross",
+            series(
+                "om_cross",
+                time=list(t),
+                variables=[{"index": 1, "name": "x", "values": list(t)}],
+            ),
         )
         session.stage([PatchOp(A, "add", "/metrics", self._warned("om_cross"))])
         assert session.not_stored_notes(A) == []

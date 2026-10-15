@@ -8,6 +8,8 @@ import numpy as np
 import pytest
 
 from dstf.discovery.test_registry import TestModel
+from dstf.storage.baseline import Baseline
+from dstf.storage.baseline_codec import decode_series
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -41,6 +43,14 @@ def make_test_model(model_id: str = "Lib.T", **kw) -> TestModel:
     )
     defaults.update(kw)
     return TestModel(**defaults)
+
+
+def series(name: str, time: list, variables: list[dict], **fields) -> Baseline:
+    """A named baseline from the ON-DISK shape — ``variables`` as the file's
+    ``{index, name, expression, values}`` entries, any other top-level field
+    (``provenance``, ``simulation``, ...) by keyword — read by the codec,
+    as a soft check's file is."""
+    return decode_series({"time": time, "variables": variables, **fields}, name)
 
 
 def python_example_copy(tmp_path, *, baselines: bool = True):

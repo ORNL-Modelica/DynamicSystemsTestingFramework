@@ -125,7 +125,8 @@ src/dstf/
 │   ├── snap.py               # snapped — the one snap rule for a value the pointer placed (D149)
 │   └── validator.py          # Baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped)
 ├── storage/
-│   ├── baseline.py           # Baseline value type + PRIMARY_BASELINE
+│   ├── baseline.py           # The stored-baseline types: ReferenceFile, Baseline, StoredVariable, DiagnosticSummary, Sampling
+│   ├── baseline_codec.py     # THE reader and writer of a baseline file (primary, soft check, JSON companion); number precision
 │   ├── ref_index.py          # RefIndex + atomic text writes
 │   ├── roles.py              # soft_check/companion CRUD mixin
 │   ├── accept.py             # accept_run_results — the one accept path, with the aborted-run refusal
@@ -320,13 +321,20 @@ reporters render TestComparison → console / JUnit / HTML / plots
 
 ## Reference File Structure
 
-`<reference_root>/<Backend>/<os>/ref_0001.json` — per backend+OS, self-contained:
+`<reference_root>/<Backend>/<os>/ref_0001.json` — per backend+OS, self-contained.
+Every baseline file — a primary, a soft check, a JSON companion's data — is
+read and written by ONE module, `storage/baseline_codec.py`; the rest of the
+code sees the `storage/baseline.py` types (`ReferenceFile`, `Baseline`,
+`StoredVariable`, `DiagnosticSummary`, `Sampling`), never the parsed dict.
+Decode -> encode of an unchanged file is byte-identical. The keys, in the
+order the codec writes them (optional ones only when present):
 ```json
 {
   "model_id": "...", "test_id": "0001",
   "status": "active",
   "date_added": "2026-01-15T...", "last_updated": "2026-04-08T...",
   "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl", "number_of_intervals": 500, "output_interval": null},
+  "sampling": {"setting": "all", "source_points": 501, "stored_points": 501, "precision": "single"},
   "comparison": {"tolerance": 0.01, "variable_overrides": {"pipe.T[1]": {"tolerance": 0.1}}},
   "statistics": {
     "translation": {
@@ -338,14 +346,21 @@ reporters render TestComparison → console / JUnit / HTML / plots
     "CPUtime": 12.3, "EventCounter": 42
   },
   "diagnostics": [
-    {"name": "CPUtime", "values": [...]},
-    {"name": "EventCounter", "values": [...]}
+    {"name": "CPUtime", "final": 12.3, "min": 0.0, "max": 12.3},
+    {"name": "EventCounter", "final": 42.0, "min": 0.0, "max": 42.0}
   ],
   "n_vars": 3,
   "time": [0.0, 0.1, ...],
   "variables": [{"index": 1, "name": "pipe.T[1]", "expression": "", "values": [...]}]
 }
 ```
+
+`sampling` says what accept did to the run's rows (D153) and the precision
+the arrays are read back through: a `"single"` file's numbers are written with
+9 significant digits and read back through float32, a `"double"` file's with
+17 — the run's own numbers either way. A diagnostic is stored as a summary
+(`final`, `min`, `max`), never a trajectory; an old `{name, values}` entry is
+summarized by the codec on read.
 
 A variable entry is `{"index", "name", "expression", "values"}` in that order
 (D132). `name` is the name the RESULT FILE gives the variable —
@@ -399,14 +414,15 @@ A soft_check file holds the same per-baseline fields plus ``provenance``:
 }
 ```
 
-Readers use the ``Baseline`` view: ``ReferenceStore.get_baselines(model_id)``
-returns ``primary`` (synthesized from the flat fields, provenance filled in
-from ``date_added`` / ``last_updated``) merged with every soft_check.
-Companions are excluded — they cannot be scored against.
+Readers see ``Baseline``s: ``ReferenceStore.get_reference(model_id)`` is the
+file's ``ReferenceFile``, whose ``baseline`` is the ``primary``;
+``get_soft_checks(model_id)`` gives every soft_check, and the comparator scores
+a tree against the two together. Companions are excluded — they cannot be
+scored against.
 
 Separate files mean accepting fresh primary results can never clobber a named
-baseline. A top-level ``baselines`` key left in an old ref file is ignored with
-a warning and dropped on the next accept.
+baseline. A top-level ``baselines`` key left in an old ref file is not read
+and is dropped on the next accept.
 
 The three baseline roles serve three workflows:
 
@@ -418,7 +434,8 @@ The three baseline roles serve three workflows:
   registered as soft_checks under different names, each targetable
   by its own leaf.
 
-See ``src/dstf/storage/baseline.py`` for the ``Baseline`` dataclass and
+See ``src/dstf/storage/baseline.py`` for the types, ``baseline_codec.py`` for
+the file format, and
 ``src/dstf/storage/roles.py`` for the role CRUD. The comparator threads soft_checks into the tree evaluator and
 the reporter renders per-leaf `against=` provenance — both shipped in Phase 4 /
 D66.

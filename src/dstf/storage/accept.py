@@ -14,6 +14,7 @@ from ..comparison.comparator import (
     refused_base_tolerance,
 )
 from ..discovery.test_registry import TestModel
+from .baseline import ReferenceFile
 from .batch_manifest import unfinished_run_models
 from .ref_index import RefIndex
 from .reference_store import ReferenceStore
@@ -38,9 +39,9 @@ def large_baseline_warning(store: ReferenceStore, model_id: str) -> str | None:
         return None
     if size <= LARGE_BASELINE_BYTES:
         return None
-    reference = store.get_reference(model_id) or {}
-    points = len(reference.get("time", []))
-    n_vars = len(reference.get("variables", []))
+    reference = store.get_reference(model_id)
+    points = len(reference.baseline.time) if reference is not None else 0
+    n_vars = len(reference.baseline.variables) if reference is not None else 0
     return (
         f"{ref_file.name} ({model_id}) is {size / 1e6:.1f} MB ({points:,} points "
         f"× {n_vars:,} variable{'' if n_vars == 1 else 's'}) — set "
@@ -73,8 +74,8 @@ def simulate_only_note(model_ids: list[str]) -> str | None:
     return f"Simulate-only, nothing to store: {_named(model_ids)}"
 
 
-def _variable_names(reference: dict | None) -> list[str]:
-    return [v.get("name") or "" for v in (reference or {}).get("variables", [])]
+def _variable_names(reference: ReferenceFile | None) -> list[str]:
+    return reference.baseline.names() if reference is not None else []
 
 
 def lost_variables_warnings(

@@ -26,6 +26,7 @@ from dstf.comparison.tree_eval import (
     evaluate_spec,
 )
 from dstf.comparison.tree_spec import parse_metric_tree
+from dstf.storage.baseline import DiagnosticSummary, StoredVariable
 
 SEEDED = ["range", "tube", "scalar", "dominant-frequency"]
 
@@ -47,13 +48,11 @@ def _score(leaf: dict, act=(T, V), ref=(T, V)):
             PRIMARY_BASELINE: BaselineView(
                 name=PRIMARY_BASELINE,
                 ref_vars_by_name={
-                    "x": {
-                        "index": 1,
-                        "name": "x",
-                        "time": rt.tolist(),
-                        "values": rv.tolist(),
-                    }
+                    "x": StoredVariable(
+                        index=1, name="x", expression="", values=rv.tolist()
+                    )
                 },
+                shared_ref_time=np.asarray(rt),
             )
         },
         base_tolerance=1e-4,
@@ -425,9 +424,9 @@ def test_a_diagnostic_leaf_parses_and_scores_its_own_data():
     base = BaselineView(
         name=PRIMARY_BASELINE,
         ref_vars_by_name={},
-        shared_ref_time=None,
+        shared_ref_time=np.array([]),
         statistics={},
-        diagnostics=[{"name": "EventCounter", "final": 5.0}],
+        diagnostics=[DiagnosticSummary(name="EventCounter", final=5.0)],
     )
     got = evaluate_spec(
         spec,
