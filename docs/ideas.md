@@ -2078,3 +2078,10 @@ planning.
   tool side by side, before anything is planned. (A reading, not the
   owner's words: the prototype is the editable report page from before
   editing moved into `dstf author`, D125.) Grill before planning.
+
+**The run-a-suite function scores and writes `verdicts.json` (owner,
+2026-10-14).** `dstf.pipeline.run_pipeline` is the documented Python way to
+run a suite, but it only simulates: scoring and `verdicts.json` happen in
+`dstf run`. The owner ruled that a script reads results as files, so the
+public function should do what `dstf run` does and write the same
+`verdicts.json`. Agreed for after 1.1.0 (a new behaviour, not a fix).
