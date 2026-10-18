@@ -2140,3 +2140,11 @@ data loader); the honest value there is `null`. Cheaper half-measures to
 weigh when this comes back: the library's declared `version` annotation; a
 content hash of only the files a test loaded (`discovery/library_state.py`
 already stamps source files per queue click). Grill before planning.
+
+**Dymola `--batch` records no library versions (owner, 2026-10-18; noted,
+not scheduled).** Provenance (1.2) stores each baseline's `RunMetadata`. The
+batch `.mos` lane has never collected `library_versions`, so a baseline
+accepted from `dstf run --batch` stores `library_versions: null` where the
+default persistent lane stores `{"Modelica": "4.1.0", ...}`. Filling it means
+the `.mos` script writing the loaded libraries' `version` annotations
+somewhere the backend reads back.
