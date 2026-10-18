@@ -2186,4 +2186,10 @@ session should cover:
   bugs over the core modules;
 - what a fast tier for every push vs a full tier would look like.
 
+First measurement (2026-10-18, CI's marker selection run serially on this
+machine, 39 min, 8,059 passed): `tests/test_test_page.py` alone is 1,701 s
+of the 2,149 s spent in tests over 0.5 s — 489 of its 514 tests at a median
+3.4 s each, all in the test body (not fixtures). Every other file is under
+90 s. The Test page's tests are where the session starts.
+
 Measure before proposing; the owner wants an in-depth investigation first.
