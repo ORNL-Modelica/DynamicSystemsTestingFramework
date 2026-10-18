@@ -561,7 +561,9 @@ class SimulationPool:
                 run_result = dataclasses.replace(
                     run_result, cancelled=True, error_message="Cancelled"
                 )
-            assert item.started_at is not None  # stamped by `_take`
+            assert item.started_at is not None, (
+                f"pool: {item.model_id} runs with no start stamped (`_take` stamps it)"
+            )
             result = self.path.end(item.test, test_key, run_result, item.started_at)
         except Exception as exc:
             logger.exception("pool: running %s raised", item.model_id)

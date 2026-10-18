@@ -1718,13 +1718,14 @@ class PersistentBackendBase(Backend):
         get up to :attr:`max_restarts_per_worker` restart attempts; on
         exhaustion the in-flight test gets a synthetic failure result.
 
-        *manifest* receives each verdict as it lands — this loop is the one
-        place every persistent result (real, restart-exhausted, drained)
-        passes through, and a Ctrl-C here would otherwise leave the run's
-        outcomes unrecorded. Each is recorded with *progress*'s metadata —
-        the run's reporter (``run_tests`` built it in ``_prepare_run``), read
-        per result so a version a worker named late is in it — and ends its
-        dashboard row there.
+        *manifest* receives each verdict as it lands — every result of a run
+        that started a worker (real, restart-exhausted, drained) passes
+        through this loop, and a Ctrl-C here would otherwise leave the run's
+        outcomes unrecorded. (A run no worker started never reaches it:
+        ``run_tests`` records those failures itself.) Each is recorded with
+        *progress*'s metadata — the run's reporter (``run_tests`` built it
+        in ``_prepare_run``), read per result so a version a worker named
+        late is in it — and ends its dashboard row there.
         """
         work_queue: queue.Queue[tuple | None] = queue.Queue()
         for item in test_items:

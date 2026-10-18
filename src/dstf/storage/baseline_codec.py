@@ -81,12 +81,13 @@ def unread_variable_keys(data: dict) -> dict[str, list[str]]:
     is not one of `VARIABLE_KEYS` — which decoding drops — with the names
     of the variables that carry it, both in the document's order. The codec
     says nothing of what it drops; a caller that should (``soft-check
-    add``) asks this."""
+    add``) asks this. A name is given as text, whatever the document held:
+    the caller joins them, after the file is written."""
     out: dict[str, list[str]] = {}
     for entry in data.get("variables") or []:
         for key in entry:
             if key not in VARIABLE_KEYS:
-                out.setdefault(key, []).append(entry.get("name") or "")
+                out.setdefault(key, []).append(str(entry.get("name") or ""))
     return out
 
 

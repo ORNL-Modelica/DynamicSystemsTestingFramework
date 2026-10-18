@@ -24,7 +24,8 @@ from dstf.comparison.comparator import compare_all
 from dstf.config import Config, ConfigError
 from dstf.discovery.test_registry import discover_tests, merge_tests
 from dstf.storage.accept import LARGE_BASELINE_BYTES, accept_run_results
-from dstf.storage.baseline import ReferenceFile
+from dstf.storage.baseline import ReferenceFile, StoredVariable
+from dstf.storage.baseline_codec import VARIABLE_KEYS, _variable_json
 from dstf.storage.reference_store import ReferenceStore, _downsample
 
 M = "Lib.Run"
@@ -629,17 +630,17 @@ def test_import_baseline_stores_the_runs_own_numbers(tmp_path, capsys):
     assert baseline.variables[0].values == _AS_SINGLE
 
 
-def test_soft_check_add_says_the_variable_keys_it_dropped(tmp_path, capsys):
-    """A source's per-variable keys DSTF does not read (``unit``,
-    ``description``) are not stored, and `soft-check add` says so in ONE
-    line: each key, with the variables that carried it."""
+_DROPPED = "Warning: dropped variable keys nothing in DSTF reads: "
+
+
+def _soft_check_add_warnings(tmp_path, capsys, variables) -> tuple[Path, list[str]]:
+    """`soft-check add` of the reference's own file with its variables
+    replaced by *variables* — ``variables(x)`` of its one entry ``x`` — and
+    the warning lines it printed. The import must succeed."""
     config, path = _single_reference(tmp_path)
     raw = json.loads(path.read_text(encoding="utf-8"))
     (x,) = raw["variables"]
-    raw["variables"] = [
-        {**x, "unit": "K", "description": "the rod's temperature"},
-        {**x, "index": 2, "name": "y", "unit": "K"},
-    ]
+    raw["variables"] = variables(x)
     source = tmp_path / "from-elsewhere.json"
     source.write_text(json.dumps(raw), encoding="utf-8")
     capsys.readouterr()
@@ -651,14 +652,84 @@ def test_soft_check_add_says_the_variable_keys_it_dropped(tmp_path, capsys):
         == 0
     )
     said = [line for line in capsys.readouterr().out.splitlines() if "Warning" in line]
-    assert said == [
-        "Warning: dropped variable keys nothing in DSTF reads: "
-        "unit (x, y); description (x)"
-    ]
-    written = config.reference_dir / "soft_checks" / path.stem / "other.json"
-    assert [list(v) for v in json.loads(written.read_text())["variables"]] == [
-        ["index", "name", "expression", "values"]
+    return config.reference_dir / "soft_checks" / path.stem / "other.json", said
+
+
+def test_soft_check_add_says_the_variable_keys_it_dropped(tmp_path, capsys):
+    """A source's per-variable keys DSTF does not read (``unit``,
+    ``description``) are not stored, and `soft-check add` says so in ONE
+    line: each key, with the variables that carried it."""
+    written, said = _soft_check_add_warnings(
+        tmp_path,
+        capsys,
+        lambda x: [
+            {**x, "unit": "K", "description": "the rod's temperature"},
+            {**x, "index": 2, "name": "y", "unit": "K"},
+        ],
+    )
+    assert said == [_DROPPED + "unit (x, y); description (x)"]
+    assert [tuple(v) for v in json.loads(written.read_text())["variables"]] == [
+        VARIABLE_KEYS
     ] * 2
+
+
+def test_soft_check_add_warns_nothing_of_a_source_it_drops_nothing_of(tmp_path, capsys):
+    """No key dropped, no warning line — not an empty one."""
+    _written, said = _soft_check_add_warnings(tmp_path, capsys, lambda x: [x])
+    assert said == []
+
+
+def test_soft_check_add_names_a_single_dropped_key(tmp_path, capsys):
+    """One unknown key on one variable is still said."""
+    _written, said = _soft_check_add_warnings(
+        tmp_path, capsys, lambda x: [{**x, "unit": "K"}]
+    )
+    assert said == [_DROPPED + "unit (x)"]
+
+
+def test_soft_check_add_names_three_variables_of_a_key_then_counts_the_rest(
+    tmp_path, capsys
+):
+    _written, said = _soft_check_add_warnings(
+        tmp_path,
+        capsys,
+        lambda x: [
+            {**x, "index": i, "name": f"v{i}", "unit": "K"} for i in range(1, 6)
+        ],
+    )
+    assert said == [_DROPPED + "unit (v1, v2, v3 and 2 more)"]
+
+
+def test_soft_check_add_names_all_three_variables_of_a_key_carried_by_three(
+    tmp_path, capsys
+):
+    _written, said = _soft_check_add_warnings(
+        tmp_path,
+        capsys,
+        lambda x: [
+            {**x, "index": i, "name": f"v{i}", "unit": "K"} for i in range(1, 4)
+        ],
+    )
+    assert said == [_DROPPED + "unit (v1, v2, v3)"]
+
+
+def test_soft_check_add_names_a_variable_whose_name_is_no_text(tmp_path, capsys):
+    """A name the source gives as a number is said as its text: the warning
+    comes after the file is written, and a crash there exits 1 on an import
+    that was stored."""
+    _written, said = _soft_check_add_warnings(
+        tmp_path, capsys, lambda x: [{**x, "name": 7, "unit": "m"}]
+    )
+    assert said == [_DROPPED + "unit (7)"]
+
+
+def test_a_variable_entry_is_written_with_the_keys_decoding_keeps():
+    """`VARIABLE_KEYS` is what decoding keeps and `soft-check add` reports
+    against; the writer writes exactly those, in that order."""
+    entry = _variable_json(
+        StoredVariable(index=1, name="x", expression="a.b", values=[0.0]), False
+    )
+    assert tuple(entry) == VARIABLE_KEYS
 
 
 def test_a_sibling_partitions_reference_overlays_the_runs_own_numbers(tmp_path):

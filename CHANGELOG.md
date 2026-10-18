@@ -18,7 +18,7 @@ this file says when they do.
 
 - `soft-check add` no longer stores a source's per-variable keys that nothing
   in DSTF reads (`unit`, `description`, …); one warning line names the keys
-  it dropped and the variables that carried them.
+  it dropped and (up to three of) the variables that carried each.
 
 ## [1.1.0] - 2026-10-14
 

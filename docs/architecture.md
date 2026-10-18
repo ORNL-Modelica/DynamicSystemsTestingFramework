@@ -406,6 +406,8 @@ warn-wrapped) and ``companions/ref_NNNN/<name>.{json,csv}`` (plot-only).
 
   // --- primary baseline (flat top-level fields; authoritative) ---
   "simulation": {"stop_time": 100, "tolerance": 1e-4, ...},
+  "sampling": {...},
+  "provenance": {"backend": "Dymola", ...},
   "comparison": {"tolerance": 0.01, "variable_overrides": {...}},
   "statistics": {...},
   "diagnostics": [...],
@@ -415,10 +417,10 @@ warn-wrapped) and ``companions/ref_NNNN/<name>.{json,csv}`` (plot-only).
 }
 ```
 
-A soft_check file holds the same per-baseline fields plus ``provenance``, in
-the order the codec writes them (``time``, ``variables``, then
-``diagnostics``, ``simulation``, ``statistics`` and ``provenance`` when
-present):
+A soft_check file holds a baseline's series and what came with it — no
+``comparison``, ``n_vars`` or ``sampling`` — in the order the codec writes
+them: ``time``, ``variables``, then ``diagnostics``, ``simulation``,
+``statistics`` and ``provenance`` when present:
 
 ```json
 {
