@@ -17,6 +17,7 @@ scroll the PAGE — the gesture that draws the cards below."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import os
@@ -41,6 +42,7 @@ pytestmark = pytest.mark.playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout  # noqa: E402
 from playwright.sync_api import expect  # noqa: E402
 
+from dstf.comparison.modes import RangeConfig  # noqa: E402
 from dstf.comparison.snap import snapped  # noqa: E402
 from dstf.figures.plotly import GRIP, RING_PATH  # noqa: E402
 from test_author_suite_playwright import (  # noqa: E402
@@ -5355,7 +5357,9 @@ def test_a_number_field_draws_what_is_put_in_its_slots(tmp_path, playwright_brow
 
 def test_a_number_fields_help_is_read_by_hovering_it(tmp_path, playwright_browser):
     """A field's help is its tooltip: the pointer resting on the range's
-    lower bound reads the sentence, from the page."""
+    lower bound reads the sentence, from the page — the field's own
+    ``help``, as the mode declares it."""
+    (lower,) = [f for f in dataclasses.fields(RangeConfig) if f.name == "min_value"]
     with _served(tmp_path, playwright_browser, project=_typing_project) as page:
         page.wait_for_timeout(700)
         _open_crit(page, 0, "range · x")
@@ -5363,7 +5367,7 @@ def test_a_number_fields_help_is_read_by_hovering_it(tmp_path, playwright_browse
         expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
         editor.evaluate("e => e.scrollIntoView({block: 'center'})")
         page.wait_for_timeout(300)
-        bound = editor.get_by_label("Lower bound (optional)", exact=True)
+        bound = editor.get_by_label(lower.metadata["label"], exact=True)
         expect(bound).to_have_value("-1")
         box = bound.bounding_box()
         assert box is not None
@@ -5372,9 +5376,7 @@ def test_a_number_fields_help_is_read_by_hovering_it(tmp_path, playwright_browse
             box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=5
         )
         expect(page.locator(".q-tooltip")).to_have_text(
-            "Signal must never drop below this value. Leave blank to skip — "
-            "only the upper bound will apply.",
-            timeout=EXPECT_TIMEOUT,
+            lower.metadata["help"], timeout=EXPECT_TIMEOUT
         )
 
 
