@@ -2170,3 +2170,20 @@ To settle in that session:
 - which new metrics each future feature should add an example for.
 
 Grill before planning.
+
+**CI speed and a test-value audit (owner, 2026-10-18; investigate in depth
+before any work).** CI's `quality` job took 54 min on PR #6, and a full local
+run takes 40–55 min. The suite is ~8,100 tests in one serial job, with
+coverage on and no parallel runner (`pytest-xdist` is not in the lock), and
+many tests start real processes (the `dstf` CLI, workers, the tool's server).
+Coverage (66% floor) says a line ran, not that a test would catch it
+breaking. Planted-bug checks are done per build on changed code (PR #6: ~40
+planted, 6 uncaught and then pinned) but never across the whole suite. The
+session should cover:
+- where the time goes (per-test durations by file);
+- what parallel running buys, and which tests are not safe in parallel;
+- which tests catch nothing, or duplicate each other, measured with planted
+  bugs over the core modules;
+- what a fast tier for every push vs a full tier would look like.
+
+Measure before proposing; the owner wants an in-depth investigation first.
