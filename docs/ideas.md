@@ -2085,3 +2085,66 @@ run a suite, but it only simulates: scoring and `verdicts.json` happen in
 `dstf run`. The owner ruled that a script reads results as files, so the
 public function should do what `dstf run` does and write the same
 `verdicts.json`. Agreed for after 1.1.0 (a new behaviour, not a fix).
+
+**What a baseline holds: events, eigenvalues, fitted baselines (owner,
+2026-10-15, from questions after the AMC 2026 talk).** Three asks meet in
+one design: (1) discrete events and discrete states — an `Events` dataset
+(time, an order among transitions at one instant, before / after, a
+categorical value) and step-valued signals, where Modelica result files
+hold events only as duplicate time stamps and Julia/Dyad/MTK is improving
+how events are recorded; (2) eigenvalues of a linearized system — a
+dataset of modes plus metrics (an unordered complex-set match, stability,
+damping), started as data a Python test returns, with linearization by
+the simulators later and the operating point stored with it; (3) a
+baseline stored as a fit or at varying density instead of raw samples,
+where the fit's error must be recorded and kept well inside the
+tolerance. All three need a baseline that holds more than one time series
+on one shared time axis (`Baseline`, `reference_store.py`), so the
+container is designed once, against all three. Owner's leanings to test,
+not settled: events as a new field of the baseline JSON, a Julia sidecar
+only as what a backend reads. First step: find or build an example of
+each (a Dyad/MTK model with events, an OpenIPSL-style eigenvalue case, a
+fitted reference), then a dedicated session. Grill before planning.
+
+**Julia's per-test compile time is inside `sim_wall` (owner, 2026-10-15).**
+The persistent worker excludes package loading from timings, but each
+test's first solve compiles, and that time lands in the test's `sim_wall`,
+so DSTF's reported simulation time for a Julia test is mostly compile.
+One fix: a short warm-up solve per test, timed apart. Decide when the
+Julia backend is next touched (D161 keeps one-run times in scope).
+
+**When to revisit the baseline file format (owner, 2026-10-15).** JSON
+stays: TRANSFORM's 331 Dymola/linux baselines total 27 MB (median 31 KB);
+the largest, 5.8 MB (3 variables x 74k points), loads in 35 ms; compact
+JSON would be 3.4 MB and compressed float32 binary 0.7 MB. Parquet or HDF5
+would cost a second reader and writer, a dependency, and git diffs no one
+can read, for a saving nothing needs. Revisit when ensembles (the UQ
+direction), field data, or baselines routinely over ~20 MB arrive — the
+one-codec boundary planned for 1.2 makes a second format a contained
+change. Reading OTHER tools' HDF5 / Parquet data is already a small Python
+test (D80; built-in loaders were declined, decisions.md "Built-in
+CSV/parquet loaders").
+
+**The library's revision in a baseline's provenance (owner, 2026-10-15;
+deferred).** Provenance (1.2) records the toolchain that produced a
+baseline; the model's own revision is the other half — in the July 2026
+TRANSFORM drift, two of five failures were a model edit. Deferred because
+the simple form is not honest: a best-effort `git rev-parse HEAD` plus a
+dirty flag usually says "dirty" exactly when it matters (accepting right
+after an edit), provenance is per test while a `dstf author` session edits
+the model between reruns (so the state must be taken when THAT test's model
+was loaded), and a read-only `git status` on TRANSFORM-Library (4,294 files
+on the Windows drive) takes 4.5 s — per test, too slow without a cache keyed
+to file changes. Not every source is in Git (SVN, a vendor zip, an FMU, a
+data loader); the honest value there is `null`. Cheaper half-measures to
+weigh when this comes back: the library's declared `version` annotation; a
+content hash of only the files a test loaded (`discovery/library_state.py`
+already stamps source files per queue click). Grill before planning.
+
+**Dymola `--batch` records no library versions (owner, 2026-10-18; noted,
+not scheduled).** Provenance (1.2) stores each baseline's `RunMetadata`. The
+batch `.mos` lane has never collected `library_versions`, so a baseline
+accepted from `dstf run --batch` stores `library_versions: null` where the
+default persistent lane stores `{"Modelica": "4.1.0", ...}`. Filling it means
+the `.mos` script writing the loaded libraries' `version` annotations
+somewhere the backend reads back.

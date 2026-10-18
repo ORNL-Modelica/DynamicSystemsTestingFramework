@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import series
 from dstf.comparison.types import (
     StructuralWarning,
     TestComparison,
@@ -22,6 +23,7 @@ from dstf.comparison.types import (
 )
 from dstf.reporting.console_report import print_report
 from dstf.reporting.junit_report import generate_junit_report
+from dstf.storage.baseline_codec import decode_reference
 
 
 def _var(name="h", *, passed=True, index=0, is_constant=False):
@@ -85,13 +87,14 @@ def _refused(model_id="Lib.Examples.R"):
             success=True,
             variables=[VariableResult(index=1, name="h", time=t, values=t)],
         ),
-        {
-            "test_id": "0007",
-            "comparison": {"tolerance": {"lower": 0.1, "upper": 0.2}},
-            "variables": [
-                {"index": 1, "name": "h", "time": t.tolist(), "values": t.tolist()}
-            ],
-        },
+        decode_reference(
+            {
+                "test_id": "0007",
+                "comparison": {"tolerance": {"lower": 0.1, "upper": 0.2}},
+                "time": t.tolist(),
+                "variables": [{"index": 1, "name": "h", "values": t.tolist()}],
+            }
+        ),
     )
     assert not comp.passed and comp.variables == []
     return comp
@@ -189,7 +192,7 @@ def _scored(tree: dict) -> TestComparison:
         "time": t.tolist(),
         "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
     }
-    return compare_test(test, result, reference, 1e-4)
+    return compare_test(test, result, decode_reference(reference), 1e-4)
 
 
 def _flat(overrides: dict, *, default_points: bool = False, reference: dict = None):
@@ -228,7 +231,9 @@ def _flat(overrides: dict, *, default_points: bool = False, reference: dict = No
     if reference is not None:
         stored["comparison"] = reference
     return (
-        compare_test(test, result, stored, 1e-9, default_points=default_points),
+        compare_test(
+            test, result, decode_reference(stored), 1e-9, default_points=default_points
+        ),
         test,
         result,
     )
@@ -338,7 +343,7 @@ class TestAStatementIsNotAChange:
         comp = _stated()
         html = generate_comparison_plots(
             comp.model_id,
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             tmp_path / "plots",
@@ -905,9 +910,11 @@ class TestConsoleReport:
         t = np.array([i / 4 for i in range(5)])
         assert store.add_soft_check(
             D,
-            "OpenModelica",
-            time=t.tolist(),
-            variables=[{"index": 1, "name": "x", "values": (t * 2).tolist()}],
+            series(
+                "OpenModelica",
+                time=t.tolist(),
+                variables=[{"index": 1, "name": "x", "values": (t * 2).tolist()}],
+            ),
         )
         test = make_test_model(D, variable_patterns=["x"])
         test.metric_tree_spec = parse_metric_tree(
@@ -1293,11 +1300,10 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     )
     reference = {
         "test_id": "0001",
-        "variables": [
-            {"index": 1, "name": "x", "time": time.tolist(), "values": time.tolist()}
-        ],
+        "time": time.tolist(),
+        "variables": [{"index": 1, "name": "x", "values": time.tolist()}],
     }
-    comp = compare_test(test, result, reference)
+    comp = compare_test(test, result, decode_reference(reference))
     vc = comp.variables[0]
     assert not vc.passed
     assert vc.diagnostics["config_error"] is True

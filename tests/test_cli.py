@@ -32,6 +32,7 @@ from dstf.comparison.types import TestComparison
 from dstf.config import Config, detect_os
 from dstf.discovery.test_registry import TestModel
 from dstf.pipeline import write_id_mapping
+from dstf.storage.baseline_codec import decode_reference
 from dstf.storage.batch_manifest import BatchManifest
 from dstf.storage.reference_store import ReferenceStore
 
@@ -329,7 +330,7 @@ def _scored_by(tree: dict) -> TestComparison:
         "time": t.tolist(),
         "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
     }
-    return compare_test(test, result, reference, 1e-4)
+    return compare_test(test, result, decode_reference(reference), 1e-4)
 
 
 #: Leaves of `x` for `_scored_by`: one that passes, one that fails, each of

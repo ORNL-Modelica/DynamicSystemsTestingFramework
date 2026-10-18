@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 
+from conftest import PROVENANCES
 from dstf.backends.base import _force_failed, run_verdicts
 from dstf.backends.types import TestResult, TestRunResult
 from dstf.storage.batch_manifest import BatchManifest
@@ -183,7 +184,7 @@ class TestManifestRecordsRunOutcome:
             _rr("Lib.Bad", success=False),
             _rr("Lib.Slow", success=False, timed_out=True),
         ):
-            m.record_result(rr)
+            m.record_result(rr, None)
 
         reloaded = BatchManifest.load(tmp_path / "batch_manifest.json").manifest
         assert reloaded["test_0001"]["last_run_status"] == "passed"
@@ -200,7 +201,7 @@ class TestManifestRecordsRunOutcome:
                 "test_0002": {"model_id": "Lib.B", "ref_id": None},
             },
         )
-        m.record_result(_rr("Lib.B"))
+        m.record_result(_rr("Lib.B"), None)
 
         assert m.manifest["test_0001"]["last_run_status"] == "failed"
         assert m.manifest["test_0002"]["last_run_status"] == "passed"
@@ -311,7 +312,9 @@ def test_compare_accept_still_refuses_a_test_whose_last_run_failed(tmp_path):
         tolerance=1e-6,
         method="Dassl",
     )
-    stored, skipped, _ = ReferenceStore(config).accept_results([test], results)
+    stored, skipped, _ = ReferenceStore(config).accept_results(
+        [test], results, provenance=PROVENANCES
+    )
     assert stored == []
     assert [m_id for m_id, _reason in skipped] == ["FakeLib.A"]
 
@@ -344,8 +347,8 @@ class TestAbortWindow:
                 "test_0002": {"model_id": "Lib.B", "ref_id": None},
             },
         )
-        m.record_result(_rr("Lib.A"))
-        m.record_result(_rr("Lib.B"))
+        m.record_result(_rr("Lib.A"), None)
+        m.record_result(_rr("Lib.B"), None)
         return m
 
     def test_run_start_clears_the_previous_verdict_for_this_run_scope(self, tmp_path):
@@ -379,7 +382,7 @@ class TestAbortWindow:
         m2 = BatchManifest.load(tmp_path / "batch_manifest.json")
         m2.mark_pending({"Lib.A", "Lib.B"})
         m2.save()
-        m2.record_result(_rr("Lib.A", success=False))
+        m2.record_result(_rr("Lib.A", success=False), None)
         # ...and then the process dies. No epilogue of any kind runs.
 
         # A fresh reader (the later `compare` process) sees only what is on disk.
@@ -429,8 +432,8 @@ class TestAbortWindow:
         m = self._run_one_manifest(tmp_path)
         m.mark_pending({"Lib.A", "Lib.B"})
         m.save()
-        m.record_result(_rr("Lib.A"))
-        m.record_result(_rr("Lib.B", success=False, timed_out=True))
+        m.record_result(_rr("Lib.A"), None)
+        m.record_result(_rr("Lib.B", success=False, timed_out=True), None)
 
         reloaded = BatchManifest.load(tmp_path / "batch_manifest.json").manifest
         assert reloaded["test_0001"]["last_run_status"] == "passed"

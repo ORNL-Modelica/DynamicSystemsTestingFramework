@@ -29,8 +29,13 @@ if TYPE_CHECKING:
 RUN_STATS_FILENAME = "run_stats.json"
 
 
-def write_run_stats(test_dir: Path, result: TestRunResult) -> None:
-    """Write *result*'s walls, elapsed and statistics into *test_dir*.
+def write_run_stats(
+    test_dir: Path, result: TestRunResult, metadata: dict | None
+) -> None:
+    """Write *result*'s walls, elapsed and statistics into *test_dir*, and
+    the metadata of the run that produced it (``RunMetadata.as_dict``, or
+    ``None`` when the run recorded none) — what an accept of this result
+    writes as the baseline's ``provenance``.
 
     Never raises: it is called while the run records the test's verdict,
     which a failed write must not cost — one ``# WARN:`` line instead. A
@@ -43,6 +48,7 @@ def write_run_stats(test_dir: Path, result: TestRunResult) -> None:
         "sim_wall": result.sim_wall,
         "elapsed": result.elapsed,
         "statistics": result.statistics,
+        "run_metadata": metadata,
     }
     try:
         test_dir.mkdir(parents=True, exist_ok=True)
@@ -68,11 +74,13 @@ def read_run_stats(test_dir: Path, model_id: str) -> dict[str, Any] | None:
         if data.get("model_id") != model_id:
             raise ValueError(f"written for {data.get('model_id')!r}, not {model_id!r}")
         stats = data.get("statistics")
+        meta = data.get("run_metadata")
         return {
             "translation_wall": _number(data.get("translation_wall")),
             "sim_wall": _number(data.get("sim_wall")),
             "elapsed": _number(data.get("elapsed")) or 0.0,
             "statistics": stats if isinstance(stats, dict) else None,
+            "run_metadata": meta if isinstance(meta, dict) else None,
         }
     except (OSError, ValueError) as exc:
         print(f"# WARN: ignoring {path}: {exc}", file=sys.stderr)

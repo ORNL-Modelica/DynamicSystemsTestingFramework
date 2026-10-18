@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from dstf.storage.baseline_codec import decode_reference
+
 BUDGET_BYTES = 25 * 1024 * 1024  # regression ceiling, see the module docstring
 N_VARS = 50
 N_SAMPLES = 5000
@@ -89,11 +91,11 @@ def _render_real_page(tmp_path, n_vars: int, n_samples: int, cap: int):
         variable_patterns=[t["name"] for t in trajectories],
         variable_overrides=overrides,
     )
-    comp = compare_test(test, result, ref)
+    comp = compare_test(test, result, decode_reference(ref))
     plot_dir = tmp_path / "plots"
     html = generate_comparison_plots(
         "TestLib.Wide.Fixture",
-        ref,
+        decode_reference(ref),
         result,
         comp.variables,
         plot_dir,

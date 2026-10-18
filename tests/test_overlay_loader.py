@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from conftest import series
 from dstf.reporting.overlay_loader import (
     Overlay,
     OverlayVariable,
@@ -36,13 +37,6 @@ class _FakeCompanion:
     provenance: dict = field(default_factory=dict)
     variables: dict = field(default_factory=dict)
     mapping_warnings: tuple = ()
-
-
-@dataclass
-class _FakeBaseline:
-    name: str
-    time: list
-    variables: list
 
 
 class _FakeStore:
@@ -73,7 +67,7 @@ class _FakeStore:
 
 class TestSoftCheckLoading:
     def test_soft_check_flattens_to_overlay_vars(self, tmp_path):
-        baseline = _FakeBaseline(
+        baseline = series(
             name="experiment",
             time=[0.0, 1.0, 2.0],
             variables=[
@@ -93,7 +87,7 @@ class TestSoftCheckLoading:
         assert ov.variables["h"].time == [0.0, 1.0, 2.0]
 
     def test_soft_check_missing_values_skipped(self, tmp_path):
-        baseline = _FakeBaseline(
+        baseline = series(
             name="experiment",
             time=[0.0, 1.0],
             variables=[
@@ -108,7 +102,7 @@ class TestSoftCheckLoading:
         assert set(overlays[0].variables.keys()) == {"h"}
 
     def test_soft_check_empty_marked_invalid(self, tmp_path):
-        baseline = _FakeBaseline(name="experiment", time=[], variables=[])
+        baseline = series(name="experiment", time=[], variables=[])
         store = _FakeStore(tmp_path, soft_checks={"experiment": baseline})
         overlays = load_overlays(store, "M")
         assert overlays[0].status == "invalid"
@@ -257,7 +251,7 @@ class TestTheCompanionSOwnExpressions:
         assert overlays[0].variables["h"].expression == ""
 
     def test_a_soft_check_keeps_its_entries_expressions(self, tmp_path):
-        baseline = _FakeBaseline(
+        baseline = series(
             name="experiment",
             time=[0.0, 1.0],
             variables=[
@@ -292,7 +286,7 @@ class TestTheCompanionSMappingReachesTheOverlay:
         """A soft_check, and an auto-discovered sibling-backend reference,
         are DSTF's own data keyed by the same names — there is nothing to
         map, and the read rule's fallbacks are what they use."""
-        baseline = _FakeBaseline(
+        baseline = series(
             name="experiment", time=[0.0], variables=[{"name": "h", "values": [1.0]}]
         )
         store = _FakeStore(tmp_path, soft_checks={"experiment": baseline})
@@ -865,7 +859,7 @@ class TestANameStoredTwice:
     ]
 
     def test_a_soft_check_overlays_its_first_entry(self, tmp_path):
-        baseline = _FakeBaseline(name="e", time=[0.0, 1.0], variables=self.TWICE)
+        baseline = series(name="e", time=[0.0, 1.0], variables=self.TWICE)
         store = _FakeStore(tmp_path, soft_checks={"e": baseline})
         (ov,) = load_overlays(store, "M")
         assert ov.variables["h"].values == [1.0, 1.0]
@@ -1336,18 +1330,18 @@ class TestTheRepoSExampleCompanions:
         )
         off: dict[tuple[str, str], float] = {}
         for model_id in store.index.active_tests().values():
-            baseline = store.get_baseline(model_id)
+            baseline = store.get_reference(model_id).baseline
             for ov in load_overlays(store, model_id):
                 if ov.role != "companion":
                     continue
                 for entry in baseline.variables:
                     curve, _ = _overlay_variable_for(
-                        ov, entry["name"], entry.get("expression", "")
+                        ov, entry.name, entry.expression or ""
                     )
                     if curve is None:
                         continue
                     t = np.asarray(baseline.time, dtype=float)
-                    values = np.asarray(entry["values"], dtype=float)
+                    values = np.asarray(entry.values, dtype=float)
                     ct = np.asarray(curve.time, dtype=float)
                     shared = (t >= ct[0]) & (t <= ct[-1])
                     assert shared.any()
@@ -1355,7 +1349,7 @@ class TestTheRepoSExampleCompanions:
                         np.interp(t[shared], ct, curve.values) - values[shared]
                     )
                     scale = float(np.ptp(values)) or float(np.max(np.abs(values)))
-                    off[(ov.name, entry["name"])] = float(apart.max()) / scale
+                    off[(ov.name, entry.name)] = float(apart.max()) / scale
         return off
 
     def test_every_example_companion_is_drawn_on_a_plot_its_test_has(self):
@@ -1447,17 +1441,15 @@ class TestTheRepoSExampleCompanions:
             assert (t[0], t[-1], len(t)) == (0.0, 10.0, 501)
             assert np.max(np.abs(np.asarray(curve.values) - exact[name](t))) < 1e-11
         reference = store.get_reference(model)
-        t = np.asarray(reference["time"], dtype=float)
+        t = np.asarray(reference.baseline.time, dtype=float)
         worst = {
-            v["name"]: float(
+            v.name: float(
                 np.max(
-                    np.abs(
-                        np.asarray(v["values"]) - exact[analytic.mapping[v["name"]]](t)
-                    )
+                    np.abs(np.asarray(v.values) - exact[analytic.mapping[v.name]](t))
                 )
             )
-            for v in reference["variables"]
-            if v["name"] in analytic.mapping
+            for v in reference.baseline.variables
+            if v.name in analytic.mapping
         }
         assert set(worst) == {"unitTests.x[1]"}
         assert max(worst.values()) < 1e-5, worst

@@ -327,3 +327,185 @@ def test_a_test_refused_for_its_broken_tree_is_skipped_with_the_sentence(tmp_pat
     )
     assert (stored, skipped) == (0, [("FakeLib.A", broken_roles(test))])
     assert path.read_bytes() == before
+
+
+#: A run's metadata as its reporter holds it (`RunMetadata.as_dict`).
+RUN_META = {
+    "backend": "Dymola",
+    "backend_name": "Dymola 2026x",
+    "os": "linux",
+    "tool_version": "Dymola Version 2026x, 2025-10-10",
+    "dstf_version": "1.2.0",
+    "generated_at": 1_791_000_000.0,
+    "library_versions": {"Modelica": "4.1.0"},
+}
+
+
+def _accept_one(tmp_path, metadata):
+    """Accept FakeLib.A, whose run recorded *metadata* beside its result
+    (`record_result`); the written FILE's provenance."""
+    from dstf.backends.types import TestRunResult
+    from dstf.storage.batch_manifest import BatchManifest
+
+    config, store = _env(
+        tmp_path,
+        {
+            "test_0001": {
+                "model_id": "FakeLib.A",
+                "ref_id": None,
+                "last_run_status": "pending",
+            }
+        },
+    )
+    manifest = BatchManifest.load(config.work_dir / "batch_manifest.json")
+    manifest.record_result(
+        TestRunResult(
+            model_id="FakeLib.A", test_key="test_0001", success=True, elapsed=1.0
+        ),
+        metadata,
+    )
+    test = make_test_model("FakeLib.A", variable_patterns=["x"])
+    stored, skipped, _, _ = accept_run_results(
+        store, [test], {"FakeLib.A": _result("FakeLib.A")}, config.work_dir
+    )
+    assert (stored, skipped) == (1, [])
+    ref_file = store.reference_file("FakeLib.A")
+    return config, json.loads(ref_file.read_text(encoding="utf-8"))["provenance"]
+
+
+def test_accept_writes_the_runs_provenance(tmp_path):
+    _, provenance = _accept_one(tmp_path, RUN_META)
+    assert provenance == {
+        "backend": "Dymola",
+        "backend_name": "Dymola 2026x",
+        "tool_version": "Dymola Version 2026x, 2025-10-10",
+        "library_versions": {"Modelica": "4.1.0"},
+        "dstf_version": "1.2.0",
+        "os": "linux",
+        "run_started": "2026-10-03T04:00:00+00:00",
+    }
+
+
+def test_accept_without_run_metadata_writes_nulls(tmp_path):
+    """A run that recorded no metadata: the block is still written whole,
+    what the config says filled in, the rest null."""
+    config, provenance = _accept_one(tmp_path, None)
+    assert provenance == {
+        "backend": config.backend,
+        "backend_name": config.backend_name or config.backend,
+        "tool_version": None,
+        "library_versions": None,
+        "dstf_version": None,
+        "os": config.os_name,
+        "run_started": None,
+    }
+
+
+def _record(manifest, model_id, test_key, metadata):
+    from dstf.backends.types import TestRunResult
+
+    manifest.record_result(
+        TestRunResult(model_id=model_id, test_key=test_key, success=True, elapsed=1.0),
+        metadata,
+    )
+
+
+def _written_provenance(store, model_id):
+    """The provenance in *model_id*'s written reference FILE."""
+    ref_file = store.reference_file(model_id)
+    return json.loads(ref_file.read_text(encoding="utf-8"))["provenance"]
+
+
+def test_each_accepted_test_gets_the_metadata_of_its_own_run(tmp_path):
+    """Two tests accepted together, their results produced by two runs: each
+    baseline FILE carries its own test's metadata — the lookup is per test,
+    through the manifest's entry for it, never one metadata for the accept."""
+    from dstf.storage.batch_manifest import BatchManifest
+
+    config, store = _env(
+        tmp_path,
+        {
+            "test_0001": {"model_id": "FakeLib.A", "ref_id": None},
+            "test_0002": {"model_id": "FakeLib.B", "ref_id": None},
+        },
+    )
+    later = {
+        **RUN_META,
+        "tool_version": "Dymola Version 2027x, 2026-10-01",
+        "generated_at": 1_791_086_400.0,
+    }
+    manifest = BatchManifest.load(config.work_dir / "batch_manifest.json")
+    _record(manifest, "FakeLib.A", "test_0001", RUN_META)
+    _record(manifest, "FakeLib.B", "test_0002", later)
+    tests = [
+        make_test_model(m, variable_patterns=["x"]) for m in ("FakeLib.A", "FakeLib.B")
+    ]
+    stored, skipped, _, _ = accept_run_results(
+        store,
+        tests,
+        {m: _result(m) for m in ("FakeLib.A", "FakeLib.B")},
+        config.work_dir,
+    )
+    assert (stored, skipped) == (2, [])
+    a, b = (_written_provenance(store, m) for m in ("FakeLib.A", "FakeLib.B"))
+    assert (a["tool_version"], a["run_started"]) == (
+        "Dymola Version 2026x, 2025-10-10",
+        "2026-10-03T04:00:00+00:00",
+    )
+    assert (b["tool_version"], b["run_started"]) == (
+        "Dymola Version 2027x, 2026-10-01",
+        "2026-10-04T04:00:00+00:00",
+    )
+
+
+def test_a_test_the_manifest_has_no_entry_for_gets_the_nulls(
+    tmp_path, capsys, monkeypatch
+):
+    """A test the work dir's batch manifest holds no entry for has no
+    recorded run: its baseline gets the documented nulls — never the
+    metadata of another test accepted beside it. Nor is another test's
+    ``run_stats.json`` read for it: `read_run_stats` would refuse that file
+    (its model id differs) and so still give the nulls, but only after a
+    ``WARN: ignoring`` line about a file the accept had no business
+    reading — so stderr stays empty, and the reader is never asked for it
+    (the spy holds that whatever channel the refusal is said on)."""
+    import dstf.storage.accept as accept_module
+    from dstf.storage.batch_manifest import BatchManifest
+
+    asked: list[str] = []
+    real_read_run_stats = accept_module.read_run_stats
+
+    def spy(directory, model_id):
+        asked.append(model_id)
+        return real_read_run_stats(directory, model_id)
+
+    monkeypatch.setattr(accept_module, "read_run_stats", spy)
+    config, store = _env(
+        tmp_path, {"test_0001": {"model_id": "FakeLib.A", "ref_id": None}}
+    )
+    manifest = BatchManifest.load(config.work_dir / "batch_manifest.json")
+    _record(manifest, "FakeLib.A", "test_0001", RUN_META)
+    tests = [
+        make_test_model(m, variable_patterns=["x"]) for m in ("FakeLib.A", "FakeLib.B")
+    ]
+    stored, skipped, _, _ = accept_run_results(
+        store,
+        tests,
+        {m: _result(m) for m in ("FakeLib.A", "FakeLib.B")},
+        config.work_dir,
+    )
+    assert (stored, skipped) == (2, [])
+    assert _written_provenance(store, "FakeLib.A")["tool_version"] == (
+        "Dymola Version 2026x, 2025-10-10"
+    )
+    assert _written_provenance(store, "FakeLib.B") == {
+        "backend": config.backend,
+        "backend_name": config.backend_name or config.backend,
+        "tool_version": None,
+        "library_versions": None,
+        "dstf_version": None,
+        "os": config.os_name,
+        "run_started": None,
+    }
+    assert asked == ["FakeLib.A"]
+    assert capsys.readouterr().err == ""

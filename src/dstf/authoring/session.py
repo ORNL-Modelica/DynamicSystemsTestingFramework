@@ -75,7 +75,7 @@ from ..discovery.test_registry import (
 )
 from ..figures.assemble import leaves_by_variable, view_from_trajectory
 from ..figures.view import VariableView, error_series
-from ..storage.baseline import PRIMARY_BASELINE
+from ..storage.baseline import PRIMARY_BASELINE, ReferenceFile
 from ..storage.reference_store import ReferenceStore
 from .capabilities import (
     Artifact,
@@ -195,7 +195,7 @@ class _ModelReads:
     so an edit re-decimates only the criterion's geometry and a plot's
     several series draw over the bases held here, one at a time."""
 
-    ref: dict | None
+    ref: ReferenceFile | None
     overlays: list
     bases: dict[str, VariableView] = field(default_factory=dict)
     #: Per variable, the decimated view with no Actual — the baseline's
@@ -957,12 +957,9 @@ class Session:
         reference = reads.references.get(variable)
         if reference is None:
             texts = self.variable_texts(model_id)
-            ref = reads.ref or {}
+            ref = reads.ref
             _comp, kept = self._layout_source(model_id)
-            ref_var = next(
-                (v for v in ref.get("variables", []) if v.get("name") == variable),
-                None,
-            )
+            ref_var = ref.baseline.variable(variable) if ref is not None else None
             traj = {
                 "name": variable,
                 # What an unmapped companion is matched by (D132).
@@ -975,8 +972,10 @@ class Session:
                     "",
                 ),
                 "text": texts[variable].text if variable in texts else variable,
-                "ref_time": ref.get("time", []) if ref_var else [],
-                "ref_values": ref_var["values"] if ref_var else [],
+                "ref_time": list(ref.baseline.time)
+                if ref is not None and ref_var
+                else [],
+                "ref_values": list(ref_var.values) if ref_var else [],
             }
             attach_overlays_to_trajectories([traj], reads.overlays)
             reference = reads.references[variable] = decimate_view(
@@ -1494,12 +1493,12 @@ class Session:
         if project.test(model_id) is None:
             raise KeyError(model_id)
         result = project.results.get(model_id)
-        ref = self._reads_for(model_id).ref or {}
+        ref = self._reads_for(model_id).ref
         return statistics_rows(
             result.statistics if result is not None else None,
-            ref.get("statistics"),
+            ref.baseline.statistics if ref is not None else None,
             run_diagnostics=(result.diagnostics or []) if result is not None else (),
-            baseline_diagnostics=ref.get("diagnostics") or (),
+            baseline_diagnostics=ref.baseline.diagnostics if ref is not None else (),
             extra_paths=statistic_paths(self._entry_tree(model_id)),
         )
 
@@ -2787,8 +2786,10 @@ class Session:
             # tree"); the tree path would score it — a FAIL that becomes a
             # PASS on a look. Authoring the tree is the user's act, not ours.
             return None, NO_TREE
-        ref = project.store.get_reference(model_id) or {}
-        ref_overrides = (ref.get("comparison") or {}).get("variable_overrides") or {}
+        ref = project.store.get_reference(model_id)
+        ref_overrides = (
+            ref.comparison.get("variable_overrides") or {} if ref is not None else {}
+        )
         if any(n in ref_overrides and n not in spec_overrides for n in names):
             return None, NO_TREE
         return implicit_tree_op(entry, variables=names), None
@@ -2828,15 +2829,12 @@ class ProjectView:
     dataset_kind: DatasetType
     _store: ReferenceStore = field(repr=False, compare=False)
 
-    def reference(self, model_id: str) -> dict | None:
-        """The primary baseline's JSON, or None."""
-        return self._store.get_reference(model_id)
-
     def baseline_names(self, model_id: str) -> tuple[str, ...]:
         """What a leaf's ``against`` may name: ``primary`` when a baseline
         is stored, then every soft_check, in store order."""
         names: list[str] = []
-        if self._store.get_reference(model_id) is not None:
+        ref_file = self._store.reference_file(model_id)
+        if ref_file is not None and ref_file.exists():
             names.append(PRIMARY_BASELINE)
         names.extend(self._store.get_soft_checks(model_id))
         return tuple(names)

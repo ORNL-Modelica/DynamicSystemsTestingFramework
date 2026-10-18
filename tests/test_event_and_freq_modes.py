@@ -20,6 +20,7 @@ from dstf.comparison.modes import (
     resolve_mode,
 )
 from dstf.comparison.sides import Sides
+from dstf.storage.baseline_codec import decode_reference
 
 EMPTY = np.array([])
 
@@ -719,9 +720,8 @@ def _through(leaf, flat, time, values):
     )
     reference = {
         "test_id": "1",
-        "variables": [
-            {"index": 1, "name": "x", "time": time.tolist(), "values": values.tolist()}
-        ],
+        "time": time.tolist(),
+        "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
     }
     if flat:
         override = {k: v for k, v in leaf.items() if k != "metric"}
@@ -732,7 +732,7 @@ def _through(leaf, flat, time, values):
         test = TestModel(
             metric_tree_spec=parse_metric_tree({**leaf, "variable": "x"}), **kw
         )
-    return compare_test(test, result, reference).variables[0]
+    return compare_test(test, result, decode_reference(reference)).variables[0]
 
 
 @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])

@@ -92,6 +92,10 @@ class RefIndex:
 
     def _scan(self):
         """Scan ref files and build the in-memory index."""
+        # Imported here: the codec imports `_atomic_write_text` from this
+        # module, so a module-level import would be a cycle.
+        from .baseline_codec import read_reference_header
+
         self._by_model.clear()
         self._by_id.clear()
 
@@ -105,21 +109,16 @@ class RefIndex:
                 continue
             test_id = m.group(1)
             try:
-                # Whole-file read + parse. Only model_id/status are used, and
-                # they sit at the top, but json has no partial-parse entry
-                # point — a header-only read is idea #64, not done here.
-                text = ref_file.read_text(encoding="utf-8")
-                data = json.loads(text)
+                # Whole-file read + parse (a header-only read is idea #64).
+                model_id, status = read_reference_header(ref_file)
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning("Skipping unreadable ref file %s: %s", ref_file.name, e)
                 continue
 
-            model_id = data.get("model_id")
             if not model_id:
                 logger.warning("Ref file %s has no model_id — skipping", ref_file.name)
                 continue
 
-            status = data.get("status", "active")
             self._by_id[test_id] = {"model_id": model_id, "status": status}
             if status != "obsolete":
                 existing = self._by_model.get(model_id)
@@ -242,6 +241,9 @@ class RefIndex:
         claim atomic; on collision we rescan and move to the next free ID
         instead of silently overwriting another model's baseline.
         """
+        # Imported here for the same reason as in `_scan`.
+        from .baseline_codec import claim_stub
+
         existing = self.get_id(model_id)
         if existing is not None:
             return existing
@@ -255,10 +257,7 @@ class RefIndex:
                 with open(ref_file, "x", encoding="utf-8") as f:
                     # Minimal valid claim stub — store_reference atomically
                     # replaces it with the full baseline immediately after.
-                    json.dump(
-                        {"model_id": model_id, "test_id": test_id, "status": "active"},
-                        f,
-                    )
+                    f.write(claim_stub(model_id, test_id))
             except FileExistsError:
                 # ID already taken on disk (concurrent writer, or a file our
                 # stale index missed). Rescan, then move past the collision —

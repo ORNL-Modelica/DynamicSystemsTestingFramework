@@ -66,11 +66,7 @@ def _check_variable_map(
     reference = store.get_reference(model_id)
     if reference is None:
         return
-    known = {
-        entry.get("name")
-        for entry in reference.get("variables") or []
-        if isinstance(entry, dict)
-    }
+    known = set(reference.baseline.names())
     unknown = sorted(v for v in mapping if v not in known)
     if unknown:
         raise _MapError(
@@ -207,7 +203,7 @@ def _print_soft_checks(checks: dict) -> None:
     """One line per soft_check: its name, variable count and origin."""
     for name, bl in checks.items():
         origin = bl.provenance.get("source") or bl.provenance.get("origin") or "-"
-        print(f"  {name:<30} n_vars={len(bl.variables):<4} origin={origin}")
+        print(f"  {name:<30} n_vars={len(bl.names()):<4} origin={origin}")
 
 
 def cmd_soft_check_list(args: argparse.Namespace) -> int:
@@ -252,9 +248,10 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     ``ref_NNNN.json`` file uses at its top level) and stores it under
     the local model's soft_checks with the given name.
     """
+    import dataclasses
     import json as json_mod
 
-    from ..storage.reference_store import read_reference_file
+    from ..storage.baseline_codec import decode_series, unread_variable_keys
 
     store = _store(args)
     source = Path(args.source)
@@ -262,7 +259,7 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
         print(f"File not found: {source}")
         return 1
     try:
-        data = read_reference_file(source)
+        data = json_mod.loads(source.read_text(encoding="utf-8"))
     except (json_mod.JSONDecodeError, OSError) as e:
         print(f"Failed to read {source}: {e}")
         return 1
@@ -273,26 +270,20 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
         print(f"Failed to read {source}: it holds a JSON {kind}, not an object")
         return 1
 
-    time = data.get("time") or []
-    variables = data.get("variables") or []
-    if not time or not variables:
+    # Refused above while still a parsed value: the codec reads an object.
+    baseline = decode_series(data, args.name)
+    if not baseline.time or not baseline.variables:
         print("Source file missing 'time' or 'variables' — cannot import")
         return 1
 
-    provenance = dict(data.get("provenance") or {})
+    provenance = dict(baseline.provenance)
     provenance.setdefault("origin", SOFT_CHECK_ORIGIN)
     provenance.setdefault("imported_from", str(source))
 
     try:
         ok = store.add_soft_check(
             args.model_id,
-            args.name,
-            time=time,
-            variables=variables,
-            diagnostics=data.get("diagnostics"),
-            simulation=data.get("simulation"),
-            statistics=data.get("statistics"),
-            provenance=provenance,
+            dataclasses.replace(baseline, provenance=provenance),
         )
     except (ValueError, FileNotFoundError) as e:
         print(f"Error: {e}")
@@ -300,4 +291,18 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     if ok:
         store.config.write_default_file()
         print(f"Imported {source} → soft_check {args.name!r} on {args.model_id}")
+        dropped = unread_variable_keys(data)
+        if dropped:
+            print(
+                "Warning: dropped variable keys nothing in DSTF reads: "
+                + "; ".join(
+                    f"{key} ({_first_names(names)})" for key, names in dropped.items()
+                )
+            )
     return 0 if ok else 1
+
+
+def _first_names(names: list[str], shown: int = 3) -> str:
+    """Up to *shown* of *names*, then ``and N more``."""
+    out = ", ".join(names[:shown])
+    return out + (f" and {len(names) - shown} more" if len(names) > shown else "")

@@ -25,6 +25,7 @@ from dstf.comparison.tree_spec import spec_to_view
 from dstf.config import Config
 from dstf.discovery.test_registry import discover_tests
 from dstf.reporting.tree_rows import criteria_rows, leaves_of
+from dstf.storage.baseline_codec import decode_reference
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "modelica" / "ModelicaTestingLib"
 REFS = EXAMPLE / "Resources" / "ReferenceResults"
@@ -120,7 +121,7 @@ def test_each_shipped_baseline_holds_the_array_and_passes_its_own_criteria(parti
             for v in reference["variables"]
         ],
     )
-    comp = compare_test(_test(), result, reference)
+    comp = compare_test(_test(), result, decode_reference(reference))
     assert comp.passed and len(comp.variables) == 21
     assert all(v.passed for v in comp.variables)
     assert comp.warnings == []

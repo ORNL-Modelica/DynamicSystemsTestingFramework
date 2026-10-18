@@ -6,6 +6,7 @@ large."""
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import inspect
 import json
@@ -15,7 +16,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from conftest import make_test_model
+from conftest import PROVENANCE, PROVENANCES, make_test_model
 from dstf.authoring.session import Session
 from dstf.backends.types import TestResult, VariableResult
 from dstf.cli.main import main
@@ -23,6 +24,8 @@ from dstf.comparison.comparator import compare_all
 from dstf.config import Config, ConfigError
 from dstf.discovery.test_registry import discover_tests, merge_tests
 from dstf.storage.accept import LARGE_BASELINE_BYTES, accept_run_results
+from dstf.storage.baseline import ReferenceFile, StoredVariable
+from dstf.storage.baseline_codec import VARIABLE_KEYS, _variable_json
 from dstf.storage.reference_store import ReferenceStore, _downsample
 
 M = "Lib.Run"
@@ -71,14 +74,28 @@ def _run(rows: int, events: tuple[int, ...] = ()) -> TestResult:
     )
 
 
+def _view(reference: ReferenceFile) -> dict:
+    """What a reader of a reference gets, keyed as its file is: the numbers
+    the codec hands on (not the digits the file spells)."""
+    return {
+        "time": reference.baseline.time,
+        "sampling": dataclasses.asdict(reference.sampling)
+        if reference.sampling is not None
+        else None,
+        "variables": [
+            {"name": v.name, "values": v.values} for v in reference.baseline.variables
+        ],
+    }
+
+
 def _stored(config: Config, result: TestResult, test=None) -> dict:
-    """``result`` accepted as ``test``'s baseline: the reference JSON."""
+    """``result`` accepted as ``test``'s baseline, as a reader gets it."""
     store = ReferenceStore(config)
     test = test or make_test_model(M, variable_patterns=["i", "x"])
-    assert store.store_reference(test, result) is True
+    assert store.store_reference(test, result, provenance=PROVENANCE) is True
     reference = store.get_reference(M)
     assert reference is not None
-    return reference
+    return _view(reference)
 
 
 def _kept(reference: dict) -> list[int]:
@@ -268,11 +285,16 @@ def test_a_refused_testing_json_is_one_line_and_exit_two(tmp_path, capsys):
     ids=["all", "thinned", "a number over the rows"],
 )
 def test_the_reference_records_its_sampling(tmp_path, keys, rows, sampling):
-    reference = _stored(_config(tmp_path, **keys), _run(rows, (300, 900)))
+    config = _config(tmp_path, **keys)
+    reference = _stored(config, _run(rows, (300, 900)))
     assert reference["sampling"] == sampling
     assert len(reference["time"]) == sampling["stored_points"]
     # Metadata, so above the data: the file's last two keys stay its arrays.
-    assert list(reference)[-2:] == ["time", "variables"]
+    (path,) = config.reference_dir.glob("ref_*.json")
+    assert list(json.loads(path.read_text(encoding="utf-8")))[-2:] == [
+        "time",
+        "variables",
+    ]
 
 
 def test_a_reference_without_sampling_loads_and_scores_as_before(tmp_path):
@@ -281,7 +303,7 @@ def test_a_reference_without_sampling_loads_and_scores_as_before(tmp_path):
     config = _config(tmp_path, baseline_points=2000)
     result = _run(5000, EVENTS)
     test = make_test_model(M, variable_patterns=["i", "x"])
-    assert "sampling" in _stored(config, result, test)
+    assert _stored(config, result, test)["sampling"] is not None
     drifted = _run(5000, EVENTS)
     drifted.variables[1].values = drifted.variables[1].values * 1.001
 
@@ -295,7 +317,7 @@ def test_a_reference_without_sampling_loads_and_scores_as_before(tmp_path):
     del data["sampling"]
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
-    assert "sampling" not in ReferenceStore(config).get_reference(M)
+    assert ReferenceStore(config).get_reference(M).sampling is None
     assert score() == with_sampling
     assert with_sampling[1][3] > 0.0  # a comparison that measured something
 
@@ -518,7 +540,7 @@ def test_a_reference_without_the_precision_is_read_as_it_always_was(tmp_path):
     assert raw["sampling"].pop("precision") == "single"
     raw["variables"][0]["values"] = [0.1, 0.2]  # as seven digits wrote them
     path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
-    reference = ReferenceStore(config).get_reference(M)
+    reference = _view(ReferenceStore(config).get_reference(M))
     assert reference["variables"][0]["values"] == [0.1, 0.2]
     assert reference["variables"][0]["values"] != [
         float(np.float32(0.1)),
@@ -532,19 +554,19 @@ def test_every_reader_of_a_reference_file_reads_it_through_the_one_function(
     """The sibling-partition overlays and `soft-check add` read a
     reference file too: a single-precision one gives them the same
     numbers."""
-    from dstf.reporting.overlay_loader import _ref_data_to_overlay_vars
-    from dstf.storage.reference_store import read_reference_file
+    from dstf.reporting.overlay_loader import _baseline_to_overlay_vars
+    from dstf.storage.baseline_codec import read_reference
 
     config = _config(tmp_path)
     _stored(config, _single([0.0, 1.0], x=[0.1, 0.2]))
     (path,) = config.reference_dir.glob("ref_*.json")
-    data = read_reference_file(path)
-    assert data["variables"][0]["values"] == [
+    baseline = read_reference(path).baseline
+    assert baseline.variables[0].values == [
         float(np.float32(0.1)),
         float(np.float32(0.2)),
     ]
-    overlay = _ref_data_to_overlay_vars(data)["x"]
-    assert list(overlay.values) == data["variables"][0]["values"]
+    overlay = _baseline_to_overlay_vars(baseline)["x"]
+    assert list(overlay.values) == baseline.variables[0].values
 
 
 #: What a single-precision run holds for 0.1 and 0.2, as Python floats —
@@ -571,7 +593,7 @@ def test_a_soft_check_file_is_read_through_the_one_function(tmp_path):
     soft.parent.mkdir(parents=True)
     soft.write_bytes(path.read_bytes())
     (baseline,) = ReferenceStore(config).get_soft_checks(M).values()
-    assert baseline.variables[0]["values"] == _AS_SINGLE
+    assert baseline.variables[0].values == _AS_SINGLE
     assert baseline.time == [0.0, 1.0]
 
 
@@ -605,7 +627,109 @@ def test_import_baseline_stores_the_runs_own_numbers(tmp_path, capsys):
         == 0
     )
     (baseline,) = ReferenceStore(config).get_soft_checks(M).values()
-    assert baseline.variables[0]["values"] == _AS_SINGLE
+    assert baseline.variables[0].values == _AS_SINGLE
+
+
+_DROPPED = "Warning: dropped variable keys nothing in DSTF reads: "
+
+
+def _soft_check_add_warnings(tmp_path, capsys, variables) -> tuple[Path, list[str]]:
+    """`soft-check add` of the reference's own file with its variables
+    replaced by *variables* — ``variables(x)`` of its one entry ``x`` — and
+    the warning lines it printed. The import must succeed."""
+    config, path = _single_reference(tmp_path)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    (x,) = raw["variables"]
+    raw["variables"] = variables(x)
+    source = tmp_path / "from-elsewhere.json"
+    source.write_text(json.dumps(raw), encoding="utf-8")
+    capsys.readouterr()
+    assert (
+        main(
+            ["--config", str(config.config_file), "soft-check", "add", M, "other"]
+            + [str(source)]
+        )
+        == 0
+    )
+    said = [line for line in capsys.readouterr().out.splitlines() if "Warning" in line]
+    return config.reference_dir / "soft_checks" / path.stem / "other.json", said
+
+
+def test_soft_check_add_says_the_variable_keys_it_dropped(tmp_path, capsys):
+    """A source's per-variable keys DSTF does not read (``unit``,
+    ``description``) are not stored, and `soft-check add` says so in ONE
+    line: each key, with the variables that carried it."""
+    written, said = _soft_check_add_warnings(
+        tmp_path,
+        capsys,
+        lambda x: [
+            {**x, "unit": "K", "description": "the rod's temperature"},
+            {**x, "index": 2, "name": "y", "unit": "K"},
+        ],
+    )
+    assert said == [_DROPPED + "unit (x, y); description (x)"]
+    assert [tuple(v) for v in json.loads(written.read_text())["variables"]] == [
+        VARIABLE_KEYS
+    ] * 2
+
+
+def test_soft_check_add_warns_nothing_of_a_source_it_drops_nothing_of(tmp_path, capsys):
+    """No key dropped, no warning line — not an empty one."""
+    _written, said = _soft_check_add_warnings(tmp_path, capsys, lambda x: [x])
+    assert said == []
+
+
+def test_soft_check_add_names_a_single_dropped_key(tmp_path, capsys):
+    """One unknown key on one variable is still said."""
+    _written, said = _soft_check_add_warnings(
+        tmp_path, capsys, lambda x: [{**x, "unit": "K"}]
+    )
+    assert said == [_DROPPED + "unit (x)"]
+
+
+def test_soft_check_add_names_three_variables_of_a_key_then_counts_the_rest(
+    tmp_path, capsys
+):
+    _written, said = _soft_check_add_warnings(
+        tmp_path,
+        capsys,
+        lambda x: [
+            {**x, "index": i, "name": f"v{i}", "unit": "K"} for i in range(1, 6)
+        ],
+    )
+    assert said == [_DROPPED + "unit (v1, v2, v3 and 2 more)"]
+
+
+def test_soft_check_add_names_all_three_variables_of_a_key_carried_by_three(
+    tmp_path, capsys
+):
+    _written, said = _soft_check_add_warnings(
+        tmp_path,
+        capsys,
+        lambda x: [
+            {**x, "index": i, "name": f"v{i}", "unit": "K"} for i in range(1, 4)
+        ],
+    )
+    assert said == [_DROPPED + "unit (v1, v2, v3)"]
+
+
+def test_soft_check_add_names_a_variable_whose_name_is_no_text(tmp_path, capsys):
+    """A name the source gives as a number is said as its text: the warning
+    comes after the file is written, and a crash there exits 1 on an import
+    that was stored."""
+    _written, said = _soft_check_add_warnings(
+        tmp_path, capsys, lambda x: [{**x, "name": 7, "unit": "m"}]
+    )
+    assert said == [_DROPPED + "unit (7)"]
+
+
+def test_a_variable_entry_is_written_with_the_keys_decoding_keeps():
+    """`VARIABLE_KEYS` is what decoding keeps and `soft-check add` reports
+    against; the writer writes exactly those, in that order."""
+    entry = _variable_json(
+        StoredVariable(index=1, name="x", expression="a.b", values=[0.0]), False
+    )
+    assert tuple(entry) == VARIABLE_KEYS
 
 
 def test_a_sibling_partitions_reference_overlays_the_runs_own_numbers(tmp_path):
@@ -642,8 +766,10 @@ def test_a_result_with_no_rows_is_not_stored_and_the_accept_says_so(tmp_path):
     test = make_test_model(M, variable_patterns=["x"])
     store = ReferenceStore(config)
     with pytest.raises(ValueError, match="no rows to store"):
-        store.store_reference(test, result)
-    stored, skipped, _ = store.accept_results([test], {M: result})
+        store.store_reference(test, result, provenance=PROVENANCE)
+    stored, skipped, _ = store.accept_results(
+        [test], {M: result}, provenance=PROVENANCES
+    )
     assert stored == []
     assert skipped == [
         (M, f"refusing to store baseline for {M}: the result has no rows to store")
@@ -796,14 +922,14 @@ def test_the_tools_accept_stores_the_points_the_tests_key_says(tmp_path):
     session.apply(Accept().act(view))
 
     store = session.project.store
-    assert store.get_reference(A)["sampling"] == {
+    assert _view(store.get_reference(A))["sampling"] == {
         "setting": 3,
         "source_points": 5,
         "stored_points": 3,
         "precision": "double",
     }
-    assert store.get_reference(A)["time"] == [0.0, 0.5, 1.0]
-    assert store.get_reference(B)["sampling"] == {
+    assert _view(store.get_reference(A))["time"] == [0.0, 0.5, 1.0]
+    assert _view(store.get_reference(B))["sampling"] == {
         "setting": "all",
         "source_points": 5,
         "stored_points": 5,
@@ -883,7 +1009,7 @@ def test_a_baseline_file_over_five_megabytes_is_said_and_is_stored(tmp_path):
     assert warnings == [
         _said("ref_0001.json", "Lib.Big", _megabytes(path), "75,000", "3 variables")
     ]
-    assert len(store.get_reference("Lib.Big")["time"]) == 75_000  # stored whole
+    assert len(_view(store.get_reference("Lib.Big"))["time"]) == 75_000  # stored whole
 
 
 def test_the_warning_is_one_per_file_over_the_threshold(tmp_path, monkeypatch):

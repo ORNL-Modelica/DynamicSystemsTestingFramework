@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from conftest import make_test_model
+from conftest import PROVENANCE, make_test_model
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.storage.reference_store import ReferenceStore
@@ -133,5 +133,6 @@ def wave_project(tmp_path: Path, tree: dict | None = None) -> tuple[Path, Path]:
                 VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
             ],
         ),
+        provenance=PROVENANCE,
     )
     return cfg, work

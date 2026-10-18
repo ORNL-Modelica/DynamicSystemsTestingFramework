@@ -9229,3 +9229,31 @@ project flag given before and after the command with two values is an
 error naming both; the later used to win. (4) Empty values are refused: one
 argparse type over every flag that takes a value and every positional;
 `--filter ""` had selected every test.
+
+## D161 — Timing is reported, not tested; an outside analysis keeps its own files (2026-10-15)
+
+**Context.** A question after the AMC 2026 talk asked for a simulation to
+be run several times and its time averaged. DSTF records each test's
+times once (`statistics.timing`, `run_stats.json`, the report's columns)
+and no verdict reads them unless an author writes a `scalar` criterion on
+one. Asking "did my model get slower" is a regression question, so D66's
+scope-out of analysis is not by itself the reason to decline it.
+
+**Decision.** Repeated runs and timing aggregates are not part of DSTF.
+
+- The reason is the reference, not the purpose: a trustworthy timing check
+  needs a reference tied to ONE machine and controlled runs, and a
+  baseline is partitioned by `<Backend>/<os>`. Repeating a run would make
+  one noisy number less noisy against a reference that is still the
+  wrong one. A design that brings a machine-keyed reference reopens this.
+- Repeat-and-aggregate is done by wrapping DSTF: a loop over `dstf run` or
+  `run_pipeline`, reading each run's `run_stats.json`.
+- An outside analysis writes its own files, beside the run's outputs in
+  the work dir — never into a baseline. Accept rebuilds the baseline file
+  from what it writes (`ReferenceStore.store_reference`), so a field another
+  tool added would be lost at the next accept; and a baseline holds only
+  what accept writes. DSTF does not promise to read those files.
+
+What stays in scope is that DSTF's own one-run times are honest: a time
+that silently includes something else (Julia's per-test compile inside
+`sim_wall`) is a defect, logged in `docs/ideas.md`.

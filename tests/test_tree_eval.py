@@ -25,6 +25,8 @@ from dstf.comparison.tree_spec import (
     synthesize_implicit_tree,
 )
 from dstf.discovery.test_registry import TestModel
+from dstf.storage.baseline import StoredVariable
+from dstf.storage.baseline_codec import decode_reference
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,12 +34,26 @@ from dstf.discovery.test_registry import TestModel
 
 
 def _primary(ref_vars_by_name, shared_ref_time=None) -> dict:
-    """Shortcut: wrap a single ``primary`` baseline for the evaluator."""
+    """Shortcut: wrap a single ``primary`` baseline for the evaluator, its
+    variables given as a file's entries. A baseline has ONE time grid:
+    without ``shared_ref_time``, the entries' own ``time`` (the same in
+    every caller) is lifted to it."""
+    if shared_ref_time is None:
+        times = [e["time"] for e in ref_vars_by_name.values() if "time" in e]
+        shared_ref_time = times[0] if times else []
     return {
         PRIMARY_BASELINE: BaselineView(
             name=PRIMARY_BASELINE,
-            ref_vars_by_name=ref_vars_by_name,
-            shared_ref_time=shared_ref_time,
+            ref_vars_by_name={
+                name: StoredVariable(
+                    index=e.get("index"),
+                    name=e.get("name", name),
+                    expression=e.get("expression", ""),
+                    values=list(e["values"]),
+                )
+                for name, e in ref_vars_by_name.items()
+            },
+            shared_ref_time=np.asarray(shared_ref_time, dtype=float),
         ),
     }
 
@@ -55,19 +71,15 @@ def _result_with(variables: dict[str, tuple[np.ndarray, np.ndarray]]) -> TestRes
 
 
 def _reference_with(variables: dict[str, tuple[np.ndarray, np.ndarray]]) -> dict:
-    """Build a reference dict with the given variables (shared time is omitted
-    to exercise per-variable time arrays — matches the Phase 2 FMU path)."""
+    """Build a reference dict with the given variables on the baseline's ONE
+    shared time grid (the first variable's; every caller passes one)."""
     ref_vars = []
+    times = []
     for i, (name, (t, v)) in enumerate(variables.items()):
-        ref_vars.append(
-            {
-                "index": i + 1,
-                "name": name,
-                "time": t.tolist(),
-                "values": v.tolist(),
-            }
-        )
-    return {"test_id": "0001", "variables": ref_vars}
+        times.append(t.tolist())
+        ref_vars.append({"index": i + 1, "name": name, "values": v.tolist()})
+    assert all(t == times[0] for t in times), "a baseline has one time grid"
+    return {"test_id": "0001", "time": times[0] if times else [], "variables": ref_vars}
 
 
 def _test_model(metrics_raw: dict) -> TestModel:
@@ -204,24 +216,23 @@ class TestLeafEval:
                 "primary": BaselineView(
                     name="primary",
                     ref_vars_by_name={
-                        "x": {
-                            "index": 1,
-                            "name": "x",
-                            "time": t.tolist(),
-                            "values": primary_vals.tolist(),
-                        }
+                        "x": StoredVariable(
+                            index=1,
+                            name="x",
+                            expression="",
+                            values=primary_vals.tolist(),
+                        )
                     },
+                    shared_ref_time=t,
                 ),
                 "experiment": BaselineView(
                     name="experiment",
                     ref_vars_by_name={
-                        "x": {
-                            "index": 1,
-                            "name": "x",
-                            "time": t.tolist(),
-                            "values": ref_vals.tolist(),
-                        }
+                        "x": StoredVariable(
+                            index=1, name="x", expression="", values=ref_vals.tolist()
+                        )
                     },
+                    shared_ref_time=t,
                 ),
             },
             base_tolerance=1e-4,
@@ -245,7 +256,11 @@ class TestLeafEval:
             var_results_by_name={
                 "x": VariableResult(index=1, name="x", time=t, values=ref_vals)
             },
-            baselines={"primary": BaselineView(name="primary", ref_vars_by_name={})},
+            baselines={
+                "primary": BaselineView(
+                    name="primary", ref_vars_by_name={}, shared_ref_time=np.array([])
+                )
+            },
             base_tolerance=1e-4,
         )
         assert not tree.passed
@@ -666,7 +681,7 @@ class TestCompareTestIntegration:
                 ],
             }
         )
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert comp.passed
         assert comp.metric_tree is not None
         assert comp.metric_tree.passed
@@ -687,7 +702,7 @@ class TestCompareTestIntegration:
                 ],
             }
         )
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert comp.passed
 
     def test_spec_path_ignores_variable_overrides(self):
@@ -709,7 +724,7 @@ class TestCompareTestIntegration:
         )
         # Set a super-strict legacy override — should be ignored
         test.variable_overrides = {"x": {"tolerance": 1e-12}}
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert comp.passed  # Tree's 0.1 tolerance wins; override ignored
 
     def test_named_baseline_needs_a_store(self):
@@ -747,7 +762,7 @@ class TestCompareTestIntegration:
                 "tolerance": 0.01,
             }
         )
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert not comp.passed
         assert comp.metric_tree is not None
         assert comp.metric_tree.label == "x"
@@ -763,7 +778,7 @@ class TestCompareTestIntegration:
         fail; the ``against: "experiment"`` leaf passes — so this fails if
         the soft_check merge is ever dropped from compare_test.
         """
-        from dstf.storage.baseline import Baseline
+        from conftest import series
 
         t, primary_vals = _linear()
         _, exp_vals = _linear(offset=0.5)
@@ -775,7 +790,7 @@ class TestCompareTestIntegration:
             def get_soft_checks(self, model_id):
                 assert model_id == "Test.Model"
                 return {
-                    "experiment": Baseline(
+                    "experiment": series(
                         name="experiment",
                         time=t.tolist(),
                         variables=[
@@ -811,7 +826,9 @@ class TestCompareTestIntegration:
                 ],
             }
         )
-        comp = compare_test(test, result, reference, store=_StubStore())
+        comp = compare_test(
+            test, result, decode_reference(reference), store=_StubStore()
+        )
 
         assert comp.passed
         assert comp.metric_tree is not None
@@ -851,7 +868,7 @@ class TestCompareTestIntegration:
                 ],
             }
         )
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert comp.passed
         assert [v.name for v in comp.variables] == ["a", "c"]
 
@@ -1051,7 +1068,11 @@ class TestSentinelLeavesKeepTheirName:
             var_results_by_name={
                 "x": VariableResult(index=1, name="x", time=t, values=vals)
             },
-            baselines={"primary": BaselineView(name="primary", ref_vars_by_name={})},
+            baselines={
+                "primary": BaselineView(
+                    name="primary", ref_vars_by_name={}, shared_ref_time=np.array([])
+                )
+            },
             base_tolerance=1e-4,
         )
         assert not tree.passed

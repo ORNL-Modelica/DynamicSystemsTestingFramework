@@ -128,6 +128,18 @@ def _make_test(**overrides) -> TestModel:
     return TestModel(**defaults)
 
 
+class _RunProgress:
+    """The run's reporter that dispatch records each result with."""
+
+    metadata = {"backend": "OpenModelica", "tool_version": "OpenModelica 1.25"}
+
+    def on_start(self, test_key, worker_id=None):
+        pass
+
+    def on_finish(self, test_key, **kw):
+        pass
+
+
 def _make_config(tmp_path: Path, **overrides) -> Config:
     (tmp_path / "package.mo").write_text("package Lib end Lib;")
     defaults: dict[str, Any] = dict(
@@ -682,6 +694,7 @@ class TestWorkerLifecycle:
                 work_dir=backend.config.work_dir,
                 manifest={tk: {"model_id": t.model_id} for t, tk in items},
             ),
+            progress=_RunProgress(),
         )
 
         assert len(results) == 3

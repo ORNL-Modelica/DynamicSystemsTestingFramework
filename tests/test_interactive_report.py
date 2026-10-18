@@ -22,6 +22,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
+from dstf.storage.baseline_codec import decode_reference
 from test_report_suite import _page_data  # noqa: E402
 
 N_FULL = 3001  # over the cap -> decimated
@@ -196,7 +197,7 @@ def _generate_compared(out_dir: Path, plots=None):
         n_vars=len(names),
         metric_tree_spec=parse_metric_tree(_SPEC),
     )
-    comp = compare_test(test, result, ref)
+    comp = compare_test(test, result, decode_reference(ref))
 
     test_dir = out_dir / "testdir"
     test_dir.mkdir(parents=True, exist_ok=True)
@@ -228,7 +229,7 @@ def _generate_compared(out_dir: Path, plots=None):
 
     html = generate_comparison_plots(
         "TestLib.Kept.Fixture",
-        ref,
+        decode_reference(ref),
         result,
         comp.variables,
         out_dir / "plots",
@@ -339,10 +340,10 @@ def _generate_open_window(out_dir: Path) -> Path:
             }
         ),
     )
-    comp = compare_test(test, result, ref)
+    comp = compare_test(test, result, decode_reference(ref))
     html = generate_comparison_plots(
         "TestLib.OpenWindow.Fixture",
-        ref,
+        decode_reference(ref),
         result,
         comp.variables,
         out_dir / "plots",

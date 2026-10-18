@@ -104,6 +104,14 @@ class ProgressReporter:
         # Set by finalize: the run is over, and nothing writes again.
         self._closed = False
 
+    @property
+    def metadata(self) -> dict | None:
+        """The run's metadata as it stands now — a copy, ``update_metadata``'s
+        late patches included — or ``None`` when the run was given none.
+        What ``BatchManifest.record_result`` stamps beside each result."""
+        with self._lock:
+            return dict(self._metadata) if self._metadata is not None else None
+
     def update_metadata(self, **fields: object) -> None:
         """Patch run-level metadata after the fact (e.g. a backend that only
         learns its ``tool_version`` once its worker is live) and re-emit the

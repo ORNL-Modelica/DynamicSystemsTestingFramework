@@ -119,10 +119,15 @@ class ItemPath(Protocol):
         ...
 
     def end(
-        self, test: TestModel, test_key: str, run_result: TestRunResult
+        self,
+        test: TestModel,
+        test_key: str,
+        run_result: TestRunResult,
+        started_at: float,
     ) -> TestResult | None:
-        """After the run: record what it came to, and read the result back
-        (``None`` for a cancelled run)."""
+        """After the run that began at *started_at* (``time.time()``): record
+        what it came to, and read the result back (``None`` for a cancelled
+        run)."""
         ...
 
 
@@ -556,7 +561,10 @@ class SimulationPool:
                 run_result = dataclasses.replace(
                     run_result, cancelled=True, error_message="Cancelled"
                 )
-            result = self.path.end(item.test, test_key, run_result)
+            assert item.started_at is not None, (
+                f"pool: {item.model_id} runs with no start stamped (`_take` stamps it)"
+            )
+            result = self.path.end(item.test, test_key, run_result, item.started_at)
         except Exception as exc:
             logger.exception("pool: running %s raised", item.model_id)
             error = f"{type(exc).__name__}: {exc}"

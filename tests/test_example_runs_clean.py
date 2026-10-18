@@ -25,6 +25,7 @@ from dstf.comparison.comparator import compare_one
 from dstf.config import Config
 from dstf.discovery.test_registry import discover_tests
 from dstf.reporting.status import PASS, classify
+from dstf.storage.baseline import ReferenceFile
 from dstf.storage.reference_store import ReferenceStore
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "modelica" / "ModelicaTestingLib"
@@ -33,20 +34,20 @@ TREE = "ModelicaTestingLib.Examples.MetricTreeTest"
 PARTITIONS = ["Dymola/linux", "Dymola/windows", "OpenModelica/linux"]
 
 
-def _as_its_own_run(reference: dict) -> TestResult:
-    time = np.asarray(reference["time"], dtype=float)
+def _as_its_own_run(reference: ReferenceFile) -> TestResult:
+    time = np.asarray(reference.baseline.time, dtype=float)
     return TestResult(
-        reference["model_id"],
+        reference.model_id,
         True,
         variables=[
             VariableResult(
-                v["index"],
+                v.index,
                 time,
-                np.asarray(v["values"], dtype=float),
-                name=v["name"],
-                expression=v.get("expression") or "",
+                np.asarray(v.values, dtype=float),
+                name=v.name,
+                expression=v.expression or "",
             )
-            for v in reference["variables"]
+            for v in reference.baseline.variables
         ],
     )
 

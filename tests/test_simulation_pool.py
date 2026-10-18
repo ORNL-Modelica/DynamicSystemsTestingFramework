@@ -153,7 +153,12 @@ _STORE = SimpleNamespace(index=SimpleNamespace(get_id=lambda model_id: None))
 def _config(tmp_path, **kw):
     kw.setdefault("parallel", 1)
     return SimpleNamespace(
-        work_dir=tmp_path / "work", timeout=30.0, backend="Stub", **kw
+        work_dir=tmp_path / "work",
+        timeout=30.0,
+        backend="Stub",
+        backend_name="Stub",
+        os_name="linux",
+        **kw,
     )
 
 
@@ -1478,6 +1483,83 @@ def test_the_python_backend_through_the_pool_equals_run_pipeline(tmp_path):
     assert status["metadata"]["backend_name"] == "Python"
     assert status["metadata"]["tool_version"].startswith("Python 3")
     assert (config.work_dir / "dashboard.html").exists()
+
+
+def test_a_queue_runs_metadata_starts_when_its_test_did(stub):
+    """A test run from the queue is a run of its own: the metadata recorded
+    beside its result (an accept's ``run_started``) starts when the item
+    did — its ``started_at`` — not at its end less its elapsed time."""
+    backend, pool, _ = stub
+    backend.gate("Lib.A")
+    item = pool.submit(_t("A"))
+    _wait_until(lambda: item.state is ItemState.RUNNING)
+    time.sleep(0.1)  # the run takes time: its start is not its end
+    backend.gates["Lib.A"].set()
+    _wait_until(lambda: _ended(item))
+
+    kept = json.loads(
+        (backend.config.work_dir / item.test_key / "run_stats.json").read_text()
+    )
+    assert item.started_at is not None
+    assert kept["run_metadata"]["generated_at"] == item.started_at
+
+
+def test_an_accept_after_a_queue_rerun_writes_the_reruns_provenance(
+    tmp_path, monkeypatch
+):
+    """The tool path: the work dir's status.json holds run A's metadata (the
+    last `dstf run`); the queue reruns one test under metadata B and the
+    Accept comes before the queue drains (no status.json write). The
+    baseline FILE written records B — the run that produced the result."""
+    from dstf.backends import select_backend
+    from dstf.storage.accept import accept_run_results
+    from dstf.storage.reference_store import ReferenceStore
+
+    config, tests = _python_project(tmp_path, "tool")
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    run_a = {
+        "backend": "Python",
+        "backend_name": "Python",
+        "os": "linux",
+        "tool_version": "RUN A",
+        "dstf_version": "0.0.0",
+        "generated_at": 1000.0,
+        "library_versions": {"A": "1"},
+    }
+    (config.work_dir / "status.json").write_text(
+        json.dumps({"metadata": run_a, "tests": []}), encoding="utf-8"
+    )
+    backend = select_backend(config, persistent=True)
+    backend.quiet = True
+    monkeypatch.setattr(
+        backend,
+        "run_versions",
+        lambda: {"tool_version": "RUN B", "library_versions": {"B": "2"}},
+    )
+    store = ReferenceStore(config)
+    pool = open_pool(config, backend=backend, store=store, workers=1)
+    try:
+        item = pool.submit(tests["Fast1"])
+        _wait_until(lambda: _ended(item))
+    finally:
+        pool.close()
+    assert item.state is ItemState.FINISHED
+
+    stored, skipped, _, _ = accept_run_results(
+        store, [tests["Fast1"]], {item.model_id: item.result}, config.work_dir
+    )
+    assert (stored, skipped) == (1, [])
+    written = json.loads(
+        store.reference_file(item.model_id).read_text(encoding="utf-8")
+    )
+    provenance = written["provenance"]
+    assert provenance["tool_version"] == "RUN B"
+    assert provenance["library_versions"] == {"B": "2"}
+    assert provenance["backend"] == "Python" and provenance["os"] == config.os_name
+    assert provenance["run_started"] > "2026"  # this run's start, not A's
+    assert (
+        json.loads((config.work_dir / "status.json").read_text())["metadata"] == run_a
+    )
 
 
 def _comparable(value):

@@ -5,9 +5,8 @@ model_id, test_id, status, date_added, and last_updated metadata. An in-memory
 index is built by scanning ref files — no persistent manifest file needed
 (:mod:`dstf.storage.ref_index`).
 
-A :class:`~dstf.storage.baseline.Baseline` view is exposed alongside the raw-dict
-API. The on-disk format is flat — one baseline per file — and the view
-synthesizes a single baseline named ``"primary"`` from those fields. Additional
+Every file is read and written by :mod:`dstf.storage.baseline_codec`; this
+store hands out :class:`~dstf.storage.baseline.ReferenceFile`s. Additional
 named baselines are separate files under ``soft_checks/ref_NNNN/<name>.json``
 (D66); that CRUD lives in :mod:`dstf.storage.roles`.
 """
@@ -17,6 +16,7 @@ import io
 import json
 import logging
 import shutil
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,105 +26,26 @@ import numpy as np
 from ..backends import TestResult
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from .baseline import PRIMARY_BASELINE, Baseline
+from .baseline import (
+    PRIMARY_BASELINE,
+    Baseline,
+    DiagnosticSummary,
+    ReferenceFile,
+    Sampling,
+    StoredVariable,
+)
+from .baseline_codec import (
+    DOUBLE,
+    SINGLE,
+    read_reference,
+    reference_to_json,
+    stored_numbers,
+    write_reference,
+)
 from .ref_index import RefIndex, _atomic_write_text
 from .roles import _companion_dir, _RolesMixin, _soft_check_dir
 
 logger = logging.getLogger(__name__)
-
-
-#: Significant digits a value is written with, by the precision it has:
-#: the fewest that identify EVERY number of that precision, so a stored
-#: value is the run's own. IEEE 754 binary32 needs at most 9 decimal digits
-#: to round-trip, binary64 at most 17. (A double was written with 15 — one
-#: more often than not another double than the run's, and a baseline scored
-#: 6.7e-10 against its own run on a signal of range 0.4 at 130450.) JSON
-#: then writes each at its SHORTEST spelling that reads back the same:
-#: `0.1` stays `0.1`.
-SINGLE_DIGITS = 9
-DOUBLE_DIGITS = 17
-
-#: ``sampling.precision`` of a reference JSON whose time and value arrays
-#: were ALL single precision in the run it was accepted from.
-SINGLE = "single"
-DOUBLE = "double"
-
-
-def read_reference_file(path: Path) -> dict:
-    """A reference-shape JSON file as the dict it holds — THE reader of a
-    baseline's arrays (``time``, each variable's ``values``): a primary
-    reference of this partition (:meth:`ReferenceStore.get_reference`), of
-    a sibling one (the report's overlays), a soft check's file, a JSON
-    companion's (another library's reference file, or a frozen copy) and
-    the source of a ``soft-check add`` all come through here. ``OSError`` and
-    ``json.JSONDecodeError`` are the caller's: each says its own thing
-    about a file it could not read.
-
-    A file that says its run was single precision (``sampling.precision``)
-    is read back THROUGH single precision: each stored number becomes the
-    nearest float32, as a Python float. Those are the run's own values, bit
-    for bit — the 9 digits written identify a float32, not the double a
-    JSON reader would otherwise make of them, which is a different number
-    than the one the run holds (and scored a baseline against its own run
-    at up to 6e-2 where the signal's range was small beside its level).
-    The arrays stay lists of floats: nothing downstream sees another type.
-    A file without the field is read exactly as it always was."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    sampling = data.get("sampling") if isinstance(data, dict) else None
-    if isinstance(sampling, dict) and sampling.get("precision") == SINGLE:
-        if isinstance(data.get("time"), list):
-            data["time"] = _through_single(data["time"])
-        for entry in data.get("variables") or []:
-            if isinstance(entry, dict) and isinstance(entry.get("values"), list):
-                entry["values"] = _through_single(entry["values"])
-    return data
-
-
-def _through_single(values: list) -> list:
-    """``values`` as the float32 nearest each, widened back: Python floats
-    that ARE single-precision numbers. Anything that is not all numbers is
-    returned as it is — what such a list means is its reader's to say."""
-    try:
-        return np.asarray(values, dtype=np.float32).astype(np.float64).tolist()
-    except (TypeError, ValueError):
-        return values
-
-
-def _baseline_from_flat(data: dict) -> Baseline:
-    """Synthesize the ``"primary"`` baseline from a flat reference dict.
-
-    A ref file keeps its baseline fields (``time``, ``variables``,
-    ``comparison``, ...) at the top level. This adapter lifts them into a
-    Baseline view so readers target one API for primary and soft_checks alike.
-    """
-    provenance: dict[str, Any] = {"origin": "flat"}
-    if "date_added" in data:
-        provenance["captured_at"] = data["date_added"]
-    if "last_updated" in data and data.get("last_updated") != data.get("date_added"):
-        provenance["last_updated"] = data["last_updated"]
-
-    return Baseline(
-        name=PRIMARY_BASELINE,
-        time=data.get("time", []),
-        variables=data.get("variables", []),
-        diagnostics=data.get("diagnostics", []),
-        simulation=data.get("simulation", {}),
-        comparison=data.get("comparison", {}),
-        statistics=data.get("statistics", {}),
-        provenance=provenance,
-    )
-
-
-def _extract_baselines(data: dict) -> dict[str, Baseline]:
-    """Return the ``"primary"`` baseline of a reference file, keyed by name.
-
-    A ref file carries exactly one baseline: the primary, stored as flat
-    top-level fields (``time``, ``variables``, ``simulation``,
-    ``comparison``, ``statistics``, ``diagnostics``). Named baselines live
-    in the store's ``soft_checks/ref_NNNN/<name>.json`` subdir (D66) and are
-    merged in by :meth:`ReferenceStore.get_baselines`, not read from here.
-    """
-    return {PRIMARY_BASELINE: _baseline_from_flat(data)}
 
 
 class ReferenceStore(_RolesMixin):
@@ -165,72 +86,30 @@ class ReferenceStore(_RolesMixin):
         its contents names — or None for a model with none."""
         return self._ref_file_for_model(model_id)
 
-    def get_reference(self, model_id: str) -> dict | None:
-        """Load reference data for a model. Returns None if not found.
-
-        Returns the raw dict as stored on disk. Most callers should prefer
-        :meth:`get_baseline` or :meth:`get_baselines`, which present a
-        schema-version-independent view.
-        """
+    def get_reference(self, model_id: str) -> ReferenceFile | None:
+        """A model's reference file, decoded; None when it has none or it
+        cannot be read (the error is logged)."""
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None or not ref_file.exists():
             return None
         try:
-            data = read_reference_file(ref_file)
+            return read_reference(ref_file)
         except (json.JSONDecodeError, OSError) as e:
             logger.error("Failed to read reference %s: %s", ref_file, e)
             return None
-        if isinstance(data.get("baselines"), dict):
-            # Old data, not old code: named baselines are read only from
-            # soft_checks/ now. The key is ignored here and dropped the next
-            # time this file is written.
-            logger.warning(
-                "%s carries a top-level 'baselines' key — it is ignored. "
-                "Re-add those baselines as soft_checks: "
-                "`dstf soft-check add %s <name> <source>`.",
-                ref_file,
-                model_id,
-            )
-        return data
-
-    def get_baselines(self, model_id: str) -> dict[str, Baseline]:
-        """Return the primary baseline plus any registered soft_checks.
-
-        Companions are **not** returned here — they are plot-only
-        overlays and cannot be scored against (D66). Use
-        :meth:`get_companions` for those.
-
-        Empty dict if the model has no reference file.
-        """
-        data = self.get_reference(model_id)
-        if data is None:
-            return {}
-        out = _extract_baselines(data)
-        out.update(self.get_soft_checks(model_id))
-        return out
-
-    def get_baseline(
-        self,
-        model_id: str,
-        name: str = PRIMARY_BASELINE,
-    ) -> Baseline | None:
-        """Return one named baseline for a model, or None if not found.
-
-        Defaults to ``"primary"`` — which is what every existing caller
-        implicitly wants (there is only one baseline per file today).
-        """
-        return self.get_baselines(model_id).get(name)
-
-    def list_baseline_names(self, model_id: str) -> list[str]:
-        """Return the names of baselines available for a model."""
-        return list(self.get_baselines(model_id).keys())
 
     def store_reference(
         self,
         test: TestModel,
         result: TestResult,
+        *,
+        provenance: dict,
     ) -> bool:
         """Store simulation results as a new reference baseline.
+
+        ``provenance`` is what produced *result* (``accept._provenance``),
+        written as the file's ``provenance``: required, so no writer can
+        store a baseline without saying where it came from.
 
         Raises :class:`ValueError` when the trajectory contains non-finite
         values or no rows at all — callers that accept in bulk should catch
@@ -273,14 +152,14 @@ class ReferenceStore(_RolesMixin):
         ref_file = self.ref_dir / filename
 
         # Check if this is a new file or an update
-        existing = None
+        existing: ReferenceFile | None = None
         if ref_file.exists():
             try:
-                existing = json.loads(ref_file.read_text(encoding="utf-8"))
+                existing = read_reference(ref_file)
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # Build the reference JSON
+        # Build the reference file
         # All variables share the same time vector (Modelica spec).
         shared_time = result.variables[0].time
         # The points kept (D153): every row the run wrote, unless
@@ -299,22 +178,21 @@ class ReferenceStore(_RolesMixin):
         for var in result.variables:
             _, values_list = _downsample(shared_time, var.values, max_points)
             variables.append(
-                {
-                    "index": var.index,
-                    "name": var.name,
+                StoredVariable(
+                    index=var.index,
+                    name=var.name,
                     # Always written, "" included: what the model's ``x={...}``
                     # said when this baseline was accepted, soft-checked on
-                    # every compare. An entry WITHOUT the key is one no
-                    # writer of this version produced.
-                    "expression": var.expression,
-                    "values": values_list,
-                }
+                    # every compare.
+                    expression=var.expression,
+                    values=values_list,
+                )
             )
 
         now = datetime.now(timezone.utc).isoformat()
         date_added = now
-        if existing and "date_added" in existing:
-            date_added = existing["date_added"]
+        if existing is not None and existing.date_added is not None:
+            date_added = existing.date_added
 
         # Derive numberOfIntervals from actual result if not explicitly set
         n_intervals = test.number_of_intervals
@@ -324,38 +202,30 @@ class ReferenceStore(_RolesMixin):
             unique_times = len(np.unique(shared_time))
             n_intervals = max(unique_times - 1, 1)
 
-        ref_data: dict[str, Any] = {
-            "model_id": test.model_id,
-            "test_id": test_id,
-            "status": "active",
-            "date_added": date_added,
-            "last_updated": now,
-            "simulation": {
-                "stop_time": test.stop_time,
-                "tolerance": test.tolerance,
-                "method": test.method,
-                "number_of_intervals": n_intervals,
-                "output_interval": out_interval,
-            },
-            # What was done to the run's rows, always written: a reference
-            # WITHOUT the key was stored before it existed, under a cap of
-            # 2000 points that no key set.
-            "sampling": {
-                "setting": setting,
-                "source_points": len(shared_time),
-                "stored_points": len(shared_time_list),
-                # Always written. "single" only when the time vector and
-                # EVERY value array were single precision: the reader then
-                # takes each stored number back through float32
-                # (`read_reference_file`), which would move a double.
-                "precision": SINGLE
-                if all(
-                    np.asarray(a).dtype == np.float32
-                    for a in (shared_time, *(v.values for v in result.variables))
-                )
-                else DOUBLE,
-            },
+        simulation = {
+            "stop_time": test.stop_time,
+            "tolerance": test.tolerance,
+            "method": test.method,
+            "number_of_intervals": n_intervals,
+            "output_interval": out_interval,
         }
+        # What was done to the run's rows, always written: a reference
+        # WITHOUT the key was stored before it existed, under a cap of
+        # 2000 points that no key set.
+        sampling = Sampling(
+            setting=setting,
+            source_points=len(shared_time),
+            stored_points=len(shared_time_list),
+            # Always written. "single" only when the time vector and EVERY
+            # value array were single precision: the codec then reads each
+            # stored number back through float32, which would move a double.
+            precision=SINGLE
+            if all(
+                np.asarray(a).dtype == np.float32
+                for a in (shared_time, *(v.values for v in result.variables))
+            )
+            else DOUBLE,
+        )
 
         # Comparison settings (per-test and per-variable tolerances)
         # A base tolerance is written only when it is ONE finite number —
@@ -371,8 +241,8 @@ class ReferenceStore(_RolesMixin):
         if test.variable_overrides:
             comparison["variable_overrides"] = test.variable_overrides
         # Preserve existing comparison settings if not overridden
-        if existing and "comparison" in existing:
-            existing_comp = existing["comparison"]
+        if existing is not None and existing.comparison:
+            existing_comp = existing.comparison
             if "tolerance" not in comparison and is_base_tolerance(
                 existing_comp.get("tolerance")
             ):
@@ -382,11 +252,6 @@ class ReferenceStore(_RolesMixin):
                 and "variable_overrides" in existing_comp
             ):
                 comparison["variable_overrides"] = existing_comp["variable_overrides"]
-        if comparison:
-            ref_data["comparison"] = comparison
-
-        if result.statistics:
-            ref_data["statistics"] = result.statistics
 
         # Diagnostic variables (CPUtime, EventCounter) — stored as a scalar
         # summary, not a full trajectory. The trajectory value (especially
@@ -395,27 +260,44 @@ class ReferenceStore(_RolesMixin):
         # Users who want a diagnostic's full trajectory can add its name to
         # the test's variables/variable_patterns list — it'll be tracked
         # like any other variable at that point.
-        if result.diagnostics:
-            diag_list = []
-            for diag in result.diagnostics:
-                values = np.asarray(diag.values)
-                entry: dict = {"name": diag.name}
-                if values.size > 0:
-                    entry["final"] = float(values[-1])
-                    entry["min"] = float(values.min())
-                    entry["max"] = float(values.max())
-                diag_list.append(entry)
-            ref_data["diagnostics"] = diag_list
+        diagnostics = []
+        for diag in result.diagnostics or []:
+            values = np.asarray(diag.values)
+            if values.size > 0:
+                diagnostics.append(
+                    DiagnosticSummary(
+                        name=diag.name,
+                        final=float(values[-1]),
+                        min=float(values.min()),
+                        max=float(values.max()),
+                    )
+                )
+            else:
+                diagnostics.append(DiagnosticSummary(name=diag.name))
 
-        # Data fields last — keeps metadata readable at the top of the file
-        ref_data["n_vars"] = len(variables)
-        ref_data["time"] = shared_time_list
-        ref_data["variables"] = variables
+        ref = ReferenceFile(
+            model_id=test.model_id,
+            test_id=test_id,
+            status="active",
+            date_added=date_added,
+            last_updated=now,
+            sampling=sampling,
+            comparison=comparison,
+            baseline=Baseline(
+                name=PRIMARY_BASELINE,
+                time=shared_time_list,
+                variables=variables,
+                diagnostics=diagnostics,
+                simulation=simulation,
+                statistics=result.statistics or {},
+                provenance=provenance,
+            ),
+        )
 
         # review 2026-07-06 (finding 31): atomic — a Ctrl-C mid-accept must
         # not corrupt the baseline (a corrupt file is silently dropped by the
         # next scan and its ID re-allocated to a different model).
-        _atomic_write_text(ref_file, json.dumps(ref_data, indent=2) + "\n")
+        write_reference(ref_file, ref)
 
         return True
 
@@ -423,8 +305,11 @@ class ReferenceStore(_RolesMixin):
         self,
         tests: list[TestModel],
         results: dict[str, TestResult],
+        *,
+        provenance: Mapping[str, dict],
     ) -> tuple[list[str], list[tuple[str, str]], list[str]]:
-        """Accept simulation results as new baselines.
+        """Accept simulation results as new baselines, each with the
+        ``provenance`` of its model's result.
 
         Returns ``(stored, skipped, simulate_only)``: the model ids whose
         baseline was written, in the order given; ``(model_id, reason)`` for
@@ -451,7 +336,9 @@ class ReferenceStore(_RolesMixin):
                 simulate_only.append(test.model_id)
                 continue
             try:
-                ok = self.store_reference(test, result)
+                ok = self.store_reference(
+                    test, result, provenance=provenance[test.model_id]
+                )
             except ValueError as exc:
                 # review 2026-07-06 leftover B: one poisoned trajectory must
                 # not abort accepting the rest — skip it, warn, keep going.
@@ -464,30 +351,6 @@ class ReferenceStore(_RolesMixin):
                 skipped.append((test.model_id, "no tracked variables in result"))
         return stored, skipped, simulate_only
 
-    def set_status(self, model_id: str, status: str) -> bool:
-        """Update the status field of a reference file.
-
-        Valid statuses: 'active', 'skip', 'obsolete'.
-        """
-        ref_file = self._ref_file_for_model(model_id)
-        if ref_file is None or not ref_file.exists():
-            return False
-        try:
-            data = json.loads(ref_file.read_text(encoding="utf-8"))
-            data["status"] = status
-            # review 2026-07-06 (finding 31): atomic status flip.
-            _atomic_write_text(ref_file, json.dumps(data, indent=2) + "\n")
-            # Update in-memory index
-            test_id = self._index.get_id(model_id)
-            if test_id and test_id in self._index._by_id:
-                self._index._by_id[test_id]["status"] = status
-                if status == "obsolete":
-                    self._index._by_model.pop(model_id, None)
-            return True
-        except (json.JSONDecodeError, OSError) as e:
-            logger.error("Failed to update status for %s: %s", ref_file, e)
-            return False
-
     def list_models(self) -> list[str]:
         """List all model IDs with stored references (excluding obsolete)."""
         return sorted(self._index.active_tests().values())
@@ -498,8 +361,8 @@ class ReferenceStore(_RolesMixin):
         all_refs = {}
         for model_id in models:
             ref = self.get_reference(model_id)
-            if ref:
-                all_refs[model_id] = ref
+            if ref is not None:
+                all_refs[model_id] = reference_to_json(ref)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         # review 2026-07-06 (finding 31): atomic like every other JSON write.
@@ -527,19 +390,19 @@ class ReferenceStore(_RolesMixin):
         )
         for model_id in models:
             ref = self.get_reference(model_id)
-            if ref:
-                sim = ref.get("simulation", {})
+            if ref is not None:
+                sim = ref.baseline.simulation
                 writer.writerow(
                     [
-                        ref.get("test_id", ""),
+                        ref.test_id or "",
                         model_id,
-                        ref.get("status", "active"),
-                        ref.get("n_vars", ""),
+                        ref.active_status,
+                        len(ref.baseline.variables),
                         sim.get("stop_time", ""),
                         sim.get("tolerance", ""),
                         sim.get("method", ""),
-                        ref.get("date_added", ""),
-                        ref.get("last_updated", ""),
+                        ref.date_added or "",
+                        ref.last_updated or "",
                     ]
                 )
         # review 2026-07-06 (finding 31): atomic like every other export —
@@ -601,7 +464,7 @@ def _downsample(
     """
     n = len(time)
     if n <= max_points:
-        return _to_json_list(time), _to_json_list(values)
+        return stored_numbers(time), stored_numbers(values)
 
     # Find event boundary indices (duplicate time values — keep both)
     event_indices = set()
@@ -646,21 +509,4 @@ def _downsample(
         all_indices = sorted(event_indices | set(extras))
 
     idx = np.array(all_indices)
-    return _to_json_list(time[idx]), _to_json_list(values[idx])
-
-
-def _to_json_list(arr: np.ndarray) -> list[float]:
-    """Convert numpy array to JSON-serializable list of Python floats.
-
-    Rounds to the significant digits that identify a value of the source's
-    precision (:data:`SINGLE_DIGITS`, :data:`DOUBLE_DIGITS`):
-    - float32 (Dymola's single-precision result files): 9 — the fewest
-      that round-trip every float32, so the reader can give the run's own
-      number back (`read_reference_file`). At 7, which this wrote before,
-      a stored value was a different float32 than the run's more often
-      than not.
-    - float64: 17, the fewest that round-trip every double — the stored
-      value IS the run's.
-    """
-    sig = SINGLE_DIGITS if arr.dtype == np.float32 else DOUBLE_DIGITS
-    return [float(f"%.{sig}g" % v) for v in arr]
+    return stored_numbers(time[idx]), stored_numbers(values[idx])

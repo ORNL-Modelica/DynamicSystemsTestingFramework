@@ -6,6 +6,20 @@ follow [semantic versioning](https://semver.org/). DSTF is in beta: the command
 line and the `testing.json` keys may still change between minor versions, and
 this file says when they do.
 
+## [Unreleased]
+
+### Added
+
+- Accepted baselines record what produced them — backend, simulator and
+  library versions, DSTF version, OS, when the run started (`provenance`).
+  Existing baselines gain it at their next accept.
+
+### Changed
+
+- `soft-check add` no longer stores a source's per-variable keys that nothing
+  in DSTF reads (`unit`, `description`, …); one warning line names the keys
+  it dropped and (up to three of) the variables that carried each.
+
 ## [1.1.0] - 2026-10-14
 
 This release changes the command line and `testing.json`. Nothing old is

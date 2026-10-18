@@ -19,6 +19,7 @@ pytest.importorskip("nicegui")
 from nicegui import ui  # noqa: E402
 from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
+from conftest import PROVENANCE  # noqa: E402
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.capabilities import Artifact, Patch, Placement  # noqa: E402
@@ -10711,6 +10712,7 @@ def _ref_override_project(tmp_path, on="x"):
             ],
             statistics=copy.deepcopy(DYMOLA_BASE),
         ),
+        provenance=PROVENANCE,
     )
     return cfg, work
 

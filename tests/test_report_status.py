@@ -32,6 +32,7 @@ from dstf.reporting.status import (
     classify,
     count_by_status,
 )
+from dstf.storage.baseline_codec import decode_reference
 
 
 def _var(name="h", *, passed=True, index=0):
@@ -285,7 +286,7 @@ class TestSimulateOnlyClassification:
                 success=True,
                 variables=[VariableResult(index=1, time=t, values=t, name="x")],
             ),
-            {"test_id": "0007"},
+            decode_reference({"test_id": "0007"}),
         )
         assert comp.simulate_only is True
         assert classify(comp) == PASS

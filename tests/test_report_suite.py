@@ -15,6 +15,7 @@ import pytest
 
 from dstf.comparison.types import VariableComparison
 from dstf.reporting.report_suite import _json_sanitize, generate_comparison_plots
+from dstf.storage.baseline_codec import decode_reference
 
 
 def _stamped_root_leaf(vc):
@@ -270,7 +271,7 @@ class TestViewAndLookupDrift:
             ),
         )
         for model in (flat, explicit):
-            comp = compare_test(model, result, ref)
+            comp = compare_test(model, result, decode_reference(ref))
             with caplog.at_level(
                 logging.WARNING, logger="dstf.reporting.context_builder"
             ):
@@ -561,11 +562,11 @@ class TestEmbeddedFigures:
                 "x": {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01}
             },
         )
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
         plot_dir = tmp_path / "plots"
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             plot_dir,
@@ -646,7 +647,7 @@ class TestEmbeddedFigures:
             variable_patterns=["x"],
             variable_overrides={"x": {"mode": "points", "tolerance": 0.01}},
         )
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
 
         built: list[dict] = []
         real = report_suite._build_figures
@@ -671,7 +672,7 @@ class TestEmbeddedFigures:
         monkeypatch.setattr(report_suite, "_build_figures", spy)
         report_suite.generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             tmp_path / "plots",
@@ -854,11 +855,11 @@ class TestEmbeddedFigures:
             n_vars=1,
             metric_tree_spec=spec,
         )
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
         plot_dir = tmp_path / ("first" if sentinel_first else "second")
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             plot_dir,
@@ -961,11 +962,11 @@ class TestEmbeddedFigures:
             n_vars=1,
             metric_tree_spec=spec,
         )
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
         plot_dir = tmp_path / "lone"
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             plot_dir,
@@ -1147,10 +1148,10 @@ class TestServerRenderedTree:
             n_vars=2,
             metric_tree_spec=parse_metric_tree(self.SPEC),
         )
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             tmp_path / "plots",
@@ -1341,7 +1342,7 @@ class TestRestoredViewingChecks:
         _t, _ref_v, ref, result = self._inputs()
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comparisons,
             tmp_path / "plots",
@@ -1359,7 +1360,7 @@ class TestRestoredViewingChecks:
 
         _t, _ref_v, ref, result = self._inputs()
         test = self._model(**kw)
-        return test, compare_test(test, result, ref)
+        return test, compare_test(test, result, decode_reference(ref))
 
     def test_a_root_with_no_verdict_renders_pending_not_fail(self, tmp_path):
         """No evaluated tree ⇒ no root verdict ⇒ the summary is ``pending``.
@@ -1561,7 +1562,7 @@ class TestPlotSections:
             metric_tree_spec=parse_metric_tree(metrics) if metrics else None,
             plots=parse_plots(extras) if extras is not None else None,
         )
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
         if "plots" not in kw:
             kw["plots"], kw["extra_series"] = plot_inputs(
                 test, comp.variables, result, None, None
@@ -1569,7 +1570,7 @@ class TestPlotSections:
         plot_dir = tmp_path / "plots"
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             plot_dir,
@@ -1776,11 +1777,11 @@ class TestPlotSections:
             source="unit_tests",
             x_expressions=expr,
         )
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
         plots, extra = plot_inputs(test, comp.variables, result, None, None)
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             tmp_path / "p",
@@ -1850,11 +1851,11 @@ class TestPlotSections:
                 }
             ),
         )
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
         plots, extra = plot_inputs(test, comp.variables, result, None, None)
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             tmp_path / "p",
@@ -2655,7 +2656,9 @@ class TestTheTrajectoriesCarryTheExpression:
                 actual_final=1.0,
             )
         ]
-        trajectories, _diag, nobaseline = build_trajectories(comparisons, result, ref)
+        trajectories, _diag, nobaseline = build_trajectories(
+            comparisons, result, decode_reference(ref)
+        )
         assert [(t["name"], t["expression"]) for t in trajectories] == [
             ("unitTests.x[1]", "pipe.T[1]")
         ]
@@ -2717,10 +2720,10 @@ def test_the_drawn_reference_is_paired_by_name_not_by_index():
             for i, n in enumerate(order)
         ],
     )
-    comp = compare_test(test, result, reference)
+    comp = compare_test(test, result, decode_reference(reference))
     assert comp.passed
     trajectories, _diag, _nb = build_trajectories(
-        list(comp.variables), result, reference
+        list(comp.variables), result, decode_reference(reference)
     )
     by = {tr["name"]: tr for tr in trajectories}
     assert by["b"]["ref_values"] == vals["b"].tolist()
@@ -2752,9 +2755,11 @@ def test_a_name_stored_twice_draws_its_first_entry():
         success=True,
         variables=[VariableResult(index=1, time=t, values=np.ones(11), name="a")],
     )
-    comp = compare_test(test, result, reference)
+    comp = compare_test(test, result, decode_reference(reference))
     assert comp.passed  # scored against the first entry
-    (traj,), _diag, _nb = build_trajectories(list(comp.variables), result, reference)
+    (traj,), _diag, _nb = build_trajectories(
+        list(comp.variables), result, decode_reference(reference)
+    )
     assert traj["ref_values"] == [1.0] * 11
 
 
@@ -2841,7 +2846,7 @@ class TestAVariableReadsAsItsExpression:
         # scope.
         if plots is not None:
             test.plots = parse_plots(plots)
-        comp = compare_test(test, result, ref)
+        comp = compare_test(test, result, decode_reference(ref))
 
         # Through the production producer, not a hand-rolled layout: the
         # page's plots are derived from the tree, and `plot_inputs` also
@@ -2862,7 +2867,7 @@ class TestAVariableReadsAsItsExpression:
         )
         html = generate_comparison_plots(
             "M",
-            ref,
+            decode_reference(ref),
             result,
             comp.variables,
             tmp_path / name,
@@ -3361,7 +3366,7 @@ class TestTheStatisticsTable:
         ctx = _build_template_context(
             "M",
             [],
-            ref,
+            decode_reference(ref),
             run,
             None,
             result=TestResult("M", True, diagnostics=[wall], statistics=run),

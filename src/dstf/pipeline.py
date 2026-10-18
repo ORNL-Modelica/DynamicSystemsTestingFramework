@@ -341,21 +341,33 @@ class ItemRun:
         return keyed[0][1]
 
     def end(
-        self, test: TestModel, test_key: str, run_result: TestRunResult
+        self,
+        test: TestModel,
+        test_key: str,
+        run_result: TestRunResult,
+        started_at: float,
     ) -> TestResult | None:
         """Record *run_result* in the manifest (a cancelled run as
         cancelled) and return the result read back — ``None`` for a
-        cancelled run, the failure for a failed one."""
+        cancelled run, the failure for a failed one. *started_at* is when
+        the item's run began (``QueueItem.started_at``)."""
         from .storage.batch_manifest import BatchManifest
 
         work_dir = self.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
+        # The metadata of the run that produced THIS result, recorded beside
+        # it: a queue has no ProgressReporter (status.json is written once,
+        # when it drains — `write_status`), so it is built here from the
+        # backend as `write_status` builds it. A test run from the queue is
+        # a run of its own: its start is the item's.
+        metadata = self.backend._build_run_metadata(**self.backend.run_versions())
+        metadata["generated_at"] = started_at
         with self._manifest_lock:
             # Re-read: another item's thread has saved since this one's
             # begin, and ref ids may have been assigned by an accept.
             manifest = BatchManifest.load(work_dir / "batch_manifest.json")
             manifest.enrich_ref_ids(self.store.index)
-            manifest.record_result(run_result)
+            manifest.record_result(run_result, metadata)
         return self.backend.result_of_run(test, test_key, run_result)
 
     def write_status(self, items: Iterable[QueueItem]) -> None:

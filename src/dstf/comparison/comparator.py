@@ -33,7 +33,12 @@ from ..backends.common.result_variables import tracked_results, tracks
 from ..backends.types import DatasetType, VariableResult
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
-from ..storage.baseline import PRIMARY_BASELINE
+from ..storage.baseline import (
+    PRIMARY_BASELINE,
+    Baseline,
+    ReferenceFile,
+    StoredVariable,
+)
 from ..storage.reference_store import ReferenceStore
 
 # Re-export facade (see module docstring): modes/tree_eval/metric_tree and the
@@ -84,12 +89,12 @@ _BASE_TOLERANCE_WHERE = {
 
 
 def _base_tolerance(
-    test: TestModel, reference: dict, default_tolerance: object
+    test: TestModel, reference: ReferenceFile | None, default_tolerance: object
 ) -> tuple[Any, str]:
     """The test's base tolerance and its source: per-test > reference >
     project. An ``is not None`` chain, NOT ``or`` — an explicit tolerance of
     0 (strictest possible) must be honored (review 2026-07-06, finding 7)."""
-    ref_comparison = reference.get("comparison", {})
+    ref_comparison = reference.comparison if reference is not None else {}
     if test.comparison_tolerance is not None:
         return test.comparison_tolerance, "test"
     if ref_comparison.get("tolerance") is not None:
@@ -98,7 +103,7 @@ def _base_tolerance(
 
 
 def refused_base_tolerance(
-    test: TestModel, reference: dict | None, default_tolerance: object
+    test: TestModel, reference: ReferenceFile | None, default_tolerance: object
 ) -> TestComparison | None:
     """The refusal of a test whose base tolerance — the one in effect — is
     not ONE finite number, or ``None``. nrmse, the default metric, has one
@@ -110,13 +115,13 @@ def refused_base_tolerance(
     makes (``compare_one``; ``compare_test`` for a direct caller). Decided
     later, a test with no baseline read NO_REF — "accept it" — and one whose
     every criterion scores without a baseline passed over it."""
-    value, source = _base_tolerance(test, reference or {}, default_tolerance)
+    value, source = _base_tolerance(test, reference, default_tolerance)
     if is_base_tolerance(value):
         return None
     return TestComparison(
         model_id=test.model_id,
         passed=False,
-        test_id=(reference or {}).get("test_id"),
+        test_id=reference.test_id if reference is not None else None,
         has_reference=reference is not None,
         error_message=base_tolerance_refused(_BASE_TOLERANCE_WHERE[source], value),
     )
@@ -209,7 +214,7 @@ def broken_roles(test: TestModel) -> str | None:
 
 
 def stored_override_problem(
-    reference: dict, store: ReferenceStore, model_id: str
+    reference: ReferenceFile, store: ReferenceStore, model_id: str
 ) -> str | None:
     """Why a baseline's stored ``comparison.variable_overrides`` cannot be
     read, as a sentence naming the reference file, or ``None``: an override
@@ -233,10 +238,7 @@ def stored_override_problem(
     from .sides import _as_json
     from .strict_keys import unread_override_key
 
-    comparison = reference.get("comparison")
-    overrides = (
-        comparison.get("variable_overrides") if isinstance(comparison, dict) else None
-    )
+    overrides = reference.comparison.get("variable_overrides")
     if overrides is None:
         return None
 
@@ -276,13 +278,13 @@ def refuse_stored_overrides(tests: Iterable[TestModel], store: ReferenceStore) -
 
 
 def _check_structural_changes(
-    reference: dict,
+    reference: ReferenceFile,
     result: TestResult,
 ) -> list[StructuralWarning]:
     """Compare structural statistics between reference and current run."""
     warnings = []
 
-    ref_stats = reference.get("statistics", {})
+    ref_stats = reference.baseline.statistics
     cur_stats = result.statistics or {}
 
     checks = [
@@ -330,8 +332,18 @@ def _check_structural_changes(
     return warnings
 
 
+def _first_by_name(variables: list[StoredVariable]) -> dict[str, StoredVariable]:
+    """A baseline's variables by name, the FIRST of a name stored twice:
+    the one the scoring pairs with and the expression check reads."""
+    out: dict[str, StoredVariable] = {}
+    for v in variables:
+        if v.name and v.name not in out:
+            out[v.name] = v
+    return out
+
+
 def migration_hint(
-    baseline_entries: Mapping[str, dict], name: str, expression: str
+    baseline_entries: Mapping[str, StoredVariable], name: str, expression: str
 ) -> str:
     """The clause that says which name a baseline entry must be stored
     under, or ``""``.
@@ -353,8 +365,9 @@ def migration_hint(
       ``heatTransfer.alphas[\\n        1, 1]``, and the expression beside
       the result variable is normalized; compared raw, the most common
       un-migrated shape in a real library got no hint at all.
-    * An entry that already carries ``"expression"`` was written after the
-      identity change and is not un-migrated. A migrated baseline may hold
+    * An entry that already carries ``"expression"`` (an ``expression``
+      that is not ``None``) was written after the identity change and is
+      not un-migrated. A migrated baseline may hold
       a spec-tracked ``pipe.T[1]`` beside a NEW ``unitTests.x[1]`` whose
       expression happens to be ``pipe.T[1]``; a hint there would name a
       rename that must not happen.
@@ -364,7 +377,7 @@ def migration_hint(
     if not expression:
         return ""
     if not any(
-        normalize_expression(stored) == expression and "expression" not in entry
+        normalize_expression(stored) == expression and entry.expression is None
         for stored, entry in baseline_entries.items()
     ):
         return ""
@@ -375,7 +388,7 @@ def migration_hint(
 
 
 def _check_expressions(
-    variables: list[dict],
+    variables: list[StoredVariable],
     result: TestResult,
     *,
     against: str = "",
@@ -402,9 +415,8 @@ def _check_expressions(
     scope = None if only is None else set(only)
     recorded: dict[str, str] = {}
     for entry in variables:
-        name = entry.get("name") or ""
-        if name and name not in recorded:
-            recorded[name] = entry.get("expression") or ""
+        if entry.name and entry.name not in recorded:
+            recorded[entry.name] = entry.expression or ""
     where = f" (against {against})" if against else ""
     return [
         StructuralWarning(
@@ -566,7 +578,7 @@ def _tracked_but_not_scored(
 def compare_test(
     test: TestModel,
     result: TestResult,
-    reference: dict,
+    reference: ReferenceFile,
     default_tolerance: float = DEFAULT_TOLERANCE,
     default_points: bool = False,
     store=None,  # Optional[ReferenceStore] — if provided, soft_checks from the new subdir layout are merged in
@@ -577,7 +589,7 @@ def compare_test(
     Args:
         test: Test specification with model ID, variable overrides, etc.
         result: Simulation output (variables with time series).
-        reference: Stored reference data dict.
+        reference: The stored reference file.
         default_tolerance: Fallback tolerance when no per-test or per-ref
             tolerance is set.
         default_points: When True, variables without an explicit ``mode``
@@ -594,7 +606,7 @@ def compare_test(
     from .modes import override_metric, resolve_mode
     from .tree_eval import collect_leaf_variables, evaluate_spec
 
-    ref_test_id = reference.get("test_id")
+    ref_test_id = reference.test_id
 
     if not result.success:
         return TestComparison(
@@ -646,23 +658,17 @@ def compare_test(
 
     structural_warnings = _check_structural_changes(
         reference, result
-    ) + _check_expressions(reference.get("variables", []), result)
+    ) + _check_expressions(reference.baseline.variables, result)
 
     # Pairing is by name. Pairing by numeric index silently scored variables
     # against the wrong baseline trajectory after any spec reorder (review
     # 2026-07-06, finding 8); a first-entry-wins map is also what the
     # expression check reads.
-    ref_vars_by_name = {}
-    for v in reference.get("variables", []):
-        rn = v.get("name", "")
-        if rn and rn not in ref_vars_by_name:
-            ref_vars_by_name[rn] = v
-    shared_ref_time = reference.get("time")
-    if shared_ref_time is not None:
-        shared_ref_time = np.array(shared_ref_time)
+    ref_vars_by_name = _first_by_name(reference.baseline.variables)
+    shared_ref_time = np.array(reference.baseline.time)
     comparisons = []
 
-    ref_comparison = reference.get("comparison", {})
+    ref_comparison = reference.comparison
     base_tolerance, tolerance_source = _base_tolerance(
         test, reference, default_tolerance
     )
@@ -673,7 +679,6 @@ def compare_test(
     # so the legacy ``comparison.variable_overrides`` is ignored on this
     # path (documented — same fields move into each leaf's params).
     if test.metric_tree_spec is not None:
-        from ..storage.reference_store import _extract_baselines
         from .tree_eval import BaselineView, ScalarSources
 
         var_results_by_name = {v.name: v for v in result.variables if v.name}
@@ -682,21 +687,15 @@ def compare_test(
         # pick which baseline to score against via `leaf.against` (defaults
         # to primary). With no store there are no named baselines, so an
         # `against: <name>` leaf gets the missing-baseline sentinel.
-        all_baselines = _extract_baselines(reference)
+        all_baselines: dict[str, Baseline] = {PRIMARY_BASELINE: reference.baseline}
         if store is not None:
             all_baselines.update(store.get_soft_checks(test.model_id))
         baselines: dict[str, BaselineView] = {}
         for name, bl in all_baselines.items():
-            refs_by_name: dict[str, dict] = {}
-            for rv in bl.variables:
-                rn = rv.get("name", "")
-                if rn and rn not in refs_by_name:
-                    refs_by_name[rn] = rv
-            bl_time = np.array(bl.time) if bl.time else None
             baselines[name] = BaselineView(
                 name=name,
-                ref_vars_by_name=refs_by_name,
-                shared_ref_time=bl_time,
+                ref_vars_by_name=_first_by_name(bl.variables),
+                shared_ref_time=np.array(bl.time),
                 statistics=bl.statistics,
                 diagnostics=bl.diagnostics,
             )
@@ -750,7 +749,7 @@ def compare_test(
         # variable, with the name to store it under when it is the
         # un-migrated shape rather than a variable the baseline never held.
         ref_var = ref_vars_by_name.get(var_result.name)
-        if ref_var is None and reference.get("variables"):
+        if ref_var is None and reference.baseline.variables:
             logger.warning(
                 "%s: the baseline holds no variable named %r — treating as "
                 "missing baseline (re-accept to refresh)%s",
@@ -863,11 +862,8 @@ def compare_test(
             )
             continue
 
-        if shared_ref_time is not None:
-            ref_time = shared_ref_time
-        else:
-            ref_time = np.array(ref_var["time"])
-        ref_values = np.array(ref_var["values"])
+        ref_time = shared_ref_time
+        ref_values = np.array(ref_var.values)
 
         try:
             vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
@@ -919,7 +915,7 @@ def compare_test(
 def _lost_variable_comparisons(
     test: TestModel,
     result: TestResult,
-    ref_vars_by_name: Mapping[str, dict],
+    ref_vars_by_name: Mapping[str, StoredVariable],
     overrides: Mapping[str, dict],
     base_tolerance: float,
     default_points: bool,
@@ -951,7 +947,7 @@ def _lost_variable_comparisons(
         if name in held or not tracked(name):
             continue
         vc = _missing_variable_comparison(name, None)
-        vc.expression = entry.get("expression") or ""
+        vc.expression = entry.expression or ""
         override = overrides.get(name, {})
         metric_name = override_metric(override, default_points)
         try:
@@ -1094,6 +1090,22 @@ def _test_is_baseline_free(
     return True
 
 
+def _no_reference(model_id: str) -> ReferenceFile:
+    """The reference a test with none is compared against: no fields, an
+    empty primary baseline — a simulate-only or baseline-free test reads
+    nothing from it."""
+    return ReferenceFile(
+        model_id=model_id,
+        test_id=None,
+        status=None,
+        date_added=None,
+        last_updated=None,
+        sampling=None,
+        comparison={},
+        baseline=Baseline(name=PRIMARY_BASELINE, time=[], variables=[]),
+    )
+
+
 def compare_one(
     test: TestModel,
     result: TestResult | None,
@@ -1146,7 +1158,7 @@ def compare_one(
             return TestComparison(
                 model_id=test.model_id,
                 passed=False,
-                test_id=reference.get("test_id"),
+                test_id=reference.test_id,
                 has_reference=True,
                 error_message=unread,
             )
@@ -1162,7 +1174,7 @@ def compare_one(
         return TestComparison(
             model_id=test.model_id,
             passed=False,
-            test_id=(reference or {}).get("test_id"),
+            test_id=reference.test_id if reference is not None else None,
             has_reference=reference is not None,
             error_message=nothing,
         )
@@ -1172,13 +1184,13 @@ def compare_one(
         return TestComparison(
             model_id=test.model_id,
             passed=False,
-            test_id=(reference or {}).get("test_id"),
+            test_id=reference.test_id if reference is not None else None,
             has_reference=reference is not None,
             error_message=broken,
         )
     # simulate_only tests don't need a baseline — their pass criterion
     # is "did it simulate successfully?". Dispatch to compare_test with
-    # an empty dict reference so its simulate_only short-circuit runs
+    # an empty reference so its simulate_only short-circuit runs
     # (returning passed=True + metric_tree with label="simulate-only")
     # instead of collapsing to the generic NO_REF state.
     #
@@ -1202,7 +1214,7 @@ def compare_one(
     comp = compare_test(
         test,
         result,
-        reference if reference is not None else {},
+        reference if reference is not None else _no_reference(test.model_id),
         default_tolerance=default_tolerance,
         default_points=default_points,
         store=store,

@@ -21,6 +21,7 @@ from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_one, compare_test, nothing_scored
 from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.reporting.status import FAIL, NO_REF, PASS, SIM_FAIL, classify, refusal
+from dstf.storage.baseline_codec import decode_reference
 from test_base_tolerance import CSV, RAMP, Project, _case, _ran  # noqa: F401
 
 T = np.linspace(0.0, 1.0, 5)
@@ -55,7 +56,7 @@ def _result(*names: str) -> TestResult:
 
 class _Store:
     def __init__(self, reference):
-        self.reference = reference
+        self.reference = None if reference is None else decode_reference(reference)
 
     def get_reference(self, model_id):
         return self.reference
@@ -104,7 +105,9 @@ def test_a_result_holding_nothing_the_test_tracks_fails_and_says_so(route, basel
     assert refusal(comp) == f"{NONE_OF} {tracked}{NOTHING}"
     assert comp.variables == [] and comp.metric_tree is None
     # A direct caller of compare_test is told the same.
-    direct = compare_test(test, _result(*names), REFERENCE if baseline else {})
+    direct = compare_test(
+        test, _result(*names), decode_reference(REFERENCE if baseline else {})
+    )
     assert (direct.passed, direct.error_message) == (False, comp.error_message)
 
 
@@ -160,7 +163,9 @@ def test_an_override_on_a_test_that_tracks_nothing_fails_and_says_so(baseline):
     assert comp.simulate_only is False and comp.has_reference is baseline
     assert refusal(comp) == _untracked("x")
     assert comp.variables == [] and comp.metric_tree is None
-    direct = compare_test(test, _result("x"), REFERENCE if baseline else {})
+    direct = compare_test(
+        test, _result("x"), decode_reference(REFERENCE if baseline else {})
+    )
     assert (direct.passed, direct.error_message) == (False, comp.error_message)
 
 

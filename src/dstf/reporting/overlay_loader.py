@@ -54,7 +54,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from ..storage.reference_store import read_reference_file
+from ..storage.baseline import Baseline, ReferenceFile
+from ..storage.baseline_codec import read_reference, read_series
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +220,7 @@ def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
     matches = index.get(model_id, ())
     overlays: list[Overlay] = []
     for ref in matches:
-        ov_vars = _ref_data_to_overlay_vars(ref.data)
+        ov_vars = _baseline_to_overlay_vars(ref.ref.baseline)
         overlays.append(
             Overlay(
                 name=f"{ref.backend}/{ref.os}",
@@ -238,7 +239,7 @@ class _SiblingRef:
     backend: str
     os: str
     path: Path
-    data: dict
+    ref: ReferenceFile
 
 
 @lru_cache(maxsize=8)
@@ -270,51 +271,22 @@ def _sibling_backend_index(
                 continue
             for ref_file in sorted(os_dir.glob("ref_*.json")):
                 try:
-                    data = read_reference_file(ref_file)
+                    ref = read_reference(ref_file)
                 except (json.JSONDecodeError, OSError):
                     continue
-                if data.get("status") == "obsolete":
+                if ref.active_status == "obsolete":
                     continue
-                mid = data.get("model_id")
-                if not mid:
+                if not ref.model_id:
                     continue
-                index.setdefault(mid, []).append(
+                index.setdefault(ref.model_id, []).append(
                     _SiblingRef(
                         backend=backend_dir.name,
                         os=os_dir.name,
                         path=ref_file,
-                        data=data,
+                        ref=ref,
                     )
                 )
     return {k: tuple(v) for k, v in index.items()}
-
-
-def _ref_data_to_overlay_vars(ref_data: dict) -> dict[str, OverlayVariable]:
-    """Flatten a raw ref-file dict (primary baseline shape) into overlay vars.
-
-    A ref file stores its primary flat: ``{"simulation": {...}, "time": [...],
-    "variables": [{"name":..., "values":[...]}, ...]}``. Anything else is a
-    safe no-op.
-    """
-    time = ref_data.get("time")
-    if not isinstance(time, list):
-        return {}
-    out: dict[str, OverlayVariable] = {}
-    for entry in ref_data.get("variables") or []:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("name")
-        values = entry.get("values")
-        # A name stored twice draws its FIRST entry, the one the
-        # comparator scores and the context builder draws.
-        if not name or not isinstance(values, list) or name in out:
-            continue
-        out[name] = OverlayVariable(
-            time=list(time),
-            values=list(values),
-            expression=_entry_expression(entry),
-        )
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -322,33 +294,20 @@ def _ref_data_to_overlay_vars(ref_data: dict) -> dict[str, OverlayVariable]:
 # ---------------------------------------------------------------------------
 
 
-def _entry_expression(entry: dict) -> str:
-    """The ``expression`` a reference-shape variable entry records, as text.
-
-    Missing, null and non-text all read as "no expression" — the same
-    thing every other reader of the field takes ``""`` for (D132).
-    """
-    value = entry.get("expression")
-    return value if isinstance(value, str) else ""
-
-
-def _baseline_to_overlay_vars(baseline) -> dict[str, OverlayVariable]:
-    """Flatten a :class:`Baseline` into per-variable overlay data."""
-    time = list(baseline.time or [])
+def _baseline_to_overlay_vars(baseline: Baseline) -> dict[str, OverlayVariable]:
+    """Flatten a :class:`Baseline` — a soft check, a sibling backend's
+    primary, a JSON companion's data — into per-variable overlay data."""
     out: dict[str, OverlayVariable] = {}
-    for var in baseline.variables or []:
-        name = var.get("name")
+    for var in baseline.variables:
         # A name stored twice draws its FIRST entry, the one the
-        # comparator scores and the context builder draws.
-        if not name or name in out:
+        # comparator scores and the context builder draws. An entry with
+        # no values has nothing to draw.
+        if not var.name or var.name in out or not var.values:
             continue
-        values = var.get("values")
-        if not isinstance(values, list):
-            continue
-        out[name] = OverlayVariable(
-            time=list(time),
-            values=list(values),
-            expression=_entry_expression(var),
+        out[var.name] = OverlayVariable(
+            time=list(baseline.time),
+            values=list(var.values),
+            expression=var.expression or "",
         )
     return out
 
@@ -461,26 +420,9 @@ def _resolve_companion_path(store, model_id: str, companion) -> Path | None:
 def _load_json(path: Path) -> dict[str, OverlayVariable]:
     """Parse a JSON companion file. Expects ``time: [...]`` + ``variables:
     [...]`` — the shape of a reference file, which is what a companion that
-    points at another library's baseline IS: read by the one reader of
-    that shape, so a ``single`` file draws its run's own numbers."""
-    data = read_reference_file(path)
-    time = list(data.get("time") or [])
-    out: dict[str, OverlayVariable] = {}
-    for entry in data.get("variables", []) or []:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("name")
-        values = entry.get("values")
-        # A name stored twice draws its FIRST entry, the one the
-        # comparator scores and the context builder draws.
-        if not name or not isinstance(values, list) or name in out:
-            continue
-        out[name] = OverlayVariable(
-            time=list(time),
-            values=list(values),
-            expression=_entry_expression(entry),
-        )
-    return out
+    points at another library's baseline IS: read by the codec, so a
+    ``single`` file draws its run's own numbers."""
+    return _baseline_to_overlay_vars(read_series(path, path.stem))
 
 
 def companion_variable_names(path: Path, fmt: str) -> list[str]:

@@ -21,6 +21,7 @@ import numpy as np
 from ..backends import VariableResult
 from ..backends.common.statistics import read_summary
 from ..backends.types import DatasetType
+from ..storage.baseline import DiagnosticSummary, StoredVariable
 from .comparator import VariableComparison, migration_hint
 from .geometry import Window
 from .metric_tree import (
@@ -45,22 +46,21 @@ PRIMARY_BASELINE = "primary"
 class BaselineView:
     """Pre-processed view of one baseline for leaf evaluation.
 
-    Packages the per-variable reference dicts and the shared time vector
-    (or ``None`` when each variable carries its own time). Multiple named
+    Packages the stored variables by name and the baseline's shared time
+    vector. Multiple named
     baselines coexist in the evaluator's input (``{"primary": ...,
     "experiment": ...}``); a leaf's ``against`` field picks which one it
     scores against.
     """
 
     name: str
-    ref_vars_by_name: dict[str, dict]
-    shared_ref_time: np.ndarray | None = None
+    ref_vars_by_name: dict[str, StoredVariable]
+    shared_ref_time: np.ndarray
     #: Statistics captured with the baseline (dotted keys like
     #: ``translation.scalar_unknowns``) and the stored diagnostics summaries
-    #: (``{"name", "final", "min", "max"}``) — the baseline side of a
-    #: ``scalar`` leaf's stats-path quantity.
+    #: — the baseline side of a ``scalar`` leaf's stats-path quantity.
     statistics: dict = field(default_factory=dict)
-    diagnostics: list[dict] = field(default_factory=list)
+    diagnostics: list[DiagnosticSummary] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -501,11 +501,9 @@ def _evaluate_leaf(
             ref_time = np.array([])
             ref_values = np.array([])
         else:
-            if baseline is not None and baseline.shared_ref_time is not None:
-                ref_time = baseline.shared_ref_time
-            else:
-                ref_time = np.array(ref_var["time"])
-            ref_values = np.array(ref_var["values"])
+            assert baseline is not None  # a stored variable is in a baseline
+            ref_time = baseline.shared_ref_time
+            ref_values = np.array(ref_var.values)
 
         act_time = var_result.time
         act_values = var_result.values
@@ -606,11 +604,10 @@ def resolve_scalar_path(
     the statistics entry is the one the structural-warning checks already
     treat as authoritative.
 
-    Diagnostics come in three shapes: the baseline's stored summaries
-    (``{"name", "final", "min", "max"}``), pre-summary baselines carrying
-    the full ``{"name", "values"}`` array (old data — the reporter's
-    ``build_trajectories`` still back-reads it), and the current run's
-    ``VariableResult`` trajectories. The last two are summarized here; the
+    Diagnostics come in two shapes: the baseline's stored summaries
+    (:class:`~dstf.storage.baseline.DiagnosticSummary` — the codec
+    summarizes a pre-summary ``{"name", "values"}`` entry on read) and the
+    current run's ``VariableResult`` trajectories, summarized here; the
     run's trajectories are deliberately not stored (reference_store:
     CPUtime is nondeterministic).
     """
@@ -626,11 +623,8 @@ def resolve_scalar_path(
             if entry.name != name:
                 continue
             return _summarize_values(entry.values, field_name)
-        if isinstance(entry, dict) and entry.get("name") == name:
-            if field_name in entry:
-                return _as_float(entry.get(field_name))
-            # Pre-summary baseline: derive from the stored full array.
-            return _summarize_values(entry.get("values"), field_name)
+        if isinstance(entry, DiagnosticSummary) and entry.name == name:
+            return _as_float(getattr(entry, field_name))
     return None
 
 

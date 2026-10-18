@@ -244,7 +244,7 @@ class TestAFailedRunSReasonReadBack:
             work_dir=work, manifest={"test_0001": {"model_id": test.model_id}}
         )
         run = backend.run_single_test(test, "test_0001", 1, 1)
-        manifest.record_result(run)
+        manifest.record_result(run, None)
         manifest.results.append(run)
         in_hand = backend.read_results([manifest], [test])[test.model_id]
         read_back = backend.read_last_results([test])[test.model_id]

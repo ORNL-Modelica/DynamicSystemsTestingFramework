@@ -20,6 +20,7 @@ from pathlib import Path
 from ..comparison.comparator import VariableComparison
 from ..comparison.types import TestComparison
 from ..config_shape import default
+from ..storage.baseline import ReferenceFile
 from .context_builder import _build_template_context
 from .rows import summary_fields
 from .status import classify_with_class, refusal
@@ -442,7 +443,7 @@ def _build_figures(context: dict, max_samples: int | None, theme: str) -> dict:
 
 def generate_comparison_plots(
     model_id: str,
-    ref_data: dict | None,
+    ref_data: ReferenceFile | None,
     result,
     comparisons: list[VariableComparison],
     plot_dir: Path,

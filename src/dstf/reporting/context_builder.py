@@ -16,6 +16,7 @@ import numpy as np
 from ..backends.types import VariableText, display_label, variable_texts
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
+from ..storage.baseline import DiagnosticSummary, ReferenceFile, StoredVariable
 from .stats_rows import SECTION_TITLES, report_text, statistics_rows
 
 logger = logging.getLogger(__name__)
@@ -224,7 +225,7 @@ def _augment_tree_view(
 
 def _build_ref_info(
     comparisons: list,
-    ref_data: dict | None,
+    ref_data: ReferenceFile | None,
     test_dir: Path | None,
     ref_file: Path | None,
 ) -> list:
@@ -235,20 +236,19 @@ def _build_ref_info(
     """
     ref_info = []
     meta_fields = [
-        ("test_id", "Test ID"),
-        ("status", "Status"),
-        ("date_added", "Date Added"),
-        ("last_updated", "Last Updated"),
+        ("Test ID", ref_data.test_id if ref_data else None),
+        ("Status", ref_data.active_status if ref_data else None),
+        ("Date Added", ref_data.date_added if ref_data else None),
+        ("Last Updated", ref_data.last_updated if ref_data else None),
     ]
-    for key, label in meta_fields:
-        ref_val = ref_data.get(key, "") if ref_data else ""
+    for label, ref_val in meta_fields:
         if ref_val:
             ref_info.append({"label": label, "value": _format_value(ref_val)})
 
-    if ref_data and ref_data.get("test_id"):
+    if ref_data and ref_data.test_id:
         from ..storage.ref_index import RefIndex
 
-        ref_filename = RefIndex.ref_filename(ref_data["test_id"])
+        ref_filename = RefIndex.ref_filename(ref_data.test_id)
         row = {"label": "Reference File", "value": ref_filename}
         if ref_file and ref_file.exists():
             row["link"] = ref_file.resolve().as_uri()
@@ -269,9 +269,12 @@ def _build_ref_info(
     # 23 current / 21 reference`, as one quantity then and now.
     if comparisons:
         ref_info.append({"label": "Criteria", "value": str(len(comparisons))})
-    if ref_data and ref_data.get("n_vars") is not None:
+    if ref_data:
         ref_info.append(
-            {"label": "Reference Variables", "value": str(ref_data["n_vars"])}
+            {
+                "label": "Reference Variables",
+                "value": str(len(ref_data.baseline.variables)),
+            }
         )
     return ref_info
 
@@ -342,14 +345,13 @@ def _build_statistics_sections(
 def build_trajectories(
     comparisons: list,
     result,
-    ref_data: dict | None,
+    ref_data: ReferenceFile | None,
     texts: dict[str, VariableText] | None = None,
 ) -> tuple[list, list, list]:
     """Build the trajectory triple — primary tracked variables, diagnostic
     variables (CPUtime / EventCounter), and the no-baseline pass-through
-    used when a test runs without a reference. Diagnostic refs may carry
-    a scalar summary instead of a full trajectory; the legacy
-    full-array shape is still accepted for back-read.
+    used when a test runs without a reference. A stored diagnostic is a
+    summary, not a trajectory: a diagnostic's entry draws the run alone.
 
     ``texts`` is the test's label scope (:func:`test_texts`). Every entry
     carries BOTH readings: ``label`` for the surfaces that show the muted
@@ -360,7 +362,7 @@ def build_trajectories(
     Returns ``(trajectories, diag_trajectories, nobaseline_trajectories)``.
     """
     trajectories = []
-    ref_time_list = ref_data.get("time", []) if ref_data else []
+    ref_time_list = list(ref_data.baseline.time) if ref_data else []
 
     if result and result.variables:
         # One entry per variable NAME, not per comparison: several leaves may
@@ -380,11 +382,11 @@ def build_trajectories(
         # old sorted order drew another variable's reference, and its error
         # overlays, under this one's name. The first entry of a name wins,
         # as it does for the comparator.
-        ref_vars_by_name: dict[str, dict] = {}
+        ref_vars_by_name: dict[str, StoredVariable] = {}
         if ref_data:
-            for rv in ref_data.get("variables", []):
-                if rv.get("name"):
-                    ref_vars_by_name.setdefault(rv["name"], rv)
+            for rv in ref_data.baseline.variables:
+                if rv.name:
+                    ref_vars_by_name.setdefault(rv.name, rv)
         for name, name_comparisons in by_name.items():
             index = next((vc.index for vc in name_comparisons if vc.index > 0), 0)
             if index > 0:
@@ -409,26 +411,20 @@ def build_trajectories(
                     "act_time": act_var.time.tolist() if act_var else [],
                     "act_values": act_var.values.tolist() if act_var else [],
                     "ref_time": ref_time_list,
-                    "ref_values": ref_var["values"] if ref_var else [],
+                    "ref_values": list(ref_var.values) if ref_var else [],
                 }
             )
 
     diag_trajectories = []
     if result and result.diagnostics:
-        ref_diags_by_name = {}
-        if ref_data:
-            for rd in ref_data.get("diagnostics", []):
-                ref_diags_by_name[rd["name"]] = rd
         for diag in result.diagnostics:
-            ref_diag = ref_diags_by_name.get(diag.name)
-            ref_values = ref_diag.get("values", []) if ref_diag else []
             diag_trajectories.append(
                 {
                     "name": diag.name,
                     "act_time": diag.time.tolist(),
                     "act_values": diag.values.tolist(),
-                    "ref_time": ref_time_list if ref_values else [],
-                    "ref_values": ref_values,
+                    "ref_time": [],
+                    "ref_values": [],
                 }
             )
 
@@ -449,7 +445,7 @@ def build_trajectories(
     return trajectories, diag_trajectories, nobaseline_trajectories
 
 
-def _build_diag_summaries(result, ref_data: dict | None) -> list:
+def _build_diag_summaries(result, ref_data: ReferenceFile | None) -> list:
     """Diagnostic-variable summary rows (current final/min/max vs reference
     summary). Replaces the pre-D78 full-trajectory comparison for
     diagnostics — the trajectory is informational; the summary values
@@ -457,23 +453,16 @@ def _build_diag_summaries(result, ref_data: dict | None) -> list:
     """
     if not (result and result.diagnostics):
         return []
-    ref_diags_by_name = {}
+    ref_diags_by_name: dict[str, DiagnosticSummary] = {}
     if ref_data:
-        for rd in ref_data.get("diagnostics", []):
-            ref_diags_by_name[rd["name"]] = rd
+        for rd in ref_data.baseline.diagnostics:
+            ref_diags_by_name[rd.name] = rd
     diag_summaries = []
     for diag in result.diagnostics:
         values = np.asarray(diag.values)
         cur_final = float(values[-1]) if values.size else None
-        ref_entry = ref_diags_by_name.get(diag.name, {})
-        # Accept either new summary shape (final/min/max) or legacy full-
-        # trajectory shape (values) for back-read during transition.
-        if "final" in ref_entry:
-            ref_final = ref_entry.get("final")
-        elif "values" in ref_entry and ref_entry["values"]:
-            ref_final = float(ref_entry["values"][-1])
-        else:
-            ref_final = None
+        ref_entry = ref_diags_by_name.get(diag.name)
+        ref_final = ref_entry.final if ref_entry is not None else None
         diag_summaries.append(
             {
                 "name": diag.name,
@@ -855,7 +844,7 @@ def _build_tree_view_and_variables(
 def _build_template_context(
     model_id: str,
     comparisons: list[VariableComparison],
-    ref_data: dict | None,
+    ref_data: ReferenceFile | None,
     cur_stats: dict | None,
     test_dir: Path | None,
     test_model=None,
@@ -881,8 +870,8 @@ def _build_template_context(
     """
     if cur_stats is None:
         cur_stats = {}
-    ref_stats = ref_data.get("statistics", {}) if ref_data else {}
-    ref_sim = ref_data.get("simulation", {}) if ref_data else {}
+    ref_stats = ref_data.baseline.statistics if ref_data else {}
+    ref_sim = ref_data.baseline.simulation if ref_data else {}
 
     ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
     sim_params = _build_sim_params(test_model, ref_sim)

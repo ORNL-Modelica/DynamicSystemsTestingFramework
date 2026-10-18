@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from conftest import PROVENANCE, series
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
@@ -52,7 +53,7 @@ def store_with_primary(sample_models_dir, tmp_path):
     config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
     store = ReferenceStore(config)
     test = _make_test_model()
-    store.store_reference(test, _make_test_result())
+    store.store_reference(test, _make_test_result(), provenance=PROVENANCE)
     return store, test
 
 
@@ -70,10 +71,12 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         ok = store.add_soft_check(
             test.model_id,
-            "experiment",
-            time=[0.0, 1.0, 2.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0, 0.5, 0.9]}],
-            provenance={"source": "rig-A"},
+            series(
+                "experiment",
+                time=[0.0, 1.0, 2.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0, 0.5, 0.9]}],
+                provenance={"source": "rig-A"},
+            ),
         )
         assert ok is True
 
@@ -93,17 +96,19 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "imported",
-            time=[0.0, 1.0],
-            variables=[
-                {"index": 1, "name": "x", "values": [0.0, 1.0]},
-                {
-                    "index": 2,
-                    "name": "unitTests.x[1]",
-                    "expression": "pipe.T[1]",
-                    "values": [0.0, 2.0],
-                },
-            ],
+            series(
+                "imported",
+                time=[0.0, 1.0],
+                variables=[
+                    {"index": 1, "name": "x", "values": [0.0, 1.0]},
+                    {
+                        "index": 2,
+                        "name": "unitTests.x[1]",
+                        "expression": "pipe.T[1]",
+                        "values": [0.0, 2.0],
+                    },
+                ],
+            ),
         )
         sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "imported.json"
         written = json.loads(sc_file.read_text())["variables"]
@@ -119,9 +124,10 @@ class TestSoftCheckStorage:
         """The order is IMPOSED, not patched in beside whatever ``name`` was
         found: an entry that already carried ``expression``, or one whose
         ``name`` came after its ``values``, kept its own order, and two
-        files written by one command read differently. Any key this writer
-        does not name follows, in its own order — and the caller's dict is
-        never mutated (it may be a live result's)."""
+        files written by one command read differently. A key the codec does
+        not know (``unit``) is not a field of a stored variable and is not
+        written — and the caller's dict is never mutated (it may be a live
+        result's)."""
         store, test = store_with_primary
         entry = {
             "values": [0.0, 1.0],
@@ -132,11 +138,12 @@ class TestSoftCheckStorage:
         }
         before = copy.deepcopy(entry)
         store.add_soft_check(
-            test.model_id, "odd-order", time=[0.0, 1.0], variables=[entry]
+            test.model_id,
+            series("odd-order", time=[0.0, 1.0], variables=[entry]),
         )
         sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "odd-order.json"
         (written,) = json.loads(sc_file.read_text())["variables"]
-        assert list(written) == ["index", "name", "expression", "values", "unit"]
+        assert list(written) == ["index", "name", "expression", "values"]
         # Values as well as key order: the caller's entry may be a live
         # result's, and this writer reorders and defaults fields.
         assert entry == before and list(entry) == list(before)
@@ -150,16 +157,18 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "nulled",
-            time=[0.0, 1.0],
-            variables=[
-                {
-                    "index": 1,
-                    "name": "unitTests.x[1]",
-                    "expression": None,
-                    "values": [0.0, 1.0],
-                }
-            ],
+            series(
+                "nulled",
+                time=[0.0, 1.0],
+                variables=[
+                    {
+                        "index": 1,
+                        "name": "unitTests.x[1]",
+                        "expression": None,
+                        "values": [0.0, 1.0],
+                    }
+                ],
+            ),
         )
         sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "nulled.json"
         (written,) = json.loads(sc_file.read_text())["variables"]
@@ -169,33 +178,39 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "cross-check",
-            time=[0.0, 1.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            series(
+                "cross-check",
+                time=[0.0, 1.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            ),
         )
         soft_checks = store.get_soft_checks(test.model_id)
         assert "cross-check" in soft_checks
         assert soft_checks["cross-check"].time == [0.0, 1.0]
 
-    def test_get_baselines_includes_soft_checks(self, store_with_primary):
-        """The combined baseline view (for comparator) covers primary + soft_checks."""
+    def test_get_soft_checks_beside_the_primary(self, store_with_primary):
+        """The comparator's baselines are the primary plus these."""
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "experiment",
-            time=[0.0, 1.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            series(
+                "experiment",
+                time=[0.0, 1.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            ),
         )
-        baselines = store.get_baselines(test.model_id)
-        assert set(baselines) == {"primary", "experiment"}
+        assert store.get_reference(test.model_id) is not None
+        assert set(store.get_soft_checks(test.model_id)) == {"experiment"}
 
     def test_remove(self, store_with_primary):
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "foo",
-            time=[0.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            series(
+                "foo",
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            ),
         )
         assert store.remove_soft_check(test.model_id, "foo") is True
         assert store.get_soft_checks(test.model_id) == {}
@@ -206,15 +221,19 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "foo",
-            time=[0.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            series(
+                "foo",
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            ),
         )
         ok = store.add_soft_check(
             test.model_id,
-            "foo",
-            time=[1.0],
-            variables=[{"index": 1, "name": "x", "values": [1.0]}],
+            series(
+                "foo",
+                time=[1.0],
+                variables=[{"index": 1, "name": "x", "values": [1.0]}],
+            ),
             overwrite=False,
         )
         assert ok is False
@@ -226,9 +245,11 @@ class TestSoftCheckStorage:
         with pytest.raises(ValueError, match="primary"):
             store.add_soft_check(
                 test.model_id,
-                "primary",
-                time=[0.0],
-                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                series(
+                    "primary",
+                    time=[0.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                ),
             )
 
     def test_empty_name_rejected(self, store_with_primary):
@@ -236,9 +257,11 @@ class TestSoftCheckStorage:
         with pytest.raises(ValueError, match="non-empty"):
             store.add_soft_check(
                 test.model_id,
-                "",
-                time=[0.0],
-                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                series(
+                    "",
+                    time=[0.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                ),
             )
 
     def test_without_primary_raises(self, sample_models_dir, tmp_path):
@@ -247,9 +270,11 @@ class TestSoftCheckStorage:
         with pytest.raises(FileNotFoundError, match="primary"):
             store.add_soft_check(
                 "Nonexistent.Test",
-                "foo",
-                time=[0.0],
-                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                series(
+                    "foo",
+                    time=[0.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                ),
             )
 
 
@@ -600,9 +625,11 @@ class TestRoleNamespace:
         with pytest.raises(ValueError, match="companion"):
             store.add_soft_check(
                 test.model_id,
-                "shared-name",
-                time=[0.0],
-                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                series(
+                    "shared-name",
+                    time=[0.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                ),
             )
 
     def test_companion_rejects_soft_check_name_collision(
@@ -611,27 +638,27 @@ class TestRoleNamespace:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "shared-name",
-            time=[0.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            series(
+                "shared-name",
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            ),
         )
         src = tmp_path / "data.csv"
         src.write_text("x\n1\n")
         with pytest.raises(ValueError, match="soft_check"):
             store.add_companion(test.model_id, "shared-name", path=src)
 
-    def test_companions_not_returned_by_get_baselines(
+    def test_companions_not_returned_by_get_soft_checks(
         self, store_with_primary, tmp_path
     ):
         """Companions are plot-only — never visible to the comparator via
-        get_baselines (which feeds the tree's ``against:`` lookup)."""
+        get_soft_checks (which feeds the tree's ``against:`` lookup)."""
         store, test = store_with_primary
         src = tmp_path / "data.csv"
         src.write_text("x\n1\n")
         store.add_companion(test.model_id, "rig", path=src)
-        baselines = store.get_baselines(test.model_id)
-        assert "rig" not in baselines
-        assert set(baselines) == {"primary"}
+        assert store.get_soft_checks(test.model_id) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +716,7 @@ class TestCompanionMapCLI:
                     VariableResult(index=2, time=t, values=np.cos(t), name="y"),
                 ],
             ),
+            provenance=PROVENANCE,
         )
         rc = self._run(
             store,
@@ -914,9 +942,13 @@ class TestRolesWhereATestIsScored:
         time = np.linspace(0, 10, 11)
         store.add_soft_check(
             test.model_id,
-            "other",
-            time=list(time),
-            variables=[{"index": 1, "name": "x", "values": list(1.5 * np.sin(time))}],
+            series(
+                "other",
+                time=list(time),
+                variables=[
+                    {"index": 1, "name": "x", "values": list(1.5 * np.sin(time))}
+                ],
+            ),
         )
         rig = tmp_path / "rig.csv"
         rig.write_text("time,x\n0,0\n10,1\n")

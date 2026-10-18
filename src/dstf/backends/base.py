@@ -1133,7 +1133,7 @@ class Backend(ABC):
                 run_results.append(result)
                 # Persist the verdict as it lands, not in an epilogue an
                 # abort would skip (see BatchManifest.record_result).
-                manifest.record_result(result)
+                manifest.record_result(result, setup.progress.metadata)
                 _end_row(test_key, result)
                 completed += 1
                 _print_progress(
@@ -1156,7 +1156,7 @@ class Backend(ABC):
                 for future in as_completed(futures):
                     result = future.result()
                     run_results.append(result)
-                    manifest.record_result(result)
+                    manifest.record_result(result, setup.progress.metadata)
                     completed += 1
                     model_id = futures[future]
                     test_key = key_lookup.get(model_id, "")

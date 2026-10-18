@@ -1267,6 +1267,31 @@ def _scratch_manifest(tmp_path, items=()) -> BatchManifest:
     )
 
 
+#: A run's metadata as its reporter holds it (`RunMetadata.as_dict`).
+RUN_META = {
+    "backend": "Fake",
+    "backend_name": "Fake",
+    "os": "linux",
+    "tool_version": "FakeTool 1.2.3",
+    "dstf_version": "1.2.0",
+    "generated_at": 1_791_000_000.0,
+    "library_versions": None,
+}
+
+
+class _RunProgress:
+    """The run's reporter that dispatch records each result with and ends
+    each row on."""
+
+    metadata = RUN_META
+
+    def on_start(self, test_key, worker_id=None):
+        pass
+
+    def on_finish(self, test_key, success, elapsed, detail=None, timed_out=False):
+        pass
+
+
 def _stub_backend(tmp_path) -> _StubBackend:
     cfg = SimpleNamespace(timeout=5.0, parallel=2, work_dir=tmp_path)
     return _StubBackend(cfg)
@@ -1282,7 +1307,11 @@ class TestDispatchDeadWorker:
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(6)]
 
         results = backend._dispatch_with_restart(
-            [dead, good], items, total=6, manifest=_scratch_manifest(tmp_path, items)
+            [dead, good],
+            items,
+            total=6,
+            manifest=_scratch_manifest(tmp_path, items),
+            progress=_RunProgress(),
         )
 
         assert len(results) == 6
@@ -1302,7 +1331,11 @@ class TestDispatchDeadWorker:
 
         def run():
             box["results"] = backend._dispatch_with_restart(
-                [dead], items, total=4, manifest=_scratch_manifest(tmp_path, items)
+                [dead],
+                items,
+                total=4,
+                manifest=_scratch_manifest(tmp_path, items),
+                progress=_RunProgress(),
             )
 
         th = threading.Thread(target=run, daemon=True)
@@ -1324,7 +1357,11 @@ class TestDispatchWorkerRaise:
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(3)]
 
         results = backend._dispatch_with_restart(
-            [w], items, total=3, manifest=_scratch_manifest(tmp_path, items)
+            [w],
+            items,
+            total=3,
+            manifest=_scratch_manifest(tmp_path, items),
+            progress=_RunProgress(),
         )
 
         assert len(results) == 3
@@ -1446,7 +1483,11 @@ def test_timeout_detail_is_not_truncated_past_the_hint(tmp_path, capsys):
 
     items = [(_tm("Lib.A"), "test_0001")]
     backend._dispatch_with_restart(
-        [worker], items, total=1, manifest=_scratch_manifest(tmp_path, items)
+        [worker],
+        items,
+        total=1,
+        manifest=_scratch_manifest(tmp_path, items),
+        progress=_RunProgress(),
     )
 
     assert "simulation.timeout" in capsys.readouterr().err
@@ -1487,7 +1528,11 @@ class TestRestartRetry:
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(3)]
 
         results = backend._dispatch_with_restart(
-            [w], items, total=3, manifest=_scratch_manifest(tmp_path, items)
+            [w],
+            items,
+            total=3,
+            manifest=_scratch_manifest(tmp_path, items),
+            progress=_RunProgress(),
         )
 
         assert len(results) == 3
@@ -1505,7 +1550,11 @@ class TestRestartRetry:
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(3)]
 
         results = backend._dispatch_with_restart(
-            [w], items, total=3, manifest=_scratch_manifest(tmp_path, items)
+            [w],
+            items,
+            total=3,
+            manifest=_scratch_manifest(tmp_path, items),
+            progress=_RunProgress(),
         )
 
         # First test runs on the already-live worker and kills it; the
@@ -1543,7 +1592,11 @@ class TestRestartRetry:
 
         items = [(_tm("Lib.A"), "test_0001")]
         results = backend._dispatch_with_restart(
-            [w], items, total=1, manifest=_scratch_manifest(tmp_path, items)
+            [w],
+            items,
+            total=1,
+            manifest=_scratch_manifest(tmp_path, items),
+            progress=_RunProgress(),
         )
         assert results[0].error_message == "model did not translate"
         assert w.start_calls == 2
@@ -1587,7 +1640,11 @@ class TestDispatchRecordsIncrementally:
                 )
 
         backend._dispatch_with_restart(
-            [_Observing(0, backend.config)], items, total=3, manifest=manifest
+            [_Observing(0, backend.config)],
+            items,
+            total=3,
+            manifest=manifest,
+            progress=_RunProgress(),
         )
 
         # By the time test 3 started, tests 1 and 2 were durable.
@@ -1604,7 +1661,11 @@ class TestDispatchRecordsIncrementally:
         manifest.mark_pending({t.model_id for t, _ in items})
 
         backend._dispatch_with_restart(
-            [_DeadWorker(0, backend.config)], items, total=2, manifest=manifest
+            [_DeadWorker(0, backend.config)],
+            items,
+            total=2,
+            manifest=manifest,
+            progress=_RunProgress(),
         )
 
         saved = json.loads((tmp_path / "batch_manifest.json").read_text())
@@ -1617,6 +1678,8 @@ def test_dashboard_detail_keeps_the_whole_timeout_hint(tmp_path):
     captured: dict = {}
 
     class _Progress:
+        metadata = RUN_META  # the run's, as `record_result` asks it
+
         def on_start(self, test_key, worker_id=None):
             pass
 
@@ -1646,6 +1709,7 @@ def test_dashboard_detail_keeps_the_whole_timeout_hint(tmp_path):
         items,
         total=1,
         manifest=_scratch_manifest(tmp_path, items),
+        progress=backend.progress,
     )
 
     assert captured["detail"] == long_msg
@@ -1658,6 +1722,8 @@ def test_a_non_timeout_failure_detail_is_still_clipped(tmp_path):
     captured: dict = {}
 
     class _Progress:
+        metadata = RUN_META  # the run's, as `record_result` asks it
+
         def on_start(self, test_key, worker_id=None):
             pass
 
@@ -1684,6 +1750,7 @@ def test_a_non_timeout_failure_detail_is_still_clipped(tmp_path):
         items,
         total=1,
         manifest=_scratch_manifest(tmp_path, items),
+        progress=backend.progress,
     )
 
     assert len(captured["detail"]) == 120

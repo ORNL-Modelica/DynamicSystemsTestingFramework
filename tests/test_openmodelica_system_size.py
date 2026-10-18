@@ -27,6 +27,7 @@ from dstf.cli import main
 from dstf.comparison.comparator import compare_test
 from dstf.config import Config
 from dstf.reporting.stats_rows import changed
+from dstf.storage.baseline_codec import decode_reference
 
 FIXTURES = Path(__file__).parent / "fixtures" / "results_openmodelica"
 EXAMPLE = Path(__file__).parent.parent / "examples" / "modelica" / "ModelicaTestingLib"
@@ -206,7 +207,9 @@ def _scored(states_now: int | None, reference_statistics: dict | None):
     if reference_statistics is not None:
         reference["statistics"] = reference_statistics
     return compare_test(
-        make_test_model("Lib.M", variable_patterns=["x"]), result, reference
+        make_test_model("Lib.M", variable_patterns=["x"]),
+        result,
+        decode_reference(reference),
     )
 
 

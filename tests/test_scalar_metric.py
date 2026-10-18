@@ -23,6 +23,8 @@ from dstf.comparison.tree_eval import (
 )
 from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.discovery.test_registry import TestModel
+from dstf.storage.baseline import StoredVariable
+from dstf.storage.baseline_codec import decode_reference, decode_series
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -39,8 +41,18 @@ def _mode(**kwargs) -> ScalarMode:
     return ScalarMode(ScalarConfig(**kwargs))
 
 
+def _stored(name: str, values) -> StoredVariable:
+    return StoredVariable(index=1, name=name, expression="", values=list(values))
+
+
 def _baselines(**kwargs) -> dict[str, BaselineView]:
     kwargs.setdefault("ref_vars_by_name", {})
+    kwargs.setdefault("shared_ref_time", np.array([]))
+    if "diagnostics" in kwargs:
+        # Given as a file stores them, read as the codec reads a file.
+        kwargs["diagnostics"] = decode_series(
+            {"diagnostics": kwargs["diagnostics"]}, PRIMARY_BASELINE
+        ).diagnostics
     return {PRIMARY_BASELINE: BaselineView(name=PRIMARY_BASELINE, **kwargs)}
 
 
@@ -309,9 +321,8 @@ class TestScalarLeafEvaluation:
         time = np.linspace(0.0, 9.0, 10)
         ref = BaselineView(
             name=PRIMARY_BASELINE,
-            ref_vars_by_name={
-                "x": {"time": time.tolist(), "values": time.tolist()},
-            },
+            ref_vars_by_name={"x": _stored("x", time)},
+            shared_ref_time=time,
         )
         act = np.array([0.0, 1.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
         results = {"x": VariableResult(index=1, name="x", time=time, values=act)}
@@ -421,8 +432,9 @@ class TestScalarLeafEvaluation:
         assert node.diagnostics["variable"].actual_final == pytest.approx(expected)
 
     def test_legacy_full_array_diagnostics_entry_is_summarized(self):
-        # Pre-summary baselines stored the whole diagnostic trajectory; the
-        # reporter still back-reads that shape, so the resolver must too.
+        # Pre-summary baselines stored the whole diagnostic trajectory: the
+        # codec summarizes such an entry on read (`_baselines` decodes the
+        # file's shape), and the resolver reads the summary.
         spec = parse_metric_tree(
             {"metric": "scalar", "quantity": "CPUtime.max", "tolerance": 0.0}
         )
@@ -534,11 +546,15 @@ class TestScalarLeafEvaluation:
         )
         baselines = {
             PRIMARY_BASELINE: BaselineView(
-                name=PRIMARY_BASELINE, ref_vars_by_name={}, statistics={}
+                name=PRIMARY_BASELINE,
+                ref_vars_by_name={},
+                shared_ref_time=np.array([]),
+                statistics={},
             ),
             "experiment": BaselineView(
                 name="experiment",
                 ref_vars_by_name={},
+                shared_ref_time=np.array([]),
                 statistics={"timing": {"total": 2.0}},
             ),
         }
@@ -623,7 +639,7 @@ class TestScalarLeafEvaluation:
             "variables": [],
             "statistics": {"translation": {"scalar_unknowns": 12}},
         }
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert comp.passed
 
 
@@ -677,7 +693,8 @@ class TestQuantityGate:
         time = np.linspace(0.0, 1.0, 11)
         ref = BaselineView(
             name=PRIMARY_BASELINE,
-            ref_vars_by_name={"x": {"time": time.tolist(), "values": time.tolist()}},
+            ref_vars_by_name={"x": _stored("x", time)},
+            shared_ref_time=time,
             statistics={"timing": {"total": 2.0}},
         )
         results = {"x": VariableResult(index=1, name="x", time=time, values=2.0 * time)}
@@ -706,7 +723,8 @@ class TestQuantityGate:
         time = np.linspace(0.0, 1.0, 11)
         ref = BaselineView(
             name=PRIMARY_BASELINE,
-            ref_vars_by_name={"x": {"time": time.tolist(), "values": time.tolist()}},
+            ref_vars_by_name={"x": _stored("x", time)},
+            shared_ref_time=time,
             statistics={"timing": {"total": 2.0}},
         )
         results = {"x": VariableResult(index=1, name="x", time=time, values=2.0 * time)}
@@ -764,7 +782,7 @@ class TestQuantityGate:
             "variables": [{"index": 1, "name": "x", "values": time.tolist()}],
             "diagnostics": [{"name": "CPUtime", "final": 1.0, "min": 1.0, "max": 1.0}],
         }
-        comp = compare_test(test, result, reference)
+        comp = compare_test(test, result, decode_reference(reference))
         assert not comp.passed
         (vc,) = comp.variables
         assert vc.mode == "scalar"

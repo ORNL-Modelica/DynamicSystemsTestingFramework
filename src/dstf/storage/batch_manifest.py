@@ -81,7 +81,7 @@ class BatchManifest:
         _atomic_write_text(path, json.dumps(self.manifest, indent=2))
         return path
 
-    def record_result(self, result: TestRunResult) -> None:
+    def record_result(self, result: TestRunResult, metadata: dict | None) -> None:
         """Stamp one test's verdict into its manifest entry and persist NOW.
 
         The run's per-test outcome has to outlive the process that produced
@@ -115,10 +115,14 @@ class BatchManifest:
                 if entry["model_id"] == result.model_id:
                     entry["last_run_status"] = status
             self.save()
-        # The run's walls and statistics, beside the result they describe
-        # (storage.run_stats). After the verdict is saved and outside its
-        # lock: the file is the test's own, and its write never raises.
-        write_run_stats(self.test_dir(result.test_key), result)
+        # The run's walls and statistics, and *metadata* — the run that
+        # produced this result (RunMetadata.as_dict, None when it recorded
+        # none) — beside the result they describe (storage.run_stats): an
+        # accept reads its provenance from there, never from status.json,
+        # which is one snapshot per work dir. After the verdict is saved and
+        # outside its lock: the file is the test's own, and its write never
+        # raises.
+        write_run_stats(self.test_dir(result.test_key), result, metadata)
 
     def mark_pending(self, model_ids: set[str]) -> None:
         """Stamp :data:`PENDING_RUN_STATUS` on the entries a run is about to

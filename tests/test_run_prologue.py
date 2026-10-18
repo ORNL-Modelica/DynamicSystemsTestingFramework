@@ -396,3 +396,86 @@ class TestBatchDymolaRecordsVerdicts:
 
         assert seen[1]["test_0001"]["last_run_status"] == "passed"
         assert seen[1]["test_0002"]["last_run_status"] == "pending"
+
+
+# =========================================================================
+# Each lane records the run's metadata beside each result (run_stats.json):
+# what an accept writes as the baseline's provenance. Read from the FILE.
+# =========================================================================
+
+
+class TestEachLaneRecordsTheRunsMetadata:
+    def _kept(self, cfg) -> dict[str, dict | None]:
+        """Each test's recorded ``run_metadata``, read from its FILE."""
+        manifest = json.loads((cfg.work_dir / "batch_manifest.json").read_text())
+        return {
+            entry["model_id"]: json.loads(
+                (cfg.work_dir / key / "run_stats.json").read_text()
+            )["run_metadata"]
+            for key, entry in manifest.items()
+        }
+
+    def _the_runs(self, cfg) -> dict:
+        return json.loads((cfg.work_dir / "status.json").read_text())["metadata"]
+
+    def test_the_batch_loop_one_at_a_time(self, tmp_path):
+        cfg = _config(tmp_path, parallel=1)
+        _FakeBatchBackend(cfg).run_tests([_tm("Lib.A"), _tm("Lib.B")])
+
+        kept = self._kept(cfg)
+        assert kept["Lib.A"]["tool_version"] == "FakeTool 1.2.3"
+        assert kept == {"Lib.A": self._the_runs(cfg), "Lib.B": self._the_runs(cfg)}
+
+    def test_the_batch_loop_in_parallel(self, tmp_path):
+        """``--parallel`` lands results through its own call site."""
+        cfg = _config(tmp_path, parallel=2)
+        _FakeBatchBackend(cfg).run_tests([_tm("Lib.A"), _tm("Lib.B")])
+
+        kept = self._kept(cfg)
+        assert kept["Lib.A"]["tool_version"] == "FakeTool 1.2.3"
+        assert kept == {"Lib.A": self._the_runs(cfg), "Lib.B": self._the_runs(cfg)}
+
+    def test_the_persistent_lane_with_the_version_a_live_worker_named(self, tmp_path):
+        """The default ``dstf run`` lane for Dymola / OpenModelica / Julia: a
+        live worker names the tool's version after the run started, and each
+        result is recorded with it."""
+
+        class _Named(_FakePersistentBackend):
+            def _probe_worker_version(self, live_workers):
+                return "FakeTool 2.0, from the worker"
+
+        cfg = _config(tmp_path)
+        _Named(cfg).run_tests([_tm("Lib.A"), _tm("Lib.B")])
+
+        kept = self._kept(cfg)
+        assert kept["Lib.A"]["tool_version"] == "FakeTool 2.0, from the worker"
+        assert kept == {"Lib.A": self._the_runs(cfg), "Lib.B": self._the_runs(cfg)}
+
+    def test_batch_dymola_with_the_version_its_startup_wrote(
+        self, tmp_path, monkeypatch
+    ):
+        """A batch's ``startup.mos`` writes the real Dymola version; each
+        result of that batch is recorded with it — the version is stamped
+        before the results are."""
+        from dstf.backends.dymola.backend import TOOL_VERSION_FILENAME, DymolaBackend
+
+        cfg = _config(tmp_path, parallel=1)
+        backend = _dymola_backend(cfg, monkeypatch)
+
+        def _batch(self, batch, *a, **k):
+            (cfg.work_dir / TOOL_VERSION_FILENAME).write_text(
+                "Dymola Version 2026x, 2025-10-10\n", encoding="utf-8"
+            )
+            return [
+                TestRunResult(
+                    model_id=t.model_id, test_key=tk, success=True, elapsed=0.1
+                )
+                for t, tk in batch
+            ]
+
+        monkeypatch.setattr(DymolaBackend, "_run_batch", _batch)
+        backend.run_tests([_tm("Lib.A"), _tm("Lib.B")])
+
+        kept = self._kept(cfg)
+        assert kept["Lib.A"]["tool_version"] == "Dymola Version 2026x, 2025-10-10"
+        assert kept == {"Lib.A": self._the_runs(cfg), "Lib.B": self._the_runs(cfg)}

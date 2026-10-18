@@ -34,6 +34,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
+from ..storage.baseline import Baseline, StoredVariable
 from ..storage.reference_store import ReferenceStore
 from .base import Backend
 from .types import Capability, TestResult
@@ -156,29 +157,27 @@ def produce_dymola_via_fmpy_baseline(
         return False
 
     # All FMPy variables share the same time vector; pull from the first.
-    time_vec = list(fmpy_result.variables[0].time)
-    variables_payload = [
-        {
-            "index": v.index,
-            "name": v.name,
-            "expression": v.expression,
-            "values": list(v.values),
-        }
-        for v in fmpy_result.variables
-    ]
+    baseline = Baseline(
+        name=CROSS_BACKEND_BASELINE_NAME,
+        time=list(fmpy_result.variables[0].time),
+        variables=[
+            StoredVariable(
+                index=v.index,
+                name=v.name,
+                expression=v.expression,
+                values=list(v.values),
+            )
+            for v in fmpy_result.variables
+        ],
+        provenance={
+            "source": "cross-backend chain",
+            "primary_backend": type(primary_backend).__name__,
+            "secondary_backend": "FMPy",
+            "fmu_path": str(fmu_path),
+        },
+    )
     try:
-        store.add_soft_check(
-            test.model_id,
-            CROSS_BACKEND_BASELINE_NAME,
-            time=time_vec,
-            variables=variables_payload,
-            provenance={
-                "source": "cross-backend chain",
-                "primary_backend": type(primary_backend).__name__,
-                "secondary_backend": "FMPy",
-                "fmu_path": str(fmu_path),
-            },
-        )
+        store.add_soft_check(test.model_id, baseline)
     except (FileNotFoundError, ValueError) as exc:
         # review 2026-07-06 (finding 76): add_soft_check also raises
         # ValueError (e.g. name collides with an existing companion) — the

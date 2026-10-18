@@ -685,6 +685,9 @@ class _Progress:
     """`Backend.progress`, calling `between` once the first test has been
     recorded — the moment between two tests of a run."""
 
+    #: The run's metadata, as `record_result` asks it.
+    metadata = {"backend": "Fake", "tool_version": "FakeTool 1.2.3"}
+
     def __init__(self, between):
         self._between = between
 
@@ -783,7 +786,9 @@ class TestIdleDeath:
             manifest={tk: {"model_id": t.model_id, "ref_id": None} for t, tk in items},
         )
         try:
-            results = backend._dispatch_with_restart([worker], items, 2, manifest)
+            results = backend._dispatch_with_restart(
+                [worker], items, 2, manifest, backend.progress
+            )
 
             assert [(r.model_id, r.success) for r in results] == [
                 ("Lib.A", True),

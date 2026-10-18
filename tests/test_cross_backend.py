@@ -136,9 +136,9 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     assert cb_soft_check.provenance["secondary_backend"] == "FMPy"
 
     # Primary ref file is unchanged by soft_check writes.
-    ref = store.get_reference("BouncingBall")
-    assert ref is not None
-    assert "baselines" not in ref or not ref["baselines"]
+    ref_file = store.reference_file("BouncingBall")
+    assert ref_file is not None
+    assert "baselines" not in json.loads(ref_file.read_text(encoding="utf-8"))
 
 
 @_needs_real_fmpy
@@ -257,7 +257,10 @@ class TestCrossBackendBaselinePayload:
         """The chain writes a baseline like any other writer does: keyed by
         the result-file name, with the expression recorded beside it (``""``
         for an FMU variable, which has none)."""
-        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
+        from dstf.backends.cross_backend import (
+            CROSS_BACKEND_BASELINE_NAME,
+            produce_dymola_via_fmpy_baseline,
+        )
         from dstf.backends.types import TestResult, VariableResult
         from dstf.config import Config
 
@@ -310,8 +313,10 @@ class TestCrossBackendBaselinePayload:
         test = _tm("Model", variable_patterns=["h"])
         assert produce_dymola_via_fmpy_baseline(test, primary, config, store) is True
 
-        payload = store.add_soft_check.call_args.kwargs["variables"]
-        assert [(v["name"], v["expression"]) for v in payload] == [
+        stored = store.add_soft_check.call_args.args[1]
+        assert stored.name == CROSS_BACKEND_BASELINE_NAME
+        payload = stored.variables
+        assert [(v.name, v.expression) for v in payload] == [
             ("unitTests.x[1]", "pipe.T[1]"),
             ("h", ""),
         ]

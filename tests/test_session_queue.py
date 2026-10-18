@@ -871,7 +871,12 @@ def _stub_backend(h, monkeypatch, tmp_path):
     config = h.session.project.config
     stub = _FakeBackend(
         SimpleNamespace(
-            work_dir=config.work_dir, timeout=30.0, backend="Stub", parallel=1
+            work_dir=config.work_dir,
+            timeout=30.0,
+            backend="Stub",
+            backend_name="Stub",
+            os_name="linux",
+            parallel=1,
         )
     )
     monkeypatch.setattr(
