@@ -177,7 +177,7 @@ def produce_dymola_via_fmpy_baseline(
         },
     )
     try:
-        store.add_soft_check(test.model_id, CROSS_BACKEND_BASELINE_NAME, baseline)
+        store.add_soft_check(test.model_id, baseline)
     except (FileNotFoundError, ValueError) as exc:
         # review 2026-07-06 (finding 76): add_soft_check also raises
         # ValueError (e.g. name collides with an existing companion) — the

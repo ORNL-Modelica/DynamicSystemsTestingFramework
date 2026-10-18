@@ -2403,7 +2403,6 @@ class TestSessionView:
         t = [i / 4 for i in range(5)]
         session.project.store.add_soft_check(
             A,
-            "om_cross",
             series(
                 "om_cross",
                 time=list(t),
@@ -4917,7 +4916,6 @@ class TestABaselineThisFolderDoesNotHold:
         t = [i / 4 for i in range(5)]
         session.project.store.add_soft_check(
             A,
-            "om_cross",
             series(
                 "om_cross",
                 time=list(t),

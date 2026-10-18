@@ -143,7 +143,9 @@ def accept_refusal(
 def _provenance(meta: dict | None, config: Config) -> dict:
     """A baseline's ``provenance``: the metadata of the run that produced the
     result accepted (``RunMetadata.as_dict``, kept in the test's
-    ``run_stats.json``), its start as ISO-8601 ``run_started``. No machine
+    ``run_stats.json``), its start as ISO-8601 ``run_started`` — the start
+    of the run that produced the result, which for a single test run from
+    the tool's queue is that test's own start (``ItemRun.end``). No machine
     name and no load (owner, 2026-10-15). Written whole even when the run
     recorded none: ``backend``, ``backend_name`` and ``os`` from ``config``,
     every other field ``null`` — a writer never leaves a field out."""

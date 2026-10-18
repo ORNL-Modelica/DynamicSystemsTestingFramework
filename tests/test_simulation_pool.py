@@ -1485,6 +1485,25 @@ def test_the_python_backend_through_the_pool_equals_run_pipeline(tmp_path):
     assert (config.work_dir / "dashboard.html").exists()
 
 
+def test_a_queue_runs_metadata_starts_when_its_test_did(stub):
+    """A test run from the queue is a run of its own: the metadata recorded
+    beside its result (an accept's ``run_started``) starts when the item
+    did — its ``started_at`` — not at its end less its elapsed time."""
+    backend, pool, _ = stub
+    backend.gate("Lib.A")
+    item = pool.submit(_t("A"))
+    _wait_until(lambda: item.state is ItemState.RUNNING)
+    time.sleep(0.1)  # the run takes time: its start is not its end
+    backend.gates["Lib.A"].set()
+    _wait_until(lambda: _ended(item))
+
+    kept = json.loads(
+        (backend.config.work_dir / item.test_key / "run_stats.json").read_text()
+    )
+    assert item.started_at is not None
+    assert kept["run_metadata"]["generated_at"] == item.started_at
+
+
 def test_an_accept_after_a_queue_rerun_writes_the_reruns_provenance(
     tmp_path, monkeypatch
 ):

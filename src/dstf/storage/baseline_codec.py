@@ -71,6 +71,25 @@ def _as_written(values: list[float], single: bool) -> list[float]:
 # --- decode ----------------------------------------------------------------
 
 
+#: The keys of a stored variable's entry, in the order they are written:
+#: all a reader of DSTF reads of one. Any other key is dropped on decode.
+VARIABLE_KEYS = ("index", "name", "expression", "values")
+
+
+def unread_variable_keys(data: dict) -> dict[str, list[str]]:
+    """Each key of a reference-shape document's ``variables`` entries that
+    is not one of `VARIABLE_KEYS` — which decoding drops — with the names
+    of the variables that carry it, both in the document's order. The codec
+    says nothing of what it drops; a caller that should (``soft-check
+    add``) asks this."""
+    out: dict[str, list[str]] = {}
+    for entry in data.get("variables") or []:
+        for key in entry:
+            if key not in VARIABLE_KEYS:
+                out.setdefault(key, []).append(entry.get("name") or "")
+    return out
+
+
 def _variable(entry: dict, single: bool) -> StoredVariable:
     values = entry.get("values") or []
     return StoredVariable(

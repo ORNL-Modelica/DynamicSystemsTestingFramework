@@ -369,7 +369,10 @@ summarized by the codec on read.
 the `RunMetadata` of the run that produced the accepted result — read from the
 `run_stats.json` that `BatchManifest.record_result` writes beside each result,
 never from `status.json`, which is one snapshot per work dir — with
-`generated_at` as ISO-8601 `run_started`. No machine name, no load. A run that
+`generated_at` as ISO-8601 `run_started`: the start of the run that produced
+the result, which for a test run from the tool's queue (`pipeline.ItemRun`,
+one test per run) is that test's own start (`QueueItem.started_at`). No
+machine name, no load. A run that
 recorded no metadata still gets the whole block: `backend`, `backend_name` and
 `os` from the config, the rest `null`. A file accepted before the block
 existed has none until its next accept.
@@ -412,17 +415,20 @@ warn-wrapped) and ``companions/ref_NNNN/<name>.{json,csv}`` (plot-only).
 }
 ```
 
-A soft_check file holds the same per-baseline fields plus ``provenance``:
+A soft_check file holds the same per-baseline fields plus ``provenance``, in
+the order the codec writes them (``time``, ``variables``, then
+``diagnostics``, ``simulation``, ``statistics`` and ``provenance`` when
+present):
 
 ```json
 {
+  "time": [...], "variables": [...],
   "provenance": {
     "origin": "rig-run-2024-03-15",
     "captured_at": "2024-03-15T09:20:00Z",
     "notes": "Benchmark 3B, lab 2 test stand.",
     "citation": "Internal report XYZ-2024-042, §4.3"
-  },
-  "time": [...], "variables": [...]
+  }
 }
 ```
 

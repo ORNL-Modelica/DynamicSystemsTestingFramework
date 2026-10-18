@@ -907,7 +907,6 @@ def _session_with_soft_check(tmp_path, *ops):
     t = [i / 4 for i in range(5)]
     s.project.store.add_soft_check(
         A,
-        "om_cross",
         series(
             "om_cross",
             time=list(t),

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -159,7 +160,7 @@ def drained(tmp_path, monkeypatch):
         error_message="Cancelled",
         cancelled=True,
     )
-    assert path.end(ramp, key, stopped) is None
+    assert path.end(ramp, key, stopped, time.time()) is None
     item = QueueItem(
         ramp,
         state=ItemState.CANCELLED,

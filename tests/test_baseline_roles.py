@@ -71,7 +71,6 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         ok = store.add_soft_check(
             test.model_id,
-            "experiment",
             series(
                 "experiment",
                 time=[0.0, 1.0, 2.0],
@@ -97,7 +96,6 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "imported",
             series(
                 "imported",
                 time=[0.0, 1.0],
@@ -141,7 +139,6 @@ class TestSoftCheckStorage:
         before = copy.deepcopy(entry)
         store.add_soft_check(
             test.model_id,
-            "odd-order",
             series("odd-order", time=[0.0, 1.0], variables=[entry]),
         )
         sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "odd-order.json"
@@ -160,7 +157,6 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "nulled",
             series(
                 "nulled",
                 time=[0.0, 1.0],
@@ -182,7 +178,6 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "cross-check",
             series(
                 "cross-check",
                 time=[0.0, 1.0],
@@ -198,7 +193,6 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "experiment",
             series(
                 "experiment",
                 time=[0.0, 1.0],
@@ -212,7 +206,6 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "foo",
             series(
                 "foo",
                 time=[0.0],
@@ -228,7 +221,6 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "foo",
             series(
                 "foo",
                 time=[0.0],
@@ -237,7 +229,6 @@ class TestSoftCheckStorage:
         )
         ok = store.add_soft_check(
             test.model_id,
-            "foo",
             series(
                 "foo",
                 time=[1.0],
@@ -254,7 +245,6 @@ class TestSoftCheckStorage:
         with pytest.raises(ValueError, match="primary"):
             store.add_soft_check(
                 test.model_id,
-                "primary",
                 series(
                     "primary",
                     time=[0.0],
@@ -267,7 +257,6 @@ class TestSoftCheckStorage:
         with pytest.raises(ValueError, match="non-empty"):
             store.add_soft_check(
                 test.model_id,
-                "",
                 series(
                     "",
                     time=[0.0],
@@ -281,7 +270,6 @@ class TestSoftCheckStorage:
         with pytest.raises(FileNotFoundError, match="primary"):
             store.add_soft_check(
                 "Nonexistent.Test",
-                "foo",
                 series(
                     "foo",
                     time=[0.0],
@@ -637,7 +625,6 @@ class TestRoleNamespace:
         with pytest.raises(ValueError, match="companion"):
             store.add_soft_check(
                 test.model_id,
-                "shared-name",
                 series(
                     "shared-name",
                     time=[0.0],
@@ -651,7 +638,6 @@ class TestRoleNamespace:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "shared-name",
             series(
                 "shared-name",
                 time=[0.0],
@@ -956,7 +942,6 @@ class TestRolesWhereATestIsScored:
         time = np.linspace(0, 10, 11)
         store.add_soft_check(
             test.model_id,
-            "other",
             series(
                 "other",
                 time=list(time),

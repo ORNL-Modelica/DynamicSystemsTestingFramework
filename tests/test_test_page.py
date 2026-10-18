@@ -19,6 +19,7 @@ pytest.importorskip("nicegui")
 from nicegui import ui  # noqa: E402
 from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
+from conftest import PROVENANCE  # noqa: E402
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.capabilities import Artifact, Patch, Placement  # noqa: E402
@@ -11876,7 +11877,6 @@ async def test_a_failed_runs_statistics_line_says_there_is_no_run_result(
 
 # -- U5 Task 3: a click on a tree row ----------------------------------------
 
-from conftest import PROVENANCE
 from dstf.authoring.shell.test_page import TREE as TREE_OPEN  # noqa: E402
 
 #: Every kind of group, each over criteria on x and y (A tracks both).

@@ -102,6 +102,24 @@ class TestRefIndex:
         assert len(active) == 1
         assert "0001" in active
 
+    def test_a_file_without_status_is_listed_active(self, tmp_path):
+        """A reference file written before ``status`` existed — no key at
+        all, its variables without ``expression`` — is an active baseline:
+        listed, and found by its model."""
+        old = {
+            "model_id": "MyLib.Old",
+            "test_id": "0001",
+            "date_added": "2025-03-01T00:00:00+00:00",
+            "last_updated": "2025-03-01T00:00:00+00:00",
+            "n_vars": 1,
+            "time": [0.0, 1.0],
+            "variables": [{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+        }
+        (tmp_path / "ref_0001.json").write_text(json.dumps(old), encoding="utf-8")
+        index = RefIndex(tmp_path)
+        assert index.active_tests() == {"0001": "MyLib.Old"}
+        assert index.get_id("MyLib.Old") == "0001"
+
     def test_obsolete_excluded_from_get_model_id(self, tmp_path):
         """Obsolete tests return None from get_model_id."""
         self._write_ref(tmp_path, "0001", "MyLib.Test1", status="obsolete")
@@ -792,7 +810,6 @@ class TestAtomicWrites:
         )
         store.add_soft_check(
             test.model_id,
-            "experiment",
             series(
                 "experiment",
                 time=[0.0, 1.0],
@@ -862,7 +879,6 @@ class TestIdAllocation:
         store, test = store_with_primary
         store.add_soft_check(
             test.model_id,
-            "experiment",
             series(
                 "experiment",
                 time=[0.0, 1.0],
@@ -1062,7 +1078,6 @@ class TestRoleNameValidation:
         with pytest.raises(ValueError) as exc:
             store.add_soft_check(
                 test.model_id,
-                bad,
                 series(
                     bad,
                     time=[0.0],
@@ -1094,7 +1109,6 @@ class TestRoleNameValidation:
         with pytest.raises(ValueError):
             store.add_soft_check(
                 test.model_id,
-                "../../evil",
                 series(
                     "../../evil",
                     time=[0.0],
@@ -1109,7 +1123,6 @@ class TestRoleNameValidation:
         with pytest.raises(ValueError, match="/"):
             store.add_soft_check(
                 test.model_id,
-                "a/b",
                 series(
                     "a/b",
                     time=[0.0],
@@ -1121,7 +1134,6 @@ class TestRoleNameValidation:
         store, test = store_with_primary
         ok = store.add_soft_check(
             test.model_id,
-            "dymola-via-fmpy",
             series(
                 "dymola-via-fmpy",
                 time=[0.0],

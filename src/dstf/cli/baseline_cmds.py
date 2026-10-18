@@ -251,7 +251,7 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     import dataclasses
     import json as json_mod
 
-    from ..storage.baseline_codec import decode_series
+    from ..storage.baseline_codec import decode_series, unread_variable_keys
 
     store = _store(args)
     source = Path(args.source)
@@ -283,7 +283,6 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     try:
         ok = store.add_soft_check(
             args.model_id,
-            args.name,
             dataclasses.replace(baseline, provenance=provenance),
         )
     except (ValueError, FileNotFoundError) as e:
@@ -292,4 +291,18 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     if ok:
         store.config.write_default_file()
         print(f"Imported {source} → soft_check {args.name!r} on {args.model_id}")
+        dropped = unread_variable_keys(data)
+        if dropped:
+            print(
+                "Warning: dropped variable keys nothing in DSTF reads: "
+                + "; ".join(
+                    f"{key} ({_first_names(names)})" for key, names in dropped.items()
+                )
+            )
     return 0 if ok else 1
+
+
+def _first_names(names: list[str], shown: int = 3) -> str:
+    """Up to *shown* of *names*, then ``and N more``."""
+    out = ", ".join(names[:shown])
+    return out + (f" and {len(names) - shown} more" if len(names) > shown else "")

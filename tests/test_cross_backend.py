@@ -257,7 +257,10 @@ class TestCrossBackendBaselinePayload:
         """The chain writes a baseline like any other writer does: keyed by
         the result-file name, with the expression recorded beside it (``""``
         for an FMU variable, which has none)."""
-        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
+        from dstf.backends.cross_backend import (
+            CROSS_BACKEND_BASELINE_NAME,
+            produce_dymola_via_fmpy_baseline,
+        )
         from dstf.backends.types import TestResult, VariableResult
         from dstf.config import Config
 
@@ -310,7 +313,9 @@ class TestCrossBackendBaselinePayload:
         test = _tm("Model", variable_patterns=["h"])
         assert produce_dymola_via_fmpy_baseline(test, primary, config, store) is True
 
-        payload = store.add_soft_check.call_args.args[2].variables
+        stored = store.add_soft_check.call_args.args[1]
+        assert stored.name == CROSS_BACKEND_BASELINE_NAME
+        payload = stored.variables
         assert [(v.name, v.expression) for v in payload] == [
             ("unitTests.x[1]", "pipe.T[1]"),
             ("h", ""),

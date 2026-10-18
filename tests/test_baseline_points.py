@@ -629,6 +629,38 @@ def test_import_baseline_stores_the_runs_own_numbers(tmp_path, capsys):
     assert baseline.variables[0].values == _AS_SINGLE
 
 
+def test_soft_check_add_says_the_variable_keys_it_dropped(tmp_path, capsys):
+    """A source's per-variable keys DSTF does not read (``unit``,
+    ``description``) are not stored, and `soft-check add` says so in ONE
+    line: each key, with the variables that carried it."""
+    config, path = _single_reference(tmp_path)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    (x,) = raw["variables"]
+    raw["variables"] = [
+        {**x, "unit": "K", "description": "the rod's temperature"},
+        {**x, "index": 2, "name": "y", "unit": "K"},
+    ]
+    source = tmp_path / "from-elsewhere.json"
+    source.write_text(json.dumps(raw), encoding="utf-8")
+    capsys.readouterr()
+    assert (
+        main(
+            ["--config", str(config.config_file), "soft-check", "add", M, "other"]
+            + [str(source)]
+        )
+        == 0
+    )
+    said = [line for line in capsys.readouterr().out.splitlines() if "Warning" in line]
+    assert said == [
+        "Warning: dropped variable keys nothing in DSTF reads: "
+        "unit (x, y); description (x)"
+    ]
+    written = config.reference_dir / "soft_checks" / path.stem / "other.json"
+    assert [list(v) for v in json.loads(written.read_text())["variables"]] == [
+        ["index", "name", "expression", "values"]
+    ] * 2
+
+
 def test_a_sibling_partitions_reference_overlays_the_runs_own_numbers(tmp_path):
     from dstf.reporting.overlay_loader import (
         _sibling_backend_index,

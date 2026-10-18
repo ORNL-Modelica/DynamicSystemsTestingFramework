@@ -27,7 +27,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..config import Config
 from ..config_shape import default
@@ -49,6 +49,9 @@ from .common.proc_kill import (
     snapshot_children,
 )
 from .types import TestRunResult, timeout_message
+
+if TYPE_CHECKING:
+    from .progress import ProgressReporter
 
 logger = logging.getLogger(__name__)
 
@@ -1647,7 +1650,9 @@ class PersistentBackendBase(Backend):
         if updates:
             setup.progress.update_metadata(**updates)
 
-        results = self._dispatch_with_restart(live_workers, test_items, total, manifest)
+        results = self._dispatch_with_restart(
+            live_workers, test_items, total, manifest, setup.progress
+        )
 
         for w in workers:
             w.close()
@@ -1704,6 +1709,7 @@ class PersistentBackendBase(Backend):
         test_items: list,
         total: int,
         manifest: BatchManifest,
+        progress: "ProgressReporter",
     ) -> list[TestRunResult]:
         """Shared queue + sentinel + per-worker restart dispatch.
 
@@ -1715,7 +1721,10 @@ class PersistentBackendBase(Backend):
         *manifest* receives each verdict as it lands — this loop is the one
         place every persistent result (real, restart-exhausted, drained)
         passes through, and a Ctrl-C here would otherwise leave the run's
-        outcomes unrecorded.
+        outcomes unrecorded. Each is recorded with *progress*'s metadata —
+        the run's reporter (``run_tests`` built it in ``_prepare_run``), read
+        per result so a version a worker named late is in it — and ends its
+        dashboard row there.
         """
         work_queue: queue.Queue[tuple | None] = queue.Queue()
         for item in test_items:
@@ -1734,10 +1743,8 @@ class PersistentBackendBase(Backend):
                 idx = completed[0]
             # Persist before anything else can fail: this is the abort-proof
             # half of the run-verdict record (BatchManifest.record_result),
-            # with the metadata of this run (`run_tests` set its reporter).
-            manifest.record_result(
-                tr, self.progress.metadata if self.progress is not None else None
-            )
+            # with the metadata of this run.
+            manifest.record_result(tr, progress.metadata)
             label = f"{test_key} {test.model_id.rsplit('.', 1)[-1]}"
             status = "ok" if tr.success else ("TIMEOUT" if tr.timed_out else "FAIL")
             parts = []
@@ -1763,20 +1770,19 @@ class PersistentBackendBase(Backend):
                 detail=detail_str,
                 quiet=self.quiet,
             )
-            if self.progress is not None:
-                self.progress.on_finish(
-                    test_key,
-                    success=tr.success,
-                    elapsed=tr.elapsed,
-                    # Same timeout-conditional lift as the progress line
-                    # above: the Julia timeout message runs past 120 chars and
-                    # the clip landed mid-hint, so the dashboard showed a
-                    # truncated "simulation.tim…".
-                    detail=None
-                    if tr.success
-                    else (tr.error_message or "")[: None if tr.timed_out else 120],
-                    timed_out=tr.timed_out,
-                )
+            progress.on_finish(
+                test_key,
+                success=tr.success,
+                elapsed=tr.elapsed,
+                # Same timeout-conditional lift as the progress line
+                # above: the Julia timeout message runs past 120 chars and
+                # the clip landed mid-hint, so the dashboard showed a
+                # truncated "simulation.tim…".
+                detail=None
+                if tr.success
+                else (tr.error_message or "")[: None if tr.timed_out else 120],
+                timed_out=tr.timed_out,
+            )
 
         # review 2026-07-06 (finding 20): dispatch-thread liveness registry.
         # A worker whose restart failed permanently must NOT stay in the

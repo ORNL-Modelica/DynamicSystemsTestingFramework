@@ -214,19 +214,19 @@ class _RolesMixin:
     def add_soft_check(
         self,
         model_id: str,
-        name: str,
         baseline: Baseline,
         *,
         overwrite: bool = True,
     ) -> bool:
-        """Register ``baseline`` as the soft_check ``name`` of a model (the
-        caller names the baseline ``name``).
+        """Register ``baseline`` as a soft_check of a model, under its own
+        ``name``.
 
         The model must already have a primary baseline on disk.
         Name collision with an existing companion is rejected.
 
         Returns True on write, False if overwrite=False and the name exists.
         """
+        name = baseline.name
         if name == PRIMARY_BASELINE:
             raise ValueError(
                 "'primary' is reserved for the stored simulation result; "

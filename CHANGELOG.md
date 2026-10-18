@@ -14,6 +14,12 @@ this file says when they do.
   library versions, DSTF version, OS, when the run started (`provenance`).
   Existing baselines gain it at their next accept.
 
+### Changed
+
+- `soft-check add` no longer stores a source's per-variable keys that nothing
+  in DSTF reads (`unit`, `description`, …); one warning line names the keys
+  it dropped and the variables that carried them.
+
 ## [1.1.0] - 2026-10-14
 
 This release changes the command line and `testing.json`. Nothing old is

@@ -910,7 +910,6 @@ class TestConsoleReport:
         t = np.array([i / 4 for i in range(5)])
         assert store.add_soft_check(
             D,
-            "OpenModelica",
             series(
                 "OpenModelica",
                 time=t.tolist(),
