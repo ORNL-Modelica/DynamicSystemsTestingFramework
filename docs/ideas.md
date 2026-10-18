@@ -2148,3 +2148,25 @@ accepted from `dstf run --batch` stores `library_versions: null` where the
 default persistent lane stores `{"Modelica": "4.1.0", ...}`. Filling it means
 the `.mos` script writing the loaded libraries' `version` annotations
 somewhere the backend reads back.
+
+**Example libraries that show off the metrics: a "kitchen-sink" test (owner,
+2026-10-18; explore in a dedicated session).** The example libraries should
+keep giving a newcomer a test to try for every kind of check DSTF has, and
+they should grow as the checks grow. Today ModelicaTestingLib has one test
+per mode and combinator, plus `MetricTreeTest`, which uses windowed leaves and
+a companion over a step response. JuliaMtkTestingLib mirrors most of these but
+has no event test and no `event-timing` criterion. Neither library has
+anything for eigenvalues or linearization; that waits on the "what a baseline
+holds" session. The owner's proposal is ONE example system with ONE metric
+tree that exercises many metrics at once. For example: a multi-layered
+sinusoid with events in it, scored together by `dominant-frequency`,
+`event-timing`, `tube`, `range`, `points`, `scalar` and the combinators. It
+would be a demo, a stress test of the tree, and a slide figure in one, and it
+would exist in both Modelica and Julia (and so cross-check the two backends).
+To settle in that session:
+- whether it replaces any single-mode tests or sits beside them;
+- whether its references stay small;
+- whether events in Julia/MTK give the same timing as Dymola and OM;
+- which new metrics each future feature should add an example for.
+
+Grill before planning.
