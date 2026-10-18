@@ -37,7 +37,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...discovery.library_state import LibraryChanges, dependency_root, under
-from ...discovery.test_registry import TestModel
+from ...discovery.test_registry import TestModel, diagnostic_names
 from ..common.mat_reader import mat_reaches_time
 from ..common.proc_kill import live_children
 from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
@@ -747,7 +747,7 @@ class OpenModelicaWorker(Worker):
         # build_simulate_args' own business — same call as the batch backend.
         sim_args = build_simulate_args(
             test,
-            self.om_config.diagnostic_variables,
+            diagnostic_names(test, self.om_config.diagnostic_variables),
             mat_sync=self.om_config.mat_sync,
         )
         simulate_expr = f"simulate({test.model_id}, {', '.join(sim_args)})"

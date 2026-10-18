@@ -201,6 +201,18 @@ NO_TEST = {
         [_entry(variables=["x", 1])],
         f"tests[{A}].variables[1]: must be a name or a pattern, got 1",
     ),
+    "diagnostic variables that are no list": (
+        [_entry(diagnostic_variables="h")],
+        f'tests[{A}].diagnostic_variables: must be a list of names, got "h"',
+    ),
+    "diagnostic variables null": (
+        [_entry(diagnostic_variables=None)],
+        f"tests[{A}].diagnostic_variables: must be a list of names, got null",
+    ),
+    "a diagnostic variable that is no name": (
+        [_entry(diagnostic_variables=["h", 1])],
+        f"tests[{A}].diagnostic_variables[1]: must be a name, got 1",
+    ),
     "a source that is no path": (
         [_entry(source=5)],
         f"tests[{A}].source: must be a path, got 5",

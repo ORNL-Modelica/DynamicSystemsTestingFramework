@@ -68,6 +68,7 @@ from ..discovery.spec_update import (
 from ..discovery.test_registry import (
     SpecModelLocator,
     TestModel,
+    diagnostic_names,
     merge_tests,
     scan_files,
     scan_source_tests,
@@ -1194,10 +1195,13 @@ class Session:
         by_id = {t.model_id: t for t in tests}
         out: set[str] = set()
         for model_id in models:
+            test = by_id.get(model_id)
             missing = unrecorded_variables(
-                by_id.get(model_id),
+                test,
                 project.results.get(model_id),
-                project.config.diagnostic_variables,
+                diagnostic_names(test, project.config.diagnostic_variables)
+                if test is not None
+                else (),
             )
             if missing and not set(missing).isdisjoint(self._file_names(model_id)):
                 out.add(model_id)

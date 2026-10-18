@@ -2,7 +2,7 @@
 
 import copy
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -100,6 +100,10 @@ class TestModel:
     # (``Config.baseline_points``).
     baseline_points: int | str | None = None
 
+    # The entry's own ``diagnostic_variables``: names whose summary this
+    # test's runs record beside the project's (`diagnostic_names`).
+    diagnostic_variables: list[str] = field(default_factory=list)
+
     # PTA.4 — richer-contract fields settable via recognizers. Additive;
     # defaults preserve pre-PTA behavior.
     #
@@ -178,6 +182,13 @@ class TestModel:
         ):
             self.field_sources.setdefault(fname, "default")
         return self
+
+
+def diagnostic_names(test: TestModel, project: Sequence[str]) -> list[str]:
+    """The names whose summary every run of ``test`` records: the
+    project's `diagnostic_variables`, then the test's own, unique, in
+    that order. Project and test names mean the same thing."""
+    return list(dict.fromkeys([*project, *test.diagnostic_variables]))
 
 
 def _build_test_model_from_recognizer_results(
@@ -450,6 +461,7 @@ def merge_tests(
                 existing.plots = spec_test.plots
             if spec_test.baseline_points is not None:
                 existing.baseline_points = spec_test.baseline_points
+            existing.diagnostic_variables = spec_test.diagnostic_variables
         else:
             # Provenance for spec-set fields was stamped by parse_test_spec;
             # unset fields get "default" in finalize_defaults — review

@@ -43,7 +43,8 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
 
     And refuse a value the parser reads that is not what it reads there:
     ``variables`` that is no list of strings (``"x"`` was a warning and a
-    test tracking nothing, ``[1]`` a traceback at compare), a ``source``
+    test tracking nothing, ``[1]`` a traceback at compare), nor
+    ``diagnostic_variables``, a ``source``
     that is no string, a ``simulation`` value of another type than
     ``spec_shape.SIMULATION`` gives its key (``"stop_time": "abc"`` was a
     warning and a run to the default second; ``"100"`` and ``true`` were
@@ -72,20 +73,25 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
             )
         return value
 
-    refuse(here, entry, spec_shape.ENTRY)
-    if "variables" in entry:
-        variables = entry["variables"]
-        if not isinstance(variables, list):
+    def strings(key: str, listed: str, one: str) -> None:
+        """``entry[key]``, when it is there: a list of strings, or refused —
+        the list said as ``listed``, each item as ``one``."""
+        if key not in entry:
+            return
+        value = entry[key]
+        if not isinstance(value, list):
             raise EntryKeyError(
-                f"{here}.variables",
-                f"must be a list of names or patterns, got {_as_json(variables)}",
+                f"{here}.{key}", f"must be {listed}, got {_as_json(value)}"
             )
-        for i, pattern in enumerate(variables):
-            if not isinstance(pattern, str):
+        for i, item in enumerate(value):
+            if not isinstance(item, str):
                 raise EntryKeyError(
-                    f"{here}.variables[{i}]",
-                    f"must be a name or a pattern, got {_as_json(pattern)}",
+                    f"{here}.{key}[{i}]", f"must be {one}, got {_as_json(item)}"
                 )
+
+    refuse(here, entry, spec_shape.ENTRY)
+    strings("variables", "a list of names or patterns", "a name or a pattern")
+    strings("diagnostic_variables", "a list of names", "a name")
     if "source" in entry and not isinstance(entry["source"], str):
         raise EntryKeyError(
             f"{here}.source", f"must be a path, got {_as_json(entry['source'])}"
@@ -443,6 +449,10 @@ def spec_models_from_document(
             if refused is not None:
                 raise ConfigError(f"{label}: {refused}")
             test.baseline_points = entry["baseline_points"]
+
+        # The test's own diagnostic names, beside the project's
+        # (`diagnostic_names`): a list of strings, `check_entry_keys`.
+        test.diagnostic_variables = list(entry.get("diagnostic_variables", []))
 
         tests.append(test)
 

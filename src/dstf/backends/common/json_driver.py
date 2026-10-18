@@ -25,7 +25,7 @@ from typing import ClassVar
 
 import numpy as np
 
-from ...discovery.test_registry import TestModel
+from ...discovery.test_registry import TestModel, diagnostic_names
 from ..base import Backend
 from ..types import (
     TestResult,
@@ -377,7 +377,8 @@ class JsonDriverBackend(Backend):
         # indices stay put); one the payload lacks is loud, as a missing
         # UnitTests variable is on the .mat backends.
         requested = list(requested)
-        for name in criterion_variables(test, self.config.diagnostic_variables):
+        listed = diagnostic_names(test, self.config.diagnostic_variables)
+        for name in criterion_variables(test, listed):
             if name in requested:
                 continue
             if name in available:

@@ -31,7 +31,7 @@ from typing import Any
 
 from ...config import Config
 from ...config_shape import default
-from ...discovery.test_registry import TestModel
+from ...discovery.test_registry import TestModel, diagnostic_names
 from .. import register
 from ..base import Backend, Diagnosis
 from ..common import result_files
@@ -238,7 +238,7 @@ class OpenModelicaBackend(Backend):
             library_package_mo=self.config.library_dir / "package.mo",
             dependencies=deps,
             backend_setup=list(self.om_config.backend_setup),
-            diagnostic_vars=list(self.om_config.diagnostic_variables),
+            diagnostic_vars=diagnostic_names(test, self.om_config.diagnostic_variables),
             std_version=self.om_config.std_version,
             mat_sync=self.om_config.mat_sync,
         )
@@ -411,7 +411,7 @@ class OpenModelicaBackend(Backend):
                 statistics=stats,
             )
 
-        diag_names = list(self.om_config.diagnostic_variables)
+        diag_names = diagnostic_names(test, self.om_config.diagnostic_variables)
         needed = compute_needed_variables(mat_path, test, diag_names)
 
         mat_data = read_result_mat(mat_path, variable_names=needed)

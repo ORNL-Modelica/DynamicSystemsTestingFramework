@@ -84,7 +84,7 @@ def build_variable_filter(
     # doesn't list, and for the variables a criterion names.
     for n in extra_names:
         alternatives.append(re.escape(n))
-    # Diagnostic variables (literal names — no globs)
+    # The names the test lists (`diagnostic_names`: literal — no globs)
     for dv in diagnostic_vars:
         alternatives.append(re.escape(dv))
     # Dedupe while preserving order

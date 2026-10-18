@@ -12,7 +12,7 @@ from typing import Any
 from ...config import Config
 from ...config_shape import FILE, Setting, default
 from ...discovery.library_state import dependency_file
-from ...discovery.test_registry import TestModel
+from ...discovery.test_registry import TestModel, diagnostic_names
 from ...storage.batch_manifest import BatchManifest
 from .. import register
 from ..base import Backend, Diagnosis, _print_run_header
@@ -659,11 +659,8 @@ class DymolaBackend(Backend):
 
         # Phase 1: Get variable names (fast — reads only the name matrix)
         # Then resolve patterns to determine which variables we actually need.
-        needed_vars = compute_needed_variables(
-            mat_path,
-            test,
-            self.dymola_config.diagnostic_variables,
-        )
+        listed = diagnostic_names(test, self.dymola_config.diagnostic_variables)
+        needed_vars = compute_needed_variables(mat_path, test, listed)
 
         # Phase 2: Load only needed variables from the .mat file
         mat_data = read_result_mat(mat_path, variable_names=needed_vars)
@@ -675,11 +672,7 @@ class DymolaBackend(Backend):
                 statistics=stats,
             )
 
-        variables, diagnostics = extract_variables(
-            mat_data,
-            test,
-            self.dymola_config.diagnostic_variables,
-        )
+        variables, diagnostics = extract_variables(mat_data, test, listed)
         stats = fold_diagnostics_into_statistics(stats, diagnostics)
 
         unfinished = unfinished_result(test, mat_path, variables, diagnostics, stats)

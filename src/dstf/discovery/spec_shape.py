@@ -360,6 +360,14 @@ ENTRY: dict[str, Setting] = {
         "or more, which thins a longer run to at most that many. Without "
         "this key testing.json's baseline_points applies.",
     ),
+    "diagnostic_variables": Setting(
+        {"type": "array", "items": {"type": "string"}},
+        [],
+        "Names whose summary (final, min, max) this test's baseline stores, "
+        "in addition to `testing.json`'s list. A listed name's curve is "
+        "stored only when a criterion needs it — any criterion but a "
+        "scalar's final, min or max over the whole run.",
+    ),
     **NOTES,
 }
 

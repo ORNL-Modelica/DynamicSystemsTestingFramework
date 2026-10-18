@@ -31,6 +31,7 @@ from nicegui import ui
 
 from ...backends.types import VariableText
 from ...discovery.plots import PlotExtra, ResolvedPlot
+from ...discovery.test_registry import diagnostic_names
 from ...discovery.unit_tests import is_unit_test_variable
 from ...figures.families import HUES
 from ..layout import add_context, new_watch, remove_context
@@ -83,6 +84,8 @@ class _Reads:
     #: the names that are the test's UnitTests elements: rows of their own,
     #: as they are plots of their own (O3)
     unit_tests: frozenset[str]
+    #: the names the test lists (`diagnostic_names`): the Diagnostics group
+    diagnostics: tuple[str, ...]
 
 
 def _slug(title: str) -> str:
@@ -236,6 +239,11 @@ class VariablesDrawer:
             unit_tests=frozenset(
                 n for n in names if test is not None and is_unit_test_variable(test, n)
             ),
+            diagnostics=tuple(
+                diagnostic_names(test, project.config.diagnostic_variables)
+                if test is not None and project is not None
+                else ()
+            ),
         )
 
     def _signature(self, reads: _Reads | None) -> object:
@@ -266,6 +274,7 @@ class VariablesDrawer:
             tuple((n, t.label, t.text) for n, t in reads.scope.items()),
             reads.plots,
             reads.unit_tests,
+            reads.diagnostics,
             "" if reads.names else page.unscored_reason(),
         )
 
@@ -309,7 +318,6 @@ class VariablesDrawer:
             return
         self.box.say(None)
         names = reads.names
-        project = page.shell.session.project
         with self.body:
             if not names:
                 ui.label(
@@ -325,9 +333,7 @@ class VariablesDrawer:
             groups_of = partial(
                 variable_groups,
                 tracked=reads.tracked,
-                diagnostics=(
-                    project.config.diagnostic_variables if project is not None else ()
-                ),
+                diagnostics=reads.diagnostics,
                 labels={name: t.label for name, t in scope.items()},
                 plots=reads.plots,
                 unit_tests=reads.unit_tests,

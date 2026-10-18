@@ -50,7 +50,7 @@ import numpy as np
 
 from ...config import Config
 from ...config_shape import Setting
-from ...discovery.test_registry import TestModel
+from ...discovery.test_registry import TestModel, diagnostic_names
 from ...discovery.unit_tests import unit_test_variables
 from .. import register
 from ..base import Backend, Diagnosis
@@ -253,11 +253,9 @@ class FmpyBackend(Backend):
             with _MODEL_DESCRIPTION_LOCK:
                 md = fmpy.read_model_description(str(fmu_path))
             available = _list_scalar_variables(md)
+            listed = diagnostic_names(test, self.config.diagnostic_variables)
             requested = _tracked(
-                test,
-                _resolve_requested_outputs(test, available),
-                available,
-                self.config.diagnostic_variables,
+                test, _resolve_requested_outputs(test, available), available, listed
             )
             if requested and not test.variable_patterns:
                 # No patterns: what fmpy records by default stays recorded
@@ -401,16 +399,15 @@ class FmpyBackend(Backend):
                 requested = available
             elif not test.variable_patterns:
                 requested = []
-        requested = _tracked(
-            test, requested, available, self.config.diagnostic_variables
-        )
+        listed = diagnostic_names(test, self.config.diagnostic_variables)
+        requested = _tracked(test, requested, available, listed)
         # Loud on every backend (`extract_variables`): a variable the
         # UnitTests or a criterion names that the saved columns lack is a
         # spec/model mismatch, not something to swallow.
         for name in dict.fromkeys(
             [
                 *(v.name for v in unit_test_variables(test)),
-                *criterion_variables(test, self.config.diagnostic_variables),
+                *criterion_variables(test, listed),
             ]
         ):
             if name not in requested:
