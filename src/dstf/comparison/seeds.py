@@ -131,6 +131,24 @@ def seed_tube(data: SeedData) -> dict:
     return {"tube_width_mode": "band", "tube_abs": _outward(m, m, up=True)}
 
 
+#: A number within 1% of the baseline's: what `seed_scalar` seeds where it
+#: reads the reference, a listed name's `+` writes where no side is a
+#: finite number (`seed_variable_number`), and a `value` Statistics row's
+#: "changed" scores (`stats_rows.changed`) — the one leaf, so the tip, the
+#: card and the scorer agree.
+VALUE_LEAF: dict = {
+    "quantity": {"reduce": "final"},
+    "tolerance_mode": "rel",
+    "tolerance": 0.01,
+}
+
+
+def _value_leaf() -> dict:
+    """A fresh copy of `VALUE_LEAF`: a leaf written into a spec is the
+    caller's to change, the constant never."""
+    return {**VALUE_LEAF, "quantity": dict(VALUE_LEAF["quantity"])}
+
+
 def seed_scalar(data: SeedData) -> dict:
     """The final value: within 1% of the baseline's where the seed reads
     the reference, else between bounds 5% of its magnitude either side."""
@@ -142,7 +160,7 @@ def seed_scalar(data: SeedData) -> dict:
     # NaN, or none inside the window) seeds from the actual, and a
     # tolerance against it failed on its own data.
     if s is data.ref:
-        return {"quantity": quantity, "tolerance_mode": "rel", "tolerance": 0.01}
+        return _value_leaf()
     final = float(s[1][np.isfinite(s[1])][-1])
     half = SEED_MARGIN * (abs(final) or _span(s[1])[2])
     return {
@@ -279,7 +297,9 @@ def seed_variable_number(
     its values (owner, 2026-10-18): within 1% of ``baseline``, the same
     number of the baseline's summary, where it has one (the Statistics
     row's `changed` rule); else bounds around the run's number (``values``,
-    reduced); with neither, bare."""
+    reduced). With neither a finite number (NaN, inf, or nothing), the same
+    1% (`VALUE_LEAF`), written out: a bare leaf read "exact match" on the
+    tip and was scored by the test's base tolerance."""
     quantity = {"reduce": reduce}
     leaf: dict = {"metric": "scalar", "variable": name}
     if name in TIMES or name in COUNTS:
@@ -296,4 +316,5 @@ def seed_variable_number(
         number = _reduce_series(np.arange(float(series.size)), series, reduce)
         act = (one, np.array([number]))
     ref = (one, np.array([float(baseline)])) if baseline is not None else None
-    return {**leaf, **seed_scalar(SeedData(ref=ref, act=act)), "quantity": quantity}
+    seeded = seed_scalar(SeedData(ref=ref, act=act)) or _value_leaf()
+    return {**leaf, **seeded, "quantity": quantity}

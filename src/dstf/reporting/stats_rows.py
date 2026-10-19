@@ -42,6 +42,7 @@ from ..comparison.modes import ScalarConfig, ScalarMode
 from ..comparison.seeds import (
     COUNTS,
     TIMES,
+    VALUE_LEAF,
     quantity_kind,
     seed_quantity,
 )
@@ -81,15 +82,6 @@ class StatRow:
     #: the significant digits each side was recorded with, (run, baseline):
     #: what `report_text` and `card_text` show it at
     digits: tuple[int, int] = (DOUBLE_SHOWN, DOUBLE_SHOWN)
-
-
-#: The criterion a `value` row's ``+`` writes against a baseline's summary
-#: (`seed_variable_number` over `seed_scalar`): its final within 1%.
-VALUE_LEAF = {
-    "quantity": {"reduce": "final"},
-    "tolerance_mode": "rel",
-    "tolerance": 0.01,
-}
 
 
 def changed(

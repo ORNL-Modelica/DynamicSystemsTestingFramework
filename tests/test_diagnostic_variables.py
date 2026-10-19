@@ -2327,3 +2327,69 @@ def test_a_value_rows_verdict_is_the_pluses_leaf_never_a_seed(monkeypatch):
     } == VALUE_LEAF
     monkeypatch.setattr(seeds, "seed_scalar", lambda data: {})
     assert changed("h", "value", 1.02, 1.0) and not changed("h", "value", 1.005, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("run", "stored"),
+    [(NAN, NAN), (INF, INF), (NAN, None), (None, NAN)],
+    ids=["nan-nan", "inf-inf", "nan-no-baseline", "no-run-nan"],
+)
+def test_the_plus_on_a_row_with_no_finite_number_writes_its_tolerance(
+    tmp_path, run, stored
+):
+    """Neither side a finite number: the `+` writes the 1% a row's verdict
+    scores (`VALUE_LEAF`), never a bare leaf the test's base tolerance
+    would score — and the tip and the card say that same 1%."""
+    from dstf.authoring.builtin.edit_tree import _requirement
+    from dstf.authoring.session import PatchOp
+    from dstf.authoring.shell.stats_card import scored as scored_rows
+    from dstf.authoring.shell.stats_card import summary
+    from dstf.comparison.seeds import VALUE_LEAF
+
+    s, A = _h_session(tmp_path, run=run, stored=stored)
+    value = _plus(s, A, "h")
+    assert {
+        k: v for k, v in value.items() if k not in ("metric", "variable")
+    } == VALUE_LEAF
+    assert _requirement(value) == "Add a requirement: within 1%"
+    s.stage([PatchOp(A, "add", "/metrics/children/-", value)])
+    (read,) = scored_rows(s.statistic_leaves(A), s.tree_view(A))["h"]
+    assert summary(read) == "±1%"
+
+
+@pytest.mark.parametrize(
+    ("run", "stored"),
+    [(NAN, NAN), (INF, INF), (NAN, None), (None, NAN)],
+    ids=["nan-nan", "inf-inf", "nan-no-baseline", "no-run-nan"],
+)
+def test_cpu_time_and_event_counter_seeds_keep_their_tolerances_off_non_finite_sides(
+    run, stored
+):
+    """CPUtime's `+` is warned within 10%, EventCounter's exact, whatever
+    the sides hold: their tolerances are known, never seeded."""
+    from dstf.comparison.seeds import seed_variable_number
+
+    values = None if run is None else np.array([0.0, run])
+    cpu = seed_variable_number("CPUtime", values, into="and", baseline=stored)
+    assert cpu["combinator"] == "warn"
+    (inner,) = cpu["children"]
+    assert (inner["tolerance"], inner["tolerance_mode"]) == (0.1, "rel")
+    events = seed_variable_number("EventCounter", values, into="and", baseline=stored)
+    assert (events["tolerance"], events["tolerance_mode"]) == (0, "abs")
+
+
+def test_a_plus_written_off_no_finite_number_scores_by_its_tolerance_once_both_are(
+    tmp_path,
+):
+    """The `+` staged with no finite number scores, once the run and the
+    baseline are numbers, by the 1% it wrote: 0.1 -> 0.105 moved 5% and
+    FAILS — where the test's base tolerance (abs 0.01) would pass it."""
+    from dstf.authoring.session import PatchOp
+
+    s, A = _h_session(tmp_path, run=NAN, stored=NAN)
+    value = _plus(s, A, "h")
+    ran, A = _h_session(tmp_path / "ran", run=0.105, stored=0.1)
+    ran.stage([PatchOp(A, "add", "/metrics/children/-", value)])
+    vc = ran.comparisons[A].variables[-1]
+    assert (vc.name, vc.actual_final, vc.reference_final) == ("h", 0.105, 0.1)
+    assert vc.passed is False
