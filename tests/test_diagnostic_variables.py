@@ -2316,16 +2316,22 @@ def test_a_value_rows_verdict_is_the_pluses_leaf_never_a_seed(monkeypatch):
     """A `value` row's "changed" scores the leaf the `+` writes against a
     baseline's summary (`VALUE_LEAF`: its final within 1%) — the leaf, not
     a seed of it: a seed comes back empty off a baseline it cannot read,
-    and an empty leaf crashed the row, the card and the suite's report."""
+    and an empty leaf crashed the row, the card and the suite's report.
+    The seed is made empty wherever `changed` could look it up: in
+    `stats_rows`' own names (a module-level import) and in `seeds` (one
+    made at call time)."""
     from dstf.comparison import seeds
-    from dstf.comparison.seeds import seed_variable_number
-    from dstf.reporting.stats_rows import VALUE_LEAF, changed
+    from dstf.comparison.seeds import VALUE_LEAF, seed_variable_number
+    from dstf.reporting import stats_rows
+    from dstf.reporting.stats_rows import changed
 
     written = seed_variable_number("h", np.array([0.5, 1.0]), into="and", baseline=1.0)
     assert {
         k: v for k, v in written.items() if k not in ("metric", "variable")
     } == VALUE_LEAF
-    monkeypatch.setattr(seeds, "seed_scalar", lambda data: {})
+    empty = lambda data: {}  # noqa: E731
+    monkeypatch.setattr(seeds, "seed_scalar", empty)
+    monkeypatch.setattr(stats_rows, "seed_scalar", empty, raising=False)
     assert changed("h", "value", 1.02, 1.0) and not changed("h", "value", 1.005, 1.0)
 
 
