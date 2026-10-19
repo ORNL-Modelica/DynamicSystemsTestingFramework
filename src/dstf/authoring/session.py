@@ -1494,23 +1494,16 @@ class Session:
         in progress, or ended without finishing (D151) — as a tree view
         with a word in place of every verdict (`live_rows.unscored_view`):
         the tree as authored, pending edits included, else the implicit
-        tree of what its last result scored. None for any other test, and
+        tree of what its last result scored (:meth:`_scored_spec`, the
+        tree the card and the report read). None for any other test, and
         for one with neither."""
-        from ..comparison.tree_spec import synthesize_implicit_tree
-
         model_id = test.model_id
         word = self.live_runs.word(model_id)
         if word is None:
             return None
-        spec = test.metric_tree_spec
+        spec = self._scored_spec(model_id)
         if spec is None:
-            comp, _result = self._layout_source(model_id)
-            compared = [vc.name for vc in comp.variables] if comp is not None else []
-            if not compared:
-                return None
-            spec = synthesize_implicit_tree(
-                compared, variable_overrides=test.variable_overrides
-            )
+            return None
         return unscored_view(spec, self.variable_texts(model_id), word)
 
     def partial(self, model_id: str) -> Partial | None:

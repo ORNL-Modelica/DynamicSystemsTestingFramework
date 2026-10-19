@@ -2220,3 +2220,26 @@ def test_the_sidecar_holds_no_second_diagnostics_table(tmp_path):
         for sec in data["statistics_sections"]
         for r in sec["rows"]
     )
+
+
+def test_a_running_tests_tree_and_card_read_the_one_scored_tree(tmp_path):
+    """While a run has taken the result, the tree view says a word for each
+    criterion of the tree the card reads (`_scored_spec`): the authored one,
+    staged edits included — its card leaf there, and on the card."""
+    from dstf.authoring.session import PatchOp
+    from dstf.backends.pool import ItemState
+    from dstf.reporting.tree_rows import leaves_of
+    from test_session_queue import drop_item, fake_item
+
+    s, A = _h_session(tmp_path, run=1.0, stored=1.0)
+    s.stage([PatchOp(A, "add", "/metrics/children/-", H_FINAL)])
+    running = fake_item(s, A, ItemState.RUNNING)
+    s._item_started(running)
+    assert A not in s.project.results
+    view = s.tree_view(A)
+    assert [(n["path"], n["metric"], n["variable"]) for n in leaves_of(view)] == [
+        ("/metrics/children/0", "nrmse", "x"),
+        ("/metrics/children/1", "scalar", "h"),
+    ]
+    assert [p for _, p in s.statistic_leaves(A)] == ["/metrics/children/1"]
+    drop_item(s, running)
