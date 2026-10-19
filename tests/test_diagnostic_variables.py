@@ -2051,17 +2051,22 @@ def test_a_criterion_on_a_listed_name_never_run_has_its_row_on_both_tiers(tmp_pa
         (-2.0, -3.99, "-100%"),
         # On the 0.5% edge itself, where the ratio rounds to 100% toward zero
         (1.0, 0.005, "-<100%"),
-        (1.0, -0.005, "-<100%"),
-        (-65.9349487071646, 0.32967474353582304, "+<100%"),
         (1.291934251236563, 0.0064596712561828164, "-<100%"),
+        # A run that crossed zero moved by more than the baseline: 100%
+        (1.0, -0.005, "-100%"),
+        (1.0, -0.004, "-100%"),
+        (1.0, -1e-9, "-100%"),
+        (-2.0, 0.008, "+100%"),
+        (-65.9349487071646, 0.32967474353582304, "+100%"),
     ],
 )
 def test_a_value_near_zero_reads_less_than_100_percent_on_both_sides(base, run, delta):
-    """A run that is not zero but whose change rounds to 100% toward zero
-    reads "<100%" there — down over a positive baseline, up over a negative
-    one, on the 0.5% edge too; only an exact zero reads 100% toward zero.
-    Elsewhere the change is of the baseline's magnitude: -2 -> -4 moved
-    down by all of it."""
+    """A run that kept the baseline's sign, is not zero, and whose change
+    rounds to 100% toward zero reads "<100%" there — down over a positive
+    baseline, up over a negative one, on the 0.5% edge too: it moved by less
+    than all of the baseline. A run that crossed zero moved by more, and
+    reads its rounded change (1 -> -0.004 reads -100%). Elsewhere the change
+    is of the baseline's magnitude: -2 -> -4 moved down by all of it."""
     assert _h_row(base, run).delta == delta
 
 

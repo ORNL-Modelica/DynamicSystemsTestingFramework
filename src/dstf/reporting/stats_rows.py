@@ -179,11 +179,13 @@ def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     baseline's magnitude: over a negative baseline a value that went down
     reads down, and -2 -> -4 reads ``-100%``. Under 1% it keeps one decimal
     (``+0.3%``), and under 0.05% reads ``+<0.1%``: a number that moved never
-    reads ``+0%`` or ``+0.0%``. And only a run of zero reads 100% toward
-    zero — ``-100%`` over a positive baseline, ``+100%`` over a negative
-    one: any other run whose change reads that, rounded, reads ``-<100%``
-    / ``+<100%``. Away from zero the magnitude rule stands: -2 -> -4
-    reads ``-100%``."""
+    reads ``+0%`` or ``+0.0%``. And of the runs that kept the baseline's
+    sign, only a run of zero reads 100% toward zero — ``-100%`` over a
+    positive baseline, ``+100%`` over a negative one: any other whose
+    change reads that, rounded, moved by less than all of the baseline and
+    reads ``-<100%`` / ``+<100%``. A run that crossed zero moved by more,
+    and reads its change rounded (1 -> -0.004 reads ``-100%``); away from
+    zero the magnitude rule stands too (-2 -> -4 reads ``-100%``)."""
     if run is None or baseline is None or run == baseline:
         return ""
     if kind == "count":
@@ -199,7 +201,8 @@ def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     text = f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"
     # Decided by the text, not by a band of the ratio: a band and the
     # rounding meet at the same edge, where a float decides which wins.
-    return f"{toward_zero[0]}<100%" if text == toward_zero else text
+    kept_sign = (run > 0) == (baseline > 0)
+    return f"{toward_zero[0]}<100%" if text == toward_zero and kept_sign else text
 
 
 def _text(v: object) -> str:
