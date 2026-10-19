@@ -2203,3 +2203,11 @@ standard spec document for future builds, and changes to the process
 where that mining shows a gap. Until then the files stay where they are:
 whether they are kept, moved or removed is decided in that session, not
 before.
+
+**A code-review session over the plug-in API (owner, 2026-10-19; a
+dedicated session).** `diagnostic_names(test, config_list)` became public
+API so a plug-in backend records the same listed names DSTF's own backends
+do; every backend calls it as
+`diagnostic_names(test, self.config.diagnostic_variables)` (31 call sites).
+Whether it belongs on `Backend` as a method, and what else a plug-in author
+has to rebuild from internals, is reviewed in that session, not piecemeal.
