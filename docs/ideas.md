@@ -2193,3 +2193,13 @@ of the 2,149 s spent in tests over 0.5 s — 489 of its 514 tests at a median
 90 s. The Test page's tests are where the session starts.
 
 Measure before proposing; the owner wants an in-depth investigation first.
+
+**A standard spec document, mined from the plans (owner, 2026-10-19; a
+dedicated session).** `docs/superpowers/` holds 40 plans and design specs
+written build by build since April, each in its own shape. The session
+mines them, together with the code as it stands, for what a build's spec
+needs in order to be planned, built and reviewed well. It then writes one
+standard spec document for future builds, and changes to the process
+where that mining shows a gap. Until then the files stay where they are:
+whether they are kept, moved or removed is decided in that session, not
+before.
