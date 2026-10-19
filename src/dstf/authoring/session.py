@@ -1474,7 +1474,7 @@ class Session:
             raise KeyError(model_id)
         comp = self.comparisons.get(model_id)
         if comp is None or not comp.evaluated:
-            return self._unscored_view(test)
+            return self._unscored_view(model_id)
         base = (
             (comp.base_tolerance, comp.tolerance_source)
             if comp.base_tolerance is not None and comp.tolerance_source is not None
@@ -1489,7 +1489,7 @@ class Session:
             base,
         )
 
-    def _unscored_view(self, test: TestModel) -> dict | None:
+    def _unscored_view(self, model_id: str) -> dict | None:
         """The criteria of a test with nothing scored BECAUSE OF A RUN —
         in progress, or ended without finishing (D151) — as a tree view
         with a word in place of every verdict (`live_rows.unscored_view`):
@@ -1497,7 +1497,6 @@ class Session:
         tree of what its last result scored (:meth:`_scored_spec`, the
         tree the card and the report read). None for any other test, and
         for one with neither."""
-        model_id = test.model_id
         word = self.live_runs.word(model_id)
         if word is None:
             return None
