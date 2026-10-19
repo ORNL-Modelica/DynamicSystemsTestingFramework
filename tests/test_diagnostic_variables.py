@@ -2203,3 +2203,20 @@ def test_a_scored_max_on_a_listed_name_nothing_holds_gives_its_final_row_too(
     rows = {r.path: r for r in s.statistics(A)}
     assert (rows["h"].section, rows["h"].kind) == ("simulation", "value")
     assert (rows["h.max"].section, rows["h.max"].kind) == ("other scored", "value")
+
+
+def test_the_sidecar_holds_no_second_diagnostics_table(tmp_path):
+    """The listed names' numbers are the Statistics rows: no other table of
+    them — with its own membership and its own "changed" — is written into
+    comparison_data.json, which no template rendered."""
+    from test_session import A, _stats_session
+
+    s = _stats_session(tmp_path)
+    _report_page(s, A, tmp_path / "plots")
+    data = json.loads((tmp_path / "plots" / "comparison_data.json").read_text())
+    assert "diagnostic_summaries" not in data
+    assert any(
+        r["label"] == "CPUtime"
+        for sec in data["statistics_sections"]
+        for r in sec["rows"]
+    )

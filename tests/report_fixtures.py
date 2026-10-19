@@ -69,7 +69,6 @@ def _fixture_context(label: str | None = None) -> dict:
         "ref_info": [],
         "sim_params": [],
         "statistics_sections": [],
-        "diagnostic_summaries": [],
         "artifacts": [],
         "diag_trajectories": [],
         "nobaseline_trajectories": [],

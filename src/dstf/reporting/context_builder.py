@@ -11,12 +11,10 @@ import math
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-import numpy as np
-
 from ..backends.types import VariableText, display_label, variable_texts
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
-from ..storage.baseline import DiagnosticSummary, ReferenceFile, StoredVariable
+from ..storage.baseline import ReferenceFile, StoredVariable
 from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 from .stats_rows import SECTION_TITLES, report_text, statistics_rows
 
@@ -460,39 +458,6 @@ def build_trajectories(
     return trajectories, diag_trajectories, nobaseline_trajectories
 
 
-def _build_diag_summaries(result, ref_data: ReferenceFile | None) -> list:
-    """Diagnostic-variable summary rows (current final/min/max vs reference
-    summary). Replaces the pre-D78 full-trajectory comparison for
-    diagnostics — the trajectory is informational; the summary values
-    are the actual regression signal (final CPUtime, total event count).
-    """
-    if not (result and result.diagnostics):
-        return []
-    ref_diags_by_name: dict[str, DiagnosticSummary] = {}
-    if ref_data:
-        for rd in ref_data.baseline.diagnostics:
-            ref_diags_by_name[rd.name] = rd
-    diag_summaries = []
-    for diag in result.diagnostics:
-        values = np.asarray(diag.values)
-        cur_final = float(values[-1]) if values.size else None
-        ref_entry = ref_diags_by_name.get(diag.name)
-        ref_final = ref_entry.final if ref_entry is not None else None
-        diag_summaries.append(
-            {
-                "name": diag.name,
-                "current": _format_value(cur_final) if cur_final is not None else "",
-                "reference": _format_value(ref_final) if ref_final is not None else "",
-                "changed": (
-                    cur_final is not None
-                    and ref_final is not None
-                    and cur_final != ref_final
-                ),
-            }
-        )
-    return diag_summaries
-
-
 def _build_artifacts(
     test_dir: Path | None,
     artifact_files: tuple[tuple[str, str], ...],
@@ -923,7 +888,6 @@ def _build_template_context(
         ref_data,
         texts,
     )
-    diag_summaries = _build_diag_summaries(result, ref_data)
     artifacts = _build_artifacts(test_dir, artifact_files)
     n_passed, _n_nobaseline, is_simulate_only, sim_failed = _compute_summary_flags(
         comparisons,
@@ -972,7 +936,6 @@ def _build_template_context(
         "ref_info": ref_info,
         "sim_params": sim_params,
         "statistics_sections": statistics_sections,
-        "diagnostic_summaries": diag_summaries,
         "artifacts": artifacts,
         "trajectories": trajectories,
         "diag_trajectories": diag_trajectories,
