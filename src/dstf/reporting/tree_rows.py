@@ -32,6 +32,19 @@ def names_a_series(leaf: dict, diagnostics: Collection[str]) -> bool:
     return not on_the_card_view(leaf, diagnostics)
 
 
+def card_paths(view: dict | None, diagnostics: Collection[str]) -> set[str]:
+    """The paths of the leaves of a SCORED tree's view that are on the
+    Statistics card (`on_the_card_view`; ``diagnostics``, the names the test
+    lists): drawn on no plot. Both tiers' plots skip exactly these."""
+    from ..comparison.tree_spec import on_the_card_view
+
+    return {
+        str(leaf.get("path"))
+        for leaf in leaves_of(view)
+        if on_the_card_view(leaf, diagnostics)
+    }
+
+
 def ancestor_kinds(view: dict | None) -> dict[str, tuple[str, ...]]:
     """Each node's path -> its ancestors' combinators, the root's first:
     where in the tree a criteria row's leaf sits, which its row is led by

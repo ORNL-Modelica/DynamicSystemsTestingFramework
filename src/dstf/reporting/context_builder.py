@@ -701,10 +701,11 @@ def _tree_summary(view: dict | None) -> dict | None:
     }
 
 
-def _spec_for(comparisons: list, test_model):
-    """The tree the view walks: the authored one, else the implicit tree
-    synthesized from what was scored. Both the tree view and the
-    per-variable entries read it, so they agree by construction."""
+def scored_spec(comparisons: list, test_model):
+    """The tree a test is scored by — the tree the view walks: the authored
+    one, else the implicit tree synthesized from what was scored. The tree
+    view, the per-variable entries and the tool's Statistics card read it,
+    so they agree by construction."""
     from ..comparison.tree_spec import (
         synthesize_implicit_tree as _synthesize_implicit_tree,
     )
@@ -750,7 +751,7 @@ def build_tree_view(
         spec_to_view as _spec_to_view,
     )
 
-    spec = _spec_for(comparisons, test_model)
+    spec = scored_spec(comparisons, test_model)
     eval_by_path = _flatten_evaluation(metric_tree) if metric_tree is not None else {}
 
     # Leaves are addressed by the path a patch op would use — stamped by the
@@ -819,7 +820,7 @@ def _build_tree_view_and_variables(
     tree_view = build_tree_view(comparisons, test_model, metric_tree, texts)
     if tree_view is None:
         return None, {}
-    spec = _spec_for(comparisons, test_model)
+    spec = scored_spec(comparisons, test_model)
     all_leaves = _view_leaves(tree_view)
 
     # Look the trajectory up by variable name — ``build_trajectories``

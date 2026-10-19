@@ -1665,3 +1665,108 @@ def test_the_report_routes_a_listed_names_number_through_every_hop(tmp_path):
     }
     assert paths[1] == ["/metrics/children/2"]  # the nrmse on CPUtime alone
     assert "/metrics/children/1" not in {p for v in paths.values() for p in v}
+
+
+# -- one scored tree for the card on both tiers ----------------------------------
+
+FLAT_SCALAR = {
+    "mode": "scalar",
+    "quantity": {"reduce": "final"},
+    "tolerance": 0.1,
+    "tolerance_mode": "rel",
+}
+
+
+def _flat_session(tmp_path, scored: bool):
+    """A FLAT entry (no `metrics`) with a watch plot of CPUtime. ``scored``:
+    it tracks CPUtime and scores its final with a `scalar` override — a
+    card leaf of the implicit tree; else CPUtime is not scored at all."""
+    from dstf.authoring.session import Session
+    from dstf.backends.types import TestResult
+    from dstf.storage.reference_store import ReferenceStore
+    from test_session import PROVENANCE, A, _two_var_project
+
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["plots"] = [{"var": "CPUtime"}]
+            if scored:
+                entry["variables"] = ["x", "y", "CPUtime"]
+                entry["comparison"] = {"variable_overrides": {"CPUtime": FLAT_SCALAR}}
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    config = Config(config_file=cfg, work_dir=work)
+    tt = np.asarray([i / 4 for i in range(5)])
+    ReferenceStore(config).store_reference(
+        make_test_model(A, variable_patterns=["x", "y", "CPUtime"]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+                VariableResult(index=3, time=tt, values=0.8 * tt, name="CPUtime"),
+            ],
+            diagnostics=[
+                VariableResult(index=1, time=tt, values=0.8 * tt, name="CPUtime")
+            ],
+        ),
+        provenance=PROVENANCE,
+    )
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["variables"]["CPUtime"] = list(0.81 * tt)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    return s, A
+
+
+def test_a_flat_entrys_card_criterion_draws_nothing_on_its_plot_on_either_tier(
+    tmp_path,
+):
+    """The skip sets of both tiers come from the SCORED tree — for a flat
+    entry the implicit one: CPUtime's plot draws its curves and errors and
+    none of the scalar's marks (no shape, no trace of a leaf's geometry),
+    the same figure on the tool as in the report."""
+    tool, report = _cpu_figures(*_flat_session(tmp_path, True))
+    for figure in (tool, report):
+        assert (figure["layout"].get("shapes") or []) == []
+        assert {t["meta"]["kind"] for t in figure["data"]} <= {"act", "ref", "error"}
+    assert _marks(tool) == _marks(report)
+
+
+def test_a_flat_entrys_card_criterion_is_on_the_statistics_card(tmp_path):
+    from dstf.authoring.shell.stats_card import scored as scored_rows
+
+    s, A = _flat_session(tmp_path, True)
+    leaves = s.statistic_leaves(A)
+    assert [(leaf.variable, path) for leaf, path in leaves] == [
+        ("CPUtime", "/metrics/children/2")
+    ]
+    assert s.card_paths(A) == {"/metrics/children/2"}
+    reads = scored_rows(leaves, s.tree_view(A))
+    assert [c["path"] for c in reads["CPUtime"]] == ["/metrics/children/2"]
+    assert reads["CPUtime"][0]["status"] == "pass"
+
+
+def test_edit_on_plot_is_not_offered_for_a_card_criterion(tmp_path):
+    """A number on the card has no marks on a plot, so no handles to drag:
+    "Edit on plot" is not offered for it, on the plot of its variable."""
+    from dstf.authoring.builtin.edit_on_plot import EditOnPlot
+    from dstf.authoring.session import Selection, SessionView
+
+    s, A = _card_session(
+        tmp_path,
+        {"metric": "nrmse", "variable": "CPUtime"},
+        MAX_CPU | {"max_value": 9.0},
+    )
+    view = SessionView(
+        s,
+        Selection(
+            tests=frozenset({A}), variable="CPUtime", leaf_path="/metrics/children/2"
+        ),
+    )
+    said = EditOnPlot().available(view)
+    assert said == "/metrics/children/2 is not a criterion on CPUtime"

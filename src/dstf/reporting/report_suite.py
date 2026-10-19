@@ -18,7 +18,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from ..comparison.comparator import VariableComparison
-from ..comparison.tree_spec import on_the_card_view
 from ..comparison.types import TestComparison
 from ..config_shape import default
 from ..discovery.test_registry import diagnostic_names
@@ -26,7 +25,7 @@ from ..storage.baseline import ReferenceFile
 from .context_builder import _build_template_context
 from .rows import summary_fields
 from .status import classify_with_class, refusal
-from .tree_rows import criteria_rows, leaves_of
+from .tree_rows import card_paths, criteria_rows
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -282,12 +281,7 @@ def plot_page_keys(
     tree_view = context.get("tree_view")
     # A card leaf (a statistic, a listed name's number) is in the metric
     # tree and on no plot: neither a section's criteria nor its marks.
-    card = {
-        str(leaf.get("path"))
-        for leaf in leaves_of(tree_view)
-        if on_the_card_view(leaf, diagnostics)
-    }
-    leaves_by_var = leaves_by_variable(metric_tree, card)
+    leaves_by_var = leaves_by_variable(metric_tree, card_paths(tree_view, diagnostics))
     budget = max_samples if max_samples and max_samples > 0 else None
 
     def curve(n: str) -> tuple:
