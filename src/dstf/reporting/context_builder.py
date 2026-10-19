@@ -359,10 +359,11 @@ def build_trajectories(
     ref_data: ReferenceFile | None,
     texts: dict[str, VariableText] | None = None,
 ) -> tuple[list, list, list]:
-    """Build the trajectory triple — primary tracked variables, diagnostic
-    variables (CPUtime / EventCounter), and the no-baseline pass-through
-    used when a test runs without a reference. A stored diagnostic is a
-    summary, not a trajectory: a diagnostic's entry draws the run alone.
+    """Build the trajectory triple — primary tracked variables, the listed
+    names the run recorded (CPUtime, EventCounter, a test's own), and the
+    no-baseline pass-through used when a test runs without a reference. A
+    listed name is stored as its summary, not a trajectory: its entry
+    draws the run alone.
 
     ``texts`` is the test's label scope (:func:`test_texts`). Every entry
     carries BOTH readings: ``label`` for the surfaces that show the muted

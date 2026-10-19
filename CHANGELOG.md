@@ -13,12 +13,29 @@ this file says when they do.
 - Accepted baselines record what produced them — backend, simulator and
   library versions, DSTF version, OS, when the run started (`provenance`).
   Existing baselines gain it at their next accept.
+- A test entry's own `diagnostic_variables`: names whose summary its
+  baseline stores, beside `testing.json`'s.
 
 ### Changed
 
 - `soft-check add` no longer stores a source's per-variable keys that nothing
   in DSTF reads (`unit`, `description`, …); one warning line names the keys
   it dropped and (up to three of) the variables that carried each.
+- CPUtime and EventCounter are variables: any criterion may score them. A
+  listed name's curve is stored only when a criterion needs it; a scalar's
+  final, min or max is scored from its stored summary.
+- A variable's number is written
+  `{"variable": "X", "quantity": {"reduce": "final"}}`. `"quantity": "X.final"`
+  and `"quantity": "X"` now fail "not found", with a hint naming that
+  spelling; a dotted `quantity` names a statistic of the log only.
+- Baselines no longer hold `statistics.CPUtime` / `statistics.EventCounter`:
+  ignored on read, gone at the next accept.
+- FMPy, Julia and Python now record the listed names their results hold.
+- On the Test page a listed name's number (a scalar's final, min or max) is
+  on the Statistics card, not a plot; in the report it is in the metric tree
+  and in no plot's criteria, as a statistic's criterion always was. The add
+  form's picker has no Diagnostics section: every name is under Other
+  variables, with every metric.
 
 ## [1.1.0] - 2026-10-14
 

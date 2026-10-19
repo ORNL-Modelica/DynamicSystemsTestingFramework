@@ -278,7 +278,8 @@ backend.read_results(manifests, tests)
     → lists variable names from .mat (fast header scan, no data loaded)
     → resolves variable patterns against available names
     → reads only needed variables from .mat via numpy.memmap (selective row access)
-    → auto-captures diagnostic variables (configurable, default: CPUtime, EventCounter)
+    → records the listed names it holds as diagnostics (`diagnostic_names`: testing.json's
+      diagnostic_variables, default CPUtime, EventCounter, then the entry's own)
     → returns dict[model_id → TestResult]
 
 compare_all(tests, results, store, default_tolerance, default_points)
@@ -345,8 +346,7 @@ order the codec writes them (optional ones only when present):
       "nonlinear": [3, 1], "nonlinear_count": 2, "nonlinear_total": 4, "nonlinear_max": 3,
       "init_nonlinear": [5], "init_nonlinear_count": 1, ...
     },
-    "simulation": {"cpu_time_integration": 0.5, ...},
-    "CPUtime": 12.3, "EventCounter": 42
+    "simulation": {"cpu_time_integration": 0.5, ...}
   },
   "diagnostics": [
     {"name": "CPUtime", "final": 12.3, "min": 0.0, "max": 12.3},
@@ -361,9 +361,11 @@ order the codec writes them (optional ones only when present):
 `sampling` says what accept did to the run's rows (D153) and the precision
 the arrays are read back through: a `"single"` file's numbers are written with
 9 significant digits and read back through float32, a `"double"` file's with
-17 — the run's own numbers either way. A diagnostic is stored as a summary
-(`final`, `min`, `max`), never a trajectory; an old `{name, values}` entry is
-summarized by the codec on read.
+17 — the run's own numbers either way. A listed name is stored as a summary
+(`final`, `min`, `max`); its curve is stored only when a criterion needs it,
+in `variables` (D162). An old `{name, values}` entry is summarized by the
+codec on read, and a 1.1 copy of a listed name's final under `statistics`
+(`"CPUtime": 12.3`) is dropped on read and never written.
 
 `provenance` is written by every accept (`storage/accept.py::_provenance`):
 the `RunMetadata` of the run that produced the accepted result — read from the

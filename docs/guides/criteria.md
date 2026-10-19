@@ -92,6 +92,45 @@ criterion scores is still recorded and plotted, and each report names it in a
 warning, so a new variable that needs a criterion does not go unnoticed. Under a
 tree, `comparison.variable_overrides` scores nothing.
 
+Every name in the result is a variable, `CPUtime` and `EventCounter` included,
+and any criterion may score it. A name listed in `diagnostic_variables` —
+`testing.json`'s, or a test entry's own — has its summary (final, min, max)
+stored in the baseline, and its curve only when a criterion needs it: a
+`scalar`'s final, min or max over the whole run is scored from the summary;
+any other criterion stores the curve. A test that checks its event count
+exactly, warns when its CPU time moves by more than 10%, and keeps a summary
+of `pump.speed`:
+
+<!-- snippet: test_spec -->
+```json
+{
+  "tests": [
+    {
+      "model": "MyLib.Examples.PipeTest",
+      "variables": ["pipe.T[1]"],
+      "diagnostic_variables": ["pump.speed"],
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {"metric": "nrmse", "variable": "pipe.T[1]", "tolerance": 0.01},
+          {"metric": "scalar", "variable": "EventCounter",
+           "quantity": {"reduce": "final"}, "tolerance": 0, "tolerance_mode": "abs"},
+          {"metric": "scalar", "variable": "pump.speed",
+           "quantity": {"reduce": "max"}, "tolerance": 0.02},
+          {"combinator": "warn", "children": [
+            {"metric": "scalar", "variable": "CPUtime",
+             "quantity": {"reduce": "final"}, "tolerance": 0.1, "tolerance_mode": "rel"}
+          ]}
+        ]
+      }
+    }
+  ]
+}
+```
+
+A dotted `quantity` string names a statistic of the simulator's log, such as
+`"translation.nonlinear_count"`, never a variable.
+
 ## A tolerance with two sides
 
 A tolerance is one number, or a pair that sets each side on its own. With

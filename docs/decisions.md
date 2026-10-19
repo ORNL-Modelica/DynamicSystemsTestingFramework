@@ -9257,3 +9257,84 @@ scope-out of analysis is not by itself the reason to decline it.
 What stays in scope is that DSTF's own one-run times are honest: a time
 that silently includes something else (Julia's per-test compile inside
 `sim_wall`) is a defect, logged in `docs/ideas.md`.
+
+## D162 — One name, one meaning: every name in a result file is a variable (2026-10-18)
+
+**Context.** CPUtime and EventCounter were special. They were not
+extracted as variables, and each could be scored in three spellings that
+read different numbers: the add form wrote `"quantity": "CPUtime.final"`,
+which read the stored diagnostics summary raw (`0.04324999824166298`); the
+Statistics card's `+` wrote `"quantity": "CPUtime"`, which read a copy of
+that final the result's statistics held, rounded to 7 digits for float32
+(`0.04325`); and `{"reduce": "final"}` gave the same number from a curve.
+A curve criterion on CPUtime (an nrmse) failed "variable 'CPUtime' not
+found in the result", because extraction skipped every listed name. Every
+Dymola baseline held the final twice (`statistics.CPUtime` beside the
+summary). FMPy and the JSON driver (Julia, Python) recorded no listed name
+at all.
+
+**Decision.** Three kinds of stored data, each with one meaning:
+
+- **Curves** — variables stored over time.
+- **Summaries** — `final`, `min` and `max` of every LISTED name:
+  `testing.json`'s `diagnostic_variables` and a test entry's own (new),
+  treated identically (`diagnostic_names`). Every backend records them.
+- **Statistics** — numbers from the simulator's log (translation sizes,
+  log event counts, timing), addressed by a dotted path. A path is a
+  statistic only.
+
+A variable's number has one spelling:
+`{"metric": "scalar", "variable": "X", "quantity": {"reduce": "final"}}`.
+
+1. *Which criterion a summary answers* (`tree_spec.reads_a_summary`): a
+   scalar's final, min or max over the whole run. Owner, 2026-10-18: any
+   other criterion on a listed name — a mean, an integral, any window, any
+   curve metric — needs the curve, so the name is extracted and accept
+   stores its curve (`tree_variables` skips a listed name only when every
+   leaf naming it reads a summary). The evaluator reads a side's summary
+   only where that side lacks the curve (`tree_eval._summary_arrays`);
+   with both curves, nothing changed.
+2. *Numbers on the card, curves on plots* (`tree_spec.on_the_card` and its
+   view twin `on_the_card_view`: one predicate). The Statistics card holds
+   statistics and a listed name's numbers; a plot holds every curve
+   criterion and a number of an unlisted variable. The report, which has
+   no card, lists a listed name's number in its metric tree and in no
+   plot section — as it always listed a statistic's. Adding a card
+   criterion rebuilds no plot card.
+3. *The display rule* (owner, 2026-10-18): a number is shown at the
+   precision it was recorded with — a run's from its array's dtype
+   (float32: 7 significant digits, float64: 15), a baseline's from its
+   file's `sampling.precision`, read in one place
+   (`baseline_codec.shown_digits`). A file with no `sampling` was written
+   under the float32 default and reads as single, for display only (the
+   owner: "the default is float32 currently"). Log statistics stay at 15.
+   Storage and scoring are unchanged. Over the 950 stored references the
+   report's Reference cells read as before but one: TRANSFORM
+   Dymola/windows `ref_0011`, whose old copy was never rounded, now reads
+   `0.006 s`.
+4. *Kinds by name.* CPUtime is a time (seeded within 10%, inside a `warn`
+   where it lands in an `and` — its curve criteria too), EventCounter a
+   count (exact, bare); any other listed name is a `value` — no unit, a
+   percentage delta, the ordinary scalar seed — never a kind guessed from
+   its values.
+5. *Old data.* A top-level statistic named like one of the same file's
+   diagnostics is the pre-1.2 copy: the codec drops it on read and never
+   writes it, so the next accept writes the file without it. TRANSFORM's
+   files are not converted. `"quantity": "X.final"` and `"quantity": "X"`
+   are not read as a variable's number: such a criterion fails "not
+   found", with a hint naming the one spelling — a message, no alias.
+
+**Rejected.** Storage derived from the criteria alone (store whatever the
+tree reads, nothing else): removing a criterion would silently drop a
+curve from the next accept.
+
+**Supersedes in part.** D10 and D54 (finals no longer copied into the
+statistics; diagnostics are scored, and a criterion that needs the curve
+stores it), D106's resolution of `"CPUtime.final"` (a dotted path is a
+statistic only), D142 items 5 (the picker's Diagnostics section is gone:
+every name is under Other variables, every metric offered) and 9 (K1's
+`"<name>.final"` spelling and its count-by-values guess), and D143's S2
+(`X.final` is no longer the row `X`).
+
+*Correcting the record:* `"CPUtime.final"` read the summary raw; only the
+card's bare `"CPUtime"` read the rounded copy.

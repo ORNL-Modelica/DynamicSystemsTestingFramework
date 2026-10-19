@@ -253,13 +253,12 @@ class ReferenceStore(_RolesMixin):
             ):
                 comparison["variable_overrides"] = existing_comp["variable_overrides"]
 
-        # Diagnostic variables (CPUtime, EventCounter) — stored as a scalar
-        # summary, not a full trajectory. The trajectory value (especially
-        # CPUtime) is nondeterministic — storing it caused every re-accept
-        # to produce a spurious git diff and bloated the baseline files.
-        # Users who want a diagnostic's full trajectory can add its name to
-        # the test's variables/variable_patterns list — it'll be tracked
-        # like any other variable at that point.
+        # The listed names (`diagnostic_names`: CPUtime, EventCounter, a
+        # test's own) — stored as their summary, not a trajectory: CPUtime's
+        # is nondeterministic, and storing it gave every re-accept a spurious
+        # git diff. A criterion that needs a listed name's curve has it
+        # extracted, so it is among the variables above and stored as one
+        # (D162); a `variables` pattern does the same.
         diagnostics = []
         for diag in result.diagnostics or []:
             values = np.asarray(diag.values)
