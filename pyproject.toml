@@ -1,6 +1,6 @@
 [project]
 name = "dynamic-systems-testing-framework"
-version = "1.1.0"
+version = "1.2.0"
 description = "Dynamic Systems Testing Framework — regression & unit testing for time-dependent system behavior, with plug-in backends: Modelica (Dymola, OpenModelica), FMU (FMPy), Julia (ModelingToolkit) and Python to start"
 # What the package index shows: the README as the project page (its one image
 # is an absolute URL for that), the license by its SPDX name with the file
