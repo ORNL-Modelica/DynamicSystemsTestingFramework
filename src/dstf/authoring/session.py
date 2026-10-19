@@ -1566,19 +1566,20 @@ class Session:
         """The tree the test is scored by (`scored_spec`, the rule the tree
         view and the report walk): the authored one, staged edits included —
         criteria all the same with nothing compared yet — else the implicit
-        tree of what was compared; None with neither. Never the tree
-        :meth:`tree` materializes, which reads the baseline."""
+        tree of what the LAYOUT's comparison compared (:meth:`_layout_source`:
+        while a run has taken the result, the one it replaced, so a flat
+        entry's card leaf stays on the card); None with neither. Never the
+        tree :meth:`tree` materializes, which reads the baseline."""
         from ..reporting.context_builder import scored_spec
 
         test = self._require_project().test(model_id)
         if test is None:
             raise KeyError(model_id)
-        if test.metric_tree_spec is not None:
-            return test.metric_tree_spec
-        comp = self.comparisons.get(model_id)
-        if comp is None or not comp.variables:
+        comp, _ = self._layout_source(model_id)
+        compared = list(comp.variables) if comp is not None else []
+        if test.metric_tree_spec is None and not compared:
             return None
-        return scored_spec(list(comp.variables), test)
+        return scored_spec(compared, test)
 
     def tree(self, model_id: str) -> dict | None:
         """The raw tree a Patch edits (:meth:`tree_or_reason`'s tree)."""

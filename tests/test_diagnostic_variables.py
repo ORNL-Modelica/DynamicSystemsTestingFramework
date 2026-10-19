@@ -1941,3 +1941,32 @@ def test_a_value_near_zero_reads_less_than_100_percent_on_both_sides(base, run, 
     a negative one; only an exact zero reads 100%. Elsewhere the change is
     of the baseline's magnitude: -2 -> -4 moved down by all of it."""
     assert _h_row(base, run).delta == delta
+
+
+def test_a_flat_entrys_card_leaf_stays_on_the_card_while_its_run_is_in_progress(
+    tmp_path,
+):
+    """The tree the card reads is the one the page is laid out by: while a
+    run has taken the result, the comparison it replaced (D151) — never an
+    empty one that drops a flat entry's card leaf onto a plot."""
+    from dstf.backends.pool import ItemState
+    from test_session_queue import drop_item, fake_item
+
+    s, A = _flat_session(tmp_path, scored=True)
+
+    def layout():
+        return {
+            "statistic_leaves": [path for _, path in s.statistic_leaves(A)],
+            "card_paths": sorted(s.card_paths(A)),
+            "tracked": s.tracked(A),
+            "plots": [p.subject for p in s.plots(A)],
+            "rows": [r.path for r in s.statistics(A)],
+        }
+
+    idle = layout()
+    assert idle["card_paths"] and idle["statistic_leaves"]
+    running = fake_item(s, A, ItemState.RUNNING)
+    s._item_started(running)
+    assert A not in s.project.results
+    assert layout() == idle
+    drop_item(s, running)
