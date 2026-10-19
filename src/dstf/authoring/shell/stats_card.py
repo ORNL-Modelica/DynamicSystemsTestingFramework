@@ -73,9 +73,10 @@ def _more(named: Sequence[StatRow], cap: int) -> str:
 def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
     """The closed line after "run vs baseline ·": the changed COUNTS — in
     section order, at most `NAMED` named, then `+N more` — or `no count
-    changed`; then, after a `·`, the changed times, the farthest moved
-    first, at most `TIMES`. `all match` where no count and no time
-    changed; or why it names none — "no run result" where ``has_run`` is
+    changed`; then, after a `·`, the changed times and the changed
+    `value` rows (a listed name that is neither a time nor a count, also
+    read as a percentage), the farthest moved first, at most `TIMES`.
+    `all match` where nothing changed; or why it names none — "no run result" where ``has_run`` is
     false: no run, or one that failed. The owner's ruling
     (2026-09-30): over TRANSFORM CPUtime ran ~2.2x its baseline on 324 of
     331 tests, so a line naming times among the counts named CPUtime on
@@ -100,7 +101,9 @@ def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
         key=lambda r: sections.index(r.section),
     )
     times = sorted(
-        (r for r in shown if r.changed and r.kind == "time"), key=_moved, reverse=True
+        (r for r in shown if r.changed and r.kind in ("time", "value")),
+        key=_moved,
+        reverse=True,
     )
     if not counts and not times:
         return "all match"

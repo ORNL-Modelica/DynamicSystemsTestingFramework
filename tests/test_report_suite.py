@@ -91,6 +91,7 @@ class TestStrictJsonArtifacts:
             result=None,
             comparisons=[_nonfinite_comparison()],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
         text = (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
         # Strict parse: any Infinity/NaN token trips the parse_constant hook.
@@ -106,6 +107,7 @@ class TestStrictJsonArtifacts:
             result=None,
             comparisons=[_nonfinite_comparison()],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
         html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
         # The only inline script is the window.MT_REPORT data block; no
@@ -126,6 +128,7 @@ def test_a_template_comment_is_no_line_of_the_page(tmp_path):
         result=None,
         comparisons=[_nonfinite_comparison()],
         plot_dir=plot_dir,
+        diagnostics=(),
     )
     html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
     (after,) = re.findall(r'<div class="summary" id="summary">(\s*)\S', html)
@@ -152,6 +155,7 @@ class TestRunMetadataBanner:
                 "dstf_version": "0.1.0",
                 "generated_str": "2026-07-07 14:30",
             },
+            diagnostics=(),
         )
         html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
         assert 'class="run-meta"' in html
@@ -168,6 +172,7 @@ class TestRunMetadataBanner:
             result=None,
             comparisons=[_nonfinite_comparison()],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
         html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
         assert 'class="run-meta"' not in html
@@ -322,6 +327,7 @@ def test_template_emits_plot_order(tmp_path):
             short_name="Order",
             n_vars=2,
         ),
+        diagnostics=(),
     )
     html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
     assert _page_data(html, "PLOT_SERIES") == [["zeta"], ["123"]]
@@ -346,6 +352,7 @@ class TestVendoredPlotly:
             result=None,
             comparisons=[_nonfinite_comparison()],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
 
     def test_reports_root_gets_one_plotly(self, tmp_path):
@@ -495,6 +502,7 @@ class TestWorstNrmse:
                 self._scored(0.9, mode="tube"),
             ],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
         summary = json.loads(
             (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
@@ -573,6 +581,7 @@ class TestEmbeddedFigures:
             test_model=test,
             metric_tree=comp.metric_tree,
             max_embedded_samples=500,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         sidecar = json.loads(
@@ -678,10 +687,17 @@ class TestEmbeddedFigures:
             tmp_path / "plots",
             test_model=test,
             metric_tree=comp.metric_tree,
+            diagnostics=(),
         )
         # No baseline, no comparisons: one plot per tracked variable.
         report_suite.generate_comparison_plots(
-            "M", None, result, [], tmp_path / "nb_plots", test_model=test
+            "M",
+            None,
+            result,
+            [],
+            tmp_path / "nb_plots",
+            test_model=test,
+            diagnostics=(),
         )
         assert len(built) == 2 and len(page_built) == 2
         figures, diag, nb = (
@@ -866,6 +882,7 @@ class TestEmbeddedFigures:
             test_model=test,
             metric_tree=comp.metric_tree,
             max_embedded_samples=500,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         figures = _page_data(page, "PLOT_FIGURES")
@@ -973,6 +990,7 @@ class TestEmbeddedFigures:
             test_model=test,
             metric_tree=comp.metric_tree,
             max_embedded_samples=500,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         figures = _page_data(page, "PLOT_FIGURES")
@@ -1158,6 +1176,7 @@ class TestServerRenderedTree:
             test_model=test,
             metric_tree=comp.metric_tree,
             max_embedded_samples=500,
+            diagnostics=(),
         )
         return html.read_text(encoding="utf-8"), comp
 
@@ -1350,6 +1369,7 @@ class TestRestoredViewingChecks:
             metric_tree=metric_tree,
             max_embedded_samples=500,
             overlays=overlays,
+            diagnostics=(),
         )
         assert html is not None
         return html.read_text(encoding="utf-8")
@@ -1577,6 +1597,7 @@ class TestPlotSections:
             test_model=test,
             metric_tree=comp.metric_tree,
             **kw,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         sidecar = json.loads(
@@ -1620,7 +1641,7 @@ class TestPlotSections:
         kw["plots"], kw["extra_series"] = plot_inputs(test, [], result, None, None, ())
         plot_dir = tmp_path / "plots"
         html = generate_comparison_plots(
-            "M", None, result, [], plot_dir, test_model=test, **kw
+            "M", None, result, [], plot_dir, test_model=test, **kw, diagnostics=()
         )
         page = html.read_text(encoding="utf-8")
         sidecar = json.loads(
@@ -1789,6 +1810,7 @@ class TestPlotSections:
             metric_tree=comp.metric_tree,
             plots=plots,
             extra_series=extra,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         # In the tree's order, which is the index order here — x[10] last.
@@ -1863,6 +1885,7 @@ class TestPlotSections:
             metric_tree=comp.metric_tree,
             plots=plots,
             extra_series=extra,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         assert _page_data(page, "PLOT_SERIES") == [names]
@@ -2082,7 +2105,9 @@ class TestPlotSections:
         from dstf.reporting.report_suite import generate_comparison_plots
 
         with pytest.raises(ValueError, match="plots"):
-            generate_comparison_plots("M", None, None, [], tmp_path / "p")
+            generate_comparison_plots(
+                "M", None, None, [], tmp_path / "p", diagnostics=()
+            )
 
     def test_a_failed_run_has_no_plots_whatever_its_tree_and_extras(self):
         """O2, literally: a run that failed has no plots on either tier —
@@ -2553,7 +2578,9 @@ class TestBothTiersDrawTheSamePlots:
             result=result,
             metric_tree=comp.metric_tree,
         )
-        ctx.update(plot_page_keys(ctx, plots, extra, comp.metric_tree, None))
+        ctx.update(
+            plot_page_keys(ctx, plots, extra, comp.metric_tree, None, diagnostics=())
+        )
         section = next(s for s in ctx["plot_sections"] if s["series"] == [UT1])
         figure = ctx["plot_figures"][section["index"]]
         (trace,) = [tr for tr in figure["data"] if tr["meta"]["kind"] == "act"]
@@ -2876,6 +2903,7 @@ class TestAVariableReadsAsItsExpression:
             max_embedded_samples=samples,
             plots=resolved,
             extra_series=extra_series,
+            diagnostics=(),
         )
         return html.read_text(encoding="utf-8"), json.loads(
             (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")
@@ -3000,6 +3028,7 @@ class TestAVariableReadsAsItsExpression:
             test_model=test,
             plots=plots,
             extra_series=extra,
+            diagnostics=(),
         )
         return html.read_text(encoding="utf-8"), json.loads(
             (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")

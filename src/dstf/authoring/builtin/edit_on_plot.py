@@ -45,7 +45,9 @@ from ...comparison.mode_schema import SIDE_LABELS
 from ...comparison.registry import DEFAULT_METRIC, MetricDescriptor, metric
 from ...comparison.sides import parse_sides
 from ...comparison.snap import snapped
+from ...comparison.tree_spec import on_the_card_view
 from ...figures.assemble import leaves_by_variable
+from ...reporting.tree_rows import leaves_of
 from ..capabilities import Panel, Patch, Placement
 from ..session import no_tree_error
 from ..spec_document import PatchOp
@@ -102,7 +104,15 @@ def _leaf_paths(s: SessionView, model_id: str, variable: str) -> list[tuple[str,
     order. Cheap: no figure, no view."""
     comp = s.comparisons.get(model_id)
     tree = comp.metric_tree if comp is not None else None
-    return [(path, vc.mode) for path, vc in leaves_by_variable(tree).get(variable, [])]
+    listed = s.diagnostic_names(model_id)
+    card = {
+        str(leaf.get("path"))
+        for leaf in leaves_of(s.tree_view(model_id))
+        if on_the_card_view(leaf, listed)
+    }
+    return [
+        (path, vc.mode) for path, vc in leaves_by_variable(tree, card).get(variable, [])
+    ]
 
 
 def _list_fields(name: str) -> list[tuple[str, Columns]]:

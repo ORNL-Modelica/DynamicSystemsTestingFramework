@@ -994,7 +994,7 @@ class PlotCard:
         path = self.open_path if path is None else path
         comp = self.page.shell.session.comparisons.get(self.page.model_id)
         tree = comp.metric_tree if comp is not None else None
-        for pairs in leaves_by_variable(tree).values():
+        for pairs in leaves_by_variable(tree, ()).values():
             for at, vc in pairs:
                 if at == path:
                     return vc

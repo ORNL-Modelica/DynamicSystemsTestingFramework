@@ -240,6 +240,7 @@ def _generate_compared(out_dir: Path, plots=None):
         max_embedded_samples=MAX_EMBEDDED,
         overlays=overlays,
         plots=plots,
+        diagnostics=(),
     )
     assert html is not None
     return html, comp
@@ -289,6 +290,7 @@ def _generate_no_baseline(out_dir: Path) -> Path:
         metric_tree=None,
         max_embedded_samples=MAX_EMBEDDED,
         overlays=overlays,
+        diagnostics=(),
     )
     assert html is not None
     return html
@@ -350,6 +352,7 @@ def _generate_open_window(out_dir: Path) -> Path:
         test_model=test,
         metric_tree=comp.metric_tree,
         max_embedded_samples=MAX_EMBEDDED,
+        diagnostics=(),
     )
     assert html is not None
     return html

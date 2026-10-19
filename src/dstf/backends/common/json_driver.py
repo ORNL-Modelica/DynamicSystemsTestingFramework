@@ -366,7 +366,9 @@ class JsonDriverBackend(Backend):
                 statistics=stats,
             )
 
-        available = list(payload.get("variables", {}).keys())
+        # Read once: a payload without the key is a run with no variables.
+        columns = payload.get("variables") or {}
+        available = list(columns.keys())
         requested = resolve_variable_patterns(test.variable_patterns, available)
         if not requested:
             if "*" in test.variable_patterns:
@@ -396,10 +398,10 @@ class JsonDriverBackend(Backend):
         # rest. The index is a display/ordering handle, not a key — reference
         # matching is by name — so the gap is harmless and kept deliberately.
         for i, name in enumerate(requested):
-            if name not in payload["variables"]:
+            if name not in columns:
                 continue
             try:
-                values = np.asarray(payload["variables"][name], dtype=np.float64)
+                values = np.asarray(columns[name], dtype=np.float64)
             except (ValueError, TypeError) as exc:
                 return TestResult(
                     model_id=test.model_id,
@@ -421,23 +423,17 @@ class JsonDriverBackend(Backend):
 
         # The listed names the payload holds, numbered from 1 as a .mat
         # backend's are (`extract_variables`): each is summarized in the
-        # baseline, and scored from that summary (`reads_a_summary`).
+        # baseline, and scored from that summary (`reads_a_summary`). One
+        # whose values are no numbers is not recorded — a tracked variable
+        # that is none fails the test above; a listed name never did.
         diagnostics = []
         for name in listed:
-            if name not in payload["variables"]:
+            if name not in columns:
                 continue
             try:
-                values = np.asarray(payload["variables"][name], dtype=np.float64)
-            except (ValueError, TypeError) as exc:
-                return TestResult(
-                    model_id=test.model_id,
-                    success=False,
-                    error_message=(
-                        f"Variable '{name}' has non-numeric values in "
-                        f"{result_path.name}: {exc}"
-                    ),
-                    statistics=stats,
-                )
+                values = np.asarray(columns[name], dtype=np.float64)
+            except (ValueError, TypeError):
+                continue
             diagnostics.append(
                 VariableResult(
                     index=len(diagnostics) + 1,

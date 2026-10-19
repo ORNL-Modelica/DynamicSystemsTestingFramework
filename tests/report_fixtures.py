@@ -110,7 +110,14 @@ def _fixture_context(label: str | None = None) -> dict:
     # The page's plot keys come from the ONE producer, never hand-rolled:
     # one plot, the tree's one scored variable.
     ctx.update(
-        plot_page_keys(ctx, (ResolvedPlot(index=0, subject=("h",)),), {}, None, None)
+        plot_page_keys(
+            ctx,
+            (ResolvedPlot(index=0, subject=("h",)),),
+            {},
+            None,
+            None,
+            diagnostics=(),
+        )
     )
     return ctx
 

@@ -827,7 +827,8 @@ def test_the_cards_plus_on_cpu_time_writes_the_one_spelling_and_scores():
     from dstf.comparison.tree_spec import parse_metric_tree
 
     values = np.array([0.0, 0.02, 0.045], dtype=np.float32)
-    assert _quantity_leaf({"CPUtime": values}, "CPUtime", "and") == {
+    s = _fake_view({"CPUtime": values})
+    assert _quantity_leaf(s, "M", "CPUtime", "and") == {
         "combinator": "warn",
         "children": [
             {
@@ -839,7 +840,7 @@ def test_the_cards_plus_on_cpu_time_writes_the_one_spelling_and_scores():
             }
         ],
     }
-    seed = _quantity_leaf({"CPUtime": values}, "CPUtime", "or")
+    seed = _quantity_leaf(s, "M", "CPUtime", "or")
     result, vc = _eval(
         parse_metric_tree(seed),
         run_diags=[_vr("CPUtime", values)],
@@ -849,10 +850,46 @@ def test_the_cards_plus_on_cpu_time_writes_the_one_spelling_and_scores():
     assert (vc.actual_final, vc.reference_final) == (pytest.approx(0.045), 0.04325)
 
 
+def _fake_view(recorded: dict, stored: dict | None = None, listed=PROJECT):
+    """What `_quantity_leaf` reads of a SessionView: the listed names, the
+    run's recorded diagnostics, the baseline's summaries."""
+    run = SimpleNamespace(
+        diagnostics=[
+            VariableResult(index=1, time=np.arange(len(v)), values=v, name=n)
+            for n, v in recorded.items()
+        ]
+    )
+    return SimpleNamespace(
+        diagnostic_names=lambda _m: list(listed),
+        baseline_summaries=lambda _m: stored or {},
+        project=SimpleNamespace(results={"M": run}),
+    )
+
+
+def test_a_value_rows_plus_with_no_run_seeds_within_1pc_of_the_baseline():
+    """N1, N3: the `+` on a listed `h` that no run recorded reads the
+    baseline's summary — within 1% of it, the row's `changed` rule."""
+    from dstf.authoring.builtin.edit_tree import _quantity_leaf
+
+    s = _fake_view(
+        {}, {"h": DiagnosticSummary("h", final=2.0, max=3.0)}, [*PROJECT, "h"]
+    )
+    assert _quantity_leaf(s, "M", "h", "and") == {
+        "metric": "scalar",
+        "variable": "h",
+        "quantity": {"reduce": "final"},
+        "tolerance_mode": "rel",
+        "tolerance": 0.01,
+    }
+    assert _quantity_leaf(s, "M", "h.max", "and")["quantity"] == {"reduce": "max"}
+
+
 def test_a_statistic_row_keeps_its_quantity_path_seed():
     from dstf.authoring.builtin.edit_tree import _quantity_leaf
 
-    assert _quantity_leaf({}, "translation.nonlinear_count", "and") == {
+    assert _quantity_leaf(
+        _fake_view({}), "M", "translation.nonlinear_count", "and"
+    ) == {
         "metric": "scalar",
         "quantity": "translation.nonlinear_count",
         "tolerance": 0,
@@ -978,6 +1015,7 @@ def test_a_path_is_read_from_the_statistics_alone():
     assert resolve_scalar_path("translation.n", {"translation": {"n": 3}}) == 3.0
     assert resolve_scalar_path("CPUtime", {"CPUtime": 0.5}) == 0.5  # a statistic
     assert resolve_scalar_path("CPUtime.final", {}) is None
+    assert resolve_scalar_path("CPUtime.final", {"CPUtime": 1.0}) is None
 
 
 # -- numbers on the card, curves on plots (R1b) -----------------------------------
@@ -1272,3 +1310,359 @@ def test_adding_a_card_criterion_leaves_the_plot_cards_shape(tmp_path):
         ]
     )
     assert TestPage.shape(page, s.tree_view(A)) != before
+
+
+# -- the review's fixes ---------------------------------------------------------
+
+
+def _plus(session, A, quantity):
+    from dstf.authoring.builtin.edit_tree import EditTree
+    from dstf.authoring.session import Selection, SessionView
+
+    view = SessionView(session, Selection(tests=frozenset({A})))
+    (op,) = (
+        EditTree()
+        .act(view, action="add", model_id=A, path="/metrics", quantity=quantity)
+        .ops
+    )
+    return op.value
+
+
+def test_the_cards_plus_with_no_run_writes_the_one_spelling_and_scores_once_one_runs(
+    tmp_path,
+):
+    """A baseline and no run loaded: the CPUtime row's `+` is the name's
+    number all the same — decided by the names the test lists, not by
+    what a run recorded — and it scores once a run is there."""
+    from dstf.authoring.session import PatchOp
+    from test_session import A, _stats_session
+
+    s = _stats_session(tmp_path, result=False)
+    s.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics",
+                {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "x"}],
+                },
+            )
+        ]
+    )
+    value = _plus(s, A, "CPUtime")
+    assert value == {"combinator": "warn", "children": [FINAL_CPU | {"tolerance": 0.1}]}
+    ran = _stats_session(tmp_path / "ran")
+    ran.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics",
+                {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "x"}, value],
+                },
+            )
+        ]
+    )
+    vc = ran.comparisons[A].variables[-1]
+    assert "error" not in (vc.diagnostics or {})
+    assert (vc.actual_final, vc.reference_final) == (1.12, pytest.approx(0.8))
+
+
+def test_a_max_rows_plus_with_no_run_writes_its_max(tmp_path):
+    from dstf.authoring.session import PatchOp
+    from test_session import A, _stats_session
+
+    s = _stats_session(tmp_path, result=False)
+    s.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics",
+                {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "x"}],
+                },
+            )
+        ]
+    )
+    assert _plus(s, A, "CPUtime.max")["children"][0] == MAX_CPU | {"tolerance": 0.1}
+
+
+def test_a_value_with_no_run_is_seeded_from_the_baselines_summary():
+    """No run: the ordinary seed reads the baseline's number — within 1%."""
+    from dstf.comparison.seeds import seed_variable_number
+
+    assert seed_variable_number("h", None, into="and", baseline=2.0) == {
+        "metric": "scalar",
+        "variable": "h",
+        "quantity": {"reduce": "final"},
+        "tolerance_mode": "rel",
+        "tolerance": 0.01,
+    }
+
+
+@pytest.mark.parametrize(("run", "changes"), [(1.0099, False), (1.0101, True)])
+def test_a_value_rows_changed_is_exactly_its_plus_failing(run, changes):
+    """N3: with the baseline's summary the `+` seeds within 1% of it, the
+    `changed` rule: one is true exactly when the other fails."""
+    from dstf.comparison.modes import ScalarConfig, ScalarMode
+    from dstf.comparison.seeds import seed_variable_number
+    from dstf.reporting.stats_rows import statistics_rows
+
+    t = np.linspace(0, 1, 3)
+    values = np.array([0.0, 0.5, run])
+    (row,) = statistics_rows(
+        {},
+        {},
+        run_diagnostics=[VariableResult(index=1, time=t, values=values, name="h")],
+        baseline_diagnostics=[DiagnosticSummary("h", final=1.0)],
+    )
+    seed = seed_variable_number("h", values, into="and", baseline=1.0)
+    assert (seed["tolerance"], seed["tolerance_mode"]) == (0.01, "rel")
+    params = {k: v for k, v in seed.items() if k not in ("metric", "variable")}
+    got = ScalarMode(ScalarConfig(**params)).compare(
+        np.array([0.0]), np.array([1.0]), t, values
+    )
+    assert row.changed is changes is (not got.passed)
+
+
+def test_without_a_baseline_summary_a_value_keeps_its_bounds_seed():
+    from dstf.comparison.seeds import seed_variable_number
+
+    seed = seed_variable_number("h", np.array([1.0, 2.0]), into="and")
+    assert {"min_value", "max_value"} <= set(seed) and "tolerance" not in seed
+
+
+def _figure_session(tmp_path, with_scalar: bool):
+    """A's run and baseline hold CPUtime's curve; its tree an nrmse on
+    CPUtime, and — ``with_scalar`` — a scalar final on it too."""
+    from dstf.authoring.session import PatchOp, Session
+    from dstf.backends.types import TestResult
+    from dstf.storage.reference_store import ReferenceStore
+    from test_session import PROVENANCE, A, _two_var_project
+
+    cfg, work = _two_var_project(tmp_path)
+    config = Config(config_file=cfg, work_dir=work)
+    tt = np.asarray([i / 4 for i in range(5)])
+    ReferenceStore(config).store_reference(
+        make_test_model(A, variable_patterns=["x", "y", "CPUtime"]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+                VariableResult(index=3, time=tt, values=0.8 * tt, name="CPUtime"),
+            ],
+            diagnostics=[
+                VariableResult(index=1, time=tt, values=0.8 * tt, name="CPUtime")
+            ],
+        ),
+        provenance=PROVENANCE,
+    )
+    s = Session()
+    s.open(cfg, work_dir=work)
+    res = s.project.results[A]
+    res.variables = [
+        *res.variables,
+        VariableResult(index=3, time=tt, values=0.81 * tt, name="CPUtime"),
+    ]
+    res.diagnostics = [
+        VariableResult(index=1, time=tt, values=0.81 * tt, name="CPUtime")
+    ]
+    kids = [
+        {"metric": "nrmse", "variable": "x"},
+        {"metric": "nrmse", "variable": "CPUtime"},
+    ]
+    if with_scalar:
+        kids.append(FINAL_CPU)
+    s.stage([PatchOp(A, "add", "/metrics", {"combinator": "and", "children": kids})])
+    return s, A
+
+
+def _cpu_figures(s, A) -> tuple[dict, dict]:
+    """The CPUtime plot's figure on the tool and in the report."""
+    from dstf.reporting.context_builder import _build_template_context
+    from dstf.reporting.report_suite import plot_inputs, plot_page_keys
+
+    tool = s.plot_figure(A, [p.subject for p in s.plots(A)].index(("CPUtime",)))
+    project, comp = s.project, s.comparisons[A]
+    test, result = project.test(A), project.results[A]
+    listed = s.diagnostic_names(A)
+    plots, extra = plot_inputs(test, comp.variables, result, None, None, listed)
+    ctx = _build_template_context(
+        A, list(comp.variables), project.store.get_reference(A), None, None,
+        test_model=test, result=result, metric_tree=comp.metric_tree,
+    )  # fmt: skip
+    keys = plot_page_keys(ctx, plots, extra, comp.metric_tree, None, diagnostics=listed)
+    at = [tuple(r["subject"]) for r in keys["plots"]].index(("CPUtime",))
+    return tool, keys["plot_figures"][at]
+
+
+def _marks(figure: dict) -> tuple:
+    return (
+        json.dumps(figure.get("data"), sort_keys=True, default=str),
+        json.dumps(
+            (figure.get("layout") or {}).get("shapes"), sort_keys=True, default=str
+        ),
+    )
+
+
+def test_a_card_criterion_draws_nothing_on_a_plot_on_either_tier(tmp_path):
+    """F1: numbers on the card, curves on plots — a scalar final on CPUtime
+    beside its nrmse adds no trace and no shape to the CPUtime plot."""
+    alone = _cpu_figures(*_figure_session(tmp_path / "alone", False))
+    both = _cpu_figures(*_figure_session(tmp_path / "both", True))
+    assert _marks(both[0]) == _marks(alone[0])  # the tool
+    assert _marks(both[1]) == _marks(alone[1])  # the report
+
+
+def test_a_card_criterion_leaves_the_tracked_names_as_they_were(tmp_path):
+    """F2: a number on CPUtime keeps CPUtime out of Tracked — the Variables
+    drawer lists it under Diagnostics, as on main."""
+    from dstf.authoring.session import PatchOp
+    from test_session import A, _stats_session
+
+    s = _stats_session(tmp_path)
+    s.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics",
+                {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "x"}],
+                },
+            )
+        ]
+    )
+    before = s.tracked(A)
+    s.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics/children/-",
+                {"combinator": "warn", "children": [FINAL_CPU]},
+            )
+        ]
+    )
+    assert "CPUtime" not in before
+    assert s.tracked(A) == before
+
+
+def test_the_closed_line_names_a_changed_value(tmp_path):
+    """F3: a listed `h` at 2.0 against 1.0 is named, as a changed time is."""
+    from dstf.authoring.shell.stats_card import line_text
+    from dstf.reporting.stats_rows import statistics_rows
+
+    t = np.linspace(0, 1, 3)
+    rows = statistics_rows(
+        {},
+        {},
+        run_diagnostics=[
+            VariableResult(index=1, time=t, values=np.array([0.0, 1.0, 2.0]), name="h")
+        ],
+        baseline_diagnostics=[DiagnosticSummary("h", final=1.0)],
+    )
+    assert line_text(rows, True) == "no count changed · h +100%"
+
+
+@pytest.mark.parametrize(
+    "payload", [{"success": True, "time": [0.0, 1.0]}], ids=["no variables key"]
+)
+def test_the_json_driver_reads_a_payload_with_no_variables(tmp_path, payload):
+    """N4: as main read it — a run with nothing, never a KeyError."""
+    from dstf.backends.python import backend as pr
+
+    cfg = SimpleNamespace(
+        backend_path=None,
+        source_path=tmp_path,
+        work_dir=tmp_path / "work",
+        timeout=1,
+        diagnostic_variables=PROJECT,
+    )
+    test_dir = tmp_path / "work" / "test_0001"
+    test_dir.mkdir(parents=True)
+    (test_dir / "result.json").write_text(json.dumps(payload))
+    result = pr.PythonBackend(cfg).read_result(make_test_model("T"), "test_0001", None)
+    assert (result.success, result.variables, result.diagnostics) == (True, [], [])
+
+
+def test_a_listed_name_with_non_numeric_values_is_not_recorded(tmp_path):
+    """N4: as on main, where a listed name was never read: no diagnostic,
+    and the test is not failed for it."""
+    result = _json_result(
+        tmp_path, {"y": [0, 1], "h": ["a", "b"], "CPUtime": [0.0, 0.5]}, ["h"]
+    )
+    assert result.success
+    assert [d.name for d in result.diagnostics] == ["CPUtime"]
+
+
+def test_the_dashboards_cpu_time_is_its_recorded_digits():
+    """N5: the sidecar's `sim_cpu` (and the sort key) is main's 0.045845,
+    not the float32's widening."""
+    from dstf.reporting.rows import cpu_time
+
+    t = np.array([0.0, 1.0])
+    f32 = VariableResult(
+        index=1,
+        time=t,
+        values=np.array([0.0, 0.045845], dtype=np.float32),
+        name="CPUtime",
+    )
+    assert float(np.float32(0.045845)) != 0.045845
+    assert cpu_time([f32]) == 0.045845
+    f64 = VariableResult(
+        index=1, time=t, values=np.array([0.0, 0.0458449982]), name="CPUtime"
+    )
+    assert cpu_time([f64]) == 0.0458449982
+
+
+def test_the_report_routes_a_listed_names_number_through_every_hop(tmp_path):
+    """N2: `_build_per_test_args` → `_render_one_test`, as `compare --report`
+    renders a page: a scalar on CPUtime is in no plot section (the CPUtime
+    plot's criteria are its nrmse alone), and a scalar on EventCounter
+    derives no plot."""
+    import re
+
+    from dstf.reporting.report_suite import _build_per_test_args, _render_one_test
+
+    ev = {
+        "metric": "scalar",
+        "variable": "EventCounter",
+        "quantity": {"reduce": "final"},
+    }
+    s, A = _card_session(
+        tmp_path, FINAL_CPU, {"metric": "nrmse", "variable": "CPUtime"}, ev
+    )
+    project, comp = s.project, s.comparisons[A]
+    args = _build_per_test_args(
+        comp,
+        project.results,
+        {A: project.test(A)},
+        project.store,
+        project.config,
+        {},
+    )
+    out = tmp_path / "report"
+    _render_one_test(args, out)
+    page = out / args["report_id"]
+    sidecar = json.loads((page / "comparison_data.json").read_text(encoding="utf-8"))
+    assert [tuple(p["subject"]) for p in sidecar["plots"]] == [("x",), ("CPUtime",)]
+    html = (page / "interactive.html").read_text(encoding="utf-8")
+    sections = re.findall(
+        r'id="nodes-(\d+)">(.*?)</div>\s*</div>\s*(?=<|$)', html, re.S
+    )
+    paths = {
+        int(i): re.findall(r'class="node node-leaf" data-path="([^"]+)"', body)
+        for i, body in sections
+    }
+    assert paths[1] == ["/metrics/children/2"]  # the nrmse on CPUtime alone
+    assert "/metrics/children/1" not in {p for v in paths.values() for p in v}

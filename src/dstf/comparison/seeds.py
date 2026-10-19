@@ -261,7 +261,12 @@ def warn_if_time(leaf: dict, time: bool, *, into: str) -> dict:
 
 
 def seed_variable_number(
-    name: str, values: np.ndarray | None, *, into: str, reduce: str = "final"
+    name: str,
+    values: np.ndarray | None,
+    *,
+    into: str,
+    reduce: str = "final",
+    baseline: float | None = None,
 ) -> dict:
     """A ``scalar`` criterion on the number ``name``'s run reduces to — its
     ``final`` by default, or its ``min`` / ``max``: the one spelling of a
@@ -271,8 +276,11 @@ def seed_variable_number(
     CPUtime and EventCounter (`TIMES` | `COUNTS`) take their known
     tolerances (:func:`seed_quantity`'s): a time within 10%, inside a
     ``warn`` in an ``and``; a count exact, bare. Any other name takes the
-    ordinary scalar seed (:func:`seed_scalar`) over the run's number —
-    never a kind guessed from its values (owner, 2026-10-18)."""
+    ordinary scalar seed (:func:`seed_scalar`) — never a kind guessed from
+    its values (owner, 2026-10-18): within 1% of ``baseline``, the same
+    number of the baseline's summary, where it has one (the Statistics
+    row's `changed` rule); else bounds around the run's number (``values``,
+    reduced); with neither, bare."""
     quantity = {"reduce": reduce}
     leaf: dict = {"metric": "scalar", "variable": name}
     if name in TIMES or name in COUNTS:
@@ -282,9 +290,11 @@ def seed_variable_number(
             kind == "time",
             into=into,
         )
-    if values is None or len(values) == 0:
-        return {**leaf, "quantity": quantity}
-    series = np.asarray(values, dtype=float)
-    number = _reduce_series(np.arange(float(series.size)), series, reduce)
-    act = (np.array([0.0]), np.array([number]))
-    return {**leaf, **seed_scalar(SeedData(ref=None, act=act)), "quantity": quantity}
+    one = np.array([0.0])
+    act = None
+    if values is not None and len(values) > 0:
+        series = np.asarray(values, dtype=float)
+        number = _reduce_series(np.arange(float(series.size)), series, reduce)
+        act = (one, np.array([number]))
+    ref = (one, np.array([float(baseline)])) if baseline is not None else None
+    return {**leaf, **seed_scalar(SeedData(ref=ref, act=act)), "quantity": quantity}

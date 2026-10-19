@@ -100,6 +100,7 @@ def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_br
             {},
             None,
             None,
+            diagnostics=(),
         )
     )
     ctx["plot_figures"][0] = variable_figure(
@@ -507,7 +508,14 @@ def _page_with_a_wave_and_an_overlay(tmp_path):
     # The picker's rows are built from the context's overlays; the figure
     # is replaced after, which the rebuild would otherwise overwrite.
     ctx.update(
-        plot_page_keys(ctx, (ResolvedPlot(index=0, subject=(var,)),), {}, None, None)
+        plot_page_keys(
+            ctx,
+            (ResolvedPlot(index=0, subject=(var,)),),
+            {},
+            None,
+            None,
+            diagnostics=(),
+        )
     )
     ctx["plot_figures"][0] = variable_figure(
         build_view(

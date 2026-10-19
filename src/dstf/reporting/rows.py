@@ -20,6 +20,7 @@ from typing import Any, Literal
 from ..backends.common.statistics import diagnostic_final
 from ..backends.types import VariableResult
 from ..comparison.types import TestComparison
+from ..storage.baseline_codec import recorded_digits
 from .context_builder import worst_nrmse
 from .status import (
     CANCELLED,
@@ -290,8 +291,15 @@ EDITS = Column(
 
 def cpu_time(diagnostics: Sequence[VariableResult]) -> float | None:
     """The final value of the result's ``CPUtime`` diagnostic (Dymola: DSTF
-    sets ``OutputCPUtime := true``); None where the result recorded none."""
-    return diagnostic_final(diagnostics, "CPUtime")
+    sets ``OutputCPUtime := true``), at the digits it was recorded with
+    (`recorded_digits`, as the Statistics row shows it: a float32's
+    0.045845, never its widening 0.045844998210668564); None where the
+    result recorded none."""
+    value = diagnostic_final(diagnostics, "CPUtime")
+    if value is None:
+        return None
+    values = next(d.values for d in diagnostics if d.name == "CPUtime")
+    return float(f"{value:.{recorded_digits(values)}g}")
 
 
 def summary_fields(

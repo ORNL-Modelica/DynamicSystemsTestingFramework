@@ -76,7 +76,7 @@ from ..discovery.test_registry import (
 )
 from ..figures.assemble import leaves_by_variable, view_from_trajectory
 from ..figures.view import VariableView, error_series
-from ..storage.baseline import PRIMARY_BASELINE, ReferenceFile
+from ..storage.baseline import PRIMARY_BASELINE, DiagnosticSummary, ReferenceFile
 from ..storage.reference_store import ReferenceStore
 from .capabilities import (
     Artifact,
@@ -933,9 +933,9 @@ class Session:
                     if series is not None
                     else {}
                 )
-        leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
-            variable, []
-        )
+        leaves = leaves_by_variable(
+            comp.metric_tree if comp is not None else None, self._card_paths(model_id)
+        ).get(variable, [])
         return view_from_trajectory(variable, traj, leaves)
 
     def _unfinished_view(
@@ -1070,13 +1070,18 @@ class Session:
 
         project = self._require_project()
         comp, result = self._layout_source(model_id)
-        # A statistics leaf scores a stored number: its parsed `variable`
-        # (its quantity path, or a diagnostic's name) is no variable, and
-        # listed here the add form's picker offered `translation.*` paths
-        # as "Other variables". A name a trajectory leaf scores too stays.
+        # A card leaf scores a stored number: a statistic's parsed
+        # `variable` (its quantity path) is no variable — listed here, the
+        # add form's picker offered `translation.*` paths as "Other
+        # variables" — and a listed name only numbers score is no tracked
+        # one: the drawer lists it under Diagnostics. A name a curve
+        # criterion scores too stays (`tree_variables`).
         spec = self._entry_tree(model_id)
         numbers = (
-            set(collect_variables(spec)) - set(tree_variables(spec)) if spec else set()
+            set(collect_variables(spec))
+            - set(tree_variables(spec, self.diagnostic_names(model_id)))
+            if spec
+            else set()
         )
         scored = (
             [vc.name for vc in comp.variables if vc.name not in numbers]
@@ -1256,6 +1261,21 @@ class Session:
             raise KeyError(model_id)
         return diagnostic_names(test, project.config.diagnostic_variables)
 
+    def _card_paths(self, model_id: str) -> set[str]:
+        """The tree paths of the test's leaves on the Statistics card
+        (`statistic_leaves`): drawn on no plot (`leaves_by_variable`)."""
+        return {path for _, path in self.statistic_leaves(model_id)}
+
+    def baseline_summaries(self, model_id: str) -> dict[str, DiagnosticSummary]:
+        """The summaries the test's baseline stores of the names it listed,
+        by name — read from the CACHED reference; ``{}`` without one. What
+        a number's seed reads where no run recorded the name. An unknown
+        model is a KeyError."""
+        if self._require_project().test(model_id) is None:
+            raise KeyError(model_id)
+        ref = self._reads_for(model_id).ref
+        return {d.name: d for d in ref.baseline.diagnostics} if ref is not None else {}
+
     def _plot_leaves(self, model_id: str) -> list[LeafSpec] | None:
         """:func:`~dstf.discovery.plots.plot_leaves` for this test: the
         leaves its plots derive from, ``None`` for one plot per tracked
@@ -1423,9 +1443,9 @@ class Session:
             if not self._is_running(model_id):
                 reads.bases[variable] = base
         comp = self.comparisons.get(model_id)
-        leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
-            variable, []
-        )
+        leaves = leaves_by_variable(
+            comp.metric_tree if comp is not None else None, self._card_paths(model_id)
+        ).get(variable, [])
         # The leaves are decimated on their own (no arrays but their
         # geometry) and joined to the cached base; the figure is then built
         # WITHOUT a budget, or `variable_figure` would decimate the base a
@@ -2982,6 +3002,9 @@ class SessionView:
 
     def diagnostic_names(self, model_id: str) -> list[str]:
         return self._session.diagnostic_names(model_id)
+
+    def baseline_summaries(self, model_id: str) -> dict[str, DiagnosticSummary]:
+        return self._session.baseline_summaries(model_id)
 
     def plot_figure(
         self,

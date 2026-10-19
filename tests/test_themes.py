@@ -831,7 +831,14 @@ class TestGeneratedPages:
         pages = {}
         for name in ("dark", "default"):
             page = generate_comparison_plots(
-                "M", None, result, [], tmp_path / name, test_model=test, theme=name
+                "M",
+                None,
+                result,
+                [],
+                tmp_path / name,
+                test_model=test,
+                theme=name,
+                diagnostics=(),
             )
             html = Path(page).read_text(encoding="utf-8")
             (diag,) = json.loads(

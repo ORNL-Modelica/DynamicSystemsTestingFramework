@@ -303,24 +303,17 @@ def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch |
         raise ValueError(f"{path} names no node of {model_id}")
     if action == "add":
         into = _into(tree, node, path)
-        diagnostics = _diagnostics(s, model_id)
         quantity = inputs.get("quantity")
         if quantity is not None and inputs.get("variable") is not None:
             raise ValueError("add takes a quantity or a variable, not both")
         if quantity is not None:
-            leaves = [_quantity_leaf(diagnostics, quantity, into)]
+            leaves = [_quantity_leaf(s, model_id, quantity, into)]
         elif inputs["metric"] == "scalar" and inputs["variable"] in s.diagnostic_names(
             model_id
         ):
             # A listed name's number, in its one spelling: CPUtime warned in
             # an `and`, EventCounter exact, any other the ordinary seed.
-            leaves = [
-                seed_variable_number(
-                    inputs["variable"],
-                    diagnostics.get(inputs["variable"]),
-                    into=into,
-                )
-            ]
+            leaves = [_number_leaf(s, model_id, inputs["variable"], "final", into)]
         else:
             # One criterion per chosen element of the variable's family
             # (D152) — the variable alone with no Indices text. Seeded: a
@@ -743,20 +736,38 @@ def _into(tree: dict | None, node: dict, path: str) -> str:
     return str((parent_node or {}).get("combinator"))
 
 
-def _quantity_leaf(diagnostics: dict[str, Any], quantity: str, into: str) -> dict:
+def _quantity_leaf(s: SessionView, model_id: str, quantity: str, into: str) -> dict:
     """The criterion a Statistics row's ``+`` on ``quantity`` stages,
-    landing in ``into``. A row of a recorded diagnostic — its name (its
-    final), ``<name>.min`` or ``<name>.max`` (`card_row`) — is that
-    variable's number, in its one spelling (`seed_variable_number`); any
-    other row is a statistic, read through its path (`seed_quantity`)."""
-    if quantity in diagnostics:
-        return seed_variable_number(quantity, diagnostics[quantity], into=into)
+    landing in ``into``. A row of a name the test lists
+    (`diagnostic_names`) — its name (its final), ``<name>.min`` or
+    ``<name>.max`` (`card_row`) — is that variable's number, in its one
+    spelling (`_number_leaf`), whether or not a run recorded it; any other
+    row is a statistic, read through its path (`seed_quantity`)."""
+    listed = s.diagnostic_names(model_id)
+    if quantity in listed:
+        return _number_leaf(s, model_id, quantity, "final", into)
     name, _, field_name = quantity.rpartition(".")
-    if field_name in ("min", "max") and name in diagnostics:
-        return seed_variable_number(
-            name, diagnostics[name], into=into, reduce=field_name
-        )
+    if field_name in ("min", "max") and name in listed:
+        return _number_leaf(s, model_id, name, field_name, into)
     return seed_quantity(quantity, quantity_kind(quantity), into=into)
+
+
+def _number_leaf(
+    s: SessionView, model_id: str, name: str, field_name: str, into: str
+) -> dict:
+    """The criterion on the listed name ``name``'s ``field_name`` (final,
+    min, max), seeded from the run's samples where it recorded the name and
+    against the baseline's summary where that holds the number
+    (`seed_variable_number`)."""
+    stored = s.baseline_summaries(model_id).get(name)
+    baseline = getattr(stored, field_name) if stored is not None else None
+    return seed_variable_number(
+        name,
+        _diagnostics(s, model_id).get(name),
+        into=into,
+        reduce=field_name,
+        baseline=baseline,
+    )
 
 
 def _requirement(leaf: dict) -> str:
@@ -1276,7 +1287,7 @@ def _statistic_plus(
     if tip is None:
         assert tree is not None  # `reason` said so
         into = _into(tree, tree, ROOT)
-        tip = _requirement(_quantity_leaf(_diagnostics(s, model_id), quantity, into))
+        tip = _requirement(_quantity_leaf(s, model_id, quantity, into))
 
     def add() -> None:
         # From the tree as it is NOW, before the add moves the count.

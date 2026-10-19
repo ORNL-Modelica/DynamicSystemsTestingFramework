@@ -215,6 +215,7 @@ def test_the_sidecar_carries_the_classifiers_word(tmp_path, sample_comparison):
         comparisons=sample_comparison.variables,
         plot_dir=plot_dir,
         comparison=sample_comparison,
+        diagnostics=(),
     )
     summary = json.loads((plot_dir / "comparison_data.json").read_text("utf-8"))[
         "summary"
@@ -234,6 +235,7 @@ def test_a_sidecar_without_a_comparison_has_numbers_and_no_verdict(
         result=None,
         comparisons=sample_comparison.variables,
         plot_dir=plot_dir,
+        diagnostics=(),
     )
     summary = json.loads((plot_dir / "comparison_data.json").read_text("utf-8"))[
         "summary"

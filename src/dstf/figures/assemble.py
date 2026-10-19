@@ -3,7 +3,7 @@ report's figure build and the authoring Session's ``view`` share."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 from ..comparison.types import VariableComparison
 from .view import VariableView, build_view
@@ -11,17 +11,22 @@ from .view import VariableView, build_view
 LeafPair = tuple[str, VariableComparison]
 
 
-def leaves_by_variable(metric_tree) -> dict[str, list[LeafPair]]:
-    """Every scored leaf, keyed by the variable it scores, as the
-    ``(leaf_path, comparison)`` pairs ``build_view`` takes. Empty for
-    ``None``."""
+def leaves_by_variable(metric_tree, card: Collection[str]) -> dict[str, list[LeafPair]]:
+    """Every scored leaf a plot draws, keyed by the variable it scores, as
+    the ``(leaf_path, comparison)`` pairs ``build_view`` takes. Not the
+    leaves at ``card`` — the paths of the leaves on the Statistics card
+    (`on_the_card`: a statistic, a listed name's number): numbers on the
+    card, curves on plots, so a card leaf's marks are drawn on no plot.
+    Empty for ``None``."""
     from ..comparison.tree_eval import leaf_comparisons_by_path
 
     out: dict[str, list[LeafPair]] = {}
     if metric_tree is None:
         return out
+    skip = set(card)
     for path, vc in leaf_comparisons_by_path(metric_tree).items():
-        out.setdefault(vc.name, []).append((path, vc))
+        if path not in skip:
+            out.setdefault(vc.name, []).append((path, vc))
     return out
 
 

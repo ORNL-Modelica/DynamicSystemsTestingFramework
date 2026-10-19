@@ -18,6 +18,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from ..comparison.comparator import VariableComparison
+from ..comparison.tree_spec import on_the_card_view
 from ..comparison.types import TestComparison
 from ..config_shape import default
 from ..discovery.test_registry import diagnostic_names
@@ -25,7 +26,7 @@ from ..storage.baseline import ReferenceFile
 from .context_builder import _build_template_context
 from .rows import summary_fields
 from .status import classify_with_class, refusal
-from .tree_rows import criteria_rows
+from .tree_rows import criteria_rows, leaves_of
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -233,7 +234,8 @@ def plot_page_keys(
     metric_tree,
     max_samples,
     theme: str = "default",
-    diagnostics: Sequence[str] = (),
+    *,
+    diagnostics: Sequence[str],
 ) -> dict:
     """``plots`` (the sidecar's record), ``plot_figures``, ``plot_series``
     and ``plot_sections`` from a render context, one of each per plot of
@@ -277,9 +279,16 @@ def plot_page_keys(
     # beside (the section heading), `texts` everywhere else.
     labels = _context_labels(context)
     texts = _context_labels(context, "text")
-    leaves_by_var = leaves_by_variable(metric_tree)
-    budget = max_samples if max_samples and max_samples > 0 else None
     tree_view = context.get("tree_view")
+    # A card leaf (a statistic, a listed name's number) is in the metric
+    # tree and on no plot: neither a section's criteria nor its marks.
+    card = {
+        str(leaf.get("path"))
+        for leaf in leaves_of(tree_view)
+        if on_the_card_view(leaf, diagnostics)
+    }
+    leaves_by_var = leaves_by_variable(metric_tree, card)
+    budget = max_samples if max_samples and max_samples > 0 else None
 
     def curve(n: str) -> tuple:
         """``(time, values)`` of a series' actual curve, from whichever
@@ -479,10 +488,10 @@ def generate_comparison_plots(
     run_metadata: dict | None = None,
     plots=None,
     extra_series=None,
-    # The names the test lists (`diagnostic_names`): both production callers
-    # pass them. A number read from one's summary is in the metric tree,
-    # never in a plot section's criteria.
-    diagnostics: Sequence[str] = (),
+    *,
+    # The names the test lists (`diagnostic_names`). A number read from
+    # one's summary is in the metric tree, never on a plot.
+    diagnostics: Sequence[str],
 ) -> Path | None:
     """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
 
@@ -901,7 +910,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         run_metadata=args.get("run_metadata"),
         plots=args.get("plots"),
         extra_series=args.get("extra_series"),
-        diagnostics=args.get("diagnostics", ()),
+        diagnostics=args["diagnostics"],
     )
     render_elapsed = _time.monotonic() - t0
     return {

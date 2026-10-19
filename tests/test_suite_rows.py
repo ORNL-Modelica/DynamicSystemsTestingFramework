@@ -142,8 +142,6 @@ def test_a_dymola_row_after_a_reload_shows_the_result_files_cpu_time(tmp_path):
     import shutil
     from pathlib import Path
 
-    import numpy as np
-
     from dstf.reporting.rows import COLUMNS
 
     here = Path(__file__).parent
@@ -188,7 +186,7 @@ def test_a_dymola_row_after_a_reload_shows_the_result_files_cpu_time(tmp_path):
     s.open(config_dir / "testing.json", work_dir=work)
     (row,) = suite_rows(s, [model], failed=set())
     sim = {c.key: c for c in COLUMNS}["sim"]
-    # The run's own number: the CPUtime diagnostic's final, a float32.
-    cpu = float(np.float32(0.002))
-    assert (row.sim_wall, row.sim_cpu, row.sim_source) == (None, cpu, "cpu")
+    # The CPUtime diagnostic's final at the digits it was recorded with
+    # (a float32's 7): main's number.
+    assert (row.sim_wall, row.sim_cpu, row.sim_source) == (None, 0.002, "cpu")
     assert (sim.text(row), sim.tag(row)) == ("0.00", "cpu")
