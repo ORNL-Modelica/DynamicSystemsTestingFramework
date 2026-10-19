@@ -1677,10 +1677,11 @@ FLAT_SCALAR = {
 }
 
 
-def _flat_session(tmp_path, scored: bool):
+def _flat_session(tmp_path, scored: bool, override: dict = FLAT_SCALAR):
     """A FLAT entry (no `metrics`) with a watch plot of CPUtime. ``scored``:
-    it tracks CPUtime and scores its final with a `scalar` override — a
-    card leaf of the implicit tree; else CPUtime is not scored at all."""
+    it tracks CPUtime and scores it with a `scalar` ``override`` (its final
+    by default) — a card leaf of the implicit tree; else CPUtime is not
+    scored at all."""
     from dstf.authoring.session import Session
     from dstf.backends.types import TestResult
     from dstf.storage.reference_store import ReferenceStore
@@ -1694,7 +1695,7 @@ def _flat_session(tmp_path, scored: bool):
             entry["plots"] = [{"var": "CPUtime"}]
             if scored:
                 entry["variables"] = ["x", "y", "CPUtime"]
-                entry["comparison"] = {"variable_overrides": {"CPUtime": FLAT_SCALAR}}
+                entry["comparison"] = {"variable_overrides": {"CPUtime": override}}
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
     config = Config(config_file=cfg, work_dir=work)
     tt = np.asarray([i / 4 for i in range(5)])
@@ -1970,3 +1971,18 @@ def test_a_flat_entrys_card_leaf_stays_on_the_card_while_its_run_is_in_progress(
     assert A not in s.project.results
     assert layout() == idle
     drop_item(s, running)
+
+
+def test_a_flat_entrys_override_on_a_listed_names_max_has_its_own_row(tmp_path):
+    """A flat entry's override scoring CPUtime's max is a card leaf of the
+    implicit tree, shown on ``CPUtime.max`` — a row no side's statistics
+    hold, so the card adds it under "other scored" (S4), read from the
+    summaries, as an authored tree's leaf is."""
+    s, A = _flat_session(
+        tmp_path, scored=True, override={**FLAT_SCALAR, "quantity": {"reduce": "max"}}
+    )
+    rows = {r.path: r for r in s.statistics(A)}
+    assert rows["CPUtime.max"].section == "other scored"
+    assert rows["CPUtime.max"].kind == "time"
+    assert [path for _, path in s.statistic_leaves(A)] == ["/metrics/children/2"]
+    assert s.card_paths(A) == {"/metrics/children/2"}

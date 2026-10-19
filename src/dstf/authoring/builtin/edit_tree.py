@@ -779,12 +779,14 @@ def _requirement(leaf: dict) -> str:
     tolerance is the seed's, never a second copy of it. Read as any
     tolerance is (`parse_sides`): a number, or a lower/upper pair, whose
     two sides — where they differ — read as its two edges. A bounds seed
-    says its bounds, as the card's requirement does (`bounds_text`)."""
+    says its bounds, as the card's requirement does (`bounds_text`); it is
+    never warned — only a time is (`warn_if_time`), seeded with a
+    tolerance."""
     inner = leaf["children"][0] if "combinator" in leaf else leaf
-    warning = ", as a warning" if leaf.get("combinator") == "warn" else ""
     bounds = bounds_text(inner.get("min_value"), inner.get("max_value"))
     if bounds is not None:
-        return f"Add a requirement: {bounds}{warning}"
+        return f"Add a requirement: {bounds}"
+    warning = ", as a warning" if leaf.get("combinator") == "warn" else ""
     written = inner.get("tolerance")
     tolerance = parse_sides(0 if written is None else written, "tolerance")
     rel = inner.get("tolerance_mode") == "rel"
