@@ -2057,11 +2057,11 @@ def test_a_criterion_on_a_listed_name_never_run_has_its_row_on_both_tiers(tmp_pa
     ],
 )
 def test_a_value_near_zero_reads_less_than_100_percent_on_both_sides(base, run, delta):
-    """A run within 0.5% of the baseline's magnitude from zero, and not
-    zero, reads "<100%" toward zero — down over a positive baseline, up over
-    a negative one; only an exact zero reads 100% toward zero, on the 0.5%
-    edge too, where the ratio would round to it. Elsewhere the change is of
-    the baseline's magnitude: -2 -> -4 moved down by all of it."""
+    """A run that is not zero but whose change rounds to 100% toward zero
+    reads "<100%" there — down over a positive baseline, up over a negative
+    one, on the 0.5% edge too; only an exact zero reads 100% toward zero.
+    Elsewhere the change is of the baseline's magnitude: -2 -> -4 moved
+    down by all of it."""
     assert _h_row(base, run).delta == delta
 
 

@@ -179,30 +179,27 @@ def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     baseline's magnitude: over a negative baseline a value that went down
     reads down, and -2 -> -4 reads ``-100%``. Under 1% it keeps one decimal
     (``+0.3%``), and under 0.05% reads ``+<0.1%``: a number that moved never
-    reads ``+0%`` or ``+0.0%``. Likewise a run that reached zero reads
-    ``-100%`` over a positive baseline and ``+100%`` over a negative one —
-    100% toward zero — and no other run does: one that is not zero but
-    within 0.5% of the baseline's magnitude from it reads ``-<100%`` /
-    ``+<100%``, on that edge too. (Away from zero the magnitude rule
-    stands: -2 -> -4 reads ``-100%``.)"""
+    reads ``+0%`` or ``+0.0%``. And only a run of zero reads 100% toward
+    zero — ``-100%`` over a positive baseline, ``+100%`` over a negative
+    one: any other run whose change reads that, rounded, reads ``-<100%``
+    / ``+<100%``. Away from zero the magnitude rule stands: -2 -> -4
+    reads ``-100%``."""
     if run is None or baseline is None or run == baseline:
         return ""
     if kind == "count":
         return f"{_count_text(baseline)}→{_count_text(run)}"
     if baseline == 0:
         return f"{run - baseline:+.2g}" + (" s" if kind == "time" else "")
-    toward_zero = "-" if baseline > 0 else "+"
+    toward_zero = f"{'-' if baseline > 0 else '+'}100%"
     if run == 0:
-        return f"{toward_zero}100%"
-    if abs(run) < 0.005 * abs(baseline):
-        return f"{toward_zero}<100%"
+        return toward_zero
     ratio = (run - baseline) / abs(baseline)
     if abs(ratio) < 0.0005:
         return f"{'+' if ratio > 0 else '-'}<0.1%"
     text = f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"
-    # 0.5% from zero is where the ratio rounds to 100%: a run on that edge
-    # (or a float off it) passes the test above and would round to it.
-    return f"{toward_zero}<100%" if text == f"{toward_zero}100%" else text
+    # Decided by the text, not by a band of the ratio: a band and the
+    # rounding meet at the same edge, where a float decides which wins.
+    return f"{toward_zero[0]}<100%" if text == toward_zero else text
 
 
 def _text(v: object) -> str:
