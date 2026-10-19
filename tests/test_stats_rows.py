@@ -202,14 +202,17 @@ def test_a_listed_name_takes_its_kind_from_its_name_never_its_values(samples):
 
 
 def test_extra_paths_become_other_scored_rows():
+    """A path no row holds is a row of its own under Other, empty where
+    nothing recorded it — the 1.1 `CPUtime.final` too: it names no
+    statistic, and is no longer the `CPUtime` row's (D162 ended S2)."""
     rows = statistics_rows(
         RUN, BASE, extra_paths=["translation.typo", "CPUtime.final", "CPUtime"]
     )
     other = [r for r in rows if r.section == "other scored"]
-    assert [r.path for r in other] == ["translation.typo"]
-    assert rows[-1] is other[0]
-    assert other[0].run is None and other[0].baseline is None
-    assert not other[0].changed
+    assert [r.path for r in other] == ["translation.typo", "CPUtime.final"]
+    assert rows[-2:] == other
+    assert all(r.run is None and r.baseline is None for r in other)
+    assert not any(r.changed for r in other)
 
 
 def test_only_a_top_level_row_holds_a_final_leaf():
@@ -246,17 +249,24 @@ def test_a_listed_names_final_is_its_own_row_on_every_backend():
     """A listed name's final is a row of the Simulation section, its
     values the two sides' finals (the run's diagnostic, the baseline's
     summary) — on a backend whose statistics never held a copy of it too.
-    A `CPUtime.final` leaf is shown on it (S2)."""
+    Its max is a row of its own under Other, from the same two sides."""
     t = np.array([0.0, 1.0])
     cpu = VariableResult(index=0, time=t, values=np.array([0.0, 1.12]), name="CPUtime")
     rows = statistics_rows(
         {},
         {},
         run_diagnostics=[cpu],
-        baseline_diagnostics=[DiagnosticSummary(name="CPUtime", final=0.8)],
-        extra_paths=["CPUtime.final"],
+        baseline_diagnostics=[DiagnosticSummary(name="CPUtime", final=0.8, max=0.9)],
+        extra_paths=["CPUtime", "CPUtime.max"],
     )
-    (row,) = rows
+    row, top = rows
+    assert (top.section, top.path, top.kind, top.run, top.baseline) == (
+        "other scored",
+        "CPUtime.max",
+        "time",
+        1.12,
+        0.9,
+    )
     assert (row.section, row.path, row.run, row.baseline) == (
         "simulation",
         "CPUtime",

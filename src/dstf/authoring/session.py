@@ -1246,6 +1246,16 @@ class Session:
             raise KeyError(model_id)
         return tuple(test.plots or ())
 
+    def diagnostic_names(self, model_id: str) -> list[str]:
+        """The names ``model_id`` lists (`diagnostic_names`: the project's
+        `diagnostic_variables`, then the test's own). An unknown model is a
+        KeyError."""
+        project = self._require_project()
+        test = project.test(model_id)
+        if test is None:
+            raise KeyError(model_id)
+        return diagnostic_names(test, project.config.diagnostic_variables)
+
     def _plot_leaves(self, model_id: str) -> list[LeafSpec] | None:
         """:func:`~dstf.discovery.plots.plot_leaves` for this test: the
         leaves its plots derive from, ``None`` for one plot per tracked
@@ -1255,7 +1265,7 @@ class Session:
             raise KeyError(model_id)
         comp, _result = self._layout_source(model_id)
         compared = [vc.name for vc in comp.variables] if comp is not None else []
-        return plot_leaves(test, compared)
+        return plot_leaves(test, compared, self.diagnostic_names(model_id))
 
     def plots_from_tree(self, model_id: str) -> bool:
         """Whether the test's plots derive from a tree — the authored one,
@@ -1287,6 +1297,7 @@ class Session:
             [vc.name for vc in comp.variables] if comp is not None else [],
             result,
             listed=reads.names,
+            diagnostics=self.diagnostic_names(model_id),
         )
         if reads.names_read:
             return plots
@@ -1504,24 +1515,27 @@ class Session:
             ref.baseline.statistics if ref is not None else None,
             run_diagnostics=(result.diagnostics or []) if result is not None else (),
             baseline_diagnostics=ref.baseline.diagnostics if ref is not None else (),
-            extra_paths=statistic_paths(self._entry_tree(model_id)),
+            extra_paths=statistic_paths(
+                self._entry_tree(model_id), self.diagnostic_names(model_id)
+            ),
             baseline_digits=shown_digits(ref.sampling)
             if ref is not None
             else DOUBLE_SHOWN,
         )
 
     def statistic_leaves(self, model_id: str) -> list[tuple[LeafSpec, str]]:
-        """The statistics leaves of the entry's OWN tree, staged edits
-        included, with their paths (:func:`~dstf.comparison.tree_spec.
-        statistic_leaves`): which Statistics rows are scored. Read from the
+        """The card leaves of the entry's OWN tree (`on_the_card`: a
+        statistic, or a listed name's number), staged edits included, with
+        their paths (:func:`~dstf.comparison.tree_spec.statistic_leaves`):
+        which Statistics rows are scored. Read from the
         tree as authored, not from :meth:`tree_view` — a test with nothing
         compared (no baseline) has no view, and its criteria are criteria
         all the same. An unknown model is a KeyError."""
         from ..comparison.tree_spec import statistic_leaves
 
-        if self._require_project().test(model_id) is None:
-            raise KeyError(model_id)
-        return statistic_leaves(self._entry_tree(model_id))
+        return statistic_leaves(
+            self._entry_tree(model_id), self.diagnostic_names(model_id)
+        )
 
     def _entry_tree(self, model_id: str) -> SpecNode | None:
         """The entry's OWN tree, parsed; None when it has none. Never the
@@ -2965,6 +2979,9 @@ class SessionView:
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         return self._session.plots(model_id)
+
+    def diagnostic_names(self, model_id: str) -> list[str]:
+        return self._session.diagnostic_names(model_id)
 
     def plot_figure(
         self,

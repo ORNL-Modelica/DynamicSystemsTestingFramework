@@ -498,4 +498,22 @@ class TestStatisticPaths:
                 ],
             }
         )
-        assert statistic_paths(spec) == ["CPUtime", "translation.typo"]
+        assert statistic_paths(spec, ["CPUtime"]) == ["CPUtime", "translation.typo"]
+
+    def test_a_listed_names_numbers_are_its_rows(self):
+        """A number of a listed name is on the card (`on_the_card`): its
+        final on the name's row, its max on `<name>.max`; the same leaf on
+        an unlisted name is a plot's."""
+        from dstf.comparison.tree_spec import statistic_paths
+
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "scalar", "variable": v, "quantity": {"reduce": r}}
+                    for v, r in (("CPUtime", "final"), ("CPUtime", "max"), ("y", "max"))
+                ],
+            }
+        )
+        assert statistic_paths(spec, ["CPUtime"]) == ["CPUtime", "CPUtime.max"]
+        assert statistic_paths(spec, []) == []

@@ -14,6 +14,7 @@ nodes look ``spec.combinator`` up in :mod:`registry` to get the concrete
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -36,6 +37,7 @@ from .registry import combinator as registry_combinator
 from .registry import metric as registry_metric
 from .sides import Sides, parse_sides
 from .tree_spec import (
+    SUMMARY_FIELDS,
     CombinatorSpec,
     LeafSpec,
     SpecNode,
@@ -479,7 +481,12 @@ def _evaluate_leaf(
         # leaf must leave that leaf scoring its trajectory. Ungated, both
         # sides collapsed to one identical sample and a 2x-off signal passed.
         resolved = _scalar_path_arrays(
-            leaf, quantity, mode, baseline, scalars or ScalarSources()
+            leaf,
+            quantity,
+            mode,
+            baseline,
+            scalars or ScalarSources(),
+            run_variables=var_results_by_name,
         )
         if isinstance(resolved, VariableComparison):
             return _leaf(resolved)
@@ -648,6 +655,8 @@ def _scalar_path_arrays(
     mode,
     baseline: BaselineView | None,
     scalars: ScalarSources,
+    *,
+    run_variables: Mapping[str, VariableResult],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | VariableComparison:
     """Resolve a stats-path quantity on both sides into 1-sample arrays.
 
@@ -655,65 +664,39 @@ def _scalar_path_arrays(
     :class:`VariableComparison` naming the path and the side it is missing
     from. The reference side is left empty when the leaf scores against
     declared bounds (baseline-free) — there may be no baseline at all.
+    ``run_variables`` are the run's, only for the missing path's hint.
     """
-    act = resolve_scalar_path(path, scalars.statistics, scalars.diagnostics)
+    act = resolve_scalar_path(path, scalars.statistics)
     if act is None:
-        return _missing_scalar_path_comparison(leaf, path, "current run")
+        run_names = {*run_variables, *(d.name for d in scalars.diagnostics)}
+        return _missing_scalar_path_comparison(leaf, path, "current run", run_names)
 
     empty = np.array([])
     ref_time, ref_values = empty, empty
     if baseline is not None:
-        ref = resolve_scalar_path(path, baseline.statistics, baseline.diagnostics)
+        ref = resolve_scalar_path(path, baseline.statistics)
         if ref is None:
             if not mode.is_baseline_free():
+                held = {
+                    *baseline.ref_vars_by_name,
+                    *(d.name for d in baseline.diagnostics),
+                }
                 return _missing_scalar_path_comparison(
-                    leaf, path, f"baseline {baseline.name!r}"
+                    leaf, path, f"baseline {baseline.name!r}", held
                 )
         else:
             ref_time, ref_values = np.array([0.0]), np.array([ref])
     return ref_time, ref_values, np.array([0.0]), np.array([act])
 
 
-def resolve_scalar_path(
-    path: str,
-    statistics: dict,
-    diagnostics: list,
-) -> float | None:
-    """Resolve a dotted quantity path to a number, or ``None`` if absent.
-
-    Two lookups, in order, applied identically to both sides:
-
-    1. a dotted walk into ``statistics`` (``translation.scalar_unknowns``);
-    2. the last segment read as a diagnostics-summary field —
-       ``"CPUtime.final"`` means diagnostic ``CPUtime``, field ``final``
-       (one of final / min / max).
-
-    Statistics win on a collision: ``EventCounter`` lives in both maps, and
-    the statistics entry is the one the structural-warning checks already
-    treat as authoritative.
-
-    Diagnostics come in two shapes: the baseline's stored summaries
-    (:class:`~dstf.storage.baseline.DiagnosticSummary` — the codec
-    summarizes a pre-summary ``{"name", "values"}`` entry on read) and the
-    current run's ``VariableResult`` trajectories, summarized here; the
-    run's trajectories are deliberately not stored (reference_store:
-    CPUtime is nondeterministic).
-    """
-    value = _dotted_lookup(statistics, path)
-    if value is not None:
-        return value
-
-    name, _, field_name = path.rpartition(".")
-    if not name or field_name not in ("final", "min", "max"):
-        return None
-    for entry in diagnostics or []:
-        if isinstance(entry, VariableResult):
-            if entry.name != name:
-                continue
-            return _summarize_values(entry.values, field_name)
-        if isinstance(entry, DiagnosticSummary) and entry.name == name:
-            return _as_float(getattr(entry, field_name))
-    return None
+def resolve_scalar_path(path: str, statistics: dict) -> float | None:
+    """Resolve a dotted quantity path to a number, or ``None`` if absent:
+    a dotted walk into ``statistics`` (``translation.scalar_unknowns``),
+    applied identically to both sides. A path names a statistic of the
+    simulator's log, never a variable: a variable's number is its own
+    criterion, ``{"reduce": ...}`` (:func:`_summary_arrays` reads a listed
+    name's stored summary)."""
+    return _dotted_lookup(statistics, path)
 
 
 def _summarize_values(values, field_name: str) -> float | None:
@@ -922,6 +905,7 @@ def _missing_scalar_path_comparison(
     leaf: LeafSpec,
     path: str,
     side: str,
+    names: Collection[str] = (),
 ) -> VariableComparison:
     """Hard-fail sentinel for a quantity path absent from one side.
 
@@ -930,6 +914,11 @@ def _missing_scalar_path_comparison(
     names the path and the side (``"current run"`` / ``"baseline 'x'"``) —
     a stats path that silently scored as 0 would be a green regression
     test measuring nothing.
+
+    A path that names a variable that side holds (``names``: its
+    variables and its listed names) — ``X.final`` / ``.min`` / ``.max``,
+    which the 1.1 add form wrote, or a bare ``X``, which the card's ``+``
+    wrote — says how a variable's number is written. A message, no alias.
     """
     return VariableComparison(
         index=0,
@@ -943,7 +932,23 @@ def _missing_scalar_path_comparison(
         reference_final=float("nan"),
         actual_final=float("nan"),
         mode=leaf.metric,
-        diagnostics={"error": f"quantity {path!r} not found in {side}"},
+        diagnostics={
+            "error": f"quantity {path!r} not found in {side}"
+            + _one_spelling(path, names)
+        },
+    )
+
+
+def _one_spelling(path: str, names: Collection[str]) -> str:
+    """The hint a path naming a variable gets (`_missing_scalar_path_comparison`)."""
+    name, _, field_name = path.rpartition(".")
+    if not (name in names and field_name in SUMMARY_FIELDS):
+        name, field_name = path, "final"
+        if name not in names:
+            return ""
+    return (
+        " — a variable's number is written "
+        f'{{"variable": "{name}", "quantity": {{"reduce": "{field_name}"}}}}'
     )
 
 

@@ -2353,6 +2353,9 @@ class TestSessionView:
             "figure",
             "plot_figure",
             "plots",
+            # the names the test lists: a scalar added on one is its
+            # number's criterion (D162)
+            "diagnostic_names",
             "variable_names",
             # `labels` is a reader like the rest: a capability's caption
             # ("Add a criterion for pipe.T[1]") reads what the page's titles
@@ -4673,7 +4676,7 @@ class TestTheStatisticsRows:
                 {
                     "metric": "scalar",
                     "variable": "CPUtime",
-                    "quantity": "CPUtime.final",
+                    "quantity": {"reduce": "final"},
                     "tolerance": 0.1,
                     "tolerance_mode": "rel",
                 },
@@ -4683,9 +4686,8 @@ class TestTheStatisticsRows:
         rows = s.statistics(A)
         assert (rows[-1].path, rows[-1].section) == ("translation.typo", "other scored")
         assert rows[-1].run is None and rows[-1].baseline is None
-        # `CPUtime.final` is the `CPUtime` row (S2): no second one.
+        # CPUtime's number is the `CPUtime` row: no second one.
         assert [r.path for r in rows].count("CPUtime") == 1
-        assert "CPUtime.final" not in [r.path for r in rows]
 
     def test_an_implicit_tree_is_never_materialized_for_them(self, tmp_path):
         """The extra rows come from the ENTRY's own tree: an implicit tree

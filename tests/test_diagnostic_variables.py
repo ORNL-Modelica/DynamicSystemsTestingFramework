@@ -913,3 +913,362 @@ def test_a_max_seeds_around_the_runs_max():
     )
     assert seed["quantity"] == {"reduce": "max"}
     assert (seed["min_value"], seed["max_value"]) == (2.8, 3.2)
+
+
+# -- one spelling: a dotted path is a statistic only (R8) ------------------------
+
+HINT = ' — a variable\'s number is written {{"variable": "{x}", "quantity": {{"reduce": "{f}"}}}}'
+
+
+@pytest.mark.parametrize(
+    ("quantity", "field"),
+    [("CPUtime.final", "final"), ("CPUtime.max", "max"), ("CPUtime", "final")],
+    ids=["the picker's 1.1 path", "a max", "the card's 1.1 path"],
+)
+def test_a_path_naming_a_variable_is_not_found_and_says_the_one_spelling(
+    quantity, field
+):
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    leaf = parse_metric_tree(
+        {"metric": "scalar", "variable": "CPUtime", "quantity": quantity}
+    )
+    _, vc = _eval(
+        leaf,
+        run_diags=[_vr("CPUtime", RUN_CPU)],
+        ref_diags=[DiagnosticSummary("CPUtime", final=2.0, min=0.0, max=2.0)],
+    )
+    assert vc.diagnostics["error"] == (
+        f"quantity {quantity!r} not found in current run"
+        + HINT.format(x="CPUtime", f=field)
+    )
+
+
+def test_a_path_naming_a_baseline_variable_says_it_on_that_side():
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    leaf = parse_metric_tree({"metric": "scalar", "variable": "y", "quantity": "y.min"})
+    _, vc = _eval(
+        leaf,
+        ref_vars=[StoredVariable(index=1, name="y", expression="", values=[1.0] * 11)],
+    )
+    assert vc.diagnostics["error"] == ("quantity 'y.min' not found in current run")
+    _, vc = _eval(leaf, run_vars=[_vr("y", RUN_CPU)])
+    assert vc.diagnostics["error"] == (
+        "quantity 'y.min' not found in current run" + HINT.format(x="y", f="min")
+    )
+
+
+def test_a_path_naming_nothing_has_no_hint():
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    leaf = parse_metric_tree(
+        {"metric": "scalar", "variable": "t", "quantity": "translation.typo"}
+    )
+    _, vc = _eval(leaf, run_diags=[_vr("CPUtime", RUN_CPU)])
+    assert (
+        vc.diagnostics["error"]
+        == "quantity 'translation.typo' not found in current run"
+    )
+
+
+def test_a_path_is_read_from_the_statistics_alone():
+    from dstf.comparison.tree_eval import resolve_scalar_path
+
+    assert resolve_scalar_path("translation.n", {"translation": {"n": 3}}) == 3.0
+    assert resolve_scalar_path("CPUtime", {"CPUtime": 0.5}) == 0.5  # a statistic
+    assert resolve_scalar_path("CPUtime.final", {}) is None
+
+
+# -- numbers on the card, curves on plots (R1b) -----------------------------------
+
+CARD_LEAVES = [
+    ({"quantity": {"reduce": "final"}}, "CPUtime", True),
+    ({"quantity": {"reduce": "max"}}, "CPUtime", True),
+    ({"quantity": {"reduce": "final"}}, "y", False),  # unlisted: its plot
+    ({"quantity": {"reduce": "mean"}}, "CPUtime", False),  # needs the curve
+    ({"quantity": {"reduce": "final"}, "window": {"start": 0.5}}, "CPUtime", False),
+    ({"quantity": "translation.n"}, "translation.n", True),  # a statistic
+    ({"metric": "nrmse"}, "CPUtime", False),
+    ({"metric": "nrmse", "quantity": {"reduce": "final"}}, "CPUtime", False),
+]
+
+
+@pytest.mark.parametrize(("raw", "variable", "card"), CARD_LEAVES)
+def test_the_card_rule_reads_the_same_over_a_leaf_and_its_view(raw, variable, card):
+    """`on_the_card` and its view twin are one predicate under two inputs."""
+    from dstf.comparison.tree_spec import (
+        on_the_card,
+        on_the_card_view,
+        parse_metric_tree,
+        spec_to_view,
+    )
+
+    leaf = parse_metric_tree({"metric": "scalar", "variable": variable, **raw})
+    assert on_the_card(leaf, PROJECT) is card
+    assert on_the_card_view(spec_to_view(leaf), PROJECT) is card
+    assert on_the_card(leaf, []) is (card and isinstance(raw.get("quantity"), str))
+
+
+def _card_session(tmp_path, *leaves):
+    from dstf.authoring.session import PatchOp
+    from test_session import A, _stats_session
+
+    s = _stats_session(tmp_path)
+    tree = {
+        "combinator": "and",
+        "children": [{"metric": "nrmse", "variable": "x"}, *leaves],
+    }
+    s.stage([PatchOp(A, "add", "/metrics", tree)])
+    return s, A
+
+
+FINAL_CPU = {
+    "metric": "scalar",
+    "variable": "CPUtime",
+    "quantity": {"reduce": "final"},
+    "tolerance": 0.5,
+    "tolerance_mode": "rel",
+}
+MAX_CPU = {**FINAL_CPU, "quantity": {"reduce": "max"}}
+
+
+def test_a_summary_leaf_on_a_listed_name_is_on_the_card_not_on_a_plot(tmp_path):
+    s, A = _card_session(tmp_path, FINAL_CPU, MAX_CPU)
+    assert [p.subject for p in s.plots(A)] == [("x",)]
+    assert [(leaf.variable, path) for leaf, path in s.statistic_leaves(A)] == [
+        ("CPUtime", "/metrics/children/1"),
+        ("CPUtime", "/metrics/children/2"),
+    ]
+    rows = {r.path: r for r in s.statistics(A)}
+    # Its final on the listed name's own row; its max on a row of its own
+    # under Other, valued from the summary.
+    assert (rows["CPUtime"].run, rows["CPUtime"].baseline) == (1.12, pytest.approx(0.8))
+    assert (rows["CPUtime.max"].section, rows["CPUtime.max"].run) == (
+        "other scored",
+        1.12,
+    )
+    assert rows["CPUtime.max"].baseline == pytest.approx(0.8)
+
+
+def test_the_card_maps_a_summary_leaf_to_its_row(tmp_path):
+    from dstf.authoring.shell.stats_card import row_of
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    assert row_of(parse_metric_tree(FINAL_CPU)) == "CPUtime"
+    assert row_of(parse_metric_tree(MAX_CPU)) == "CPUtime.max"
+    statistic = {"metric": "scalar", "variable": "n", "quantity": "translation.n"}
+    assert row_of(parse_metric_tree(statistic)) == "translation.n"
+    # The 1.1 path is a statistic's row like any: no longer the name's (S2).
+    old = {"metric": "scalar", "variable": "CPUtime", "quantity": "CPUtime.final"}
+    assert row_of(parse_metric_tree(old)) == "CPUtime.final"
+
+
+def test_the_same_leaf_on_an_unlisted_variable_is_on_its_plot(tmp_path):
+    s, A = _card_session(tmp_path, {**FINAL_CPU, "variable": "y"})
+    assert [p.subject for p in s.plots(A)] == [("x",), ("y",)]
+    assert s.statistic_leaves(A) == []
+
+
+def test_a_curve_criterion_on_a_listed_name_has_its_plot(tmp_path):
+    s, A = _card_session(
+        tmp_path, FINAL_CPU, {"metric": "nrmse", "variable": "CPUtime"}
+    )
+    assert [p.subject for p in s.plots(A)] == [("x",), ("CPUtime",)]
+    assert [path for _, path in s.statistic_leaves(A)] == ["/metrics/children/1"]
+
+
+def test_a_cards_max_row_plus_seeds_a_criterion_that_scores(tmp_path):
+    """(d): the `+` on the `CPUtime.max` row writes the max in the one
+    spelling, and it is scored from the two summaries — never "not found"."""
+    from dstf.authoring.builtin.edit_tree import EditTree
+    from dstf.authoring.session import Selection, SessionView
+
+    s, A = _card_session(tmp_path, MAX_CPU)
+    view = SessionView(s, Selection(tests=frozenset({A})))
+    (op,) = (
+        EditTree()
+        .act(view, action="add", model_id=A, path="/metrics", quantity="CPUtime.max")
+        .ops
+    )
+    assert op.value == {
+        "combinator": "warn",
+        "children": [
+            {
+                "metric": "scalar",
+                "variable": "CPUtime",
+                "quantity": {"reduce": "max"},
+                "tolerance": 0.1,
+                "tolerance_mode": "rel",
+            }
+        ],
+    }
+    s.stage([op])
+    vc = s.comparisons[A].variables[-1]
+    assert "error" not in (vc.diagnostics or {})
+    assert (vc.actual_final, vc.reference_final) == (1.12, pytest.approx(0.8))
+
+
+def test_the_report_lists_a_listed_names_number_in_its_tree_not_its_plot(tmp_path):
+    """(b): a scalar final on CPUtime beside an nrmse on CPUtime: the
+    CPUtime plot section's criteria are the nrmse alone; the metric tree
+    lists both — as main listed a statistic's criterion."""
+    from dstf.reporting.context_builder import _build_template_context
+    from dstf.reporting.report_suite import plot_inputs, plot_page_keys
+    from dstf.reporting.tree_rows import leaves_of
+
+    nrmse = {"metric": "nrmse", "variable": "CPUtime"}
+    s, A = _card_session(tmp_path, FINAL_CPU, nrmse)
+    project, comp = s.project, s.comparisons[A]
+    test, result = project.test(A), project.results[A]
+    listed = s.diagnostic_names(A)
+    plots, extra = plot_inputs(test, comp.variables, result, None, None, listed)
+    ctx = _build_template_context(
+        A,
+        list(comp.variables),
+        project.store.get_reference(A),
+        None,
+        None,
+        test_model=test,
+        result=result,
+        metric_tree=comp.metric_tree,
+    )
+    ctx.update(
+        plot_page_keys(ctx, plots, extra, comp.metric_tree, None, diagnostics=listed)
+    )
+    by_subject = {
+        tuple(record["subject"]): section
+        for record, section in zip(ctx["plots"], ctx["plot_sections"])
+    }
+    assert list(by_subject) == [("x",), ("CPUtime",)]
+    criteria = by_subject[("CPUtime",)]["criteria"]
+    assert [(c["leaf"]["path"], c["leaf"]["metric"]) for c in criteria] == [
+        ("/metrics/children/2", "nrmse")
+    ]
+    assert [(n["path"], n["metric"]) for n in leaves_of(ctx["tree_view"])] == [
+        ("/metrics/children/0", "nrmse"),
+        ("/metrics/children/1", "scalar"),
+        ("/metrics/children/2", "nrmse"),
+    ]
+
+
+# -- the add form: every name a variable (R13, R14) --------------------------------
+
+
+def _add(session, A, variable, metric, path="/metrics"):
+    from dstf.authoring.builtin.edit_tree import EditTree
+    from dstf.authoring.session import Selection, SessionView
+
+    view = SessionView(session, Selection(tests=frozenset({A}), variable="x"))
+    (op,) = (
+        EditTree()
+        .act(
+            view, action="add", model_id=A, path=path, variable=variable, metric=metric
+        )
+        .ops
+    )
+    return op.value
+
+
+def _tree_session(tmp_path, kind="and", own=()):
+    from dstf.authoring.session import PatchOp
+    from test_session import A, _session_with_entry, _two_var_project
+
+    s = (
+        _session_with_entry(tmp_path, {"diagnostic_variables": list(own)})
+        if own
+        else None
+    )
+    if s is None:
+        from dstf.authoring.session import Session
+
+        cfg, work = _two_var_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+    t = np.asarray([i / 4 for i in range(5)])
+    s.project.results[A].diagnostics = [
+        VariableResult(index=1, time=t, values=0.4 * t, name="CPUtime"),
+        VariableResult(index=2, time=t, values=np.round(4 * t), name="EventCounter"),
+        VariableResult(index=3, time=t, values=1.0 + t, name="h"),
+    ]
+    tree = {"combinator": kind, "children": [{"metric": "nrmse", "variable": "x"}]}
+    s.stage([PatchOp(A, "add", "/metrics", tree)])
+    return s, A
+
+
+@pytest.mark.parametrize(("kind", "warned"), [("and", True), ("or", False)])
+def test_a_scalar_on_cpu_time_writes_the_one_spelling(tmp_path, kind, warned):
+    s, A = _tree_session(tmp_path, kind)
+    value = _add(s, A, "CPUtime", "scalar")
+    leaf = value["children"][0] if warned else value
+    assert ("combinator" in value) is warned
+    assert leaf == {
+        "metric": "scalar",
+        "variable": "CPUtime",
+        "quantity": {"reduce": "final"},
+        "tolerance": 0.1,
+        "tolerance_mode": "rel",
+    }
+
+
+@pytest.mark.parametrize(("kind", "warned"), [("and", True), ("or", False)])
+def test_a_curve_criterion_on_cpu_time_warns_only_in_an_and(tmp_path, kind, warned):
+    """Q12: a time's curve moves with the load as its number does."""
+    s, A = _tree_session(tmp_path, kind)
+    value = _add(s, A, "CPUtime", "nrmse")
+    leaf = value["children"][0] if warned else value
+    assert ("combinator" in value) is warned
+    assert leaf == {"metric": "nrmse", "variable": "CPUtime"}
+
+
+def test_a_scalar_on_the_event_count_is_exact_and_bare(tmp_path):
+    s, A = _tree_session(tmp_path)
+    assert _add(s, A, "EventCounter", "scalar") == {
+        "metric": "scalar",
+        "variable": "EventCounter",
+        "quantity": {"reduce": "final"},
+        "tolerance": 0,
+        "tolerance_mode": "abs",
+    }
+
+
+def test_a_scalar_on_a_tests_own_listed_name_takes_the_ordinary_seed(tmp_path):
+    """A per-test `h`: the ordinary scalar seed over the run's number,
+    never a time's warn."""
+    from dstf.comparison.seeds import SeedData, seed_scalar
+
+    s, A = _tree_session(tmp_path, own=["h"])
+    assert "h" in s.diagnostic_names(A)
+    one = (np.array([0.0]), np.array([2.0]))
+    assert _add(s, A, "h", "scalar") == {
+        "metric": "scalar",
+        "variable": "h",
+        **seed_scalar(SeedData(ref=None, act=one)),
+        "quantity": {"reduce": "final"},
+    }
+
+
+def test_adding_a_card_criterion_leaves_the_plot_cards_shape(tmp_path):
+    """A number on the card is on no plot: the plot cards are not rebuilt
+    (`TestPage.shape`)."""
+    from types import SimpleNamespace
+
+    from dstf.authoring.session import PatchOp
+    from dstf.authoring.shell.test_page import TestPage
+
+    s, A = _tree_session(tmp_path)
+    page = SimpleNamespace(shell=SimpleNamespace(session=s), model_id=A)
+    before = TestPage.shape(page, s.tree_view(A))
+    s.stage([PatchOp(A, "add", "/metrics/children/-", _add(s, A, "CPUtime", "scalar"))])
+    assert TestPage.shape(page, s.tree_view(A)) == before
+    s.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics/children/-",
+                {"metric": "nrmse", "variable": "CPUtime"},
+            )
+        ]
+    )
+    assert TestPage.shape(page, s.tree_view(A)) != before

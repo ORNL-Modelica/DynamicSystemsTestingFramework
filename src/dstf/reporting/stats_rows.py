@@ -235,13 +235,12 @@ def _row(
     baseline: object,
     *,
     top_level: bool = False,
-    samples: np.ndarray | None = None,
     kind: Kind | None = None,
     digits: tuple[int, int] = (DOUBLE_SHOWN, DOUBLE_SHOWN),
 ) -> StatRow:
     label = _label(key, top_level)
     if (run is None or _is_number(run)) and (baseline is None or _is_number(baseline)):
-        kind = kind or quantity_kind(path, samples)
+        kind = kind or quantity_kind(path)
         r, b = _number(run), _number(baseline)
         # The delta reads the numbers as they are shown; whether the row
         # changed is the scorer's verdict, over the numbers it scores.
@@ -382,16 +381,54 @@ def statistics_rows(
     if "simulation" not in names:
         rows += [top_row(key) for key in top]
 
-    # A text row holds no leaf: the card never shows one (S1). `X.final`
-    # is the row `X` only for a top-level `X` (S2).
+    # A text row holds no leaf: the card never shows one (S1). A listed
+    # name's min or max (`card_row`: `X.min`, `X.max`) is read from the two
+    # sides' summaries, as its final's row is; any other path is a
+    # statistic's.
     held = {row.path for row in rows if row.kind != "text"}
     for path in dict.fromkeys(extra_paths):
-        name, _, field = path.rpartition(".")
-        if path in held or (field == "final" and "." not in name and name in held):
+        if path in held:
             continue
-        r = resolve_scalar_path(path, dict(run), list(run_diagnostics))
-        b = resolve_scalar_path(path, dict(baseline), list(baseline_diagnostics))
-        samples = _diagnostic_values(run_diagnostics, name or path)
-        rows.append(_row(OTHER, path, path, r, b, top_level=True, samples=samples))
+        name, _, field_name = path.rpartition(".")
+        if name in listed and field_name in ("min", "max"):
+            samples = _diagnostic_values(run_diagnostics, name)
+            rows.append(
+                _row(
+                    OTHER,
+                    path,
+                    path,
+                    _summary(run_diagnostics, name, field_name),
+                    _summary(baseline_diagnostics, name, field_name),
+                    top_level=True,
+                    kind=listed_kind(name),
+                    digits=(
+                        recorded_digits(samples)
+                        if samples is not None
+                        else DOUBLE_SHOWN,
+                        baseline_digits,
+                    ),
+                )
+            )
+        else:
+            r = resolve_scalar_path(path, dict(run))
+            b = resolve_scalar_path(path, dict(baseline))
+            rows.append(_row(OTHER, path, path, r, b, top_level=True))
         held.add(path)
     return rows
+
+
+def _summary(entries: Sequence, name: str, field_name: str) -> float | None:
+    """The ``min`` or ``max`` of the listed name ``name`` among ``entries``:
+    a run's diagnostic over its samples, a baseline's summary's field."""
+    for entry in entries:
+        if getattr(entry, "name", None) != name:
+            continue
+        if hasattr(entry, field_name):
+            value = getattr(entry, field_name)
+            return None if value is None else float(value)
+        raw = getattr(entry, "values", None)
+        values = np.asarray([] if raw is None else raw, dtype=float)
+        if values.size == 0:
+            return None
+        return float(values.min() if field_name == "min" else values.max())
+    return None

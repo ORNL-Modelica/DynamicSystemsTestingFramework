@@ -515,7 +515,7 @@ class PlotCard:
                 # rows are where the tree has them, each with its crumb —
                 # the report's walk (`criteria_rows`), so both tiers lead a
                 # row the same way.
-                rows = criteria_rows(view, self.subject)
+                rows = criteria_rows(view, self.subject, self.listed())
                 crumb_ch = max((len(row["crumbs"]) for row in rows), default=0)
                 for row in rows:
                     path = str(row["leaf"]["path"])
@@ -629,13 +629,18 @@ class PlotCard:
                     # On the props dict: a name can hold a `"`.
                     button.props["aria-label"] = f"Remove {text} from this plot"
 
-    @staticmethod
-    def _leaves(view: dict | None, variable: str) -> list[dict]:
+    def _leaves(self, view: dict | None, variable: str) -> list[dict]:
+        listed = self.listed()
         return [
             leaf
             for leaf in leaves_of(view)
-            if leaf.get("variable") == variable and names_a_series(leaf)
+            if leaf.get("variable") == variable and names_a_series(leaf, listed)
         ]
+
+    def listed(self) -> list[str]:
+        """The names the test lists (`Session.diagnostic_names`): a number
+        read from one's summary is on the Statistics card, no row here."""
+        return self.page.shell.session.diagnostic_names(self.page.model_id)
 
     def _view(self, view: Any = UNREAD) -> dict | None:
         """The page's read of this sync, or one of this card's own when it
@@ -735,7 +740,10 @@ class PlotCard:
         variable scored on another plot draws nothing of its criteria here —
         and no stored-scalar leaf, whose ``variable`` names the leaf, not a
         series (`names_a_series`)."""
-        return [row["leaf"] for row in criteria_rows(view, self.resolved.subject)]
+        return [
+            row["leaf"]
+            for row in criteria_rows(view, self.resolved.subject, self.listed())
+        ]
 
     def is_open(self, path: str) -> bool:
         """Whether ``path`` is the open criterion — the page's word, the ONE

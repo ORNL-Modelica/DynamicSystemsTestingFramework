@@ -1565,7 +1565,7 @@ class TestPlotSections:
         comp = compare_test(test, result, decode_reference(ref))
         if "plots" not in kw:
             kw["plots"], kw["extra_series"] = plot_inputs(
-                test, comp.variables, result, None, None
+                test, comp.variables, result, None, None, ()
             )
         plot_dir = tmp_path / "plots"
         html = generate_comparison_plots(
@@ -1617,7 +1617,7 @@ class TestPlotSections:
             n_vars=2,
             plots=parse_plots(layout) if layout is not None else None,
         )
-        kw["plots"], kw["extra_series"] = plot_inputs(test, [], result, None, None)
+        kw["plots"], kw["extra_series"] = plot_inputs(test, [], result, None, None, ())
         plot_dir = tmp_path / "plots"
         html = generate_comparison_plots(
             "M", None, result, [], plot_dir, test_model=test, **kw
@@ -1778,7 +1778,7 @@ class TestPlotSections:
             x_expressions=expr,
         )
         comp = compare_test(test, result, decode_reference(ref))
-        plots, extra = plot_inputs(test, comp.variables, result, None, None)
+        plots, extra = plot_inputs(test, comp.variables, result, None, None, ())
         html = generate_comparison_plots(
             "M",
             decode_reference(ref),
@@ -1852,7 +1852,7 @@ class TestPlotSections:
             ),
         )
         comp = compare_test(test, result, decode_reference(ref))
-        plots, extra = plot_inputs(test, comp.variables, result, None, None)
+        plots, extra = plot_inputs(test, comp.variables, result, None, None, ())
         html = generate_comparison_plots(
             "M",
             decode_reference(ref),
@@ -2111,7 +2111,7 @@ class TestPlotSections:
             metric_tree_spec=parse_metric_tree(self.XY),
             plots=parse_plots([{"var": "x", "context": ["z"]}, {"var": "w"}]),
         )
-        assert plot_inputs(test, [], result, None, None) == ((), {})
+        assert plot_inputs(test, [], result, None, None, ()) == ((), {})
 
 
 class TestReviewPlotsPath:
@@ -2212,7 +2212,7 @@ def test_a_context_series_the_result_carries_is_read_from_memory(tmp_path):
             VariableResult(name="y", index=2, time=t, values=2 * t),
         ],
     )
-    plots, extra = plot_inputs(test, scored, result, Files, tmp_path)
+    plots, extra = plot_inputs(test, scored, result, Files, tmp_path, ())
     assert [(p.subject, p.context, p.missing) for p in plots] == [(("x",), ("y",), ())]
     assert list(extra) == ["y"]
     assert extra["y"][1].tolist() == (2 * t).tolist()
@@ -2252,7 +2252,7 @@ def test_unit_tests_elements_the_result_lacks_never_fold():
             }
         ),
     )
-    plots, _ = plot_inputs(test, [], result, None, None)
+    plots, _ = plot_inputs(test, [], result, None, None, ())
     assert [p.subject for p in plots] == [("unitTests.x[5]",), ("unitTests.x[6]",)]
 
 
@@ -2536,7 +2536,7 @@ class TestBothTiersDrawTheSamePlots:
         comp = s.comparisons[A]
         result = project.results.get(A)
         plots, extra = plot_inputs(
-            project.test(A), comp.variables, result, type(project.backend), None
+            project.test(A), comp.variables, result, type(project.backend), None, ()
         )
         assert [(p.subject, p.watch) for p in plots] == [
             (("y",), False),
@@ -2863,7 +2863,7 @@ class TestAVariableReadsAsItsExpression:
                 return {n: (t, np.cos(t)) for n in wanted if n in extra}
 
         resolved, extra_series = plot_inputs(
-            test, comp.variables, result, Files, tmp_path
+            test, comp.variables, result, Files, tmp_path, ()
         )
         html = generate_comparison_plots(
             "M",
@@ -2990,7 +2990,7 @@ class TestAVariableReadsAsItsExpression:
             source="unit_tests",
             x_expressions=[expressions[n] for n in names],
         )
-        plots, extra = plot_inputs(test, [], result, None, None)
+        plots, extra = plot_inputs(test, [], result, None, None, ())
         html = generate_comparison_plots(
             "M",
             None,

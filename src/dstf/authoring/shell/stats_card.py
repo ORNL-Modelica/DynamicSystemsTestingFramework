@@ -28,6 +28,7 @@ from nicegui import ui
 from ...backends.common.statistics import SUMMARIES
 from ...comparison.modes import ScalarConfig
 from ...comparison.sides import parse_sides, sides_text, signed_sides
+from ...comparison.tree_spec import card_row
 from ...reporting.stats_rows import SECTION_TITLES, StatRow, card_text
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
@@ -143,20 +144,16 @@ def cell_text(row: StatRow, side: int) -> str:
     return card_text(row.kind, value, row.digits[side]) or "—"
 
 
-def row_of(quantity: str, paths: Sequence[str] | set[str]) -> str:
-    """The row a leaf's quantity is shown on: its own, or — U2's add form
-    writes `CPUtime.final` — the top-level statistic's (S2), as
-    `statistics_rows` holds it."""
-    if quantity in paths:
-        return quantity
-    name, _, field = quantity.rpartition(".")
-    return name if field == "final" and name in paths else quantity
+def row_of(leaf: LeafSpec) -> str:
+    """The row a card leaf is shown on (`card_row`): a statistic's path, a
+    listed name's final its name's row, its min or max ``<name>.min`` /
+    ``<name>.max`` — as `statistics_rows` holds them."""
+    return card_row(leaf)
 
 
 def scored(
     leaves: Sequence[tuple[LeafSpec, str]],
     view: dict | None,
-    paths: Sequence[str],
 ) -> dict[str, list[dict]]:
     """Row path -> the criteria reading it, in tree order: the AUTHORED
     tree's statistics leaves (``leaves``, `Session.statistic_leaves`), each
@@ -164,11 +161,10 @@ def scored(
     "pending" where the view has none. Read from the view, a test with
     nothing compared (no baseline: no view) showed a staged criterion's row
     as unscored, and its `+` staged the same leaf again."""
-    held = set(paths)
     verdicts = {str(n["path"]): leaf_status(n) for n in leaves_of(view)}
     out: dict[str, list[dict]] = {}
     for leaf, path in leaves:
-        out.setdefault(row_of(str(leaf.params["quantity"]), held), []).append(
+        out.setdefault(row_of(leaf), []).append(
             {
                 "path": path,
                 "params": leaf.params,
@@ -268,7 +264,7 @@ class StatsCard:
             return
         shown = [r for r in stats if r.kind != "text"]
         paths = [r.path for r in shown]
-        reads = scored(session.statistic_leaves(model), view, paths)
+        reads = scored(session.statistic_leaves(model), view)
         tree = session.tree(model)
         shape = (
             model,
@@ -424,10 +420,7 @@ class StatsCard:
             ),
             None,
         )
-        if leaf is None:
-            return None
-        paths = [r.path for r in session.statistics(model)]
-        return row_of(str(leaf.params["quantity"]), paths)
+        return None if leaf is None else row_of(leaf)
 
     def open_editor(self, leaf_path: str, view: dict | None) -> bool:
         """The criterion's editor under its row (the `PlotCard.open_editor`

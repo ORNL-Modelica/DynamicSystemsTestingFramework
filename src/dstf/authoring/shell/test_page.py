@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from nicegui import ui
 
 from ...backends.pool import ItemState
-from ...comparison.tree_spec import reads_a_statistic
+from ...comparison.tree_spec import on_the_card_view
 from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
 from ...discovery.plots import PlotExtra, ResolvedPlot
@@ -1100,18 +1100,18 @@ class TestPage:
         the criteria and their variables, the plots themselves — each
         one's subject, context, whether it is a watch plot, and what the
         result lacks. NOT a leaf's
-        metric — a mode switch repaints a row's name in place. NOT a
-        statistics leaf: it is on no plot, and a `+` in the Statistics card
-        rebuilt every plot card — Focus ended, a zoom was lost, every figure
-        was re-sent."""
+        metric — a mode switch repaints a row's name in place. NOT a card
+        leaf (`on_the_card_view`: a statistic, or a number of a listed
+        name): it is on no plot, and a `+` in the Statistics card rebuilt
+        every plot card — Focus ended, a zoom was lost, every figure was
+        re-sent."""
         session = self.shell.session
+        listed = session.diagnostic_names(self.model_id)
         return (
             tuple(
                 (leaf["path"], leaf.get("variable"))
                 for leaf in leaves_of(view)
-                if not reads_a_statistic(
-                    str(leaf.get("metric")), leaf.get("params") or {}
-                )
+                if not on_the_card_view(leaf, listed)
             ),
             tuple(
                 (plot.subject, plot.context, plot.watch, plot.missing)

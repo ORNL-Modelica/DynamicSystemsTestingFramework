@@ -88,7 +88,7 @@ def test_each_refusal_names_where_and_what(raw, needle):
 
 
 def _leaves(raw):
-    return tree_leaves(parse_metric_tree(raw))
+    return tree_leaves(parse_metric_tree(raw), ())
 
 
 def _leaf(metric, var, **params):
@@ -240,8 +240,8 @@ def test_a_string_quantity_scalar_leaf_adds_no_plot():
 
 
 def test_tree_leaves_of_no_tree_is_none_and_of_one_leaf_is_that_leaf():
-    assert tree_leaves(None) is None
-    (only,) = tree_leaves(parse_metric_tree(_leaf("nrmse", "x")))
+    assert tree_leaves(None, ()) is None
+    (only,) = tree_leaves(parse_metric_tree(_leaf("nrmse", "x")), ())
     assert only.variable == "x"
 
 
@@ -287,16 +287,16 @@ def test_plot_leaves_are_the_authored_tree_even_with_nothing_compared():
     review's finding 7) — never one per tracked variable."""
     test = make_test_model("Lib.T")
     test.metric_tree_spec = parse_metric_tree(_and("y", "x"))
-    assert [leaf.variable for leaf in plot_leaves(test, [])] == ["y", "x"]
+    assert [leaf.variable for leaf in plot_leaves(test, [], ())] == ["y", "x"]
 
 
 def test_plot_leaves_are_the_implicit_tree_of_what_was_compared():
     test = make_test_model("Lib.T")
-    assert [leaf.variable for leaf in plot_leaves(test, ["b", "a"])] == ["b", "a"]
+    assert [leaf.variable for leaf in plot_leaves(test, ["b", "a"], ())] == ["b", "a"]
 
 
 def test_plot_leaves_are_none_with_no_tree_and_nothing_compared():
-    assert plot_leaves(make_test_model("Lib.T"), []) is None
+    assert plot_leaves(make_test_model("Lib.T"), [], ()) is None
 
 
 def _doc(plots):
@@ -449,7 +449,7 @@ def test_a_failed_run_has_no_plots_whatever_its_tree_and_extras():
     test = make_test_model("Lib.T", plots=parse_plots([{"var": "w"}]))
     test.metric_tree_spec = parse_metric_tree(_and("x"))
     partial = _Result(_Var("x", 1), _Var("w", 2), success=False)
-    assert plots_of_test(test, ["x"], partial, listed=["x", "w"]) == ()
+    assert plots_of_test(test, ["x"], partial, listed=["x", "w"], diagnostics=()) == ()
 
 
 def test_with_no_listing_what_the_result_carries_is_what_the_plots_can_draw():
@@ -460,12 +460,12 @@ def test_with_no_listing_what_the_result_carries_is_what_the_plots_can_draw():
     test = make_test_model("Lib.T")
     test.metric_tree_spec = parse_metric_tree(_and("a", "gone"))
     result = _Result(_Var("a", 1))
-    plots = plots_of_test(test, [], result, listed=None)
+    plots = plots_of_test(test, [], result, listed=None, diagnostics=())
     assert [(p.subject, p.missing) for p in plots] == [
         (("a",), ()),
         (("gone",), ("gone",)),
     ]
-    plots = plots_of_test(test, [], result, listed=["other"])
+    plots = plots_of_test(test, [], result, listed=["other"], diagnostics=())
     assert [(p.subject, p.missing) for p in plots] == [
         (("a",), ()),
         (("gone",), ("gone",)),
@@ -478,9 +478,9 @@ def test_unit_tests_elements_are_asked_of_the_leaves_and_the_tracked_names():
     with no tree."""
     test = make_test_model("Lib.T")
     test.metric_tree_spec = parse_metric_tree(_and(*UT[:2]))
-    plots = plots_of_test(test, [], _Result(), listed=None)
+    plots = plots_of_test(test, [], _Result(), listed=None, diagnostics=())
     assert [p.subject for p in plots] == [(UT[0],), (UT[1],)]
     untreed = make_test_model("Lib.T")
     result = _Result(_Var(UT[0], 1), _Var(UT[1], 2))
-    plots = plots_of_test(untreed, [], result, listed=None)
+    plots = plots_of_test(untreed, [], result, listed=None, diagnostics=())
     assert [p.subject for p in plots] == [(UT[0],), (UT[1],)]

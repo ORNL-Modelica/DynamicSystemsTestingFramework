@@ -23,7 +23,7 @@ locate the offending entry quickly in a large spec.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -217,16 +217,73 @@ def reads_a_summary(leaf: LeafSpec) -> bool:
     whole run. What a listed name's stored summary can score; any other
     criterion on a variable needs its curve (owner, 2026-10-18: a mean,
     integral or windowed scalar stores the curve)."""
-    desc = metric(leaf.metric)
-    quantity = leaf.params.get("quantity")
+    windowed = leaf.window_start is not None or leaf.window_end is not None
+    return _reads_a_summary(leaf.metric, leaf.params, windowed)
+
+
+def _reads_a_summary(
+    metric_name: str, params: Mapping[str, Any], windowed: bool
+) -> bool:
+    """:func:`reads_a_summary` over what a leaf and its view both carry."""
+    desc = metric(metric_name)
+    quantity = params.get("quantity")
     return (
         desc is not None
         and desc.accepts_quantity
         and isinstance(quantity, dict)
         and quantity.get("reduce") in SUMMARY_FIELDS
-        and leaf.window_start is None
-        and leaf.window_end is None
+        and not windowed
     )
+
+
+def on_the_card(leaf: LeafSpec, listed: Collection[str]) -> bool:
+    """A leaf the Statistics card holds, not a plot: one that reads a
+    statistic (a string quantity), or one that reads a LISTED name's
+    summary (:func:`reads_a_summary`; ``listed``: the test's
+    `diagnostic_names`). Owner, 2026-10-18: numbers on the card, curves on
+    plots — and in the report, which has no card, such a leaf is in no
+    plot's criteria, as a statistic's never was. Every place that routes a
+    leaf to the card or to a plot asks this, or its view twin
+    :func:`on_the_card_view`."""
+    windowed = leaf.window_start is not None or leaf.window_end is not None
+    return _on_the_card(leaf.metric, leaf.params, leaf.variable, windowed, listed)
+
+
+def on_the_card_view(node: Mapping[str, Any], listed: Collection[str]) -> bool:
+    """:func:`on_the_card` over a leaf of a `spec_to_view` (its ``metric``,
+    ``params``, ``variable`` and ``window``): the same predicate, for the
+    surfaces that hold a view, as :func:`reads_a_statistic` is
+    :func:`resolves_a_variable`'s."""
+    return _on_the_card(
+        str(node.get("metric")),
+        node.get("params") or {},
+        node.get("variable"),
+        bool(node.get("window")),
+        listed,
+    )
+
+
+def _on_the_card(
+    metric_name: str,
+    params: Mapping[str, Any],
+    variable: object,
+    windowed: bool,
+    listed: Collection[str],
+) -> bool:
+    return reads_a_statistic(metric_name, params) or (
+        _reads_a_summary(metric_name, params, windowed) and variable in listed
+    )
+
+
+def card_row(leaf: LeafSpec) -> str:
+    """The Statistics row a card leaf (:func:`on_the_card`) is shown on: a
+    statistic's path; a listed name's final its own row (the name), its
+    min or max ``<name>.min`` / ``<name>.max``."""
+    quantity = leaf.params["quantity"]
+    if isinstance(quantity, str):
+        return quantity
+    field_name = quantity["reduce"]
+    return leaf.variable if field_name == "final" else f"{leaf.variable}.{field_name}"
 
 
 def tree_variables(spec: SpecNode | None, listed: Iterable[str] = ()) -> list[str]:
@@ -259,27 +316,30 @@ def tree_variables(spec: SpecNode | None, listed: Iterable[str] = ()) -> list[st
     return out
 
 
-def statistic_leaves(spec: SpecNode | None) -> list[tuple[LeafSpec, str]]:
-    """The tree's statistics leaves (:func:`reads_a_statistic`) with their
-    paths, in tree order: which Statistics rows the tree scores. ``[]``
-    for no tree."""
+def statistic_leaves(
+    spec: SpecNode | None, listed: Collection[str]
+) -> list[tuple[LeafSpec, str]]:
+    """The tree's card leaves (:func:`on_the_card`) with their paths, in
+    tree order: which Statistics rows the tree scores. ``[]`` for no
+    tree."""
     if spec is None:
         return []
     return [
         (leaf, path)
         for leaf, path in _walk_leaves_with_paths(spec, "/metrics")
-        if reads_a_statistic(leaf.metric, leaf.params)
+        if on_the_card(leaf, listed)
     ]
 
 
-def statistic_paths(spec: SpecNode | None) -> list[str]:
-    """The quantity paths the tree's statistics leaves read, unique, in
-    tree order: what a Statistics row must exist for. ``[]`` for no tree."""
+def statistic_paths(spec: SpecNode | None, listed: Collection[str]) -> list[str]:
+    """The rows the tree's card leaves are shown on (:func:`card_row`),
+    unique, in tree order: what a Statistics row must exist for. ``[]``
+    for no tree."""
     out: list[str] = []
-    for leaf, _ in statistic_leaves(spec):
-        path = str(leaf.params["quantity"])
-        if path not in out:
-            out.append(path)
+    for leaf, _ in statistic_leaves(spec, listed):
+        row = card_row(leaf)
+        if row not in out:
+            out.append(row)
     return out
 
 

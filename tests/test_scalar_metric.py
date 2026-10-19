@@ -383,10 +383,15 @@ class TestScalarLeafEvaluation:
         assert not drifted.passed
         assert drifted.score == pytest.approx(1.0)
 
-    def test_diagnostics_summary_path_reduces_current_side_live(self):
+    def test_a_variables_number_reduces_the_runs_diagnostic_live(self):
         # Baseline carries the stored summary; the run carries a trajectory.
         spec = parse_metric_tree(
-            {"metric": "scalar", "quantity": "CPUtime.final", "tolerance": 0.5}
+            {
+                "metric": "scalar",
+                "variable": "CPUtime",
+                "quantity": {"reduce": "final"},
+                "tolerance": 0.5,
+            }
         )
         baseline = _baselines(
             diagnostics=[{"name": "CPUtime", "final": 1.0, "min": 0.1, "max": 1.0}]
@@ -408,9 +413,14 @@ class TestScalarLeafEvaluation:
         assert node.passed
 
     @pytest.mark.parametrize("field_name,expected", [("min", 0.1), ("max", 1.2)])
-    def test_diagnostics_summary_min_max_fields(self, field_name, expected):
+    def test_a_variables_min_and_max_read_their_fields(self, field_name, expected):
         spec = parse_metric_tree(
-            {"metric": "scalar", "quantity": f"CPUtime.{field_name}", "tolerance": 10.0}
+            {
+                "metric": "scalar",
+                "variable": "CPUtime",
+                "quantity": {"reduce": field_name},
+                "tolerance": 10.0,
+            }
         )
         run = ScalarSources(
             diagnostics=[
@@ -434,9 +444,14 @@ class TestScalarLeafEvaluation:
     def test_legacy_full_array_diagnostics_entry_is_summarized(self):
         # Pre-summary baselines stored the whole diagnostic trajectory: the
         # codec summarizes such an entry on read (`_baselines` decodes the
-        # file's shape), and the resolver reads the summary.
+        # file's shape), and the evaluator reads the summary.
         spec = parse_metric_tree(
-            {"metric": "scalar", "quantity": "CPUtime.max", "tolerance": 0.0}
+            {
+                "metric": "scalar",
+                "variable": "CPUtime",
+                "quantity": {"reduce": "max"},
+                "tolerance": 0.0,
+            }
         )
         run = ScalarSources(
             diagnostics=[
@@ -461,37 +476,6 @@ class TestScalarLeafEvaluation:
         )
         assert node.passed
         assert node.diagnostics["variable"].reference_final == pytest.approx(0.9)
-
-    def test_statistics_wins_over_diagnostics_on_collision(self):
-        # EventCounter lives in both maps; the statistics entry is the one
-        # the structural-warning checks already treat as authoritative.
-        spec = parse_metric_tree(
-            {"metric": "scalar", "quantity": "EventCounter.final", "tolerance": 0.0}
-        )
-        stats = {"EventCounter": {"final": 3.0}}
-        run = ScalarSources(
-            statistics=stats,
-            diagnostics=[
-                VariableResult(
-                    index=1,
-                    name="EventCounter",
-                    time=np.array([0.0, 1.0]),
-                    values=np.array([9.0, 9.0]),
-                )
-            ],
-        )
-        node = evaluate_spec(
-            spec,
-            {},
-            _baselines(
-                statistics=stats,
-                diagnostics=[{"name": "EventCounter", "final": 9.0}],
-            ),
-            1e-4,
-            scalars=run,
-        )
-        assert node.diagnostics["variable"].actual_final == pytest.approx(3.0)
-        assert node.passed
 
     def test_missing_path_on_the_current_side_hard_fails(self):
         spec = parse_metric_tree({"metric": "scalar", "quantity": "timing.nope"})

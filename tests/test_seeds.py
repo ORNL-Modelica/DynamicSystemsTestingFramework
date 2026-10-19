@@ -15,8 +15,8 @@ from dstf.comparison.seeds import (
     SeedData,
     _outward,
     quantity_kind,
-    seed_diagnostic,
     seed_quantity,
+    seed_variable_number,
     seeded_leaf,
 )
 from dstf.comparison.tree_eval import (
@@ -330,25 +330,30 @@ def test_a_hand_written_window_bound_may_be_a_string():
     assert (t[0], t[-1]) == (2.0, 5.0)
 
 
-# -- a diagnostic's seed (U2, K1) ------------------------------------------------
+# -- a listed name's number (U2, K1; D162) ---------------------------------------
+
+
+def _number(name, reduce="final", **params):
+    return {
+        "metric": "scalar",
+        "variable": name,
+        "quantity": {"reduce": reduce},
+        **params,
+    }
 
 
 def test_a_count_is_seeded_exact():
-    leaf = seed_diagnostic("EventCounter", np.array([0.0, 3.0, 7.0]), into="and")
-    assert leaf == {
-        "metric": "scalar",
-        "variable": "EventCounter",
-        "quantity": "EventCounter.final",
-        "tolerance": 0,
-        "tolerance_mode": "abs",
-    }
+    leaf = seed_variable_number("EventCounter", np.array([0.0, 3.0, 7.0]), into="and")
+    assert leaf == _number("EventCounter", tolerance=0, tolerance_mode="abs")
 
 
 def test_cpu_time_is_seeded_relative_even_when_its_final_is_whole():
     """A tiny model's CPUtime can be 0.0 or 1.0 at the end: a whole number,
     and no count — seeded as one, a next run's 0.01 s would fail it."""
     for values in ([0.0, 0.5, 1.25], [0.0, 0.0, 0.0], [0.0, 1.0, 1.0]):
-        (leaf,) = seed_diagnostic("CPUtime", np.array(values), into="and")["children"]
+        (leaf,) = seed_variable_number("CPUtime", np.array(values), into="and")[
+            "children"
+        ]
         assert (leaf["tolerance"], leaf["tolerance_mode"]) == (0.1, "rel"), values
 
 
@@ -356,25 +361,18 @@ def test_cpu_time_is_seeded_inside_a_warn_and_a_count_bare():
     """A run's CPU time moves with the machine's load (`--parallel`): in an
     `and` its criterion warns, never fails; a count only moves with the
     model."""
-    node = seed_diagnostic("CPUtime", np.array([0.0, 0.2, 0.4]), into="and")
+    node = seed_variable_number("CPUtime", np.array([0.0, 0.2, 0.4]), into="and")
     assert node == {
         "combinator": "warn",
-        "children": [
-            {
-                "metric": "scalar",
-                "variable": "CPUtime",
-                "quantity": "CPUtime.final",
-                "tolerance": 0.1,
-                "tolerance_mode": "rel",
-            }
-        ],
+        "children": [_number("CPUtime", tolerance=0.1, tolerance_mode="rel")],
     }
-    assert "combinator" not in seed_diagnostic(
+    assert "combinator" not in seed_variable_number(
         "EventCounter", np.array([0.0, 3.0]), into="and"
     )
-    # A diagnostic time of unknown name is a time too: it warns in an `and`.
-    assert seed_diagnostic("Wall", np.array([0.0, 2.5]), into="and")["combinator"] == (
-        "warn"
+    # Any other name is no time, whatever its samples: the ordinary seed,
+    # bare (D162).
+    assert "combinator" not in seed_variable_number(
+        "Wall", np.array([0.0, 2.5]), into="and"
     )
     parse_metric_tree(node)  # a tree the evaluator reads
 
@@ -384,42 +382,28 @@ def test_cpu_time_is_seeded_bare_where_a_warn_would_pass_its_parent(into):
     """A `warn` child passes whatever it scores: in an `or` or a `k-of-n` it
     would pass its parent with nothing else passing. Only an `and` takes the
     warn; anywhere else the leaf goes bare, with its 10%."""
-    leaf = seed_diagnostic("CPUtime", np.array([0.0, 0.2, 0.4]), into=into)
-    assert leaf == {
-        "metric": "scalar",
-        "variable": "CPUtime",
-        "quantity": "CPUtime.final",
-        "tolerance": 0.1,
-        "tolerance_mode": "rel",
-    }
+    leaf = seed_variable_number("CPUtime", np.array([0.0, 0.2, 0.4]), into=into)
+    assert leaf == _number("CPUtime", tolerance=0.1, tolerance_mode="rel")
 
 
-def test_another_diagnostic_is_a_count_when_every_sample_is_whole():
-    assert (
-        seed_diagnostic("Steps", np.array([0.0, 2.0, 9.0]), into="and")["tolerance"]
-        == 0
-    )
-    assert (
-        seed_diagnostic("Wall", np.array([0.0, 2.0, 9.5]), into="or")["tolerance"]
-        == 0.1
-    )
+@pytest.mark.parametrize("values", [[0.0, 2.0, 9.0], [0.0, 2.0, 9.5]])
+def test_another_name_is_never_a_kind_guessed_from_its_samples(values):
+    """Whole samples made a count, fractional ones a time; now any name
+    but CPUtime and EventCounter takes the ordinary scalar seed (bounds
+    around its final)."""
+    seed = seed_variable_number("Steps", np.array(values), into="and")
+    assert set(seed) == {"metric", "variable", "quantity", "min_value", "max_value"}
+    assert seed["min_value"] < values[-1] < seed["max_value"]
 
 
-def test_a_missing_sample_does_not_unmake_a_count():
-    """Only the FINITE samples are read: a NaN (a sample the run did not
-    record) is no fraction."""
-    assert (
-        seed_diagnostic("Steps", np.array([0.0, 2.0, np.nan]), into="and")["tolerance"]
-        == 0
-    )
-
-
-def test_a_diagnostic_leaf_parses_and_scores_its_own_data():
+def test_a_number_leaf_parses_and_scores_its_own_data():
+    """Scored from the summaries: the run's recorded EventCounter against
+    the baseline's stored final."""
     t = np.array([0.0, 1.0, 2.0])
     diag = VariableResult(
         index=0, time=t, values=np.array([0.0, 2.0, 5.0]), name="EventCounter"
     )
-    raw = seed_diagnostic("EventCounter", diag.values, into="and")
+    raw = seed_variable_number("EventCounter", diag.values, into="and")
     spec = parse_metric_tree(raw)
     base = BaselineView(
         name=PRIMARY_BASELINE,
@@ -436,6 +420,8 @@ def test_a_diagnostic_leaf_parses_and_scores_its_own_data():
         scalars=ScalarSources(statistics={}, diagnostics=[diag]),
     )
     assert got.passed, got
+    vc = got.diagnostics["variable"]
+    assert (vc.actual_final, vc.reference_final) == (5.0, 5.0)
 
 
 # -- a quantity's kind and its seed (U3) ------------------------------------------
@@ -450,9 +436,7 @@ def test_a_diagnostic_leaf_parses_and_scores_its_own_data():
         ("simulation.result_points", "count"),
         ("simulation.accepted_steps", "count"),
         ("EventCounter", "count"),
-        ("EventCounter.final", "count"),
         ("CPUtime", "time"),
-        ("CPUtime.final", "time"),
         ("simulation.cpu_time_integration", "time"),
         ("simulation.wall_time", "time"),
         ("timing.total_wall", "time"),
@@ -464,27 +448,9 @@ def test_a_quantity_kind_by_its_path(path, kind):
     assert quantity_kind(path) == kind
 
 
-def test_an_unknown_diagnostic_kind_by_its_samples():
-    assert quantity_kind("Foo.final", np.array([0.0, 2.0, 9.0])) == "count"
-    assert quantity_kind("Foo.final", np.array([0.0, 2.0, 9.5])) == "time"
-
-
-def test_a_top_level_statistic_naming_a_diagnostic_is_its_kind():
-    """A top-level statistic (`Wall`, folded in from the diagnostics) given
-    the run's samples is classified as the diagnostic is: the add form's
-    `Wall.final` leaf and the Statistics row's `Wall` are one kind."""
-    assert quantity_kind("Wall", np.array([0.0, 2.0, 9.5])) == "time"
-    assert quantity_kind("Wall", np.array([0.0, 2.0, 9.0])) == "count"
+def test_a_statistic_is_never_a_kind_guessed_from_samples():
+    """A path's kind is its path's: a top-level `Wall` is a count."""
     assert quantity_kind("Wall") == "count"
-    # A known name wins over whole samples, as K1 says.
-    assert quantity_kind("CPUtime", np.array([0.0, 1.0, 1.0])) == "time"
-
-
-@pytest.mark.parametrize(
-    ("path", "kind"), [("EventCounter.max", "count"), ("CPUtime.min", "time")]
-)
-def test_a_diagnostics_min_and_max_take_its_kind(path, kind):
-    assert quantity_kind(path) == kind
 
 
 def test_a_count_is_seeded_exact_and_bare():
@@ -521,8 +487,3 @@ def test_a_time_elsewhere_is_seeded_bare(into):
         "tolerance": 0.1,
         "tolerance_mode": "rel",
     }
-
-
-def test_a_variable_is_named_when_given():
-    leaf = seed_quantity("CPUtime.final", "time", into="or", variable="CPUtime")
-    assert leaf["variable"] == "CPUtime"

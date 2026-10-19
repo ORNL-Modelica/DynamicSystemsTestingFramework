@@ -374,6 +374,7 @@ class TestSimulateOnlyClassification:
                 max_embedded_samples=1000,
                 theme="default",
                 reference_root=Path("."),
+                diagnostic_variables=[],
             ),
             manifest_meta_by_model={},
         )
@@ -385,7 +386,10 @@ class TestSimulateOnlyClassification:
             # the page's plots off the same object.
             test_lookup={
                 comp.model_id: SimpleNamespace(
-                    simulate_only=True, plots=None, metric_tree_spec=None
+                    simulate_only=True,
+                    plots=None,
+                    metric_tree_spec=None,
+                    diagnostic_variables=[],
                 )
             },
             **common,

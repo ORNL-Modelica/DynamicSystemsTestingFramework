@@ -191,40 +191,21 @@ def seeded_leaf(metric: str, variable: str, data: SeedData) -> dict:
     return {**leaf, **desc.seed(data)}
 
 
-#: Diagnostics whose kind is known by name (K1): a count is scored exact, a
+#: Listed names whose kind is known by name (K1): a count is scored exact, a
 #: time within 10%. A tiny model's CPUtime can end on a whole 0.0 or 1.0:
 #: read by its values alone it is a count, and a next run's 0.01 s fails.
 COUNTS = frozenset({"EventCounter"})
 TIMES = frozenset({"CPUtime"})
 
 
-def quantity_kind(
-    path: str, values: np.ndarray | None = None
-) -> Literal["count", "time"]:
-    """What kind of number ``path`` names (S5): a ``count`` is scored exact,
-    a ``time`` within 10%. A statistic is a time by its path — the
+def quantity_kind(path: str) -> Literal["count", "time"]:
+    """What kind of number the statistic ``path`` names (S5): a ``count``
+    is scored exact, a ``time`` within 10%. A time by its path — the
     ``timing`` section, CPUtime, and the ``*_time`` / ``*_wall`` /
     ``cpu_time*`` keys; every other number a backend records is a count,
     whatever its type (a Dymola ``result_points`` can be written as a
-    float).
-
-    A diagnostic's summary (``CPUtime.final``) takes K1's rule: by name
-    when known, else a count when every finite sample of ``values`` is a
-    whole number. A top-level statistic given the run's samples of the
-    diagnostic it names (``CPUtime``, folded in from the diagnostics) is
-    that diagnostic's final and takes the same rule — the Statistics row
-    and the add form's ``X.final`` leaf are one kind."""
-    name, _, field = path.rpartition(".")
-    if not name and values is not None:
-        name, field = path, "final"
-    if name and "." not in name and field in ("final", "min", "max"):
-        if name in COUNTS:
-            return "count"
-        if name in TIMES:
-            return "time"
-        finite = values[np.isfinite(values)] if values is not None else np.array([])
-        whole = finite.size > 0 and bool(np.all(finite == np.round(finite)))
-        return "count" if whole else "time"
+    float). A listed name's kind is by its name alone
+    (`seed_variable_number`), never guessed from its values."""
     head = path.split(".", 1)[0]
     last = path.rsplit(".", 1)[-1]
     if (
@@ -242,13 +223,9 @@ def seed_quantity(
     kind: Literal["count", "time"],
     *,
     into: str,
-    variable: str | None = None,
 ) -> dict:
-    """A ``scalar`` criterion on the stored number ``path`` names:
-    ``tolerance 0 abs`` for a count and ``0.1 rel`` for a time. With
-    ``variable`` (a diagnostic's name) the leaf names it: parsed without
-    one, its variable becomes the quantity text, and its row reads
-    ``scalar · CPUtime.final``.
+    """A ``scalar`` criterion on the statistic ``path`` names: ``tolerance
+    0 abs`` for a count and ``0.1 rel`` for a time.
 
     A time is seeded inside a ``warn`` when it lands in an ``and``
     (``into``, the kind of the combinator it is added to): a run's CPU time
@@ -257,11 +234,8 @@ def seed_quantity(
     bare: a ``warn`` child passes whatever it scores, so under an ``or`` or
     a ``k-of-n`` it would pass its parent with nothing else passing. A
     count stays bare: it only moves when the model does."""
-    leaf: dict = {"metric": "scalar"}
-    if variable is not None:
-        leaf["variable"] = variable
-    leaf["quantity"] = path
-    return warn_if_time({**leaf, **_known_tolerance(kind)}, kind == "time", into=into)
+    leaf = {"metric": "scalar", "quantity": path, **_known_tolerance(kind)}
+    return warn_if_time(leaf, kind == "time", into=into)
 
 
 def _known_tolerance(kind: Literal["count", "time"]) -> dict:
@@ -314,11 +288,3 @@ def seed_variable_number(
     number = _reduce_series(np.arange(float(series.size)), series, reduce)
     act = (np.array([0.0]), np.array([number]))
     return {**leaf, **seed_scalar(SeedData(ref=None, act=act)), "quantity": quantity}
-
-
-def seed_diagnostic(name: str, values: np.ndarray | None, *, into: str) -> dict:
-    """A criterion on the diagnostic ``name`` (the plan's K1): its stored
-    final through a quantity path, seeded by :func:`seed_quantity` at the
-    kind :func:`quantity_kind` reads from ``values``."""
-    path = f"{name}.final"
-    return seed_quantity(path, quantity_kind(path, values), into=into, variable=name)
