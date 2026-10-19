@@ -186,13 +186,15 @@ def collect_variables(spec: SpecNode) -> list[str]:
 def resolves_a_variable(leaf: LeafSpec) -> bool:
     """Does this leaf score a variable of the RESULT?
 
-    False for a stored-scalar leaf — a metric that accepts ``quantity``
-    given a string one reads its number from the run's statistics, and its
-    ``variable`` is free text naming that leaf, not a series anything
-    resolves. Treated as a variable, its path (a statistic such as
-    ``translation.nonlinear_count``) was registered for the expression
-    soft-check, which then compared a baseline's recorded expression
-    against a quantity nothing measured.
+    False for a path leaf — a metric that accepts ``quantity`` given a
+    string one reads its number from the statistics, and its ``variable``
+    is free text naming that leaf (the path, e.g.
+    ``translation.nonlinear_count``, or a label), not a series anything
+    resolves. Treated as a variable it would be looked for in the result
+    (`tree_variables`) and in the expression soft-check
+    (`collect_variables_by_baseline`) — which, when a string quantity still
+    read a listed name, registered ``CPUtime`` and compared a baseline's
+    recorded expression against a quantity nothing measured.
     """
     return not reads_a_statistic(leaf.metric, leaf.params)
 

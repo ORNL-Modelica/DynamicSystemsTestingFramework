@@ -80,13 +80,14 @@ What each part does:
   the one its result file gives it; `expression` is only for a source that
   wrote another text for the same variable, as a Modelica `UnitTests`
   component does. It also records, as `diagnostics`, one `VariableResult`
-  for each name the test lists that the result holds: `testing.json`'s
-  `diagnostic_variables`, then the entry's own
-  (`TestModel.diagnostic_variables`), each once, in that order. Their
-  final, min and max are what the baseline stores, and what a `scalar`'s
-  final, min or max is scored from. DSTF's own backends compose that list
-  with `dstf.discovery.test_registry.diagnostic_names`, which is not on the
-  [API page](../reference/api.md) yet; the example above records none.
+  for each listed name its result holds: the project's
+  `diagnostic_variables` (`self.config.diagnostic_variables`), then the
+  entry's own (`test.diagnostic_variables`), each once, in that order. The
+  baseline stores each one's final, min and max; a `scalar`'s final, min or
+  max over the whole run of a name whose curve the result does not hold is
+  scored from them. The example's project lists no names of its own, and its
+  model writes neither default name (`CPUtime`, `EventCounter`), so its
+  `read_result` leaves `diagnostics` empty.
 
 ## Capabilities
 

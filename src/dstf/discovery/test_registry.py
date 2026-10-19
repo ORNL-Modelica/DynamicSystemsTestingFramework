@@ -39,6 +39,9 @@ class TestModel:
         output_interval: Seconds between output points, or None.
         timeout: Seconds the test may run, or None for the run's limit.
         variable_patterns: The entry's ``variables``: names and patterns.
+        diagnostic_variables: The entry's own ``diagnostic_variables``,
+            listed after the project's: names whose final, min and max its
+            baseline stores.
     """
 
     model_id: str

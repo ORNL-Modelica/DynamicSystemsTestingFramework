@@ -432,6 +432,9 @@ class Config:
         parallel: How many tests run at once.
         timeout: Seconds a test may run.
         tolerance: The project's base tolerance.
+        diagnostic_variables: The names whose final, min and max every
+            test's baseline stores when its result holds them
+            (``testing.json``'s ``diagnostic_variables``).
         backend_settings: The backend's settings block, after construction.
 
     Raises:
