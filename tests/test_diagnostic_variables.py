@@ -458,3 +458,458 @@ def test_an_accept_stores_a_summary_and_a_curve_only_once_a_criterion_needs_it(
     assert [d for d in second["diagnostics"] if d["name"] == "h"] == [
         {"name": "h", "final": 4.0, "min": 3.0, "max": 5.0}
     ]
+
+
+# -- no statistics copy (R5, R6) ---------------------------------------------------
+
+
+def _document(**top) -> dict:
+    """A reference document whose `diagnostics` hold CPUtime; ``top`` the
+    top-level statistics beside its `translation` section."""
+    return {
+        "model_id": "M",
+        "statistics": {"translation": {"a": 1}, **top},
+        "diagnostics": [{"name": "CPUtime", "final": 0.5, "min": 0.0, "max": 0.5}],
+        "time": [0.0],
+        "variables": [],
+    }
+
+
+def test_the_codec_drops_a_copy_of_a_diagnostic_on_read_and_never_writes_it():
+    from dstf.storage.baseline_codec import decode_reference, reference_to_json
+
+    ref = decode_reference(_document(CPUtime=0.5))
+    assert ref.baseline.statistics == {"translation": {"a": 1}}
+    assert reference_to_json(ref)["statistics"] == {"translation": {"a": 1}}
+
+
+def test_a_soft_check_drops_the_copy_too():
+    from dstf.storage.baseline_codec import decode_series
+
+    assert decode_series(_document(CPUtime=0.5), "x").statistics == {
+        "translation": {"a": 1}
+    }
+
+
+def test_the_codec_keeps_a_key_that_names_no_diagnostic():
+    """``EventCounter`` is no diagnostic of THIS file: kept."""
+    from dstf.storage.baseline_codec import decode_reference
+
+    ref = decode_reference(_document(Foo=3.0, EventCounter=2.0))
+    assert ref.baseline.statistics == {
+        "translation": {"a": 1},
+        "Foo": 3.0,
+        "EventCounter": 2.0,
+    }
+
+
+def test_the_codec_keeps_a_section_named_like_a_diagnostic():
+    from dstf.storage.baseline_codec import decode_reference
+
+    doc = _document()
+    doc["statistics"]["CPUtime"] = {"x": 1}
+    assert decode_reference(doc).baseline.statistics["CPUtime"] == {"x": 1}
+
+
+def test_a_file_whose_statistics_were_only_the_copy_is_written_without_them():
+    from dstf.storage.baseline_codec import decode_reference, reference_to_json
+
+    doc = _document(CPUtime=0.5)
+    del doc["statistics"]["translation"]
+    assert "statistics" not in reference_to_json(decode_reference(doc))
+
+
+def _dymola_run(tmp_path, own=()):
+    """The Dymola fixture's result, read as a run: CPUtime and EventCounter
+    are float32 diagnostics (0.002 and 3)."""
+    from dstf.backends.dymola import backend as dr
+
+    test_dir = tmp_path / "dymola" / "test_0001"
+    test_dir.mkdir(parents=True)
+    for name in ("dsres.mat", "dslog.txt", "translation_log.txt"):
+        shutil.copy(FIXTURES / "results" / "Dymola" / name, test_dir / name)
+    cfg = SimpleNamespace(
+        backend_setup=[],
+        diagnostic_variables=PROJECT,
+        work_dir=test_dir.parent,
+        backend_path="x",
+        timeout=1,
+        parallel=1,
+    )
+    test = make_test_model(
+        "Lib.A", variable_patterns=["x"], diagnostic_variables=list(own)
+    )
+    return dr.DymolaBackend(cfg).read_result(test, "test_0001", None)
+
+
+def test_a_dymola_run_holds_no_statistics_copy(tmp_path):
+    run = _dymola_run(tmp_path)
+    assert "CPUtime" not in run.statistics and "EventCounter" not in run.statistics
+    assert [(d.name, str(d.values.dtype)) for d in run.diagnostics] == [
+        ("CPUtime", "float32"),
+        ("EventCounter", "float32"),
+    ]
+
+
+def test_an_accept_over_an_old_file_writes_no_copy(tmp_path):
+    from dstf.storage.reference_store import ReferenceStore
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "testing.json").write_text(
+        json.dumps(
+            {"source_type": "python", "backend": "Python", "reference_root": "refs"}
+        )
+    )
+    config = Config(config_file=root / "testing.json", work_dir=tmp_path / "work")
+    run = _dymola_run(tmp_path)
+    test = make_test_model("Lib.A", variable_patterns=["x"])
+    store = ReferenceStore(config)
+    assert store.store_reference(test, run, provenance={"by": "test"})
+    (path,) = config.reference_root.rglob("ref_0001.json")
+    old = json.loads(path.read_text(encoding="utf-8"))
+    old["statistics"]["CPUtime"] = 0.002  # as 1.1 wrote it
+    path.write_text(json.dumps(old), encoding="utf-8")
+
+    assert ReferenceStore(config).store_reference(test, run, provenance={"by": "test"})
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert {
+        k for k, v in stored["statistics"].items() if not isinstance(v, dict)
+    } == set()
+    assert [d["name"] for d in stored["diagnostics"]] == ["CPUtime", "EventCounter"]
+    assert stored["sampling"]["precision"] == "single"  # a writer always writes it
+
+
+# -- the event-count warning and the CPU time read the summaries (R9, R10) -------
+
+
+def _with_events(ev):
+    from dstf.storage.baseline import Baseline, ReferenceFile
+
+    return ReferenceFile(
+        model_id="M",
+        test_id="0001",
+        status="active",
+        date_added=None,
+        last_updated=None,
+        sampling=None,
+        comparison={},
+        baseline=Baseline(
+            name="primary",
+            time=[],
+            variables=[],
+            diagnostics=[]
+            if ev is None
+            else [DiagnosticSummary("EventCounter", final=ev)],
+            simulation={},
+            # The old copy disagrees: nothing reads it any more.
+            statistics={"EventCounter": 99.0},
+        ),
+    )
+
+
+def _run_events(ev):
+    from dstf.backends.types import TestResult
+
+    values = [] if ev is None else [np.array([0, 1, ev], dtype=np.float32)]
+    return TestResult(
+        model_id="M",
+        success=True,
+        variables=[],
+        diagnostics=[
+            VariableResult(
+                index=1, time=np.linspace(0, 1, 3), values=v, name="EventCounter"
+            )
+            for v in values
+        ],
+        statistics={"EventCounter": 99.0},
+    )
+
+
+def test_the_event_count_warning_compares_the_two_summaries():
+    from dstf.comparison.comparator import _check_structural_changes as check
+
+    got = check(_with_events(19.0), _run_events(20.0))
+    assert [(w.field, w.reference_value, w.current_value) for w in got] == [
+        ("Event count", "19.0", "20.0")
+    ]
+    assert check(_with_events(19.0), _run_events(19.0)) == []
+    assert check(_with_events(None), _run_events(19.0)) == []
+    assert check(_with_events(19.0), _run_events(None)) == []
+
+
+def test_the_cpu_time_is_the_runs_cpu_time_final():
+    from dstf.comparison.comparator import TestComparison
+    from dstf.reporting.rows import cpu_time, summary_fields
+
+    t = np.linspace(0, 1, 3)
+    cpu = [
+        VariableResult(
+            index=1, time=t, values=np.array([0.1, 0.05, 0.3]), name="CPUtime"
+        )
+    ]
+    assert cpu_time(cpu) == 0.3
+    assert cpu_time([]) is None
+    comp = TestComparison(model_id="M", passed=True, variables=[])
+    assert summary_fields(comp, diagnostics=cpu)["sim_cpu"] == 0.3
+
+
+# -- the Statistics rows keep their look (R11) -------------------------------------
+
+STATS_MAIN = FIXTURES / "stats_main"
+
+
+def _without_copy(name: str, tmp_path) -> Path:
+    doc = json.loads((STATS_MAIN / f"{name}.json").read_text(encoding="utf-8"))
+    for key in ("CPUtime", "EventCounter"):
+        del doc["statistics"][key]
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("name", ["no_sampling", "single"])
+@pytest.mark.parametrize("copy", [True, False], ids=["old file", "new file"])
+def test_the_rows_and_the_report_read_as_main_read_the_old_file(tmp_path, name, copy):
+    """Expected: main's output over the old file (the copy in it), captured
+    once from a main archive — ``stats_main/expected.json``. The report's
+    Reference cells are its caller's (`_build_template_context`)."""
+    from dstf.reporting.context_builder import _build_template_context
+    from dstf.reporting.stats_rows import card_text, statistics_rows
+    from dstf.storage.baseline_codec import read_reference, shown_digits
+
+    expected = json.loads((STATS_MAIN / "expected.json").read_text())[name]
+    run = _dymola_run(tmp_path)
+    ref = read_reference(
+        STATS_MAIN / f"{name}.json" if copy else _without_copy(name, tmp_path)
+    )
+
+    ctx = _build_template_context("Lib.A", [], ref, run.statistics, None, result=run)
+    assert ctx["statistics_sections"] == expected["statistics_sections"]
+    assert ctx["key_stats"] == expected["key_stats"]
+    rows = statistics_rows(
+        run.statistics,
+        ref.baseline.statistics,
+        run_diagnostics=run.diagnostics,
+        baseline_diagnostics=ref.baseline.diagnostics,
+        baseline_digits=shown_digits(ref.sampling),
+    )
+    assert [
+        [
+            r.section,
+            r.key,
+            r.path,
+            r.label,
+            r.kind,
+            r.changed,
+            r.delta,
+            card_text(r.kind, r.run, r.digits[0]),
+            card_text(r.kind, r.baseline, r.digits[1]),
+        ]
+        for r in rows
+    ] == expected["rows"]
+
+
+def _report_cells(tmp_path, document: dict, run) -> dict[str, tuple[str, str]]:
+    from dstf.reporting.context_builder import _build_template_context
+    from dstf.storage.baseline_codec import read_reference
+
+    path = tmp_path / "ref.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    ctx = _build_template_context(
+        "M", [], read_reference(path), run.statistics, None, result=run
+    )
+    return {
+        row["label"]: (row["current"], row["reference"])
+        for section in ctx["statistics_sections"]
+        for row in section["rows"]
+    }
+
+
+def _summary_document(final: float, **extra) -> dict:
+    return {
+        "model_id": "M",
+        "diagnostics": [{"name": "CPUtime", "final": final, "min": 0.0, "max": final}],
+        "time": [0.0],
+        "variables": [],
+        **extra,
+    }
+
+
+def _cpu_run(values, dtype):
+    from dstf.backends.types import TestResult
+
+    v = np.asarray(values, dtype=dtype)
+    return TestResult(
+        model_id="M",
+        success=True,
+        variables=[],
+        diagnostics=[
+            VariableResult(
+                index=1, time=np.linspace(0, 1, len(v)), values=v, name="CPUtime"
+            )
+        ],
+        statistics={},
+    )
+
+
+def test_a_file_without_sampling_reads_as_single_precision(tmp_path):
+    """Owner, 2026-10-18: a file with no `sampling` was written under the
+    float32 default. Its CPUtime reads as 1.1 printed its copy."""
+    cells = _report_cells(
+        tmp_path,
+        _summary_document(0.008599000051617622),
+        _cpu_run([0.0, 0.0086], np.float32),
+    )
+    assert cells["CPUtime"] == ("0.0086 s", "0.008599 s")
+
+
+def test_a_single_precision_run_and_file_read_at_seven_digits(tmp_path):
+    sampling = {
+        "setting": "all",
+        "source_points": 1,
+        "stored_points": 1,
+        "precision": "single",
+    }
+    cells = _report_cells(
+        tmp_path,
+        _summary_document(0.04324999824166298, sampling=sampling),
+        _cpu_run([0.0, 0.04324999824166298], np.float32),
+    )
+    assert cells["CPUtime"] == ("0.04325 s", "0.04325 s")
+
+
+def test_a_double_precision_run_and_file_read_at_fifteen_digits(tmp_path):
+    sampling = {
+        "setting": "all",
+        "source_points": 1,
+        "stored_points": 1,
+        "precision": "double",
+    }
+    cells = _report_cells(
+        tmp_path,
+        _summary_document(0.04324999824166298, sampling=sampling),
+        _cpu_run([0.0, 0.04324999824166298], np.float64),
+    )
+    assert cells["CPUtime"] == ("0.043249998241663 s", "0.043249998241663 s")
+
+
+def test_a_listed_name_neither_a_time_nor_a_count_is_a_value(tmp_path):
+    """A height is no time: no unit, and a percentage delta; changed beyond
+    the ordinary scalar seed's 1%."""
+    from dstf.reporting.stats_rows import card_text, report_text, statistics_rows
+
+    t = np.linspace(0, 1, 3)
+    run = [
+        VariableResult(index=1, time=t, values=np.array([1.0, 2.0, 0.512]), name="h")
+    ]
+    base = [DiagnosticSummary("h", final=0.5, min=0.5, max=2.0)]
+    (row,) = statistics_rows({}, {}, run_diagnostics=run, baseline_diagnostics=base)
+    assert (row.section, row.path, row.kind) == ("simulation", "h", "value")
+    assert report_text(row.kind, row.run, row.digits[0]) == "0.512"
+    assert card_text(row.kind, row.baseline, row.digits[1]) == "0.500"
+    assert (row.delta, row.changed) == ("+2%", True)
+    (same,) = statistics_rows(
+        {},
+        {},
+        run_diagnostics=run,
+        baseline_diagnostics=[DiagnosticSummary("h", final=0.509)],
+    )
+    assert (same.delta, same.changed) == ("+0.6%", False)
+
+
+# -- the card's `+` writes the one spelling (R12, R13) ---------------------------
+
+
+def test_the_cards_plus_on_cpu_time_writes_the_one_spelling_and_scores():
+    """Main scored 0.045 against the copy 0.04325; now against the summary."""
+    from dstf.authoring.builtin.edit_tree import _quantity_leaf
+    from dstf.comparison.tree_spec import parse_metric_tree
+
+    values = np.array([0.0, 0.02, 0.045], dtype=np.float32)
+    assert _quantity_leaf({"CPUtime": values}, "CPUtime", "and") == {
+        "combinator": "warn",
+        "children": [
+            {
+                "metric": "scalar",
+                "variable": "CPUtime",
+                "quantity": {"reduce": "final"},
+                "tolerance": 0.1,
+                "tolerance_mode": "rel",
+            }
+        ],
+    }
+    seed = _quantity_leaf({"CPUtime": values}, "CPUtime", "or")
+    result, vc = _eval(
+        parse_metric_tree(seed),
+        run_diags=[_vr("CPUtime", values)],
+        ref_diags=[DiagnosticSummary("CPUtime", final=0.04325)],
+    )
+    assert result.passed
+    assert (vc.actual_final, vc.reference_final) == (pytest.approx(0.045), 0.04325)
+
+
+def test_a_statistic_row_keeps_its_quantity_path_seed():
+    from dstf.authoring.builtin.edit_tree import _quantity_leaf
+
+    assert _quantity_leaf({}, "translation.nonlinear_count", "and") == {
+        "metric": "scalar",
+        "quantity": "translation.nonlinear_count",
+        "tolerance": 0,
+        "tolerance_mode": "abs",
+    }
+
+
+@pytest.mark.parametrize(
+    ("into", "wrapped"), [("and", True), ("or", False), ("k-of-n", False)]
+)
+def test_a_cpu_time_number_warns_only_in_an_and(into, wrapped):
+    from dstf.comparison.seeds import seed_variable_number
+
+    seed = seed_variable_number("CPUtime", np.array([0.1, 0.2]), into=into)
+    leaf = seed["children"][0] if wrapped else seed
+    assert ("combinator" in seed) is wrapped
+    assert leaf == {
+        "metric": "scalar",
+        "variable": "CPUtime",
+        "quantity": {"reduce": "final"},
+        "tolerance": 0.1,
+        "tolerance_mode": "rel",
+    }
+
+
+def test_an_event_count_is_exact_and_bare():
+    from dstf.comparison.seeds import seed_variable_number
+
+    assert seed_variable_number("EventCounter", np.array([0.0, 3.0]), into="and") == {
+        "metric": "scalar",
+        "variable": "EventCounter",
+        "quantity": {"reduce": "final"},
+        "tolerance": 0,
+        "tolerance_mode": "abs",
+    }
+
+
+def test_any_other_name_takes_the_ordinary_scalar_seed_never_a_time():
+    """A listed `h` that happens to end on a whole number is no count, and
+    a height is no time: the ordinary seed, bare in an `and`."""
+    from dstf.comparison.seeds import SeedData, seed_scalar, seed_variable_number
+
+    values = np.array([1.0, 3.0, 2.0])
+    seed = seed_variable_number("h", values, into="and")
+    assert seed == {
+        "metric": "scalar",
+        "variable": "h",
+        **seed_scalar(SeedData(ref=None, act=(np.arange(3.0), values))),
+    }
+    assert (seed["min_value"], seed["max_value"]) == (1.8, 2.1)
+
+
+def test_a_max_seeds_around_the_runs_max():
+    from dstf.comparison.seeds import seed_variable_number
+
+    seed = seed_variable_number(
+        "h", np.array([1.0, 3.0, 2.0]), into="and", reduce="max"
+    )
+    assert seed["quantity"] == {"reduce": "max"}
+    assert (seed["min_value"], seed["max_value"]) == (2.8, 3.2)

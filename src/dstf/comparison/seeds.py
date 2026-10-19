@@ -23,7 +23,7 @@ from typing import Literal
 
 import numpy as np
 
-from .algorithms import _compute_fft_spectrum, _find_top_n_peaks
+from .algorithms import _compute_fft_spectrum, _find_top_n_peaks, _reduce_series
 from .registry import metric as metric_descriptor
 
 #: The margin a seed leaves around the data, as a fraction of its span.
@@ -257,20 +257,63 @@ def seed_quantity(
     bare: a ``warn`` child passes whatever it scores, so under an ``or`` or
     a ``k-of-n`` it would pass its parent with nothing else passing. A
     count stays bare: it only moves when the model does."""
-    count = kind == "count"
     leaf: dict = {"metric": "scalar"}
     if variable is not None:
         leaf["variable"] = variable
-    leaf.update(
-        {
-            "quantity": path,
-            "tolerance": 0 if count else 0.1,
-            "tolerance_mode": "abs" if count else "rel",
-        }
-    )
-    if not count and into == "and":
+    leaf["quantity"] = path
+    return warn_if_time({**leaf, **_known_tolerance(kind)}, kind == "time", into=into)
+
+
+def _known_tolerance(kind: Literal["count", "time"]) -> dict:
+    """``tolerance 0 abs`` for a count, ``0.1 rel`` for a time."""
+    count = kind == "count"
+    return {
+        "tolerance": 0 if count else 0.1,
+        "tolerance_mode": "abs" if count else "rel",
+    }
+
+
+def warn_if_time(leaf: dict, time: bool, *, into: str) -> dict:
+    """``leaf`` inside a ``warn`` when it scores a time (``time``) and lands
+    in an ``and`` (``into``, the kind of the combinator it is added to): a
+    run's CPU time moves with the machine's load — under ``--parallel``
+    most of all — and would fail a test whose model did not change.
+    Anywhere else it is bare: a ``warn`` child passes whatever it scores, so
+    under an ``or`` or a ``k-of-n`` it would pass its parent with nothing
+    else passing (Q12)."""
+    if time and into == "and":
         return {"combinator": "warn", "children": [leaf]}
     return leaf
+
+
+def seed_variable_number(
+    name: str, values: np.ndarray | None, *, into: str, reduce: str = "final"
+) -> dict:
+    """A ``scalar`` criterion on the number ``name``'s run reduces to — its
+    ``final`` by default, or its ``min`` / ``max``: the one spelling of a
+    variable's number, ``{"reduce": ...}``, scored from a listed name's
+    summary where the curve is not stored (`reads_a_summary`).
+
+    CPUtime and EventCounter (`TIMES` | `COUNTS`) take their known
+    tolerances (:func:`seed_quantity`'s): a time within 10%, inside a
+    ``warn`` in an ``and``; a count exact, bare. Any other name takes the
+    ordinary scalar seed (:func:`seed_scalar`) over the run's number —
+    never a kind guessed from its values (owner, 2026-10-18)."""
+    quantity = {"reduce": reduce}
+    leaf: dict = {"metric": "scalar", "variable": name}
+    if name in TIMES or name in COUNTS:
+        kind: Literal["count", "time"] = "time" if name in TIMES else "count"
+        return warn_if_time(
+            {**leaf, "quantity": quantity, **_known_tolerance(kind)},
+            kind == "time",
+            into=into,
+        )
+    if values is None or len(values) == 0:
+        return {**leaf, "quantity": quantity}
+    series = np.asarray(values, dtype=float)
+    number = _reduce_series(np.arange(float(series.size)), series, reduce)
+    act = (np.array([0.0]), np.array([number]))
+    return {**leaf, **seed_scalar(SeedData(ref=None, act=act)), "quantity": quantity}
 
 
 def seed_diagnostic(name: str, values: np.ndarray | None, *, into: str) -> dict:

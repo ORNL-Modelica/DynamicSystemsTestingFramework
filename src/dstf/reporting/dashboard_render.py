@@ -498,7 +498,7 @@ def build_dashboard_context(
         if comp is not None:
             row = _with_verdict(row, comp)
         result = (results or {}).get(row.model_id) if mode == "final" else None
-        cpu = cpu_time(result.statistics) if result is not None else None
+        cpu = cpu_time(result.diagnostics or []) if result is not None else None
         if cpu is not None:
             row = replace(row, sim_cpu=cpu)
         rows.append(row)

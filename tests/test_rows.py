@@ -560,17 +560,31 @@ def test_the_sort_reads_the_number_whichever_its_source():
 
 
 def test_summary_fields_carry_the_results_cpu_time(sample_comparison):
-    s = summary_fields(sample_comparison, stats={"CPUtime": 0.046})
+    """The CPU time is the run's CPUtime diagnostic's final — never a
+    statistic named so, which a 1.1 result carried as a copy."""
+    import numpy as np
+
+    from dstf.backends.types import VariableResult
+
+    cpu = [
+        VariableResult(
+            index=1,
+            time=np.array([0.0, 1.0]),
+            values=np.array([0.01, 0.046]),
+            name="CPUtime",
+        )
+    ]
+    s = summary_fields(sample_comparison, diagnostics=cpu)
     assert (s["sim_wall"], s["sim_cpu"]) == (None, 0.046)
     s = summary_fields(
-        sample_comparison, stats={"CPUtime": 0.046, "timing": {"sim_wall": 1.5}}
+        sample_comparison, stats={"timing": {"sim_wall": 1.5}}, diagnostics=cpu
     )
     assert (s["sim_wall"], s["sim_cpu"]) == (1.5, 0.046)
-    # A statistics block without one (every backend but Dymola), or a value
-    # that is no number, is no CPU time.
-    assert summary_fields(sample_comparison, stats={})["sim_cpu"] is None
-    assert summary_fields(sample_comparison, stats={"CPUtime": "x"})["sim_cpu"] is None
-    assert summary_fields(sample_comparison, stats={"CPUtime": True})["sim_cpu"] is None
+    # A run that recorded none (every backend but Dymola, by default) has no
+    # CPU time, whatever its statistics hold.
+    assert (
+        summary_fields(sample_comparison, stats={"CPUtime": 0.046})["sim_cpu"] is None
+    )
 
 
 def test_a_sidecars_cpu_time_enriches_the_row():

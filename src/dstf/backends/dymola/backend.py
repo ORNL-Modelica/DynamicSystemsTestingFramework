@@ -22,7 +22,6 @@ from ..common.proc_kill import kill_process_tree
 from ..common.result_variables import (
     compute_needed_variables,
     extract_variables,
-    fold_diagnostics_into_statistics,
     unfinished_result,
 )
 from ..locate import Found, Located, find_executable
@@ -673,7 +672,6 @@ class DymolaBackend(Backend):
             )
 
         variables, diagnostics = extract_variables(mat_data, test, listed)
-        stats = fold_diagnostics_into_statistics(stats, diagnostics)
 
         unfinished = unfinished_result(test, mat_path, variables, diagnostics, stats)
         if unfinished is not None:

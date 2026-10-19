@@ -1,0 +1,1740 @@
+{
+ "no_sampling": {
+  "statistics_sections": [
+   {
+    "title": "Translation Statistics",
+    "rows": [
+     {
+      "label": "Alias variables",
+      "current": "2",
+      "reference": "2",
+      "changed": false
+     },
+     {
+      "label": "Constants",
+      "current": "1",
+      "reference": "1",
+      "changed": false
+     },
+     {
+      "label": "Continuous time states",
+      "current": "2",
+      "reference": "2",
+      "changed": false
+     },
+     {
+      "label": "Differentiated variables",
+      "current": "2",
+      "reference": "2",
+      "changed": false
+     },
+     {
+      "label": "Linear",
+      "current": "",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Linear after manipulation",
+      "current": "",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Linear after manipulation count",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear after manipulation max",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear after manipulation total",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear count",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear max",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear total",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Mixed systems",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear",
+      "current": "",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear after manipulation",
+      "current": "",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear after manipulation count",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear after manipulation max",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear after manipulation total",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear count",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear max",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear total",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nontrivial equations",
+      "current": "3",
+      "reference": "3",
+      "changed": false
+     },
+     {
+      "label": "Numerical jacobians",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Original components",
+      "current": "2",
+      "reference": "2",
+      "changed": false
+     },
+     {
+      "label": "Original equations",
+      "current": "3",
+      "reference": "3",
+      "changed": false
+     },
+     {
+      "label": "Original unknowns scalars",
+      "current": "4",
+      "reference": "4",
+      "changed": false
+     },
+     {
+      "label": "Original variables",
+      "current": "4",
+      "reference": "4",
+      "changed": false
+     },
+     {
+      "label": "Outputs",
+      "current": "2",
+      "reference": "2",
+      "changed": false
+     },
+     {
+      "label": "Scalar equations",
+      "current": "4",
+      "reference": "4",
+      "changed": false
+     },
+     {
+      "label": "Scalar unknowns",
+      "current": "4",
+      "reference": "4",
+      "changed": false
+     },
+     {
+      "label": "State names",
+      "current": "x, y",
+      "reference": "x, y",
+      "changed": false
+     },
+     {
+      "label": "Time varying variables",
+      "current": "2",
+      "reference": "2",
+      "changed": false
+     }
+    ]
+   },
+   {
+    "title": "Simulation Statistics",
+    "rows": [
+     {
+      "label": "CPUtime",
+      "current": "0.002 s",
+      "reference": "0.00915 s",
+      "changed": true
+     },
+     {
+      "label": "EventCounter",
+      "current": "3",
+      "reference": "3",
+      "changed": false
+     },
+     {
+      "label": "Accepted steps",
+      "current": "19",
+      "reference": "85",
+      "changed": true
+     },
+     {
+      "label": "CPU time integration",
+      "current": "0.001 s",
+      "reference": "0.00699 s",
+      "changed": true
+     },
+     {
+      "label": "F evaluations",
+      "current": "19",
+      "reference": "156",
+      "changed": true
+     },
+     {
+      "label": "Input time events",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Jacobian evaluations",
+      "current": "18",
+      "reference": "18",
+      "changed": false
+     },
+     {
+      "label": "Model time events",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Result points",
+      "current": "502",
+      "reference": "502",
+      "changed": false
+     },
+     {
+      "label": "State events",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Step events",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     }
+    ]
+   },
+   {
+    "title": "Timing",
+    "rows": [
+     {
+      "label": "Translation wall",
+      "current": "",
+      "reference": "2.94 s",
+      "changed": false
+     },
+     {
+      "label": "Sim wall",
+      "current": "",
+      "reference": "0.1 s",
+      "changed": false
+     },
+     {
+      "label": "Other wall",
+      "current": "",
+      "reference": "0.07 s",
+      "changed": false
+     },
+     {
+      "label": "Total wall",
+      "current": "",
+      "reference": "3.11 s",
+      "changed": false
+     }
+    ]
+   }
+  ],
+  "key_stats": [
+   {
+    "label": "Continuous States",
+    "current": "2",
+    "reference": "2",
+    "changed": false
+   },
+   {
+    "label": "Nonlinear Systems",
+    "current": "0",
+    "reference": "0",
+    "changed": false
+   },
+   {
+    "label": "Largest Nonlinear",
+    "current": "0",
+    "reference": "0",
+    "changed": false
+   },
+   {
+    "label": "CPU Time",
+    "current": "0.002 s",
+    "reference": "0.00915 s",
+    "changed": true
+   },
+   {
+    "label": "Events",
+    "current": "3",
+    "reference": "3",
+    "changed": false
+   }
+  ],
+  "rows": [
+   [
+    "translation",
+    "alias_variables",
+    "translation.alias_variables",
+    "Alias variables",
+    "count",
+    false,
+    "",
+    "2",
+    "2"
+   ],
+   [
+    "translation",
+    "constants",
+    "translation.constants",
+    "Constants",
+    "count",
+    false,
+    "",
+    "1",
+    "1"
+   ],
+   [
+    "translation",
+    "continuous_time_states",
+    "translation.continuous_time_states",
+    "Continuous time states",
+    "count",
+    false,
+    "",
+    "2",
+    "2"
+   ],
+   [
+    "translation",
+    "differentiated_variables",
+    "translation.differentiated_variables",
+    "Differentiated variables",
+    "count",
+    false,
+    "",
+    "2",
+    "2"
+   ],
+   [
+    "translation",
+    "linear",
+    "translation.linear",
+    "Linear",
+    "text",
+    false,
+    "",
+    "",
+    ""
+   ],
+   [
+    "translation",
+    "linear_after_manipulation",
+    "translation.linear_after_manipulation",
+    "Linear after manipulation",
+    "text",
+    false,
+    "",
+    "",
+    ""
+   ],
+   [
+    "translation",
+    "linear_after_manipulation_count",
+    "translation.linear_after_manipulation_count",
+    "Linear after manipulation count",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_after_manipulation_max",
+    "translation.linear_after_manipulation_max",
+    "Linear after manipulation max",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_after_manipulation_total",
+    "translation.linear_after_manipulation_total",
+    "Linear after manipulation total",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_count",
+    "translation.linear_count",
+    "Linear count",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_max",
+    "translation.linear_max",
+    "Linear max",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_total",
+    "translation.linear_total",
+    "Linear total",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "mixed_systems",
+    "translation.mixed_systems",
+    "Mixed systems",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear",
+    "translation.nonlinear",
+    "Nonlinear",
+    "text",
+    false,
+    "",
+    "",
+    ""
+   ],
+   [
+    "translation",
+    "nonlinear_after_manipulation",
+    "translation.nonlinear_after_manipulation",
+    "Nonlinear after manipulation",
+    "text",
+    false,
+    "",
+    "",
+    ""
+   ],
+   [
+    "translation",
+    "nonlinear_after_manipulation_count",
+    "translation.nonlinear_after_manipulation_count",
+    "Nonlinear after manipulation count",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_after_manipulation_max",
+    "translation.nonlinear_after_manipulation_max",
+    "Nonlinear after manipulation max",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_after_manipulation_total",
+    "translation.nonlinear_after_manipulation_total",
+    "Nonlinear after manipulation total",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_count",
+    "translation.nonlinear_count",
+    "Nonlinear count",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_max",
+    "translation.nonlinear_max",
+    "Nonlinear max",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_total",
+    "translation.nonlinear_total",
+    "Nonlinear total",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nontrivial_equations",
+    "translation.nontrivial_equations",
+    "Nontrivial equations",
+    "count",
+    false,
+    "",
+    "3",
+    "3"
+   ],
+   [
+    "translation",
+    "numerical_jacobians",
+    "translation.numerical_jacobians",
+    "Numerical jacobians",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "original_components",
+    "translation.original_components",
+    "Original components",
+    "count",
+    false,
+    "",
+    "2",
+    "2"
+   ],
+   [
+    "translation",
+    "original_equations",
+    "translation.original_equations",
+    "Original equations",
+    "count",
+    false,
+    "",
+    "3",
+    "3"
+   ],
+   [
+    "translation",
+    "original_unknowns_scalars",
+    "translation.original_unknowns_scalars",
+    "Original unknowns scalars",
+    "count",
+    false,
+    "",
+    "4",
+    "4"
+   ],
+   [
+    "translation",
+    "original_variables",
+    "translation.original_variables",
+    "Original variables",
+    "count",
+    false,
+    "",
+    "4",
+    "4"
+   ],
+   [
+    "translation",
+    "outputs",
+    "translation.outputs",
+    "Outputs",
+    "count",
+    false,
+    "",
+    "2",
+    "2"
+   ],
+   [
+    "translation",
+    "scalar_equations",
+    "translation.scalar_equations",
+    "Scalar equations",
+    "count",
+    false,
+    "",
+    "4",
+    "4"
+   ],
+   [
+    "translation",
+    "scalar_unknowns",
+    "translation.scalar_unknowns",
+    "Scalar unknowns",
+    "count",
+    false,
+    "",
+    "4",
+    "4"
+   ],
+   [
+    "translation",
+    "state_names",
+    "translation.state_names",
+    "State names",
+    "text",
+    false,
+    "",
+    "x, y",
+    "x, y"
+   ],
+   [
+    "translation",
+    "time_varying_variables",
+    "translation.time_varying_variables",
+    "Time varying variables",
+    "count",
+    false,
+    "",
+    "2",
+    "2"
+   ],
+   [
+    "simulation",
+    "CPUtime",
+    "CPUtime",
+    "CPUtime",
+    "time",
+    true,
+    "-78%",
+    "0.00200 s",
+    "0.00915 s"
+   ],
+   [
+    "simulation",
+    "EventCounter",
+    "EventCounter",
+    "EventCounter",
+    "count",
+    false,
+    "",
+    "3",
+    "3"
+   ],
+   [
+    "simulation",
+    "accepted_steps",
+    "simulation.accepted_steps",
+    "Accepted steps",
+    "count",
+    true,
+    "85\u219219",
+    "19",
+    "85"
+   ],
+   [
+    "simulation",
+    "cpu_time_integration",
+    "simulation.cpu_time_integration",
+    "CPU time integration",
+    "time",
+    true,
+    "-86%",
+    "0.00100 s",
+    "0.00699 s"
+   ],
+   [
+    "simulation",
+    "f_evaluations",
+    "simulation.f_evaluations",
+    "F evaluations",
+    "count",
+    true,
+    "156\u219219",
+    "19",
+    "156"
+   ],
+   [
+    "simulation",
+    "input_time_events",
+    "simulation.input_time_events",
+    "Input time events",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "simulation",
+    "jacobian_evaluations",
+    "simulation.jacobian_evaluations",
+    "Jacobian evaluations",
+    "count",
+    false,
+    "",
+    "18",
+    "18"
+   ],
+   [
+    "simulation",
+    "model_time_events",
+    "simulation.model_time_events",
+    "Model time events",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "simulation",
+    "result_points",
+    "simulation.result_points",
+    "Result points",
+    "count",
+    false,
+    "",
+    "502",
+    "502"
+   ],
+   [
+    "simulation",
+    "state_events",
+    "simulation.state_events",
+    "State events",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "simulation",
+    "step_events",
+    "simulation.step_events",
+    "Step events",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "timing",
+    "translation_wall",
+    "timing.translation_wall",
+    "Translation wall",
+    "time",
+    false,
+    "",
+    "",
+    "2.94 s"
+   ],
+   [
+    "timing",
+    "sim_wall",
+    "timing.sim_wall",
+    "Sim wall",
+    "time",
+    false,
+    "",
+    "",
+    "0.100 s"
+   ],
+   [
+    "timing",
+    "other_wall",
+    "timing.other_wall",
+    "Other wall",
+    "time",
+    false,
+    "",
+    "",
+    "0.0700 s"
+   ],
+   [
+    "timing",
+    "total_wall",
+    "timing.total_wall",
+    "Total wall",
+    "time",
+    false,
+    "",
+    "",
+    "3.11 s"
+   ]
+  ]
+ },
+ "single": {
+  "statistics_sections": [
+   {
+    "title": "Translation Statistics",
+    "rows": [
+     {
+      "label": "Alias variables",
+      "current": "2",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Constants",
+      "current": "1",
+      "reference": "1",
+      "changed": false
+     },
+     {
+      "label": "Continuous time states",
+      "current": "2",
+      "reference": "20",
+      "changed": true
+     },
+     {
+      "label": "Differentiated variables",
+      "current": "2",
+      "reference": "20",
+      "changed": true
+     },
+     {
+      "label": "Free parameters",
+      "current": "",
+      "reference": "4",
+      "changed": false
+     },
+     {
+      "label": "Linear",
+      "current": "",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Linear after manipulation",
+      "current": "",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Linear after manipulation count",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear after manipulation max",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear after manipulation total",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear count",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear max",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Linear total",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Mixed systems",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear",
+      "current": "",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear after manipulation",
+      "current": "",
+      "reference": "",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear after manipulation count",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear after manipulation max",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear after manipulation total",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear count",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear max",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nonlinear total",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Nontrivial equations",
+      "current": "3",
+      "reference": "3",
+      "changed": false
+     },
+     {
+      "label": "Numerical jacobians",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Original components",
+      "current": "2",
+      "reference": "1",
+      "changed": true
+     },
+     {
+      "label": "Original equations",
+      "current": "3",
+      "reference": "3",
+      "changed": false
+     },
+     {
+      "label": "Original unknowns scalars",
+      "current": "4",
+      "reference": "20",
+      "changed": true
+     },
+     {
+      "label": "Original variables",
+      "current": "4",
+      "reference": "7",
+      "changed": true
+     },
+     {
+      "label": "Outputs",
+      "current": "2",
+      "reference": "2",
+      "changed": false
+     },
+     {
+      "label": "Parameter depending",
+      "current": "",
+      "reference": "1",
+      "changed": false
+     },
+     {
+      "label": "Scalar equations",
+      "current": "4",
+      "reference": "20",
+      "changed": true
+     },
+     {
+      "label": "Scalar unknowns",
+      "current": "4",
+      "reference": "20",
+      "changed": true
+     },
+     {
+      "label": "State names",
+      "current": "x, y",
+      "reference": "T[1], T[2], T[3], T[4], T[5], T[6], T[7], T[8], T[9], T[10], T[11], T[12], T[13], T[14], T[15], T[16], T[17], T[18], T[19], T[20]",
+      "changed": true
+     },
+     {
+      "label": "Time varying variables",
+      "current": "2",
+      "reference": "20",
+      "changed": true
+     }
+    ]
+   },
+   {
+    "title": "Simulation Statistics",
+    "rows": [
+     {
+      "label": "CPUtime",
+      "current": "0.002 s",
+      "reference": "0.001172 s",
+      "changed": true
+     },
+     {
+      "label": "EventCounter",
+      "current": "3",
+      "reference": "3",
+      "changed": false
+     },
+     {
+      "label": "Accepted steps",
+      "current": "19",
+      "reference": "174",
+      "changed": true
+     },
+     {
+      "label": "CPU time integration",
+      "current": "0.001 s",
+      "reference": "0.00108 s",
+      "changed": false
+     },
+     {
+      "label": "F evaluations",
+      "current": "19",
+      "reference": "335",
+      "changed": true
+     },
+     {
+      "label": "Input time events",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Jacobian evaluations",
+      "current": "18",
+      "reference": "25",
+      "changed": true
+     },
+     {
+      "label": "Model time events",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Result points",
+      "current": "502",
+      "reference": "102",
+      "changed": true
+     },
+     {
+      "label": "State events",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     },
+     {
+      "label": "Step events",
+      "current": "0",
+      "reference": "0",
+      "changed": false
+     }
+    ]
+   },
+   {
+    "title": "Timing",
+    "rows": [
+     {
+      "label": "Translation wall",
+      "current": "",
+      "reference": "4.08 s",
+      "changed": false
+     },
+     {
+      "label": "Sim wall",
+      "current": "",
+      "reference": "0.03 s",
+      "changed": false
+     },
+     {
+      "label": "Other wall",
+      "current": "",
+      "reference": "0.08 s",
+      "changed": false
+     },
+     {
+      "label": "Total wall",
+      "current": "",
+      "reference": "4.19 s",
+      "changed": false
+     }
+    ]
+   }
+  ],
+  "key_stats": [
+   {
+    "label": "Continuous States",
+    "current": "2",
+    "reference": "20",
+    "changed": true
+   },
+   {
+    "label": "Nonlinear Systems",
+    "current": "0",
+    "reference": "0",
+    "changed": false
+   },
+   {
+    "label": "Largest Nonlinear",
+    "current": "0",
+    "reference": "0",
+    "changed": false
+   },
+   {
+    "label": "CPU Time",
+    "current": "0.002 s",
+    "reference": "0.001172 s",
+    "changed": true
+   },
+   {
+    "label": "Events",
+    "current": "3",
+    "reference": "3",
+    "changed": false
+   }
+  ],
+  "rows": [
+   [
+    "translation",
+    "alias_variables",
+    "translation.alias_variables",
+    "Alias variables",
+    "count",
+    false,
+    "",
+    "2",
+    ""
+   ],
+   [
+    "translation",
+    "constants",
+    "translation.constants",
+    "Constants",
+    "count",
+    false,
+    "",
+    "1",
+    "1"
+   ],
+   [
+    "translation",
+    "continuous_time_states",
+    "translation.continuous_time_states",
+    "Continuous time states",
+    "count",
+    true,
+    "20\u21922",
+    "2",
+    "20"
+   ],
+   [
+    "translation",
+    "differentiated_variables",
+    "translation.differentiated_variables",
+    "Differentiated variables",
+    "count",
+    true,
+    "20\u21922",
+    "2",
+    "20"
+   ],
+   [
+    "translation",
+    "free_parameters",
+    "translation.free_parameters",
+    "Free parameters",
+    "count",
+    false,
+    "",
+    "",
+    "4"
+   ],
+   [
+    "translation",
+    "linear",
+    "translation.linear",
+    "Linear",
+    "text",
+    false,
+    "",
+    "",
+    ""
+   ],
+   [
+    "translation",
+    "linear_after_manipulation",
+    "translation.linear_after_manipulation",
+    "Linear after manipulation",
+    "text",
+    false,
+    "",
+    "",
+    ""
+   ],
+   [
+    "translation",
+    "linear_after_manipulation_count",
+    "translation.linear_after_manipulation_count",
+    "Linear after manipulation count",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_after_manipulation_max",
+    "translation.linear_after_manipulation_max",
+    "Linear after manipulation max",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_after_manipulation_total",
+    "translation.linear_after_manipulation_total",
+    "Linear after manipulation total",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_count",
+    "translation.linear_count",
+    "Linear count",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_max",
+    "translation.linear_max",
+    "Linear max",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "linear_total",
+    "translation.linear_total",
+    "Linear total",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "mixed_systems",
+    "translation.mixed_systems",
+    "Mixed systems",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear",
+    "translation.nonlinear",
+    "Nonlinear",
+    "text",
+    false,
+    "",
+    "",
+    ""
+   ],
+   [
+    "translation",
+    "nonlinear_after_manipulation",
+    "translation.nonlinear_after_manipulation",
+    "Nonlinear after manipulation",
+    "text",
+    false,
+    "",
+    "",
+    ""
+   ],
+   [
+    "translation",
+    "nonlinear_after_manipulation_count",
+    "translation.nonlinear_after_manipulation_count",
+    "Nonlinear after manipulation count",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_after_manipulation_max",
+    "translation.nonlinear_after_manipulation_max",
+    "Nonlinear after manipulation max",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_after_manipulation_total",
+    "translation.nonlinear_after_manipulation_total",
+    "Nonlinear after manipulation total",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_count",
+    "translation.nonlinear_count",
+    "Nonlinear count",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_max",
+    "translation.nonlinear_max",
+    "Nonlinear max",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nonlinear_total",
+    "translation.nonlinear_total",
+    "Nonlinear total",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "nontrivial_equations",
+    "translation.nontrivial_equations",
+    "Nontrivial equations",
+    "count",
+    false,
+    "",
+    "3",
+    "3"
+   ],
+   [
+    "translation",
+    "numerical_jacobians",
+    "translation.numerical_jacobians",
+    "Numerical jacobians",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "translation",
+    "original_components",
+    "translation.original_components",
+    "Original components",
+    "count",
+    true,
+    "1\u21922",
+    "2",
+    "1"
+   ],
+   [
+    "translation",
+    "original_equations",
+    "translation.original_equations",
+    "Original equations",
+    "count",
+    false,
+    "",
+    "3",
+    "3"
+   ],
+   [
+    "translation",
+    "original_unknowns_scalars",
+    "translation.original_unknowns_scalars",
+    "Original unknowns scalars",
+    "count",
+    true,
+    "20\u21924",
+    "4",
+    "20"
+   ],
+   [
+    "translation",
+    "original_variables",
+    "translation.original_variables",
+    "Original variables",
+    "count",
+    true,
+    "7\u21924",
+    "4",
+    "7"
+   ],
+   [
+    "translation",
+    "outputs",
+    "translation.outputs",
+    "Outputs",
+    "count",
+    false,
+    "",
+    "2",
+    "2"
+   ],
+   [
+    "translation",
+    "parameter_depending",
+    "translation.parameter_depending",
+    "Parameter depending",
+    "count",
+    false,
+    "",
+    "",
+    "1"
+   ],
+   [
+    "translation",
+    "scalar_equations",
+    "translation.scalar_equations",
+    "Scalar equations",
+    "count",
+    true,
+    "20\u21924",
+    "4",
+    "20"
+   ],
+   [
+    "translation",
+    "scalar_unknowns",
+    "translation.scalar_unknowns",
+    "Scalar unknowns",
+    "count",
+    true,
+    "20\u21924",
+    "4",
+    "20"
+   ],
+   [
+    "translation",
+    "state_names",
+    "translation.state_names",
+    "State names",
+    "text",
+    true,
+    "",
+    "x, y",
+    "T[1], T[2], T[3], T[4], T[5], T[6], T[7], T[8], T[9], T[10], T[11], T[12], T[13], T[14], T[15], T[16], T[17], T[18], T[19], T[20]"
+   ],
+   [
+    "translation",
+    "time_varying_variables",
+    "translation.time_varying_variables",
+    "Time varying variables",
+    "count",
+    true,
+    "20\u21922",
+    "2",
+    "20"
+   ],
+   [
+    "simulation",
+    "CPUtime",
+    "CPUtime",
+    "CPUtime",
+    "time",
+    true,
+    "+71%",
+    "0.00200 s",
+    "0.00117 s"
+   ],
+   [
+    "simulation",
+    "EventCounter",
+    "EventCounter",
+    "EventCounter",
+    "count",
+    false,
+    "",
+    "3",
+    "3"
+   ],
+   [
+    "simulation",
+    "accepted_steps",
+    "simulation.accepted_steps",
+    "Accepted steps",
+    "count",
+    true,
+    "174\u219219",
+    "19",
+    "174"
+   ],
+   [
+    "simulation",
+    "cpu_time_integration",
+    "simulation.cpu_time_integration",
+    "CPU time integration",
+    "time",
+    false,
+    "-7%",
+    "0.00100 s",
+    "0.00108 s"
+   ],
+   [
+    "simulation",
+    "f_evaluations",
+    "simulation.f_evaluations",
+    "F evaluations",
+    "count",
+    true,
+    "335\u219219",
+    "19",
+    "335"
+   ],
+   [
+    "simulation",
+    "input_time_events",
+    "simulation.input_time_events",
+    "Input time events",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "simulation",
+    "jacobian_evaluations",
+    "simulation.jacobian_evaluations",
+    "Jacobian evaluations",
+    "count",
+    true,
+    "25\u219218",
+    "18",
+    "25"
+   ],
+   [
+    "simulation",
+    "model_time_events",
+    "simulation.model_time_events",
+    "Model time events",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "simulation",
+    "result_points",
+    "simulation.result_points",
+    "Result points",
+    "count",
+    true,
+    "102\u2192502",
+    "502",
+    "102"
+   ],
+   [
+    "simulation",
+    "state_events",
+    "simulation.state_events",
+    "State events",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "simulation",
+    "step_events",
+    "simulation.step_events",
+    "Step events",
+    "count",
+    false,
+    "",
+    "0",
+    "0"
+   ],
+   [
+    "timing",
+    "translation_wall",
+    "timing.translation_wall",
+    "Translation wall",
+    "time",
+    false,
+    "",
+    "",
+    "4.08 s"
+   ],
+   [
+    "timing",
+    "sim_wall",
+    "timing.sim_wall",
+    "Sim wall",
+    "time",
+    false,
+    "",
+    "",
+    "0.0300 s"
+   ],
+   [
+    "timing",
+    "other_wall",
+    "timing.other_wall",
+    "Other wall",
+    "time",
+    false,
+    "",
+    "",
+    "0.0800 s"
+   ],
+   [
+    "timing",
+    "total_wall",
+    "timing.total_wall",
+    "Total wall",
+    "time",
+    false,
+    "",
+    "",
+    "4.19 s"
+   ]
+  ]
+ }
+}

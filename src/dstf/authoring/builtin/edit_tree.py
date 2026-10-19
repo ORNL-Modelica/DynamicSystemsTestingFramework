@@ -30,6 +30,7 @@ from ...comparison.seeds import (
     quantity_kind,
     seed_diagnostic,
     seed_quantity,
+    seed_variable_number,
     seeded_leaf,
 )
 from ...comparison.sides import parse_sides, signed_sides
@@ -756,17 +757,17 @@ def _into(tree: dict | None, node: dict, path: str) -> str:
 
 
 def _quantity_leaf(diagnostics: dict[str, Any], quantity: str, into: str) -> dict:
-    """The criterion an add on ``quantity`` stages, landing in ``into``: a
-    stored number, no variable. One seed per path — a diagnostic's final
-    is the add form's diagnostic criterion, its kind read from its samples,
-    and a top-level statistic naming a diagnostic reads them too, as its
-    ``X.final`` would."""
+    """The criterion a Statistics row's ``+`` on ``quantity`` stages,
+    landing in ``into``. A row that is a recorded diagnostic's name (its
+    final) is that variable's number, in its one spelling
+    (`seed_variable_number`); any other row is a statistic, read through
+    its path (`seed_quantity`)."""
+    if quantity in diagnostics:
+        return seed_variable_number(quantity, diagnostics[quantity], into=into)
     name, _, field_name = quantity.rpartition(".")
     if field_name == "final" and name in diagnostics:
         return seed_diagnostic(name, diagnostics[name], into=into)
-    return seed_quantity(
-        quantity, quantity_kind(quantity, diagnostics.get(quantity)), into=into
-    )
+    return seed_quantity(quantity, quantity_kind(quantity), into=into)
 
 
 def _requirement(leaf: dict) -> str:

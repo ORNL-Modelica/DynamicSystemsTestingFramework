@@ -21,7 +21,7 @@ import json
 import math
 from collections.abc import Sequence
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nicegui import ui
 
@@ -135,10 +135,12 @@ def summary(leaf: dict) -> str:
     return "exact" if tol.upper == 0 else f"±{tol.upper:g}"
 
 
-def cell_text(row: StatRow, value: Any) -> str:
-    """A value as the card prints it, rounded (`card_text`); `—` for a
+def cell_text(row: StatRow, side: int) -> str:
+    """A side's value (0: the run, 1: the baseline) as the card prints it,
+    rounded from the digits it was recorded with (`card_text`); `—` for a
     side that recorded none."""
-    return card_text(row.kind, value) or "—"
+    value = row.baseline if side else row.run
+    return card_text(row.kind, value, row.digits[side]) or "—"
 
 
 def row_of(quantity: str, paths: Sequence[str] | set[str]) -> str:
@@ -193,8 +195,8 @@ class _Row:
         self.pill, self.rule, self.more = pill, rule, more
 
     def paint(self, stat: StatRow, leaves: list[dict]) -> None:
-        self.run.set_text(cell_text(stat, stat.run))
-        self.base.set_text(cell_text(stat, stat.baseline))
+        self.run.set_text(cell_text(stat, 0))
+        self.base.set_text(cell_text(stat, 1))
         self.delta.set_text(stat.delta)
         if stat.changed:
             self.row.classes(add="dstf-stat-changed")

@@ -30,6 +30,7 @@ import numpy as np
 
 from ..backends import TestResult
 from ..backends.common.result_variables import tracked_results, tracks
+from ..backends.common.statistics import diagnostic_final
 from ..backends.types import DatasetType, VariableResult
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
@@ -304,7 +305,6 @@ def _check_structural_changes(
         ("translation.numerical_jacobians", "Numerical Jacobians"),
         ("translation.init_nonlinear_count", "Init nonlinear system count"),
         ("translation.init_numerical_jacobians", "Init numerical Jacobians"),
-        ("EventCounter", "Event count"),
     ]
 
     for dotted_key, label in checks:
@@ -329,6 +329,24 @@ def _check_structural_changes(
                 )
             )
 
+    # The event count is the EventCounter diagnostic's final on both sides
+    # (its summary in the baseline), compared as the statistics are: as
+    # text. Over the 686 stored Dymola baselines it equals the copy the
+    # statistics held before 1.2 in every one.
+    ref_events = diagnostic_final(reference.baseline.diagnostics, "EventCounter")
+    cur_events = diagnostic_final(result.diagnostics or [], "EventCounter")
+    if (
+        ref_events is not None
+        and cur_events is not None
+        and str(ref_events) != str(cur_events)
+    ):
+        warnings.append(
+            StructuralWarning(
+                field="Event count",
+                reference_value=str(ref_events),
+                current_value=str(cur_events),
+            )
+        )
     return warnings
 
 

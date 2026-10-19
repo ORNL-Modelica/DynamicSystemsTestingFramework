@@ -3022,9 +3022,9 @@ async def test_a_criterion_on_a_diagnostic_is_revealed_in_the_statistics_card(
         await _settled(lambda: page.open == (STATS, added))
         assert page.stats.is_open and not page.tree.is_open
         editor = _one(user, f"stats-editor:{added}")
-        # FakeLib folds no diagnostic into its statistics: the criterion's
-        # home is the "Other scored quantities" row (S4, B14).
-        assert page.stats.slots["CPUtime.final"] in list(_ancestors(editor))
+        # The run's CPUtime diagnostic is a row of its own, and the
+        # criterion on its final is shown there (S2).
+        assert page.stats.slots["CPUtime"] in list(_ancestors(editor))
 
 
 async def test_a_context_series_is_listed_with_an_x_that_takes_it_off(extras_shell):

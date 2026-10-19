@@ -1492,6 +1492,7 @@ class Session:
         KeyError, as for :meth:`tree`."""
         from ..comparison.tree_spec import statistic_paths
         from ..reporting.stats_rows import statistics_rows
+        from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 
         project = self._require_project()
         if project.test(model_id) is None:
@@ -1504,6 +1505,9 @@ class Session:
             run_diagnostics=(result.diagnostics or []) if result is not None else (),
             baseline_diagnostics=ref.baseline.diagnostics if ref is not None else (),
             extra_paths=statistic_paths(self._entry_tree(model_id)),
+            baseline_digits=shown_digits(ref.sampling)
+            if ref is not None
+            else DOUBLE_SHOWN,
         )
 
     def statistic_leaves(self, model_id: str) -> list[tuple[LeafSpec, str]]:

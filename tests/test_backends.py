@@ -1078,12 +1078,14 @@ class TestDymolaStatisticsFromLogs:
     def test_logs_are_read_when_the_run_kept_no_statistics(self, tmp_path):
         self._test_dir(tmp_path)
         test = _tm("Lib.A", variable_patterns=["x"])
-        stats = self._backend(tmp_path).read_result(test, "test_0001", None).statistics
+        result = self._backend(tmp_path).read_result(test, "test_0001", None)
+        stats = result.statistics
         assert stats is not None
         assert stats["translation"]["continuous_time_states"] is not None
         assert "cpu_time_integration" in stats["simulation"]
-        # The diagnostics still fold in after the logs.
-        assert "CPUtime" in stats
+        # CPUtime is a diagnostic, never copied into the statistics.
+        assert "CPUtime" not in stats
+        assert [d.name for d in result.diagnostics] == ["CPUtime"]
         # The logs hold no phase walls; nothing invents them.
         assert "timing" not in stats
 
@@ -1201,10 +1203,10 @@ class TestDymolaStatisticsFromLogs:
     def test_no_logs_reads_as_before(self, tmp_path):
         self._test_dir(tmp_path, logs=False)
         test = _tm("Lib.A", variable_patterns=["x"])
-        stats = self._backend(tmp_path).read_result(test, "test_0001", None).statistics
-        assert stats is not None
-        assert "translation" not in stats
-        assert "simulation" not in stats
+        result = self._backend(tmp_path).read_result(test, "test_0001", None)
+        # No logs and no copy of a diagnostic: no statistics at all.
+        assert not result.statistics
+        assert [d.name for d in result.diagnostics] == ["CPUtime"]
 
     def test_batch_run_merges_both_logs(self, tmp_path, monkeypatch):
         import shutil

@@ -14,7 +14,6 @@ import numpy as np
 from dstf.backends.common.result_variables import (
     compute_needed_variables,
     extract_variables,
-    fold_diagnostics_into_statistics,
     merge_timing_stats,
     run_timing,
 )
@@ -195,42 +194,6 @@ class TestExtractVariables:
         variables, diagnostics = extract_variables(mat_data, test, ["CPUtime"])
         assert [v.name for v in variables] == ["pipe.T[1]"]
         assert [d.name for d in diagnostics] == ["CPUtime"]
-
-
-class TestFoldDiagnosticsIntoStatistics:
-    def _diag(self, values, dtype):
-        time_arr, arr = _series(values, dtype=dtype)
-        return VariableResult(index=1, time=time_arr, values=arr, name="CPUtime")
-
-    def test_float32_rounded_to_seven_significant_digits(self):
-        diag = self._diag([0.0, 1.2345678901234], np.float32)
-        stats = fold_diagnostics_into_statistics(None, [diag])
-        assert stats == {"CPUtime": float("%.7g" % np.float32(1.2345678901234))}
-
-    def test_float64_keeps_fifteen_significant_digits(self):
-        diag = self._diag([0.0, 1.2345678901234], np.float64)
-        stats = fold_diagnostics_into_statistics({}, [diag])
-        assert stats["CPUtime"] == float("%.15g" % 1.2345678901234)
-
-    def test_existing_stats_preserved(self):
-        diag = self._diag([0.0, 2.0], np.float64)
-        stats = fold_diagnostics_into_statistics({"simulation": {"steps": 3}}, [diag])
-        assert stats["simulation"] == {"steps": 3}
-        assert stats["CPUtime"] == 2.0
-
-    def test_no_diagnostics_leaves_stats_untouched(self):
-        assert fold_diagnostics_into_statistics(None, []) is None
-        original = {"a": 1}
-        assert fold_diagnostics_into_statistics(original, []) is original
-
-    def test_empty_diagnostic_series_skipped(self):
-        empty = VariableResult(
-            index=1,
-            time=np.array([], dtype=np.float64),
-            values=np.array([], dtype=np.float64),
-            name="CPUtime",
-        )
-        assert fold_diagnostics_into_statistics(None, [empty]) == {}
 
 
 class TestMergeTimingStats:

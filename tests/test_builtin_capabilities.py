@@ -3940,17 +3940,21 @@ async def test_a_diagnostic_max_is_added_on_its_own_path(tmp_path):
     assert op.value["quantity"] == "EventCounter.max"
 
 
-async def test_a_top_level_statistic_naming_a_diagnostic_takes_its_kind(tmp_path):
-    """A user-configured diagnostic folded into the statistics: its row's
-    `+` reads the run's samples, as the add form's `Wall.final` does — a
-    time, warned in an `and` (Corrections A5)."""
+async def test_a_listed_names_plus_writes_its_number_in_the_one_spelling(tmp_path):
+    """A user-listed name's row (`Wall`): its `+` writes the variable's
+    number, ``{"reduce": "final"}``, seeded as any scalar is — bounds
+    around the run's final, bare in an `and`: a name that is no CPU time is
+    never warned, whatever its samples (D162)."""
     session = _wide_session(tmp_path, 0)
     _with_diagnostics(session, Wall=2.5)  # samples 0 .. 2.5: fractional
     (op,) = _add_quantity(session, "Wall")
-    assert op.value["combinator"] == "warn"
-    (leaf,) = op.value["children"]
-    assert (leaf["quantity"], leaf["tolerance_mode"]) == ("Wall", "rel")
-    assert "variable" not in leaf
+    assert op.value == {
+        "metric": "scalar",
+        "variable": "Wall",
+        "quantity": {"reduce": "final"},
+        "min_value": 2.3,
+        "max_value": 2.7,
+    }
 
 
 async def test_a_quantity_and_a_variable_together_raise(tmp_path):

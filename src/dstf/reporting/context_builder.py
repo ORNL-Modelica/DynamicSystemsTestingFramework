@@ -17,6 +17,7 @@ from ..backends.types import VariableText, display_label, variable_texts
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
 from ..storage.baseline import DiagnosticSummary, ReferenceFile, StoredVariable
+from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 from .stats_rows import SECTION_TITLES, report_text, statistics_rows
 
 logger = logging.getLogger(__name__)
@@ -314,16 +315,26 @@ def _build_statistics_sections(
     cur_stats: dict,
     *,
     run_diagnostics: Sequence = (),
+    baseline_diagnostics: Sequence = (),
+    baseline_digits: int = DOUBLE_SHOWN,
 ) -> list:
     """The Statistics table: :func:`~.stats_rows.statistics_rows` rendered
     into the template's ``{title, rows: [{label, current, reference,
     changed}]}`` sections — the rows the tool's Statistics card shows, in
     the report's order, under one "changed" rule for both; printed in full
     (:func:`~.stats_rows.report_text`), where the card rounds. A section with
-    no key is no section. ``run_diagnostics`` are the run's samples: a
-    folded diagnostic's row takes its kind from them, as the card's does."""
+    no key is no section. ``run_diagnostics`` and ``baseline_diagnostics``
+    are the two sides' listed names — a row each, its final — and
+    ``baseline_digits`` the precision the baseline was recorded with, as
+    the card's are."""
     sections: dict[str, dict] = {}
-    for row in statistics_rows(cur_stats, ref_stats, run_diagnostics=run_diagnostics):
+    for row in statistics_rows(
+        cur_stats,
+        ref_stats,
+        run_diagnostics=run_diagnostics,
+        baseline_diagnostics=baseline_diagnostics,
+        baseline_digits=baseline_digits,
+    ):
         if row.section not in sections:
             title = (
                 SECTION_TITLES.get(row.section) or row.section.replace("_", " ").title()
@@ -334,8 +345,8 @@ def _build_statistics_sections(
         sections[row.section]["rows"].append(
             {
                 "label": row.label,
-                "current": report_text(row.kind, row.run),
-                "reference": report_text(row.kind, row.baseline),
+                "current": report_text(row.kind, row.run, row.digits[0]),
+                "reference": report_text(row.kind, row.baseline, row.digits[1]),
                 "changed": row.changed,
             }
         )
@@ -525,6 +536,8 @@ def _build_key_stats(
     cur_stats: dict,
     *,
     run_diagnostics: Sequence = (),
+    baseline_diagnostics: Sequence = (),
+    baseline_digits: int = DOUBLE_SHOWN,
 ) -> list:
     """Top-level summary row: the worst NRMSE (`worst_nrmse`), plus a small
     fixed pick of structural stats (continuous states, nonlinear
@@ -538,7 +551,11 @@ def _build_key_stats(
     rows = {
         row.path: row
         for row in statistics_rows(
-            cur_stats, ref_stats, run_diagnostics=run_diagnostics
+            cur_stats,
+            ref_stats,
+            run_diagnostics=run_diagnostics,
+            baseline_diagnostics=baseline_diagnostics,
+            baseline_digits=baseline_digits,
         )
     }
 
@@ -549,8 +566,8 @@ def _build_key_stats(
         key_stats.append(
             {
                 "label": label,
-                "current": report_text(row.kind, row.run),
-                "reference": report_text(row.kind, row.baseline),
+                "current": report_text(row.kind, row.run, row.digits[0]),
+                "reference": report_text(row.kind, row.baseline, row.digits[1]),
                 "changed": row.changed,
             }
         )
@@ -876,9 +893,16 @@ def _build_template_context(
     ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
     sim_params = _build_sim_params(test_model, ref_sim)
     run_diagnostics = (result.diagnostics or []) if result is not None else []
-    statistics_sections = _build_statistics_sections(
-        ref_stats, cur_stats, run_diagnostics=run_diagnostics
-    )
+    # The baseline's side of the listed names' rows: its summaries, at the
+    # precision its file was recorded with.
+    sides = {
+        "run_diagnostics": run_diagnostics,
+        "baseline_diagnostics": ref_data.baseline.diagnostics if ref_data else [],
+        "baseline_digits": shown_digits(ref_data.sampling)
+        if ref_data
+        else DOUBLE_SHOWN,
+    }
+    statistics_sections = _build_statistics_sections(ref_stats, cur_stats, **sides)
     texts = test_texts(comparisons, result, plot_series)
     trajectories, diag_trajectories, nobaseline_trajectories = build_trajectories(
         comparisons,
@@ -893,9 +917,7 @@ def _build_template_context(
         result,
         test_model,
     )
-    key_stats = _build_key_stats(
-        comparisons, ref_stats, cur_stats, run_diagnostics=run_diagnostics
-    )
+    key_stats = _build_key_stats(comparisons, ref_stats, cur_stats, **sides)
     warning_rows = _build_warning_rows(warnings)
 
     last_run_str = ""

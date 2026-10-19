@@ -4714,20 +4714,23 @@ class TestTheStatisticsRows:
         s.statistics(A)
         assert s._reads_for(A).ref == before
 
-    def test_the_rows_take_each_diagnostics_own_samples(self, tmp_path):
+    def test_a_listed_names_row_takes_its_kind_from_its_name(self, tmp_path):
+        """Whole samples or fractional, a listed name that is neither CPUtime
+        nor EventCounter is a `value` (D162): its kind is never guessed."""
         s = _stats_session(tmp_path)
         tt = np.asarray([i / 4 for i in range(5)])
         res = s.project.results[A]
-        res.statistics = {**res.statistics, "Steps": 4.0, "Wall": 2.5}
         res.diagnostics = [
             VariableResult(index=0, time=tt, values=4 * tt, name="Steps"),  # whole
             VariableResult(
                 index=0, time=tt, values=2.5 * tt, name="Wall"
             ),  # fractional
+            VariableResult(index=0, time=tt, values=tt, name="CPUtime"),
         ]
         by = {r.path: r for r in s.statistics(A)}
-        assert by["Wall"].kind == "time"
-        assert by["Steps"].kind == "count"
+        assert (by["Wall"].kind, by["Wall"].run) == ("value", 2.5)
+        assert (by["Steps"].kind, by["Steps"].run) == ("value", 4.0)
+        assert by["CPUtime"].kind == "time"
 
     def test_a_diagnostic_max_leaf_gets_its_own_row_from_both_sides(self, tmp_path):
         s = _stats_session(tmp_path)

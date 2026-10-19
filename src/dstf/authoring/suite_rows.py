@@ -67,6 +67,7 @@ def suite_row(
         s = summary_fields(
             comp,
             stats=result.statistics if result is not None else None,
+            diagnostics=(result.diagnostics or []) if result is not None else (),
             ref_id=f"ref_{comp.test_id}" if comp.test_id else None,
             field_sources=row.field_sources,
         )

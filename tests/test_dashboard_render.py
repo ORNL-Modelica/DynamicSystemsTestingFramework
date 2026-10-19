@@ -2240,15 +2240,27 @@ def _cpu_only(tmp_path):
             "updated_at": 0.0,
         },
     )
-    from dstf.backends.types import TestResult
+    import numpy as np
+
+    from dstf.backends.types import TestResult, VariableResult
     from dstf.comparison.types import TestComparison
 
     comp = TestComparison(model_id="Lib.A", passed=True)
-    # As Dymola's read_result folds its diagnostics into the statistics.
+    # As Dymola's read_result records them: diagnostics, the CPU time's
+    # final its last sample. The statistics hold no copy of it.
+    t = np.array([0.0, 1.0])
     result = TestResult(
         model_id="Lib.A",
         success=True,
-        statistics={"CPUtime": 0.046, "EventCounter": 0.0},
+        diagnostics=[
+            VariableResult(
+                index=1, time=t, values=np.array([0.0, 0.046]), name="CPUtime"
+            ),
+            VariableResult(
+                index=2, time=t, values=np.array([0.0, 0.0]), name="EventCounter"
+            ),
+        ],
+        statistics={},
     )
     return comp, result
 

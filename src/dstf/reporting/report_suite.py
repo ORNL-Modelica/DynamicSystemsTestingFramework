@@ -558,6 +558,7 @@ def generate_comparison_plots(
         ),
         warnings=warnings,
         stats=cur_stats if isinstance(cur_stats, dict) else None,
+        diagnostics=(result.diagnostics or []) if result is not None else (),
         ref_id=ref_id,
         ref_file=ref_file,
         field_sources=getattr(test_model, "field_sources", None) or {},

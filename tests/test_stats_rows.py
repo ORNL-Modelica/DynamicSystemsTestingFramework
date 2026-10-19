@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 
 import numpy as np
+import pytest
 
 from dstf.backends.types import VariableResult
 from dstf.reporting.context_builder import _build_statistics_sections
@@ -178,29 +179,26 @@ def test_openmodelica_and_fakelib_shapes():
     assert rows["simulation.wall_time"].baseline is None
 
 
-def test_a_top_level_statistic_naming_a_diagnostic_takes_its_kind():
-    """A user-configured diagnostic folded into the statistics (`Wall`):
-    its fractional samples make its row a time, as the add form's
-    `Wall.final` leaf is (Corrections A5)."""
+@pytest.mark.parametrize(
+    "samples", [[0.0, 1.5, 2.5], [0.0, 1.0, 2.0]], ids=["fractional", "whole"]
+)
+def test_a_listed_name_takes_its_kind_from_its_name_never_its_values(samples):
+    """A user-listed name (`Wall`) is neither CPUtime nor EventCounter: a
+    `value`, whatever its samples — whole ones made it a count, fractional
+    ones a time (D162). Its row is its final on both sides, changed beyond
+    the ordinary scalar seed's 1%; the report tints it the same."""
     t = np.array([0.0, 1.0, 2.0])
-    wall = VariableResult(
-        index=0, time=t, values=np.array([0.0, 1.5, 2.5]), name="Wall"
-    )
+    wall = VariableResult(index=0, time=t, values=np.array(samples), name="Wall")
+    base = [DiagnosticSummary(name="Wall", final=samples[-1] * 0.96)]
     rows = _by_path(
-        statistics_rows(
-            {"Wall": 2.5},
-            {"Wall": 2.4},
-            run_diagnostics=[wall],
-            baseline_diagnostics=(),
-        )
+        statistics_rows({}, {}, run_diagnostics=[wall], baseline_diagnostics=base)
     )
-    assert rows["Wall"].kind == "time"
-    assert not rows["Wall"].changed  # 4% off: within the time's 10%
-    # The report reads the same run's samples: its row is not tinted either.
+    assert rows["Wall"].kind == "value"
+    assert rows["Wall"].changed  # 4% off: beyond 1%
     (section,) = _build_statistics_sections(
-        {"Wall": 2.4}, {"Wall": 2.5}, run_diagnostics=[wall]
+        {}, {}, run_diagnostics=[wall], baseline_diagnostics=base
     )
-    assert [(r["label"], r["changed"]) for r in section["rows"]] == [("Wall", False)]
+    assert [(r["label"], r["changed"]) for r in section["rows"]] == [("Wall", True)]
 
 
 def test_extra_paths_become_other_scored_rows():
@@ -244,9 +242,11 @@ def test_a_leaf_reading_a_list_statistic_gets_its_own_row():
     ]
 
 
-def test_an_extra_diagnostic_path_no_row_holds_reads_the_diagnostics():
-    """A backend that does not fold its diagnostics: a `CPUtime.final` leaf
-    gets its own row, its values the diagnostics' finals."""
+def test_a_listed_names_final_is_its_own_row_on_every_backend():
+    """A listed name's final is a row of the Simulation section, its
+    values the two sides' finals (the run's diagnostic, the baseline's
+    summary) — on a backend whose statistics never held a copy of it too.
+    A `CPUtime.final` leaf is shown on it (S2)."""
     t = np.array([0.0, 1.0])
     cpu = VariableResult(index=0, time=t, values=np.array([0.0, 1.12]), name="CPUtime")
     rows = statistics_rows(
@@ -257,7 +257,12 @@ def test_an_extra_diagnostic_path_no_row_holds_reads_the_diagnostics():
         extra_paths=["CPUtime.final"],
     )
     (row,) = rows
-    assert (row.section, row.run, row.baseline) == ("other scored", 1.12, 0.8)
+    assert (row.section, row.path, row.run, row.baseline) == (
+        "simulation",
+        "CPUtime",
+        1.12,
+        0.8,
+    )
     assert row.kind == "time" and row.changed
 
 

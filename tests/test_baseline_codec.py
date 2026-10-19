@@ -80,7 +80,9 @@ PRIMARY_SINGLE = """{
     "tolerance": 0.001
   },
   "statistics": {
-    "CPUtime": 0.015563
+    "translation": {
+      "continuous_time_states": 1
+    }
   },
   "diagnostics": [
     {

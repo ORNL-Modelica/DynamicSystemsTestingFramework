@@ -3,6 +3,8 @@ one place."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 SUMMARIES = ("count", "total", "max")
 
 
@@ -37,3 +39,23 @@ def read_summary(category: dict, key: str) -> int | None:
     if field not in SUMMARIES or key in category:
         return None
     return 0 if category.get(base) == [] else None
+
+
+def diagnostic_final(entries: Iterable[object], name: str) -> float | None:
+    """The final value of the listed name ``name`` among ``entries``: a
+    run's recorded diagnostics (trajectories: their last sample) or a
+    baseline's stored summaries (their ``final``). None where none is
+    named so, or it holds no value. What the event-count warning, the
+    dashboard's CPU time and the Statistics rows read — the one copy a
+    result once carried in its statistics is gone (D162)."""
+    for entry in entries:
+        if getattr(entry, "name", None) != name:
+            continue
+        if hasattr(entry, "final"):
+            final = entry.final
+            return None if final is None else float(final)
+        values = getattr(entry, "values", None)
+        if values is None or len(values) == 0:
+            return None
+        return float(values[-1])
+    return None

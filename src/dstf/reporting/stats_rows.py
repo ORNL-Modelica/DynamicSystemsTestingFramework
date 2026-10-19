@@ -11,10 +11,16 @@ not a change the tool would score.
 The rows keep the report's order and sections: translation, simulation,
 timing, then any other section in the order they appear (the baseline's
 first); keys alphabetical inside a section, ``timing`` its fixed four
-first; the top-level scalars (``CPUtime``, ``EventCounter``, folded in from
-the diagnostics) sorted in among the Simulation keys — or, with no
+first; the listed names' finals (``CPUtime``, ``EventCounter``, a test's
+own ``diagnostic_variables``: the run's diagnostics and the baseline's
+summaries) sorted in among the Simulation keys — or, with no
 ``simulation`` section on either side, a Simulation section of their own
 at the end.
+
+A number is shown at the precision it was recorded with (owner,
+2026-10-18): a listed name's final at 7 significant digits from a float32
+run or a single-precision baseline, 15 otherwise (`StatRow.digits`); a
+statistic of the log at 15. Storage and scoring are unchanged.
 """
 
 from __future__ import annotations
@@ -25,10 +31,25 @@ from typing import Any, Literal
 
 import numpy as np
 
-from ..backends.common.statistics import SUMMARIES, read_summary, sizes_systems
+from ..backends.common.statistics import (
+    SUMMARIES,
+    diagnostic_final,
+    read_summary,
+    sizes_systems,
+)
 from ..comparison.modes import ScalarConfig, ScalarMode
-from ..comparison.seeds import quantity_kind, seed_quantity
+from ..comparison.seeds import (
+    COUNTS,
+    TIMES,
+    SeedData,
+    quantity_kind,
+    seed_quantity,
+    seed_scalar,
+)
 from ..comparison.tree_eval import resolve_scalar_path
+from ..storage.baseline_codec import DOUBLE_SHOWN, recorded_digits
+
+Kind = Literal["count", "time", "value"]
 
 #: The section a leaf's quantity lands in when no row holds it (S4).
 OTHER = "other scored"
@@ -51,26 +72,36 @@ class StatRow:
     key: str  # the key inside its section ("nonlinear_count", "CPUtime")
     path: str  # the quantity path a leaf reads ("translation.nonlinear_count")
     label: str  # "Nonlinear count"; a top-level name as is
-    kind: Literal["count", "time", "text"]
+    #: a `value` is a listed name that is neither a time nor a count (a
+    #: height): no unit, a percentage delta
+    kind: Literal["count", "time", "value", "text"]
     run: Any  # a number, or a list / string for a `text` row; None: not recorded
     baseline: Any
     changed: bool
     delta: str  # "0→3" | "+38%" | "+0.12 s" | "" (S6)
+    #: the significant digits each side was recorded with, (run, baseline):
+    #: what `report_text` and `card_text` show it at
+    digits: tuple[int, int] = (DOUBLE_SHOWN, DOUBLE_SHOWN)
 
 
 def changed(
     path: str,
-    kind: Literal["count", "time"],
+    kind: Kind,
     run: float | None,
     baseline: float | None,
 ) -> bool:
     """Would the criterion a ``+`` on this row adds fail? Never when a side
     has no value (S3): there is nothing to compare, and an accept records
-    it."""
+    it. A `value` takes the ordinary scalar seed's tolerance (1% of the
+    baseline), a count and a time their known ones."""
     if run is None or baseline is None:
         return False
-    seed = seed_quantity(path, kind, into="and")
-    leaf = seed["children"][0] if "combinator" in seed else seed
+    if kind == "value":
+        one = np.array([0.0])
+        leaf = seed_scalar(SeedData(ref=(one, np.array([float(baseline)])), act=None))
+    else:
+        seed = seed_quantity(path, kind, into="and")
+        leaf = seed["children"][0] if "combinator" in seed else seed
     params = {k: v for k, v in leaf.items() if k not in ("metric", "variable")}
     got = ScalarMode(ScalarConfig(**params)).compare(
         np.array([0.0]),
@@ -101,45 +132,58 @@ def _rounded(v: float) -> str:
     return f"{v:.0f}" if abs(v) >= 999.5 else f"{v:#.3g}".rstrip(".")
 
 
-def _value_text(kind: str, value: Any, time: Callable[[float], str]) -> str:
+def _shown(value: float, digits: int) -> float:
+    """``value`` at the ``digits`` it was recorded with (`StatRow.digits`):
+    a float32's CPU time ``0.04324999824166298`` is ``0.04325``."""
+    return float(f"{value:.{digits}g}")
+
+
+def _value_text(
+    kind: str, value: Any, number: Callable[[float], str], digits: int
+) -> str:
     if value is None:
         return ""
     if kind == "text" or not _is_number(value):
         return _text(value)
     if kind == "time":
-        return f"{time(float(value))} s"
+        return f"{number(_shown(float(value), digits))} s"
+    if kind == "value":
+        return number(_shown(float(value), digits))
     return _count_text(value)
 
 
-def report_text(kind: str, value: Any) -> str:
-    """A row's value as the REPORT prints it, in full: a time with its unit
-    (``0.045845 s``, ``1.600425 s``, ``1234567.89 s`` — ``:.15g``, where
-    ``:g`` stopped at six figures, ``1.60042 s``), a count whole
-    (``1234567``, never ``1.23457e+06``), a list joined; ``""`` for a side
-    that recorded none. The report is where a number is read to its last
-    digit."""
-    return _value_text(kind, value, lambda v: f"{v:.15g}")
+def report_text(kind: str, value: Any, digits: int = DOUBLE_SHOWN) -> str:
+    """A row's value as the REPORT prints it, in full — to the ``digits``
+    it was recorded with (`StatRow.digits`): a time with its unit
+    (``0.045845 s``, ``1.600425 s``, ``1234567.89 s`` — where ``:g``
+    stopped at six figures, ``1.60042 s``), a `value` without one, a count
+    whole (``1234567``, never ``1.23457e+06``), a list joined; ``""`` for a
+    side that recorded none. The report is where a number is read to its
+    last digit."""
+    return _value_text(kind, value, lambda v: f"{v:.15g}", digits)
 
 
-def card_text(kind: str, value: Any) -> str:
+def card_text(kind: str, value: Any, digits: int = DOUBLE_SHOWN) -> str:
     """A row's value as the tool's CARD prints it, rounded to be compared
     at a glance: a time to 3 significant figures keeping its zeros
-    (``0.800 s``), whole seconds from 999.5 s (``1234 s``); otherwise as
-    :func:`report_text`."""
-    return _value_text(kind, value, _rounded)
+    (``0.800 s``), whole seconds from 999.5 s (``1234 s``), a `value` the
+    same without the unit — each from the number at the ``digits`` it was
+    recorded with; otherwise as :func:`report_text`."""
+    return _value_text(kind, value, _rounded, digits)
 
 
 def _delta(kind: str, run: float | None, baseline: float | None) -> str:
-    """S6: a count reads ``0→3``, a time ``+38%`` (``+0.12 s`` over a zero
-    baseline) — whenever both sides are present and differ, changed or
-    not. Under 1% a time keeps one decimal (``+0.3%``), and under 0.05%
-    reads ``+<0.1%``: a time that moved never reads ``+0%`` or ``+0.0%``."""
+    """S6: a count reads ``0→3``, a time or a `value` ``+38%`` (a time
+    ``+0.12 s`` over a zero baseline, a value ``+0.12``) — whenever both
+    sides are present and differ, changed or not. Under 1% it keeps one
+    decimal (``+0.3%``), and under 0.05% reads ``+<0.1%``: a number that
+    moved never reads ``+0%`` or ``+0.0%``."""
     if run is None or baseline is None or run == baseline:
         return ""
     if kind == "count":
         return f"{_count_text(baseline)}→{_count_text(run)}"
     if baseline == 0:
-        return f"{run - baseline:+.2g} s"
+        return f"{run - baseline:+.2g}" + (" s" if kind == "time" else "")
     ratio = (run - baseline) / baseline
     if abs(ratio) < 0.0005:
         return f"{'+' if ratio > 0 else '-'}<0.1%"
@@ -172,8 +216,15 @@ def _diagnostic_values(diagnostics: Sequence, name: str) -> np.ndarray | None:
     for entry in diagnostics:
         if getattr(entry, "name", None) == name:
             values = getattr(entry, "values", None)
-            return None if values is None else np.asarray(values, dtype=float)
+            return None if values is None else np.asarray(values)
     return None
+
+
+def listed_kind(name: str) -> Kind:
+    """A listed name's row kind, by its name alone: CPUtime a time,
+    EventCounter a count, any other a `value` — never guessed from its
+    values (a height is no time)."""
+    return "time" if name in TIMES else "count" if name in COUNTS else "value"
 
 
 def _row(
@@ -185,11 +236,17 @@ def _row(
     *,
     top_level: bool = False,
     samples: np.ndarray | None = None,
+    kind: Kind | None = None,
+    digits: tuple[int, int] = (DOUBLE_SHOWN, DOUBLE_SHOWN),
 ) -> StatRow:
     label = _label(key, top_level)
     if (run is None or _is_number(run)) and (baseline is None or _is_number(baseline)):
-        kind = quantity_kind(path, samples)
+        kind = kind or quantity_kind(path, samples)
         r, b = _number(run), _number(baseline)
+        # The delta reads the numbers as they are shown; whether the row
+        # changed is the scorer's verdict, over the numbers it scores.
+        shown_r = None if r is None else _shown(r, digits[0])
+        shown_b = None if b is None else _shown(b, digits[1])
         return StatRow(
             section,
             key,
@@ -199,7 +256,8 @@ def _row(
             run,
             baseline,
             changed(path, kind, r, b),
-            _delta(kind, r, b),
+            _delta(kind, shown_r, shown_b),
+            digits,
         )
     # A list or a string: the report's rule — formatted text differs, both
     # sides non-empty. Nothing scores it, so the card never shows it (S1).
@@ -250,40 +308,58 @@ def statistics_rows(
     run_diagnostics: Sequence = (),
     baseline_diagnostics: Sequence = (),
     extra_paths: Iterable[str] = (),
+    baseline_digits: int = DOUBLE_SHOWN,
 ) -> list[StatRow]:
-    """Every statistic the run or its baseline recorded, in the report's
-    order (the module docstring), then a row per ``extra_paths`` entry no
-    row holds (S4: a leaf's quantity always has a home). A system-size
-    list on either side gives its three summary rows on both; a summary
-    key a side lacks reads through :func:`read_summary` (a baseline's empty
-    ``nonlinear`` gives ``nonlinear_count`` 0). Never writes into its
-    inputs."""
+    """Every statistic the run or its baseline recorded, and the final of
+    every listed name either holds (the run's diagnostics, the baseline's
+    summaries), in the report's order (the module docstring), then a row
+    per ``extra_paths`` entry no row holds (S4: a leaf's quantity always
+    has a home). A system-size list on either side gives its three summary
+    rows on both; a summary key a side lacks reads through
+    :func:`read_summary` (a baseline's empty ``nonlinear`` gives
+    ``nonlinear_count`` 0). ``baseline_digits`` is the precision the
+    baseline's file says it was recorded with
+    (`~dstf.storage.baseline_codec.shown_digits`); a run's is its array's.
+    Never writes into its inputs."""
     run, baseline = run or {}, baseline or {}
     names: list[str] = []
     for src in (baseline, run):
         for k, v in src.items():
             if isinstance(v, Mapping) and k not in names:
                 names.append(k)
+    listed = {str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name}
+    # A top-level number that is no listed name keeps its row; one named
+    # like a listed name is the copy its final once had, never read.
     top = sorted(
         {
             k
             for src in (baseline, run)
             for k, v in src.items()
-            if not isinstance(v, Mapping)
+            if not isinstance(v, Mapping) and k not in listed
         }
+        | listed
     )
     ordered = [n for n in _PREFERRED if n in names]
     ordered += [n for n in names if n not in _PREFERRED]
 
     def top_row(key: str) -> StatRow:
+        if key not in listed:
+            return _row(
+                "simulation", key, key, run.get(key), baseline.get(key), top_level=True
+            )
+        samples = _diagnostic_values(run_diagnostics, key)
         return _row(
             "simulation",
             key,
             key,
-            run.get(key),
-            baseline.get(key),
+            diagnostic_final(run_diagnostics, key),
+            diagnostic_final(baseline_diagnostics, key),
             top_level=True,
-            samples=_diagnostic_values(run_diagnostics, key),
+            kind=listed_kind(key),
+            digits=(
+                recorded_digits(samples) if samples is not None else DOUBLE_SHOWN,
+                baseline_digits,
+            ),
         )
 
     rows: list[StatRow] = []

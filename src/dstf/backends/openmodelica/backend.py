@@ -40,7 +40,6 @@ from ..common.proc_output import decode_output
 from ..common.result_variables import (
     compute_needed_variables,
     extract_variables,
-    fold_diagnostics_into_statistics,
     unfinished_result,
 )
 from ..locate import Located, find_executable
@@ -424,7 +423,6 @@ class OpenModelicaBackend(Backend):
             )
 
         variables, diagnostics = extract_variables(mat_data, test, diag_names)
-        stats = fold_diagnostics_into_statistics(stats, diagnostics)
         # The system's size, from the file omc generated with the result
         # (`init_xml`): here, so the persistent workers, `--batch` and a
         # `compare` of an earlier run all record it.

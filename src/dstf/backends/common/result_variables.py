@@ -1,10 +1,11 @@
 """Shared result-extraction helpers for DSresult-MAT backends.
 
 Dymola and OpenModelica write the same DSresult MAT layout and follow the
-same ``<instance>.x[i]`` convention, so variable selection, extraction and the
-diagnostics/timing fold into ``statistics`` are one implementation here rather
-than a copy per backend. Backends keep their own MAT reading and their own
-timing computation — only what is genuinely identical lives here.
+same ``<instance>.x[i]`` convention, so variable selection, extraction (the
+listed names among them) and the timing block of ``statistics`` are one
+implementation here rather than a copy per backend. Backends keep their own
+MAT reading and their own timing computation — only what is genuinely
+identical lives here.
 
 Also here: :func:`tracked_results`, which of a read result's variables a test
 TRACKS — the rule the comparator and the authoring Session both ask.
@@ -15,8 +16,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable
 from pathlib import Path
-
-import numpy as np
 
 from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
@@ -256,27 +255,6 @@ def unfinished_result(
     )
 
 
-def fold_diagnostics_into_statistics(
-    stats: dict | None,
-    diagnostics: list[VariableResult],
-) -> dict | None:
-    """Add each diagnostic's final value to ``stats``, returning the dict.
-
-    Creates the dict if there is anything to fold and ``stats`` is None.
-    float32 trajectories are rounded to 7 significant digits (their real
-    precision) so the on-disk reference JSON does not carry binary noise.
-    """
-    if not diagnostics:
-        return stats
-    if stats is None:
-        stats = {}
-    for diag in diagnostics:
-        if len(diag.values) > 0:
-            sig = 7 if diag.values.dtype == np.float32 else 15
-            stats[diag.name] = float(f"%.{sig}g" % diag.values[-1])
-    return stats
-
-
 def merge_timing_stats(stats: dict | None, timing: dict[str, float]) -> dict:
     """Overlay wall-clock summary keys onto ``stats["timing"]``.
 
@@ -321,7 +299,6 @@ __all__ = [
     "compute_needed_variables",
     "criterion_variables",
     "extract_variables",
-    "fold_diagnostics_into_statistics",
     "merge_timing_stats",
     "run_timing",
     "tracked_results",
