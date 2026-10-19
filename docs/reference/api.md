@@ -104,6 +104,10 @@ install is looked for:
 ```
 
 ```{eval-rst}
+.. autofunction:: dstf.discovery.test_registry.diagnostic_names
+```
+
+```{eval-rst}
 .. autoclass:: dstf.discovery.test_registry.TestModel
 ```
 

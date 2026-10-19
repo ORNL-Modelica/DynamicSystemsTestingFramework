@@ -188,9 +188,20 @@ class TestModel:
 
 
 def diagnostic_names(test: TestModel, project: Sequence[str]) -> list[str]:
-    """The names whose summary every run of ``test`` records: the
-    project's `diagnostic_variables`, then the test's own, unique, in
-    that order. Project and test names mean the same thing."""
+    """The names a test lists, whose final, min and max its baseline
+    stores: what a backend's ``read_result`` records as the result's
+    ``diagnostics``, one for each of these names its result holds.
+
+    Args:
+        test: The test, whose entry may list its own
+            (``test.diagnostic_variables``).
+        project: The project's list (``config.diagnostic_variables``).
+
+    Returns:
+        The project's names first, then the test's own, each name once, in
+        that order. A name listed by both is one name: project and test
+        names mean the same thing.
+    """
     return list(dict.fromkeys([*project, *test.diagnostic_variables]))
 
 

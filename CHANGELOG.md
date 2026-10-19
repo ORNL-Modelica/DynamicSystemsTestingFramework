@@ -15,6 +15,8 @@ this file says when they do.
   Existing baselines gain it at their next accept.
 - A test entry's own `diagnostic_variables`: names whose summary its
   baseline stores, beside `testing.json`'s.
+- `dstf.discovery.test_registry.diagnostic_names` is public API for a
+  plug-in backend: the names its `read_result` records as `diagnostics`.
 
 ### Changed
 
