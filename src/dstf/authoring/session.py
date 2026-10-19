@@ -934,7 +934,7 @@ class Session:
                     else {}
                 )
         leaves = leaves_by_variable(
-            comp.metric_tree if comp is not None else None, self._card_paths(model_id)
+            comp.metric_tree if comp is not None else None, self.card_paths(model_id)
         ).get(variable, [])
         return view_from_trajectory(variable, traj, leaves)
 
@@ -1261,9 +1261,10 @@ class Session:
             raise KeyError(model_id)
         return diagnostic_names(test, project.config.diagnostic_variables)
 
-    def _card_paths(self, model_id: str) -> set[str]:
+    def card_paths(self, model_id: str) -> set[str]:
         """The tree paths of the test's leaves on the Statistics card
-        (`statistic_leaves`): drawn on no plot (`leaves_by_variable`)."""
+        (`statistic_leaves`, read from the entry's tree, never `tree_view`):
+        drawn on no plot (`leaves_by_variable`)."""
         return {path for _, path in self.statistic_leaves(model_id)}
 
     def baseline_summaries(self, model_id: str) -> dict[str, DiagnosticSummary]:
@@ -1444,7 +1445,7 @@ class Session:
                 reads.bases[variable] = base
         comp = self.comparisons.get(model_id)
         leaves = leaves_by_variable(
-            comp.metric_tree if comp is not None else None, self._card_paths(model_id)
+            comp.metric_tree if comp is not None else None, self.card_paths(model_id)
         ).get(variable, [])
         # The leaves are decimated on their own (no arrays but their
         # geometry) and joined to the cached base; the figure is then built
@@ -3005,6 +3006,9 @@ class SessionView:
 
     def baseline_summaries(self, model_id: str) -> dict[str, DiagnosticSummary]:
         return self._session.baseline_summaries(model_id)
+
+    def card_paths(self, model_id: str) -> set[str]:
+        return self._session.card_paths(model_id)
 
     def plot_figure(
         self,

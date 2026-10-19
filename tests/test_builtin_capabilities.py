@@ -3870,6 +3870,8 @@ async def test_a_count_lands_at_the_end_of_an_and_root(tmp_path, flat):
 
 
 async def test_cpu_time_warns_in_an_and_root_and_goes_bare_in_an_or(tmp_path):
+    """The CPUtime row's `+` is the variable's number — CPUtime is a name
+    the project lists, whether or not this run recorded it (D162)."""
     session = _wide_session(tmp_path, 0)
     session.stage([PatchOp(A, "add", ROOT, {"combinator": "and", "children": _XY})])
     (op,) = _add_quantity(session, "CPUtime")
@@ -3878,7 +3880,8 @@ async def test_cpu_time_warns_in_an_and_root_and_goes_bare_in_an_or(tmp_path):
         "children": [
             {
                 "metric": "scalar",
-                "quantity": "CPUtime",
+                "variable": "CPUtime",
+                "quantity": {"reduce": "final"},
                 "tolerance": 0.1,
                 "tolerance_mode": "rel",
             }
@@ -3927,6 +3930,7 @@ async def test_a_listed_names_plus_writes_its_number_in_the_one_spelling(tmp_pat
     around the run's final, bare in an `and`: a name that is no CPU time is
     never warned, whatever its samples (D162)."""
     session = _wide_session(tmp_path, 0)
+    session.project.test(A).diagnostic_variables = ["Wall"]  # the entry lists it
     _with_diagnostics(session, Wall=2.5)  # samples 0 .. 2.5: fractional
     (op,) = _add_quantity(session, "Wall")
     assert op.value == {

@@ -2356,6 +2356,10 @@ class TestSessionView:
             # the names the test lists: a scalar added on one is its
             # number's criterion (D162)
             "diagnostic_names",
+            # what a number's seed reads where no run recorded the name
+            "baseline_summaries",
+            # the leaves on the Statistics card: drawn on no plot
+            "card_paths",
             "variable_names",
             # `labels` is a reader like the rest: a capability's caption
             # ("Add a criterion for pipe.T[1]") reads what the page's titles
