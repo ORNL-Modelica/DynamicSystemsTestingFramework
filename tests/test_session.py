@@ -4597,13 +4597,11 @@ STATS_RUN = {
     "translation": {"nonlinear": [1, 1, 1], "nonlinear_count": 3},
     "simulation": {"state_events": 2},
     "timing": {"total_wall": 4.02},
-    "CPUtime": 1.12,
 }
 STATS_BASE = {
     "translation": {"nonlinear": []},
     "simulation": {"state_events": 2},
     "timing": {"total_wall": 3.91},
-    "CPUtime": 0.80,
 }
 
 
@@ -4803,9 +4801,9 @@ class TestTheStatisticsRows:
 #: Dymola-shaped statistics at TRANSFORM's lengths (the keys `log_parser`
 #: writes), for the Statistics card: the baseline was stored before the
 #: parser wrote a list's zero summaries (an empty `nonlinear`, no `_count`),
-#: and the run's model grew three nonlinear systems. CPU time moved
-#: 0.80 -> 1.12 s (+40%); the total wall by 3%, inside the 10% a time's
-#: requirement allows.
+#: and the run's model grew three nonlinear systems. The total wall moved by
+#: 3%, inside the 10% a time's requirement allows. CPU time (0.80 -> 1.12 s,
+#: +40%) and the event count are diagnostics (`with_dymola_diagnostics`).
 DYMOLA_BASE = {
     "translation": {
         "scalar_unknowns": 8715,
@@ -4831,8 +4829,6 @@ DYMOLA_BASE = {
         "other_wall": 0.61,
         "total_wall": 3.91,
     },
-    "CPUtime": 0.80,
-    "EventCounter": 0,
 }
 DYMOLA_RUN = copy.deepcopy(DYMOLA_BASE)
 DYMOLA_RUN["translation"].update(
@@ -4844,7 +4840,23 @@ DYMOLA_RUN["translation"].update(
     }
 )
 DYMOLA_RUN["timing"]["total_wall"] = 4.02
-DYMOLA_RUN["CPUtime"] = 1.12
+
+
+def with_dymola_diagnostics(work: Path, key: str) -> list[VariableResult]:
+    """The run at ``key`` records CPUtime (to 1.12 s) and EventCounter (0)
+    as a Dymola run does — columns of its result the JSON driver reads as
+    diagnostics — and the baseline's: CPUtime to 0.80 s, EventCounter 0."""
+    path = work / key / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    n = len(payload["time"])
+    payload["variables"]["CPUtime"] = [1.12 * i / (n - 1) for i in range(n)]
+    payload["variables"]["EventCounter"] = [0.0] * n
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    tt = np.asarray([i / 4 for i in range(5)])
+    return [
+        VariableResult(index=1, time=tt, values=0.80 * tt, name="CPUtime"),
+        VariableResult(index=2, time=tt, values=0.0 * tt, name="EventCounter"),
+    ]
 
 
 def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -4855,6 +4867,7 @@ def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
     and B has no baseline (NO_REF: nothing is scored)."""
     cfg, work = _two_var_project(tmp_path, ref_models=())
     for key, model in (("test_0001", A), ("test_0002", B)):
+        baseline_diagnostics = with_dymola_diagnostics(work, key)
         (work / key / "run_stats.json").write_text(
             json.dumps(
                 {
@@ -4878,6 +4891,7 @@ def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
                 VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
             ],
             statistics=copy.deepcopy(DYMOLA_BASE),
+            diagnostics=baseline_diagnostics,
         ),
         provenance=PROVENANCE,
     )

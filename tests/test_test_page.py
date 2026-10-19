@@ -10684,9 +10684,15 @@ def _ref_override_project(tmp_path, on="x"):
     from dstf.backends.types import TestResult, VariableResult
     from dstf.config import Config
     from dstf.storage.reference_store import ReferenceStore
-    from test_session import DYMOLA_BASE, DYMOLA_RUN, make_test_model
+    from test_session import (
+        DYMOLA_BASE,
+        DYMOLA_RUN,
+        make_test_model,
+        with_dymola_diagnostics,
+    )
 
     cfg, work = _two_var_project(tmp_path, ref_models=())
+    baseline_diagnostics = with_dymola_diagnostics(work, "test_0001")
     (work / "test_0001" / "run_stats.json").write_text(
         json.dumps(
             {
@@ -10714,6 +10720,7 @@ def _ref_override_project(tmp_path, on="x"):
                 VariableResult(index=2, time=t, values=2.1 * t, name="y"),
             ],
             statistics=copy.deepcopy(DYMOLA_BASE),
+            diagnostics=baseline_diagnostics,
         ),
         provenance=PROVENANCE,
     )
