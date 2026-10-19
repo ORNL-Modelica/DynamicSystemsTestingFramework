@@ -156,9 +156,8 @@ def scored(
     view: dict | None,
 ) -> dict[str, list[dict]]:
     """Row path -> the criteria reading it, in tree order: the card leaves
-    (`on_the_card`) of the scored tree (``leaves``,
-    `Session.statistic_leaves`), each
-    as ``{"path", "params", "status"}`` — its status the view's verdict,
+    (`on_the_card`) of the scored tree (``leaves``, `Session.statistic_leaves`),
+    each as ``{"path", "params", "status"}`` — its status the view's verdict,
     "pending" where the view has none. Read from the view, a test with
     nothing compared (no baseline: no view) showed a staged criterion's row
     as unscored, and its `+` staged the same leaf again."""

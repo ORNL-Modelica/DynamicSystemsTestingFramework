@@ -142,7 +142,7 @@
 
 ### A listed name is stored as its summary, and is a variable like any (D162)
 - Every backend records the listed names its result holds (`CPUtime`, `EventCounter`, a test's own) as diagnostics
-- Their summaries (`final`, `min`, `max`) go in the `diagnostics` section of the reference JSON; a curve only when a criterion needs it
+- Their summaries (`final`, `min`, `max`) go in the `diagnostics` section of the reference JSON; a curve only when a criterion needs it (any but a scalar's final, min or max over the whole run) or the entry's `variables` match it
 - A scalar's final, min or max over the whole run scores the summary; nothing copies a final into `statistics`
 - `EventCounter` changes trigger a warning (the two summaries' finals); `CPUtime` does not (too noisy)
 

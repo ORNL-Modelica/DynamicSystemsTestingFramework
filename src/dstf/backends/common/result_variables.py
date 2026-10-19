@@ -207,7 +207,8 @@ def extract_variables(
 
     # 4. The listed names (diagnostic_variables), recorded as diagnostics:
     # the baseline stores each one's summary, and a scalar's final, min or
-    # max is scored from it (D162).
+    # max over the whole run is scored from it where the curve is not
+    # extracted (D162).
     diagnostics: list[VariableResult] = []
     diag_idx = 1
     for var_name in diagnostic_vars:

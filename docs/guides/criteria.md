@@ -95,12 +95,12 @@ tree, `comparison.variable_overrides` scores nothing.
 Every name in the result is a variable, `CPUtime` and `EventCounter` included,
 and any criterion may score it. A name listed in `diagnostic_variables` —
 `testing.json`'s, or a test entry's own — has its summary (final, min, max)
-stored in the baseline, and its curve only when a criterion needs it or the
-entry's `variables` names it: a `scalar`'s final, min or max over the whole
-run is scored from the summary; any other criterion stores the curve. A test that checks its event count
-exactly, warns when its CPU time moves by more than 10%, and scores the
-maximum of `pump.speed` within ±0.02 of the baseline's — read from the summary
-its listing keeps:
+stored in the baseline. Its curve is stored too when the entry's `variables`
+match it or a criterion needs it: any criterion but a `scalar`'s final, min
+or max over the whole run, which is scored from the summary. A test that
+checks its event count exactly, warns when its CPU time moves by more than
+10%, and scores the maximum of `pump.speed` within ±0.02 of the baseline's —
+read from the summary its listing keeps:
 
 <!-- snippet: test_spec -->
 ```json
@@ -173,9 +173,10 @@ queue that runs the selected tests again:
 A test's page draws a plot per scored variable with its criteria under it. A
 number — a statistic of the log, or a listed name's final, min or max — is
 not on a plot: its criterion is on the page's Statistics card, and in the
-report it is in the metric tree. A criterion opens into its fields beside the plot it scores; its bounds, bands
-and checkpoints can also be dragged on the plot, and Ctrl+click adds a row —
-a checkpoint, a tube's control point — that settles on the data:
+report it is in the metric tree. A criterion opens into its fields beside the
+plot it scores; its bounds, bands and checkpoints can also be dragged on the
+plot, and Ctrl+click adds a row — a checkpoint, a tube's control point — that
+settles on the data:
 
 ![A range criterion open under its plot, with its bounds as fields and as dashed lines](../img/author-editor.png)
 

@@ -9302,11 +9302,11 @@ A variable's number has one spelling:
    plot section — as it always listed a statistic's. Adding a card
    criterion rebuilds no plot card. The rows differ by that much: the
    report's Statistics table shows each listed name a side holds (its
-   final); the card also has a row for each number its criteria score
-   (`Session.statistics`' `extra_paths`) — a listed name nothing holds yet,
-   a listed name's min or max (`X.min`, `X.max`, with the name's final row
-   beside it), a statistic no row holds — whose criteria the report lists
-   in its tree.
+   final); the card also has a row for a number its criteria score that
+   no row holds (`Session.statistics`' `extra_paths`) — a listed name
+   nothing holds yet, a listed name's min or max (`X.min`, `X.max`, under
+   Other scored quantities, with the name's own final row in Simulation),
+   a statistic no row holds — whose criteria the report lists in its tree.
 3. *The display rule* (owner, 2026-10-18): a number is shown at the
    precision it was recorded with — a run's from its array's dtype
    (float32: 7 significant digits, float64: 15), a baseline's from its

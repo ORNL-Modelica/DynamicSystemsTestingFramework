@@ -118,9 +118,8 @@ def evaluate_spec(
 
     ``scalars`` carries the run's statistics, for ``scalar`` leaves whose
     quantity is a stats path, and the listed names' recorded diagnostics,
-    for a summary-reading leaf whose curve was not extracted
-    (`_summary_arrays`); a leaf that reduces a series it has never touches
-    it.
+    for a summary-reading leaf whose curve the run did not extract
+    (`_summary_arrays`); a leaf whose series the run holds never reads it.
 
     ``path`` is this node's RFC 6902 path; leaves are stamped with it
     (``stamp_leaf_path``) so results address the spec, not a position in a
@@ -472,11 +471,11 @@ def _evaluate_leaf(
     if summary is not None:
         ref_time, ref_values, act_time, act_values, index = summary
     elif scores_stored_scalar and isinstance(quantity, str):
-        # A string ``quantity`` reads a stored scalar instead of a tracked
-        # series — where the data comes from is the evaluator's call, the
-        # same seam the window below occupies (a future ``{"expr": ...}``
-        # quantity extends this spot). The window is skipped deliberately:
-        # a stored scalar is not a time series.
+        # A string ``quantity`` reads a statistic of the log instead of a
+        # tracked series — where the data comes from is the evaluator's
+        # call, the same seam the window below occupies (a future
+        # ``{"expr": ...}`` quantity extends this spot). The window is
+        # skipped deliberately: a statistic is not a time series.
         #
         # The switch is gated on the metric's ``accepts_quantity`` flag, not
         # on the param alone: a stray ``quantity`` on an nrmse/tube/points
