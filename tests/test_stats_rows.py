@@ -25,8 +25,6 @@ RUN = {
     },
     "simulation": {"cpu_time_integration": 0.5, "state_events": 2},
     "timing": {"total_wall": 4.02, "translation_wall": 1.0},
-    "CPUtime": 1.12,
-    "EventCounter": 7.0,
 }
 BASE = {
     "translation": {
@@ -36,8 +34,28 @@ BASE = {
     },
     "simulation": {"cpu_time_integration": 0.5, "state_events": 2},
     "timing": {"total_wall": 3.91, "translation_wall": 1.0},
-    "CPUtime": 0.80,
-    "EventCounter": 7.0,
+}
+#: The listed names of the run (its diagnostics) and of the baseline (its
+#: summaries): CPU time 0.80 -> 1.12 s, an unchanged event count.
+LISTED = {
+    "run_diagnostics": [
+        VariableResult(
+            index=1,
+            time=np.array([0.0, 1.0]),
+            values=np.array([0.0, 1.12]),
+            name="CPUtime",
+        ),
+        VariableResult(
+            index=2,
+            time=np.array([0.0, 1.0]),
+            values=np.array([0.0, 7.0]),
+            name="EventCounter",
+        ),
+    ],
+    "baseline_diagnostics": [
+        DiagnosticSummary("CPUtime", final=0.80),
+        DiagnosticSummary("EventCounter", final=7.0),
+    ],
 }
 
 
@@ -46,7 +64,7 @@ def _by_path(rows):
 
 
 def test_a_count_that_moved_is_changed_and_an_equal_one_is_not():
-    rows = _by_path(statistics_rows(RUN, BASE))
+    rows = _by_path(statistics_rows(RUN, BASE, **LISTED))
     # The baseline's empty list, stored before the parser wrote its count.
     assert rows["translation.nonlinear_count"].baseline == 0
     assert rows["translation.nonlinear_count"].changed
@@ -58,7 +76,7 @@ def test_a_count_that_moved_is_changed_and_an_equal_one_is_not():
 
 
 def test_a_time_is_changed_beyond_the_seeded_tolerance_only():
-    rows = _by_path(statistics_rows(RUN, BASE))
+    rows = _by_path(statistics_rows(RUN, BASE, **LISTED))
     assert rows["CPUtime"].changed
     assert rows["CPUtime"].delta == "+40%"
     assert rows["CPUtime"].section == "simulation"
@@ -99,7 +117,7 @@ def test_a_value_only_on_one_side_is_never_changed():
 
 
 def test_text_rows_are_present_and_changed_by_the_report_rule():
-    rows = _by_path(statistics_rows(RUN, BASE))
+    rows = _by_path(statistics_rows(RUN, BASE, **LISTED))
     assert rows["translation.state_names"].kind == "text"
     assert rows["translation.state_names"].changed
     assert rows["translation.nonlinear"].kind == "text"
@@ -108,7 +126,7 @@ def test_text_rows_are_present_and_changed_by_the_report_rule():
 
 
 def test_labels():
-    rows = _by_path(statistics_rows(RUN, BASE))
+    rows = _by_path(statistics_rows(RUN, BASE, **LISTED))
     assert rows["translation.nonlinear_count"].label == "Nonlinear count"
     assert rows["simulation.cpu_time_integration"].label == "CPU time integration"
     assert rows["EventCounter"].label == "EventCounter"
@@ -118,7 +136,7 @@ def test_the_report_order_keys_alphabetical_top_level_folded_into_simulation():
     """The report's row order and section placement (Corrections A2): keys
     alphabetical inside a section, `timing` its fixed four first, top-level
     scalars sorted in among the Simulation keys."""
-    rows = statistics_rows(RUN, BASE)
+    rows = statistics_rows(RUN, BASE, **LISTED)
     assert list(dict.fromkeys(r.section for r in rows)) == [
         "translation",
         "simulation",
@@ -164,13 +182,12 @@ def test_other_sections_follow_and_top_level_scalars_alone_come_last():
 
 
 def test_openmodelica_and_fakelib_shapes():
-    om = {"timing": {"frontend": 0.1, "total": 2.0, "total_wall": 2.1}, "CPUtime": 1.0}
+    om = {"timing": {"frontend": 0.1, "total": 2.0, "total_wall": 2.1}}
     rows = statistics_rows(om, om)
     assert {r.path for r in rows} == {
         "timing.frontend",
         "timing.total",
         "timing.total_wall",
-        "CPUtime",
     }
     assert all(r.kind == "time" and not r.changed for r in rows)
     fake = {"simulation": {"wall_time": 0.01}, "timing": {"sim_wall": 0.01}}
@@ -206,7 +223,10 @@ def test_extra_paths_become_other_scored_rows():
     nothing recorded it — the 1.1 `CPUtime.final` too: it names no
     statistic, and is no longer the `CPUtime` row's (D162 ended S2)."""
     rows = statistics_rows(
-        RUN, BASE, extra_paths=["translation.typo", "CPUtime.final", "CPUtime"]
+        RUN,
+        BASE,
+        extra_paths=["translation.typo", "CPUtime.final", "CPUtime"],
+        **LISTED,
     )
     other = [r for r in rows if r.section == "other scored"]
     assert [r.path for r in other] == ["translation.typo", "CPUtime.final"]
