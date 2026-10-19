@@ -2133,3 +2133,73 @@ def test_a_flat_entrys_override_on_a_listed_names_max_has_its_own_row(tmp_path):
     assert rows["CPUtime.max"].kind == "time"
     assert [path for _, path in s.statistic_leaves(A)] == ["/metrics/children/2"]
     assert s.card_paths(A) == {"/metrics/children/2"}
+
+
+def _report_page(s, A, out: Path) -> str:
+    """The test's report page as `generate_comparison_plots` writes it, over
+    the Session's files, with the names the test lists."""
+    from dstf.reporting.report_suite import generate_comparison_plots
+
+    project, comp = s.project, s.comparisons[A]
+    html = generate_comparison_plots(
+        A,
+        project.store.get_reference(A),
+        project.results[A],
+        list(comp.variables),
+        out,
+        test_model=project.test(A),
+        metric_tree=comp.metric_tree,
+        diagnostics=s.diagnostic_names(A),
+    )
+    assert html is not None
+    return html.read_text(encoding="utf-8")
+
+
+def test_the_report_page_has_the_listed_cpu_times_row_and_key_stat(tmp_path):
+    """CPUtime, listed by the project's default, recorded by the run and
+    summarized by the baseline: the page's Statistics table has its row and
+    its key stats its CPU Time — both read through the names the page is
+    given."""
+    from test_session import A, _stats_session
+
+    s = _stats_session(tmp_path)
+    page = _report_page(s, A, tmp_path / "plots")
+    assert "<td>CPUtime</td>" in page
+    assert '<div class="label">CPU Time</div>' in page
+
+
+def test_the_key_stats_follow_the_listing(tmp_path):
+    """The project lists only `h`; the run and the baseline still hold
+    CPUtime (a summary written before the listing changed): no CPUtime row,
+    no CPU Time key stat — the key stats read the rows."""
+    from test_session import A, _stats_session
+
+    s = _stats_session(tmp_path, project_listing=["h"])
+    assert s.diagnostic_names(A) == ["h"]
+    page = _report_page(s, A, tmp_path / "plots")
+    assert "<td>CPUtime</td>" not in page
+    assert '<div class="label">CPU Time</div>' not in page
+
+
+def test_a_scored_max_on_a_listed_name_nothing_holds_gives_its_final_row_too(
+    tmp_path,
+):
+    """A card criterion on `h`'s max, `h` listed and never run: the card
+    has `h`'s own row (its final, empty) beside the `h.max` row the
+    criterion reads — the name's rows, as a held name has."""
+    from dstf.authoring.session import PatchOp
+
+    s, A = _h_session(tmp_path, run=None, stored=None)
+    s.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics/children/-",
+                {**H_FINAL, "quantity": {"reduce": "max"}},
+            )
+        ]
+    )
+    rows = {r.path: r for r in s.statistics(A)}
+    assert (rows["h"].section, rows["h"].kind) == ("simulation", "value")
+    assert (rows["h.max"].section, rows["h.max"].kind) == ("other scored", "value")

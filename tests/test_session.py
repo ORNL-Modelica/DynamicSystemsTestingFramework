@@ -4606,12 +4606,21 @@ STATS_BASE = {
 
 
 def _stats_session(
-    tmp_path: Path, *, result: bool = True, listed: tuple[str, ...] = ()
+    tmp_path: Path,
+    *,
+    result: bool = True,
+    listed: tuple[str, ...] = (),
+    project_listing: list[str] | None = None,
 ) -> Session:
     """`_two_var_project` with A's baseline carrying `STATS_BASE` and its
     in-memory result `STATS_RUN` (FakeLib records only walls); A's entry
-    lists ``listed`` beside the project's names."""
+    lists ``listed`` beside the project's names — `testing.json`'s
+    ``project_listing`` where given, else its default."""
     cfg, work = _two_var_project(tmp_path)
+    if project_listing is not None:
+        doc = json.loads(cfg.read_text(encoding="utf-8"))
+        doc["diagnostic_variables"] = project_listing
+        cfg.write_text(json.dumps(doc), encoding="utf-8")
     if listed:
         spec_path = cfg.parent / "test_spec.json"
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
