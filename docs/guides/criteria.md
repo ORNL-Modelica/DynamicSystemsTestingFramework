@@ -171,7 +171,9 @@ queue that runs the selected tests again:
 ![dstf author's Suite page: the tests with their status, Criteria and times](../img/author-suite.png)
 
 A test's page draws a plot per scored variable with its criteria under it. A
-criterion opens into its fields beside the plot it scores; its bounds, bands
+number — a statistic of the log, or a listed name's final, min or max — is
+not on a plot: its criterion is on the page's Statistics card, and in the
+report it is in the metric tree. A criterion opens into its fields beside the plot it scores; its bounds, bands
 and checkpoints can also be dragged on the plot, and Ctrl+click adds a row —
 a checkpoint, a tube's control point — that settles on the data:
 
