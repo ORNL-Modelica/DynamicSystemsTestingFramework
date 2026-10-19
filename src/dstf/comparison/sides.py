@@ -134,6 +134,19 @@ def as_written(sides: Sides) -> float | dict:
     return {"lower": sides.lower, "upper": sides.upper}
 
 
+def bounds_text(min_value: float | None, max_value: float | None) -> str | None:
+    """A criterion's declared bounds in words: ``in [a, b]``, ``≥ a`` or
+    ``≤ b``; None with neither. What the Statistics card's requirement and
+    a row's ``+`` both say of a bounds criterion."""
+    if min_value is not None and max_value is not None:
+        return f"in [{min_value:g}, {max_value:g}]"
+    if min_value is not None:
+        return f"≥ {min_value:g}"
+    if max_value is not None:
+        return f"≤ {max_value:g}"
+    return None
+
+
 def sides_text(sides: Sides, fmt: str = ".3e") -> str:
     """``sides`` in a sentence: the one number when equal (a minus as
     U+2212; a zero reads as zero whatever its sign bit), else

@@ -27,7 +27,7 @@ from nicegui import ui
 
 from ...backends.common.statistics import SUMMARIES
 from ...comparison.modes import ScalarConfig
-from ...comparison.sides import parse_sides, sides_text, signed_sides
+from ...comparison.sides import bounds_text, parse_sides, sides_text, signed_sides
 from ...comparison.tree_spec import card_row
 from ...reporting.stats_rows import SECTION_TITLES, StatRow, card_text
 from ...reporting.tree_rows import leaves_of
@@ -121,13 +121,9 @@ def summary(leaf: dict) -> str:
     reads `−0.5 / +1`, `−5% / +10%`. A value the leaf leaves out is the
     scalar mode's default."""
     p = leaf.get("params") or {}
-    lo, hi = p.get("min_value"), p.get("max_value")
-    if lo is not None and hi is not None:
-        return f"in [{lo:g}, {hi:g}]"
-    if lo is not None:
-        return f"≥ {lo:g}"
-    if hi is not None:
-        return f"≤ {hi:g}"
+    bounds = bounds_text(p.get("min_value"), p.get("max_value"))
+    if bounds is not None:
+        return bounds
     tol = parse_sides(p.get("tolerance", ScalarConfig.tolerance), "tolerance")
     rel = p.get("tolerance_mode", ScalarConfig.tolerance_mode) == "rel"
     if not tol.equal:

@@ -34,9 +34,10 @@ from ...comparison.seeds import (
     seeded_leaf,
     warn_if_time,
 )
-from ...comparison.sides import parse_sides, signed_sides
+from ...comparison.sides import bounds_text, parse_sides, signed_sides
 from ...discovery.unit_tests import is_unit_test_variable
 from ...figures.families import family_of
+from ...reporting.stats_rows import listed_names
 from ..capabilities import Panel, Patch, Placement, plural
 from ..family_rows import Family, as_one, elements_text, family_in, fold_key
 from ..session import SIMULATE_ONLY, no_tree_error
@@ -738,12 +739,15 @@ def _into(tree: dict | None, node: dict, path: str) -> str:
 
 def _quantity_leaf(s: SessionView, model_id: str, quantity: str, into: str) -> dict:
     """The criterion a Statistics row's ``+`` on ``quantity`` stages,
-    landing in ``into``. A row of a name the test lists
-    (`diagnostic_names`) — its name (its final), ``<name>.min`` or
+    landing in ``into``. A row of a listed name — one the run recorded or
+    the baseline summarizes, the set the rows are built from
+    (`stats_rows.listed_names`): its name (its final), ``<name>.min`` or
     ``<name>.max`` (`card_row`) — is that variable's number, in its one
-    spelling (`_number_leaf`), whether or not a run recorded it; any other
-    row is a statistic, read through its path (`seed_quantity`)."""
-    listed = s.diagnostic_names(model_id)
+    spelling (`_number_leaf`); any other row is a statistic, read through
+    its path (`seed_quantity`)."""
+    listed = listed_names(
+        _recorded(s, model_id), s.baseline_summaries(model_id).values()
+    )
     if quantity in listed:
         return _number_leaf(s, model_id, quantity, "final", into)
     name, _, field_name = quantity.rpartition(".")
@@ -774,8 +778,13 @@ def _requirement(leaf: dict) -> str:
     """What a Statistics row's `+` adds, in the words of its seed — the
     tolerance is the seed's, never a second copy of it. Read as any
     tolerance is (`parse_sides`): a number, or a lower/upper pair, whose
-    two sides — where they differ — read as its two edges."""
+    two sides — where they differ — read as its two edges. A bounds seed
+    says its bounds, as the card's requirement does (`bounds_text`)."""
     inner = leaf["children"][0] if "combinator" in leaf else leaf
+    warning = ", as a warning" if leaf.get("combinator") == "warn" else ""
+    bounds = bounds_text(inner.get("min_value"), inner.get("max_value"))
+    if bounds is not None:
+        return f"Add a requirement: {bounds}{warning}"
     written = inner.get("tolerance")
     tolerance = parse_sides(0 if written is None else written, "tolerance")
     rel = inner.get("tolerance_mode") == "rel"
@@ -790,7 +799,6 @@ def _requirement(leaf: dict) -> str:
         what = f"within {tolerance.upper * 100:g}%"
     else:
         what = "exact match" if tolerance.upper == 0 else f"within ±{tolerance.upper:g}"
-    warning = ", as a warning" if leaf.get("combinator") == "warn" else ""
     return f"Add a requirement: {what}{warning}"
 
 
@@ -1362,14 +1370,17 @@ def _kind_select(
     select.on_value_change(chosen)
 
 
+def _recorded(s: SessionView, model_id: str) -> list[Any]:
+    """The listed names the last run RECORDED, as its diagnostics."""
+    project = s.project
+    result = project.results.get(model_id) if project is not None else None
+    return list(result.diagnostics or []) if result is not None else []
+
+
 def _diagnostics(s: SessionView, model_id: str) -> dict[str, Any]:
     """``{name: values}`` of the listed names the last run RECORDED: the
     samples a number's seed reads (`seed_variable_number`)."""
-    project = s.project
-    result = project.results.get(model_id) if project is not None else None
-    if result is None:
-        return {}
-    return {d.name: d.values for d in result.diagnostics or [] if d.name}
+    return {d.name: d.values for d in _recorded(s, model_id) if d.name}
 
 
 def _metrics_for() -> list[str]:

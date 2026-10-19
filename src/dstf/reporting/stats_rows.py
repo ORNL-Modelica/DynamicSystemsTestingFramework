@@ -225,6 +225,15 @@ def _diagnostic_values(diagnostics: Sequence, name: str) -> np.ndarray | None:
     return None
 
 
+def listed_names(
+    run_diagnostics: Iterable[Any], baseline_diagnostics: Iterable[Any]
+) -> set[str]:
+    """The listed names the rows are built from: every name the run
+    recorded or the baseline summarizes — a row each (and its ``+`` is
+    that name's number)."""
+    return {str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name}
+
+
 def listed_kind(name: str) -> Kind:
     """A listed name's row kind, by its name alone: CPUtime a time,
     EventCounter a count, any other a `value` — never guessed from its
@@ -331,7 +340,7 @@ def statistics_rows(
         for k, v in src.items():
             if isinstance(v, Mapping) and k not in names:
                 names.append(k)
-    listed = {str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name}
+    listed = listed_names(run_diagnostics, baseline_diagnostics)
     # A top-level number that is no listed name keeps its row; one named
     # like a listed name is the copy its final once had, never read.
     top = sorted(

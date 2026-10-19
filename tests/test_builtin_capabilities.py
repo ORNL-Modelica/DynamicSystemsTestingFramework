@@ -3870,9 +3870,10 @@ async def test_a_count_lands_at_the_end_of_an_and_root(tmp_path, flat):
 
 
 async def test_cpu_time_warns_in_an_and_root_and_goes_bare_in_an_or(tmp_path):
-    """The CPUtime row's `+` is the variable's number — CPUtime is a name
-    the project lists, whether or not this run recorded it (D162)."""
+    """The CPUtime row's `+` is the variable's number (D162): the row is the
+    run's recorded CPUtime."""
     session = _wide_session(tmp_path, 0)
+    _with_diagnostics(session, CPUtime=0.4)
     session.stage([PatchOp(A, "add", ROOT, {"combinator": "and", "children": _XY})])
     (op,) = _add_quantity(session, "CPUtime")
     assert op.value == {

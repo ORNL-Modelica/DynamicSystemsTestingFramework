@@ -1810,3 +1810,112 @@ def test_a_value_that_is_not_zero_never_reads_minus_100_percent(run, delta):
     """As a number that moved never reads +0%: one that is not zero never
     reads -100% — only a fall to zero does."""
     assert _h_row(0.5, run).delta == delta
+
+
+# -- the card's `+` on a real Session --------------------------------------------
+
+
+def _h_session(tmp_path, *, run: float | None, stored: float | None, listed=("h",)):
+    """A real Session: A's entry lists ``listed``; its run (``run``: h's
+    final, None for no run loaded) and its baseline (``stored``: h's stored
+    final, None for no summary of h)."""
+    from dstf.authoring.session import PatchOp, Session
+    from dstf.backends.types import TestResult
+    from dstf.storage.reference_store import ReferenceStore
+    from test_session import PROVENANCE, A, _two_var_project
+
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["diagnostic_variables"] = list(listed)
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    tt = np.asarray([i / 4 for i in range(5)])
+    ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+        make_test_model(A, variable_patterns=["x", "y"]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+            ],
+            diagnostics=[]
+            if stored is None
+            else [
+                VariableResult(
+                    index=0, time=tt, values=np.r_[0.0, 0.1, 0.2, 0.3, stored], name="h"
+                )
+            ],
+        ),
+        provenance=PROVENANCE,
+    )
+    s = Session()
+    s.open(cfg, work_dir=work)
+    if run is None:
+        s.project.results.pop(A, None)
+    else:
+        s.project.results[A].diagnostics = [
+            VariableResult(
+                index=0, time=tt, values=np.r_[0.0, 0.1, 0.2, 0.3, run], name="h"
+            )
+        ]
+    s.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics",
+                {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "x"}],
+                },
+            )
+        ]
+    )
+    return s, A
+
+
+def test_with_no_run_the_plus_reads_the_baseline_summary_through_the_session(tmp_path):
+    """No run loaded, the baseline's summary of h at 2.0: the `+` seeds
+    within 1% of it — read through `Session.baseline_summaries`."""
+    s, A = _h_session(tmp_path, run=None, stored=2.0)
+    assert _plus(s, A, "h") == {
+        "metric": "scalar",
+        "variable": "h",
+        "quantity": {"reduce": "final"},
+        "tolerance_mode": "rel",
+        "tolerance": 0.01,
+    }
+
+
+def test_a_bounds_seeds_tooltip_names_its_bounds(tmp_path):
+    """A listed h at 1.5 with no baseline summary is seeded with bounds:
+    the `+` says them, as the card's requirement does — never "exact"."""
+    from dstf.authoring.builtin.edit_tree import _quantity_leaf, _requirement
+    from dstf.authoring.session import Selection, SessionView
+
+    s, A = _h_session(tmp_path, run=1.5, stored=None)
+    view = SessionView(s, Selection(tests=frozenset({A})))
+    seed = _quantity_leaf(view, A, "h", "and")
+    assert (seed["min_value"], seed["max_value"]) == (1.42, 1.58)
+    assert _requirement(seed) == "Add a requirement: in [1.42, 1.58]"
+
+
+def test_every_diagnostics_rows_plus_writes_the_one_spelling(tmp_path):
+    """A name the baseline summarizes that the test no longer lists (`g`)
+    still has its row; its `+` is its number — never a statistic path that
+    names nothing — and it scores."""
+    from dstf.authoring.session import PatchOp
+
+    s, A = _h_session(tmp_path, run=None, stored=1.0, listed=("x9",))
+    rows = {r.path for r in s.statistics(A)}
+    assert "h" in rows and "h" not in s.diagnostic_names(A)
+    value = _plus(s, A, "h")
+    assert (value["variable"], value["quantity"]) == ("h", {"reduce": "final"})
+    ran, A = _h_session(tmp_path / "ran", run=1.0, stored=1.0, listed=("x9",))
+    ran.stage([PatchOp(A, "add", "/metrics/children/-", value)])
+    vc = ran.comparisons[A].variables[-1]
+    assert "error" not in (vc.diagnostics or {})
+    assert (vc.actual_final, vc.reference_final, vc.passed) == (1.0, 1.0, True)
