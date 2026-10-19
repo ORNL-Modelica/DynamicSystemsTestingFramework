@@ -25,6 +25,7 @@ statistic of the log at 15. Storage and scoring are unchanged.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -41,10 +42,8 @@ from ..comparison.modes import ScalarConfig, ScalarMode
 from ..comparison.seeds import (
     COUNTS,
     TIMES,
-    SeedData,
     quantity_kind,
     seed_quantity,
-    seed_scalar,
 )
 from ..comparison.tree_eval import resolve_scalar_path
 from ..storage.baseline_codec import DOUBLE_SHOWN, recorded_digits
@@ -84,6 +83,15 @@ class StatRow:
     digits: tuple[int, int] = (DOUBLE_SHOWN, DOUBLE_SHOWN)
 
 
+#: The criterion a `value` row's ``+`` writes against a baseline's summary
+#: (`seed_variable_number` over `seed_scalar`): its final within 1%.
+VALUE_LEAF = {
+    "quantity": {"reduce": "final"},
+    "tolerance_mode": "rel",
+    "tolerance": 0.01,
+}
+
+
 def changed(
     path: str,
     kind: Kind,
@@ -92,13 +100,19 @@ def changed(
 ) -> bool:
     """Would the criterion a ``+`` on this row adds fail? Never when a side
     has no value (S3): there is nothing to compare, and an accept records
-    it. A `value` takes the ordinary scalar seed's tolerance (1% of the
-    baseline), a count and a time their known ones."""
+    it. A non-finite side is no number to score against: the row changed
+    when one side is non-finite, or both are and differ (nan and inf, +inf
+    and -inf) — never when both are the same. A `value` takes the 1% the
+    ``+`` writes against a baseline's summary (`VALUE_LEAF`) — the leaf
+    itself, never a seed, which comes back empty off a non-finite baseline
+    — a count and a time their known ones."""
     if run is None or baseline is None:
         return False
+    r, b = float(run), float(baseline)
+    if not (math.isfinite(r) and math.isfinite(b)):
+        return not (r == b or (math.isnan(r) and math.isnan(b)))
     if kind == "value":
-        one = np.array([0.0])
-        leaf = seed_scalar(SeedData(ref=(one, np.array([float(baseline)])), act=None))
+        leaf = VALUE_LEAF
     else:
         seed = seed_quantity(path, kind, into="and")
         leaf = seed["children"][0] if "combinator" in seed else seed
@@ -188,6 +202,8 @@ def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     zero the magnitude rule stands too (-2 -> -4 reads ``-100%``)."""
     if run is None or baseline is None or run == baseline:
         return ""
+    if not (math.isfinite(run) and math.isfinite(baseline)):
+        return ""  # no change to read off a non-finite side
     if kind == "count":
         return f"{_count_text(baseline)}→{_count_text(run)}"
     if baseline == 0:
@@ -196,6 +212,8 @@ def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     if run == 0:
         return toward_zero
     ratio = (run - baseline) / abs(baseline)
+    if not math.isfinite(ratio):
+        return ""  # too large to be a number: 1e308 -> -1e308
     if abs(ratio) < 0.0005:
         return f"{'+' if ratio > 0 else '-'}<0.1%"
     text = f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"

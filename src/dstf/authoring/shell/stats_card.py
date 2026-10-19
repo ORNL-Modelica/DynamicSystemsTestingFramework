@@ -60,13 +60,18 @@ def _entry(row: StatRow) -> tuple[tuple[str, str], int]:
 
 def _moved(row: StatRow) -> float:
     """How far a changed time moved, relative to its baseline: its rank
-    on the closed line. Off a zero baseline, farther than any."""
+    on the closed line. Off a zero baseline, or to or from a non-finite
+    value, farther than any."""
     run, base = float(row.run), float(row.baseline)
-    return abs((run - base) / base) if base else math.inf
+    if not (math.isfinite(run) and math.isfinite(base)) or not base:
+        return math.inf
+    return abs((run - base) / base)
 
 
 def _more(named: Sequence[StatRow], cap: int) -> str:
-    text = ", ".join(f"{r.label} {r.delta}" for r in named[:cap])
+    """The rows named, each by its label and its delta — by its label
+    alone where there is no delta to read (a non-finite side)."""
+    text = ", ".join(f"{r.label} {r.delta}".rstrip() for r in named[:cap])
     return f"{text} +{len(named) - cap} more" if len(named) > cap else text
 
 

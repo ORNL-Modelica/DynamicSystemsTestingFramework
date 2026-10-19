@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2243,3 +2244,87 @@ def test_a_running_tests_tree_and_card_read_the_one_scored_tree(tmp_path):
     ]
     assert [p for _, p in s.statistic_leaves(A)] == ["/metrics/children/1"]
     drop_item(s, running)
+
+
+NAN, INF = float("nan"), float("inf")
+
+
+@pytest.mark.parametrize(
+    ("base", "run", "is_changed"),
+    [
+        (1.0, NAN, True),
+        (NAN, 1.0, True),
+        (NAN, NAN, False),
+        (INF, INF, False),
+        (-INF, -INF, False),
+        (INF, -INF, True),
+        (NAN, INF, True),
+        (1.0, INF, True),
+    ],
+    ids=[
+        "1-nan",
+        "nan-1",
+        "nan-nan",
+        "inf-inf",
+        "-inf--inf",
+        "inf--inf",
+        "nan-inf",
+        "1-inf",
+    ],
+)
+def test_a_non_finite_side_moved_unless_both_are_the_same(base, run, is_changed):
+    """One rule for a non-finite side, for every kind of row: changed when
+    one side is non-finite, or both are and differ; not when both are the
+    same non-finite value. No percentage is read off it: the delta is
+    empty."""
+    from dstf.reporting.stats_rows import _delta, changed
+
+    row = _h_row(base, run)
+    assert (row.changed, row.delta) == (is_changed, "")
+    for kind, path in (("count", "EventCounter"), ("time", "CPUtime")):
+        assert changed(path, kind, run, base) is is_changed, kind
+        assert _delta(kind, run, base) == "", kind
+
+
+def test_a_change_too_large_to_be_a_number_has_no_delta():
+    """1e308 -> -1e308: the ratio is not a finite number — no text."""
+    assert _h_row(1e308, -1e308).delta == ""
+
+
+def test_the_closed_line_names_a_non_finite_row_without_a_percentage():
+    """A changed row with no delta is named by its label alone — never
+    "+nan%" — and, moved farther than any number, first."""
+    from dstf.authoring.shell.stats_card import line_text
+
+    rows = [_h_row(1.0, 1.5), _h_row(1.0, NAN)]
+    rows[1] = replace(rows[1], label="g", key="g", path="g")
+    assert line_text(rows, True) == "no count changed · g, h +50%"
+
+
+@pytest.mark.parametrize("stored", [NAN, INF], ids=["nan", "inf"])
+def test_a_non_finite_stored_summary_still_has_its_rows_and_its_page(tmp_path, stored):
+    """A listed `h` whose baseline summary is non-finite: the card's rows
+    and the report page are built — the row changed against the run's 1.0,
+    with no percentage, and its values printed as they are."""
+    s, A = _h_session(tmp_path, run=1.0, stored=stored)
+    (row,) = [r for r in s.statistics(A) if r.path == "h"]
+    assert (row.changed, row.delta) == (True, "")
+    page = _report_page(s, A, tmp_path / "plots")
+    assert "<td>h</td>" in page
+
+
+def test_a_value_rows_verdict_is_the_pluses_leaf_never_a_seed(monkeypatch):
+    """A `value` row's "changed" scores the leaf the `+` writes against a
+    baseline's summary (`VALUE_LEAF`: its final within 1%) — the leaf, not
+    a seed of it: a seed comes back empty off a baseline it cannot read,
+    and an empty leaf crashed the row, the card and the suite's report."""
+    from dstf.comparison import seeds
+    from dstf.comparison.seeds import seed_variable_number
+    from dstf.reporting.stats_rows import VALUE_LEAF, changed
+
+    written = seed_variable_number("h", np.array([0.5, 1.0]), into="and", baseline=1.0)
+    assert {
+        k: v for k, v in written.items() if k not in ("metric", "variable")
+    } == VALUE_LEAF
+    monkeypatch.setattr(seeds, "seed_scalar", lambda data: {})
+    assert changed("h", "value", 1.02, 1.0) and not changed("h", "value", 1.005, 1.0)
