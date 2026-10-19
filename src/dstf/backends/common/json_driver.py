@@ -419,11 +419,39 @@ class JsonDriverBackend(Backend):
                 )
             )
 
+        # The listed names the payload holds, numbered from 1 as a .mat
+        # backend's are (`extract_variables`): each is summarized in the
+        # baseline, and scored from that summary (`reads_a_summary`).
+        diagnostics = []
+        for name in listed:
+            if name not in payload["variables"]:
+                continue
+            try:
+                values = np.asarray(payload["variables"][name], dtype=np.float64)
+            except (ValueError, TypeError) as exc:
+                return TestResult(
+                    model_id=test.model_id,
+                    success=False,
+                    error_message=(
+                        f"Variable '{name}' has non-numeric values in "
+                        f"{result_path.name}: {exc}"
+                    ),
+                    statistics=stats,
+                )
+            diagnostics.append(
+                VariableResult(
+                    index=len(diagnostics) + 1,
+                    name=name,
+                    time=time_arr,
+                    values=values,
+                )
+            )
+
         return TestResult(
             model_id=test.model_id,
             success=True,
             variables=variables,
-            diagnostics=[],
+            diagnostics=diagnostics,
             statistics=stats,
         )
 

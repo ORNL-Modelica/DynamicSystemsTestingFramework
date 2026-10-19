@@ -505,7 +505,7 @@ class Config:
     # Test spec file (external test definitions)
     test_spec_file: Path | None = None
 
-    # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
+    # The names whose summary every run records (a test entry adds its own)
     diagnostic_variables: list[str] = field(
         default_factory=lambda: _default("diagnostic_variables")
     )

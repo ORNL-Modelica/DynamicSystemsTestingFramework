@@ -35,7 +35,13 @@ from .registry import DEFAULT_METRIC, MetricDescriptor
 from .registry import combinator as registry_combinator
 from .registry import metric as registry_metric
 from .sides import Sides, parse_sides
-from .tree_spec import CombinatorSpec, LeafSpec, SpecNode, resolves_a_variable
+from .tree_spec import (
+    CombinatorSpec,
+    LeafSpec,
+    SpecNode,
+    reads_a_summary,
+    resolves_a_variable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,15 +63,19 @@ class BaselineView:
     ref_vars_by_name: dict[str, StoredVariable]
     shared_ref_time: np.ndarray
     #: Statistics captured with the baseline (dotted keys like
-    #: ``translation.scalar_unknowns``) and the stored diagnostics summaries
-    #: — the baseline side of a ``scalar`` leaf's stats-path quantity.
+    #: ``translation.scalar_unknowns``) — the baseline side of a ``scalar``
+    #: leaf's stats-path quantity — and the stored summaries of the names
+    #: it listed, which a summary-reading leaf on a name the baseline holds
+    #: no curve of reads (`_summary_arrays`).
     statistics: dict = field(default_factory=dict)
     diagnostics: list[DiagnosticSummary] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class ScalarSources:
-    """The current run's stored scalars, for stats-path ``scalar`` leaves.
+    """The current run's stored scalars: its statistics, for stats-path
+    ``scalar`` leaves, and the names it listed, for a summary-reading leaf
+    on a name the run extracted no curve of (`_summary_arrays`).
 
     Mirrors :class:`BaselineView`'s two scalar fields for the actual side.
     The difference is the diagnostics shape: a run's diagnostics are
@@ -444,7 +454,20 @@ def _evaluate_leaf(
         return _leaf(_missing_baseline_comparison(leaf, held_in, companions))
 
     windowed = False
-    if scores_stored_scalar and isinstance(quantity, str):
+    # A criterion one stored number answers, on a side that holds that
+    # number and not the curve: a listed name only such criteria name is
+    # not extracted (`tree_variables`). Where both sides hold the curve,
+    # today's path below.
+    summary = (
+        _summary_arrays(leaf, mode, var_result, baseline, scalars or ScalarSources())
+        if reads_a_summary(leaf)
+        else None
+    )
+    if isinstance(summary, VariableComparison):
+        return _leaf(summary)
+    if summary is not None:
+        ref_time, ref_values, act_time, act_values, index = summary
+    elif scores_stored_scalar and isinstance(quantity, str):
         # A string ``quantity`` reads a stored scalar instead of a tracked
         # series — where the data comes from is the evaluator's call, the
         # same seam the window below occupies (a future ``{"expr": ...}``
@@ -552,6 +575,71 @@ def _evaluate_leaf(
             "end": leaf.window_end,
         }
     return leaf_result
+
+
+def _summary_arrays(
+    leaf: LeafSpec,
+    mode: ComparisonMode,
+    var_result: VariableResult | None,
+    baseline: BaselineView | None,
+    scalars: ScalarSources,
+) -> (
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]
+    | VariableComparison
+    | None
+):
+    """A summary-reading leaf (:func:`reads_a_summary`) on a side that LACKS
+    the curve and holds the name's summary: the run, a recorded diagnostic
+    (`ScalarSources.diagnostics`); the baseline, a stored summary
+    (`BaselineView.diagnostics`) with that field. None where neither side
+    is such a side: the caller's curve path, unchanged.
+
+    Otherwise ``(ref_time, ref_values, act_time, act_values, index)``: a
+    side with its curve hands the curve, which the mode reduces as it
+    reduces any; a side without hands its summary's number as one sample,
+    as `_scalar_path_arrays` does. The reference is empty for a
+    baseline-free mode (declared bounds). ``index`` is the run's curve's,
+    else 0 — a diagnostic is numbered in its own series, and
+    `build_trajectories` pairs a comparison with a series by its index
+    (review M4). A side holding neither reads as the curve path's missing
+    variable."""
+    field_name = leaf.params["quantity"]["reduce"]
+    ref_var = baseline.ref_vars_by_name.get(leaf.variable) if baseline else None
+    run_entry = next((d for d in scalars.diagnostics if d.name == leaf.variable), None)
+    stored = (
+        next((d for d in baseline.diagnostics if d.name == leaf.variable), None)
+        if baseline is not None
+        else None
+    )
+    stored_number = _as_float(getattr(stored, field_name)) if stored else None
+    run_from_summary = var_result is None and run_entry is not None
+    base_from_summary = ref_var is None and stored_number is not None
+    if not (run_from_summary or base_from_summary):
+        return None
+
+    run = var_result
+    if run is None and run_entry is not None:
+        number = _summarize_values(run_entry.values, field_name)
+        if number is not None:
+            run = VariableResult(
+                index=0,
+                time=np.array([0.0]),
+                values=np.array([number]),
+                name=leaf.variable,
+            )
+    if run is None:
+        return _missing_variable_comparison(leaf.variable, None)
+
+    if ref_var is not None:
+        assert baseline is not None  # a stored variable is in a baseline
+        ref_time, ref_values = baseline.shared_ref_time, np.array(ref_var.values)
+    elif stored_number is not None:
+        ref_time, ref_values = np.array([0.0]), np.array([stored_number])
+    elif mode.is_baseline_free():
+        ref_time, ref_values = np.array([]), np.array([])
+    else:
+        return _missing_variable_comparison(leaf.variable, run)
+    return ref_time, ref_values, run.time, run.values, run.index
 
 
 def _scalar_path_arrays(

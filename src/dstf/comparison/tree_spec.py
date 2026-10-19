@@ -207,22 +207,53 @@ def reads_a_statistic(metric_name: str, params: Mapping[str, Any]) -> bool:
     )
 
 
-def tree_variables(spec: SpecNode | None, diagnostics: Iterable[str] = ()) -> list[str]:
+#: The fields of a listed name's stored summary (`DiagnosticSummary`).
+SUMMARY_FIELDS = ("final", "min", "max")
+
+
+def reads_a_summary(leaf: LeafSpec) -> bool:
+    """A criterion one stored number answers: a quantity-taking metric
+    (scalar) reducing its variable to its final, min or max over the
+    whole run. What a listed name's stored summary can score; any other
+    criterion on a variable needs its curve (owner, 2026-10-18: a mean,
+    integral or windowed scalar stores the curve)."""
+    desc = metric(leaf.metric)
+    quantity = leaf.params.get("quantity")
+    return (
+        desc is not None
+        and desc.accepts_quantity
+        and isinstance(quantity, dict)
+        and quantity.get("reduce") in SUMMARY_FIELDS
+        and leaf.window_start is None
+        and leaf.window_end is None
+    )
+
+
+def tree_variables(spec: SpecNode | None, listed: Iterable[str] = ()) -> list[str]:
     """The variables a tree makes a run track: every leaf's ``variable``
-    that resolves one (:func:`resolves_a_variable`), unique, in tree order,
-    without the ``diagnostics`` — a diagnostic is scored through a quantity
-    path over its stored summary, never extracted as a trajectory. A backend
-    APPENDS these after the UnitTests variables and the ``variables``
-    patterns, so a criterion added later renumbers neither of those two.
-    ``[]`` for no tree (the implicit tree scores only what is tracked)."""
+    that resolves one (:func:`resolves_a_variable`), unique, in tree order.
+    A backend APPENDS these after the UnitTests variables and the
+    ``variables`` patterns, so a criterion added later renumbers neither of
+    those two. ``[]`` for no tree (the implicit tree scores only what is
+    tracked).
+
+    A listed name (``listed``: the test's `diagnostic_names`) that only
+    summary-reading criteria name (:func:`reads_a_summary`) is not
+    extracted for them — they score its summary; one criterion that needs
+    the curve extracts it, and accept stores it (a ``variables`` pattern or
+    a UnitTests variable extracts it as well)."""
     if spec is None:
         return []
-    skip = set(diagnostics)
+    leaves = [
+        leaf
+        for leaf, _ in _walk_leaves_with_paths(spec, "/metrics")
+        if resolves_a_variable(leaf)
+    ]
+    needs_the_curve = {leaf.variable for leaf in leaves if not reads_a_summary(leaf)}
+    summary_only = set(listed) - needs_the_curve
     out: list[str] = []
-    for leaf, _ in _walk_leaves_with_paths(spec, "/metrics"):
-        if not resolves_a_variable(leaf):
-            continue
-        if leaf.variable in skip or leaf.variable in out:
+    for leaf in leaves:
+        if leaf.variable in summary_only or leaf.variable in out:
             continue
         out.append(leaf.variable)
     return out

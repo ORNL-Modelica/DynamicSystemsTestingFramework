@@ -3110,11 +3110,22 @@ async def test_the_picker_offers_every_result_name_in_sections(tmp_path):
         }
 
 
-async def test_a_run_that_records_no_diagnostics_has_no_diagnostics_section(tmp_path):
+async def test_a_json_driver_run_records_a_listed_column_as_a_diagnostic(tmp_path):
+    """The JSON driver records what the project lists (``CPUtime``, by
+    default) where its result holds it (review M7): the column is a
+    diagnostic of the run, offered under Diagnostics and only there."""
     session = _wide_session(tmp_path, 0, columns=("CPUtime",))
+    assert [
+        (d.index, d.name, list(d.values))
+        for d in session.project.results[A].diagnostics
+    ] == [(1, "CPUtime", [1.0, 2.0, 3.0, 4.0, 5.0])]
     sel = Selection(tests=frozenset({A}), variable="y")
     async with host(session, EditTree(), sel) as (user, _errors, _figure):
-        assert "Diagnostics" not in _sections(await _open_plus(user, "y"))
+        assert _sections(await _open_plus(user, "y")) == {
+            "On this plot": ["y"],
+            "Other variables": ["x"],
+            "Diagnostics": ["CPUtime"],
+        }
 
 
 async def test_the_picker_filters_by_glob_regex_and_says_a_bad_one(tmp_path):

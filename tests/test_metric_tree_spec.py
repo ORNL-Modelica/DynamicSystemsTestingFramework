@@ -409,10 +409,49 @@ class TestTreeVariables:
             }
         )
 
-    def test_unique_in_tree_order_quantities_and_diagnostics_out(self):
+    def test_unique_in_tree_order_quantities_and_summary_only_names_out(self):
+        """A listed name only a scalar's whole-run max names is scored from
+        its summary: nothing extracts it."""
         from dstf.comparison.tree_spec import tree_variables
 
         assert tree_variables(self._tree(), ["CPUtime", "EventCounter"]) == ["b", "a"]
+
+    @pytest.mark.parametrize(
+        "needs_the_curve",
+        [
+            {"metric": "nrmse", "variable": "CPUtime"},
+            {
+                "metric": "scalar",
+                "variable": "CPUtime",
+                "quantity": {"reduce": "final"},
+                "window": {"start": 0.5},
+            },
+            {"metric": "scalar", "variable": "CPUtime", "quantity": {"reduce": "mean"}},
+        ],
+        ids=["an nrmse", "a windowed final", "a mean"],
+    )
+    def test_a_listed_name_a_criterion_needs_the_curve_of_is_extracted(
+        self, needs_the_curve
+    ):
+        """Owner, 2026-10-18: a criterion one stored number cannot answer
+        stores the curve — beside the summary-only one, which stays."""
+        from dstf.comparison.tree_spec import tree_variables
+
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "b"},
+                    {
+                        "metric": "scalar",
+                        "variable": "CPUtime",
+                        "quantity": {"reduce": "max"},
+                    },
+                    needs_the_curve,
+                ],
+            }
+        )
+        assert tree_variables(tree, ["CPUtime", "EventCounter"]) == ["b", "CPUtime"]
 
     def test_without_diagnostics_a_reduce_on_one_is_a_variable(self):
         from dstf.comparison.tree_spec import tree_variables

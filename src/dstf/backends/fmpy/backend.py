@@ -265,6 +265,21 @@ class FmpyBackend(Backend):
                 requested = list(
                     dict.fromkeys([*_default_outputs(fmpy, md), *requested])
                 )
+            # The names the test lists that the model has, recorded beside
+            # what is tracked (and read as diagnostics, `read_result`) —
+            # after fmpy's default set where nothing is requested: alone,
+            # they would replace it.
+            have = set(available)
+            recorded = [n for n in listed if n in have]
+            output = (
+                list(
+                    dict.fromkeys(
+                        [*(requested or _default_outputs(fmpy, md)), *recorded]
+                    )
+                )
+                if recorded
+                else requested
+            )
 
             solver = _SOLVER_MAP.get(test.method, "CVode")
             sim_kwargs = {
@@ -277,7 +292,7 @@ class FmpyBackend(Backend):
                 # `_get_output_variables`: outputs, else up to five states,
                 # else local variables) — never every variable. Empty:
                 # nothing is compared, so what fmpy picks is only plotted.
-                "output": requested or None,
+                "output": output or None,
             }
             if test.output_interval is not None:
                 sim_kwargs["output_interval"] = test.output_interval
@@ -418,6 +433,18 @@ class FmpyBackend(Backend):
                 )
 
         time_arr = np.asarray(arr["time"], dtype=np.float64)
+        # The listed names the saved columns hold, numbered from 1 as a
+        # .mat backend's are (`extract_variables`).
+        saved = set(available)
+        diagnostics = [
+            VariableResult(
+                index=i + 1,
+                name=name,
+                time=time_arr,
+                values=np.asarray(arr[name], dtype=np.float64),
+            )
+            for i, name in enumerate(n for n in listed if n in saved)
+        ]
         variables = [
             VariableResult(
                 index=i + 1,
@@ -432,7 +459,7 @@ class FmpyBackend(Backend):
             model_id=test.model_id,
             success=True,
             variables=variables,
-            diagnostics=[],  # FMPy doesn't surface CPUtime/EventCounter equivalents today
+            diagnostics=diagnostics,
             statistics=run_result.statistics if run_result else None,
         )
 
