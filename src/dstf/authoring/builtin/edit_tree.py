@@ -1275,7 +1275,9 @@ def _statistic_plus(
 ) -> None:
     """A Statistics row's `+` (U3): no form — the requirement is the seed
     (a count exact, a time within its tolerance, inside a `warn` where it
-    lands in an `and`), added at the END of the root (Q6 b), or as
+    lands in an `and`; a `value` row's within 1% of the baseline's summary,
+    else bounds around the run's number, else `VALUE_LEAF`), added at the
+    END of the root (Q6 b), or as
     ``and[leaf, new]`` under a root leaf; the new criterion's editor opens
     after it. Grey with the add form's reason where nothing can take it:
     a simulate-only test, a test with no tree to

@@ -3061,7 +3061,8 @@ def _wide_session(tmp_path, extra: int, columns=()):
 
 def _with_diagnostics(session, **finals):
     """A's in-memory result carries these diagnostics (a Dymola run's
-    `CPUtime` / `EventCounter`); the JSON driver records none."""
+    `CPUtime` / `EventCounter`), set by hand, in place of what the JSON
+    driver recorded."""
     import numpy as np
 
     from dstf.backends.types import VariableResult

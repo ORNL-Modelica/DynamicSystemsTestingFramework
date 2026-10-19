@@ -1,13 +1,16 @@
 """The Statistics card (U3): every statistic the run and its baseline
-recorded, side by side, above the criteria tree. Closed it is one line
-naming the counts that changed, then briefly the times; open, a row per count or time under its
-section, each ending in whatever attaches at STATISTIC (a `+` that adds a
-requirement on it) — or, for a row a criterion reads, that criterion's
-pill and its requirement in a word or two. The card is a VIEW of the one
-tree (Q1 b): which rows are scored is the tree as authored, staged edits
-included (`Session.statistic_leaves`); the tree view only says each
-criterion's verdict. A statistics criterion is edited under its row, by
-whatever attaches at STATISTIC_CRITERION. It knows no capability by name.
+recorded, and the listed names' numbers, side by side, above the criteria
+tree. Closed it is one line naming the counts that changed, then briefly
+the times and values; open, a row per count, time or value (a listed name
+that is neither a time nor a count) under its section, each ending in
+whatever attaches at STATISTIC (a `+` that adds a requirement on it) — or,
+for a row a criterion reads, that criterion's pill and its requirement in a
+word or two. The card is a VIEW of the one tree (Q1 b): which rows are
+scored is the SCORED tree — the authored one, staged edits included, else
+a flat entry's implicit one (`Session.statistic_leaves`); the tree view
+only says each criterion's verdict. A card criterion is edited under its
+row, by whatever attaches at STATISTIC_CRITERION. It knows no capability by
+name.
 
 The rows are `Session.statistics` (`reporting.stats_rows`), the row model
 the report renders too: a row is "changed" when the criterion its `+`
@@ -152,8 +155,9 @@ def scored(
     leaves: Sequence[tuple[LeafSpec, str]],
     view: dict | None,
 ) -> dict[str, list[dict]]:
-    """Row path -> the criteria reading it, in tree order: the AUTHORED
-    tree's statistics leaves (``leaves``, `Session.statistic_leaves`), each
+    """Row path -> the criteria reading it, in tree order: the card leaves
+    (`on_the_card`) of the scored tree (``leaves``,
+    `Session.statistic_leaves`), each
     as ``{"path", "params", "status"}`` — its status the view's verdict,
     "pending" where the view has none. Read from the view, a test with
     nothing compared (no baseline: no view) showed a staged criterion's row
@@ -405,9 +409,9 @@ class StatsCard:
     # -- the one open editor -------------------------------------------------
 
     def row_for(self, leaf_path: str) -> str | None:
-        """The row a statistics criterion is shown on, or None — a leaf
-        that reads no statistic, or none at that path. The authored tree's,
-        as `scored` reads it."""
+        """The row a card leaf (`on_the_card`) of the scored tree is shown
+        on, or None — a leaf that is no card leaf, or none at that path. The
+        scored tree's, as `scored` reads it."""
         session, model = self.page.shell.session, self.page.model_id
         leaf = next(
             (

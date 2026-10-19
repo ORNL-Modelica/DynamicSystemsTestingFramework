@@ -116,9 +116,11 @@ def evaluate_spec(
     so it is a parameter rather than a field on ``VariableResult`` — a leaf
     whose metric doesn't accept the kind hard-fails with a diagnostic.
 
-    ``scalars`` carries the run's statistics + diagnostics for ``scalar``
-    leaves whose quantity is a stats path; leaves that reduce a tracked
-    series never touch it.
+    ``scalars`` carries the run's statistics, for ``scalar`` leaves whose
+    quantity is a stats path, and the listed names' recorded diagnostics,
+    for a summary-reading leaf whose curve was not extracted
+    (`_summary_arrays`); a leaf that reduces a series it has never touches
+    it.
 
     ``path`` is this node's RFC 6902 path; leaves are stamped with it
     (``stamp_leaf_path``) so results address the spec, not a position in a
@@ -386,14 +388,14 @@ def _evaluate_leaf(
     warned = set() if warned is None else warned
     desc = registry_metric(leaf.metric)
     quantity = leaf.params.get("quantity")
-    # A stored-scalar leaf reads its numbers from the run's statistics or
-    # diagnostics, so it resolves no variable of the result and has no
-    # expression to carry. Every other leaf names one, and carries its
-    # expression onto whatever comparison it returns — a leaf that fails
-    # before it ever scores (a lost baseline, a misconfigured metric) is
-    # exactly the one a person reads, so it must not fall back to the bare
-    # name (the Task 3 review). ONE definition of "resolves no variable",
-    # shared with the spec walk the expression soft-check reads.
+    # A path leaf reads its numbers from the run's statistics only, so it
+    # resolves no variable of the result and has no expression to carry.
+    # Every other leaf names one, and carries its expression onto whatever
+    # comparison it returns — a leaf that fails before it ever scores (a
+    # lost baseline, a misconfigured metric) is exactly the one a person
+    # reads, so it must not fall back to the bare name (the Task 3 review).
+    # ONE definition of "resolves no variable", shared with the spec walk
+    # the expression soft-check reads.
     scores_stored_scalar = not resolves_a_variable(leaf)
     var_result = (
         None if scores_stored_scalar else var_results_by_name.get(leaf.variable)

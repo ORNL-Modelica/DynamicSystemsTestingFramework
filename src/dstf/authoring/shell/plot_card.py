@@ -738,8 +738,8 @@ class PlotCard:
         """Every leaf on this plot's SUBJECT, in tree order: its rows, what
         it draws, what its signature signs. Not its context — a context
         variable scored on another plot draws nothing of its criteria here —
-        and no stored-scalar leaf, whose ``variable`` names the leaf, not a
-        series (`names_a_series`)."""
+        and no card leaf (a statistic, or a listed name's number), which is
+        on the Statistics card (`names_a_series`)."""
         return [
             row["leaf"]
             for row in criteria_rows(view, self.resolved.subject, self.listed())

@@ -189,9 +189,10 @@ def resolves_a_variable(leaf: LeafSpec) -> bool:
     False for a stored-scalar leaf — a metric that accepts ``quantity``
     given a string one reads its number from the run's statistics, and its
     ``variable`` is free text naming that leaf, not a series anything
-    resolves. Treated as a variable it registered
-    ``CPUtime`` for the expression soft-check, which then compared a
-    baseline's recorded expression against a quantity nothing measured.
+    resolves. Treated as a variable, its path (a statistic such as
+    ``translation.nonlinear_count``) was registered for the expression
+    soft-check, which then compared a baseline's recorded expression
+    against a quantity nothing measured.
     """
     return not reads_a_statistic(leaf.metric, leaf.params)
 
@@ -701,11 +702,11 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
         and quantity
     ):
         # For a metric that declares ``accepts_quantity``, a string quantity
-        # names a stored scalar (statistics path / diagnostics summary), so
-        # the leaf has no tracked series to name — the path doubles as the
-        # display label. An explicit ``variable`` alongside it stays as the
-        # label the user chose. Every other metric scores a trajectory and
-        # still requires ``variable``.
+        # names a statistic of the log (a dotted path), so the leaf has no
+        # tracked series to name — the path doubles as the display label.
+        # An explicit ``variable`` alongside it stays as the label the user
+        # chose. Every other metric scores a trajectory and still requires
+        # ``variable``.
         variable = quantity
     if not isinstance(variable, str) or not variable:
         raise MetricSpecError(f"{path}.variable", "required string field")

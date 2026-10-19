@@ -804,7 +804,7 @@ def compare_test(
             baselines_read[-1] = PRIMARY_BASELINE
 
         # A stats-path quantity is resolved by the tree evaluator from the
-        # run's statistics/diagnostics; this flat path only has the
+        # run's statistics; this flat path only has the
         # variable's own trajectory, and ScalarMode would silently reduce
         # THAT instead (review finding, D106).
         desc = registry_metric(mode.name)

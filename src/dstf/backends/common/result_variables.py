@@ -205,7 +205,9 @@ def extract_variables(
                 test.model_id,
             )
 
-    # 4. Diagnostic variables (auto-captured, not compared — D54–D55)
+    # 4. The listed names (diagnostic_variables), recorded as diagnostics:
+    # the baseline stores each one's summary, and a scalar's final, min or
+    # max is scored from it (D162).
     diagnostics: list[VariableResult] = []
     diag_idx = 1
     for var_name in diagnostic_vars:
