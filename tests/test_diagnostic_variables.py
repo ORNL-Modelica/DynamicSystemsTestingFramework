@@ -2182,28 +2182,24 @@ def test_the_key_stats_follow_the_listing(tmp_path):
     assert '<div class="label">CPU Time</div>' not in page
 
 
-def test_a_scored_max_on_a_listed_name_nothing_holds_gives_its_final_row_too(
-    tmp_path,
+@pytest.mark.parametrize("reduce", ["max", "min"])
+def test_a_scored_max_or_min_on_a_listed_name_nothing_holds_gives_its_final_row_too(
+    tmp_path, reduce
 ):
-    """A card criterion on `h`'s max, `h` listed and never run: the card
-    has `h`'s own row (its final, empty) beside the `h.max` row the
-    criterion reads — the name's rows, as a held name has."""
+    """A card criterion on `h`'s max — or min — `h` listed and never run:
+    the card has `h`'s own row (its final, empty) beside the `h.max` /
+    `h.min` row the criterion reads — the name's rows, as a held name has."""
     from dstf.authoring.session import PatchOp
 
     s, A = _h_session(tmp_path, run=None, stored=None)
-    s.stage(
-        [
-            PatchOp(
-                A,
-                "add",
-                "/metrics/children/-",
-                {**H_FINAL, "quantity": {"reduce": "max"}},
-            )
-        ]
-    )
+    leaf = {**H_FINAL, "quantity": {"reduce": reduce}}
+    s.stage([PatchOp(A, "add", "/metrics/children/-", leaf)])
     rows = {r.path: r for r in s.statistics(A)}
     assert (rows["h"].section, rows["h"].kind) == ("simulation", "value")
-    assert (rows["h.max"].section, rows["h.max"].kind) == ("other scored", "value")
+    assert (rows[f"h.{reduce}"].section, rows[f"h.{reduce}"].kind) == (
+        "other scored",
+        "value",
+    )
 
 
 def test_the_sidecar_holds_no_second_diagnostics_table(tmp_path):
