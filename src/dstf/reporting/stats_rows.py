@@ -243,12 +243,15 @@ def listed_names(
 ) -> set[str]:
     """The listed names the rows are built from — a row each: the names
     the test lists (``listing``, `diagnostic_names`: what a leaf is routed
-    to the card by) that the run recorded, the baseline summarizes, or a
-    card leaf scores (``scored``) — one never run has its row, to be seen,
-    edited and deleted. A subset of the listing by construction, so a
-    row's ``+``, which reads the listing too, always lands on the card. A
-    name the test does not list has no row, whatever a stored result
-    still holds of it (owner, 2026-10-19)."""
+    to the card by) that the run recorded or the baseline summarizes, and
+    those a card leaf scores (``scored``). The tiers differ by ``scored``:
+    the card passes its card leaves' rows, so a name never run has its row
+    there, to be seen, edited and deleted; the report's table passes none
+    and shows what a side holds — its tree lists such a criterion. A
+    subset of the listing by construction, so a row's ``+``, which reads
+    the listing too, always lands on the card. A name the test does not
+    list has no row, whatever a stored result still holds of it (owner,
+    2026-10-19)."""
     held = {str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name}
     return {name for name in listing if name in held or name in scored}
 

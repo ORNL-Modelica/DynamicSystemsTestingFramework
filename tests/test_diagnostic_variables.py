@@ -2002,15 +2002,13 @@ def test_every_rows_plus_lands_its_criterion_on_the_card(tmp_path):
     assert (vc.actual_final, vc.reference_final, vc.passed) == (1.0, 1.0, True)
 
 
-def test_a_criterion_on_a_listed_name_never_run_has_its_row_on_both_tiers(tmp_path):
+def test_a_criterion_on_a_listed_name_never_run_has_its_row_on_the_card(tmp_path):
     """A criterion on a listed name nothing holds yet (a fresh test, a
-    listing just added) is routed to the card: its row is there, with no
-    values, to see, edit and delete it — and its `+` is that name's number.
-    In the report, run against a baseline that holds no `h`, the tree lists
-    the criterion and no plot is derived for it."""
+    listing just added) is routed to the card: the card adds its row, with
+    no values, to see, edit and delete it — and its `+` is that name's
+    number. No plot is derived for it."""
     from dstf.authoring.session import PatchOp
     from dstf.authoring.shell.stats_card import scored as scored_rows
-    from dstf.reporting.tree_rows import leaves_of
 
     s, A = _h_session(tmp_path, run=None, stored=None)
     s.stage([PatchOp(A, "add", "/metrics/children/-", H_FINAL)])
@@ -2025,15 +2023,38 @@ def test_a_criterion_on_a_listed_name_never_run_has_its_row_on_both_tiers(tmp_pa
     value = _plus(s, A, "h")
     assert (value["variable"], value["quantity"]) == ("h", {"reduce": "final"})
 
-    ran, A = _h_session(tmp_path / "ran", run=1.0, stored=None)
-    ran.stage([PatchOp(A, "add", "/metrics/children/-", H_FINAL)])
-    ctx = _report_context(ran, A)
-    assert [(n["path"], n["metric"]) for n in leaves_of(ctx["tree_view"])] == [
-        ("/metrics/children/0", "nrmse"),
-        (path, "scalar"),
+
+def test_the_reports_table_shows_what_a_side_holds_and_its_tree_every_criterion(
+    tmp_path,
+):
+    """The test lists `h` and `x9`, each scored by a card criterion; the run
+    recorded `h` and nothing holds `x9`. The card has both rows (it adds one
+    for a name a card criterion scores); the report's table has main's: the
+    `h` a side holds, no `x9` — whose criterion its tree lists, as it lists
+    `h`'s, with no plot derived for either."""
+    from dstf.authoring.session import PatchOp
+    from dstf.reporting.tree_rows import leaves_of
+
+    s, A = _h_session(tmp_path, run=1.0, stored=None, listed=("h", "x9"))
+    x9 = {**H_FINAL, "variable": "x9"}
+    s.stage(
+        [
+            PatchOp(A, "add", "/metrics/children/-", H_FINAL),
+            PatchOp(A, "add", "/metrics/children/-", x9),
+        ]
+    )
+    assert {"h", "x9"} <= {r.path for r in s.statistics(A)}
+    ctx = _report_context(s, A)
+    labels = _report_labels(ctx)
+    assert "h" in labels and "x9" not in labels
+    assert [
+        (n["path"], n["metric"], n["variable"]) for n in leaves_of(ctx["tree_view"])
+    ] == [
+        ("/metrics/children/0", "nrmse", "x"),
+        ("/metrics/children/1", "scalar", "h"),
+        ("/metrics/children/2", "scalar", "x9"),
     ]
     assert [tuple(r["subject"]) for r in ctx["plots"]] == [("x",)]
-    assert "h" in _report_labels(ctx)
 
 
 @pytest.mark.parametrize(

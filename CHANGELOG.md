@@ -36,9 +36,11 @@ this file says when they do.
   and in no plot's criteria, as a statistic's criterion always was. The add
   form's picker has no Diagnostics section: every name is under Other
   variables, with every metric.
-- The Statistics card and the report's Statistics table have a row for each
-  name the test lists that a side holds or a card criterion scores — none
-  for a name it no longer lists, whatever a stored baseline still holds.
+- A listed name's Statistics row is there only while the test lists it,
+  whatever a stored baseline still holds. The report's Statistics table
+  shows each listed name a side holds; the Test page's Statistics card
+  also shows one a card criterion scores and nothing holds yet (whose
+  criterion the report lists in its tree).
 
 ## [1.1.0] - 2026-10-14
 
