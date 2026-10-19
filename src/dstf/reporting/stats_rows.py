@@ -177,21 +177,26 @@ def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     ``+0.12 s`` over a zero baseline, a value ``+0.12``) — whenever both
     sides are present and differ, changed or not. The percentage is of the
     baseline's magnitude: over a negative baseline a value that went down
-    reads down. Under 1% it keeps one decimal (``+0.3%``), and under 0.05%
-    reads ``+<0.1%``: a number that moved never reads ``+0%`` or ``+0.0%``;
-    likewise one that is not zero never reads ``-100%`` — only a fall to
-    zero does — but ``-<100%``."""
+    reads down, and -2 -> -4 reads ``-100%``. Under 1% it keeps one decimal
+    (``+0.3%``), and under 0.05% reads ``+<0.1%``: a number that moved never
+    reads ``+0%`` or ``+0.0%``. Likewise a run that reached zero reads
+    ``-100%`` over a positive baseline and ``+100%`` over a negative one,
+    and only that: a run that is not zero but within 0.5% of the
+    baseline's magnitude from it reads ``-<100%`` / ``+<100%``."""
     if run is None or baseline is None or run == baseline:
         return ""
     if kind == "count":
         return f"{_count_text(baseline)}→{_count_text(run)}"
     if baseline == 0:
         return f"{run - baseline:+.2g}" + (" s" if kind == "time" else "")
+    toward_zero = "-" if baseline > 0 else "+"
+    if run == 0:
+        return f"{toward_zero}100%"
+    if abs(run) < 0.005 * abs(baseline):
+        return f"{toward_zero}<100%"
     ratio = (run - baseline) / abs(baseline)
     if abs(ratio) < 0.0005:
         return f"{'+' if ratio > 0 else '-'}<0.1%"
-    if run != 0 and -1 < ratio <= -0.995:
-        return "-<100%"
     return f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"
 
 

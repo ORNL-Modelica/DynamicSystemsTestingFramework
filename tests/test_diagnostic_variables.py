@@ -1919,3 +1919,25 @@ def test_every_diagnostics_rows_plus_writes_the_one_spelling(tmp_path):
     vc = ran.comparisons[A].variables[-1]
     assert "error" not in (vc.diagnostics or {})
     assert (vc.actual_final, vc.reference_final, vc.passed) == (1.0, 1.0, True)
+
+
+@pytest.mark.parametrize(
+    ("base", "run", "delta"),
+    [
+        (1.0, 0.004, "-<100%"),
+        (1.0, 0.006, "-99%"),
+        (1.0, 0.0, "-100%"),
+        (1.0, 1e-300, "-<100%"),
+        (-1.0, -0.004, "+<100%"),
+        (-1.0, -0.006, "+99%"),
+        (-1.0, 0.0, "+100%"),
+        (-2.0, -1e-6, "+<100%"),
+        (-2.0, -4.0, "-100%"),
+    ],
+)
+def test_a_value_near_zero_reads_less_than_100_percent_on_both_sides(base, run, delta):
+    """A run within 0.5% of the baseline's magnitude from zero, and not
+    zero, reads "<100%" toward zero — down over a positive baseline, up over
+    a negative one; only an exact zero reads 100%. Elsewhere the change is
+    of the baseline's magnitude: -2 -> -4 moved down by all of it."""
+    assert _h_row(base, run).delta == delta
