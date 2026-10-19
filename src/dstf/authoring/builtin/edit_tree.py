@@ -326,7 +326,7 @@ def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch |
                 inputs["metric"], names[0], seed_data(s, model_id, names[0])
             )
             # A curve criterion on a time (CPUtime) moves with the load: in
-            # an `and`, inside a `warn` (Q12).
+            # an `and`, inside a `warn`.
             leaves = [
                 warn_if_time(
                     {**copy.deepcopy(seeded), "variable": name},
@@ -621,7 +621,7 @@ def _add_form(
         value=first,
         text_of=lambda name: texts[name].text if name in texts else name,
         # The pick moves the Indices field; every name is offered every
-        # metric (Q2), a listed one too.
+        # metric, a listed one too.
         on_change=offer_indices,
         marker=f"{mark}:variable",
     )
@@ -1373,7 +1373,7 @@ def _diagnostics(s: SessionView, model_id: str) -> dict[str, Any]:
 
 
 def _metrics_for() -> list[str]:
-    """What the Metric select offers (Q2): every metric that scores a time
+    """What the Metric select offers: every metric that scores a time
     series — for every name, a listed one too."""
     return [d.name for d in metrics() if DatasetType.TIME_SERIES in d.accepted_datasets]
 

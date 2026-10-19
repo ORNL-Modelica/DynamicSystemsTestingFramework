@@ -179,7 +179,7 @@ def test_openmodelica_asks_for_a_tests_own_name_in_its_variable_filter(
     assert 'variableFilter="^(time|x|CPUtime|EventCounter|h)$"' in mos
 
 
-# -- a leaf that one stored number answers (R1) ----------------------------------
+# -- a leaf that one stored number answers ----------------------------------
 
 
 def _one_leaf(**leaf):
@@ -214,7 +214,7 @@ def test_any_other_criterion_needs_the_curve(leaf):
     assert not reads_a_summary(_one_leaf(**leaf))
 
 
-# -- the evaluator scores a summary on a side without the curve (R7) -------------
+# -- the evaluator scores a summary on a side without the curve -------------
 
 T = np.linspace(0.0, 1.0, 11)
 #: CPUtime's run: final 2.0, max 2.0, min 0.0
@@ -262,7 +262,7 @@ def test_both_sides_from_their_summaries(ref_final, passes):
     assert (vc.actual_final, vc.reference_final) == (2.0, ref_final)
     assert vc.nrmse == pytest.approx(abs(2.0 - ref_final) / ref_final)
     # Never the diagnostic's own number: `build_trajectories` pairs a
-    # comparison with a series by its index (review M4).
+    # comparison with a series by its index.
     assert vc.index == 0
 
 
@@ -341,7 +341,7 @@ def test_both_curves_take_todays_path_and_never_read_a_summary():
     assert (vc.actual_final, vc.reference_final, vc.index) == (2.0, 2.0, 3)
 
 
-# -- every backend records the names it lists (R4) -------------------------------
+# -- every backend records the names it lists -------------------------------
 
 
 def _json_result(tmp_path, payload: dict, own: list[str]):
@@ -460,7 +460,7 @@ def test_an_accept_stores_a_summary_and_a_curve_only_once_a_criterion_needs_it(
     ]
 
 
-# -- no statistics copy (R5, R6) ---------------------------------------------------
+# -- no statistics copy ---------------------------------------------------
 
 
 def _document(**top) -> dict:
@@ -580,7 +580,7 @@ def test_an_accept_over_an_old_file_writes_no_copy(tmp_path):
     assert stored["sampling"]["precision"] == "single"  # a writer always writes it
 
 
-# -- the event-count warning and the CPU time read the summaries (R9, R10) -------
+# -- the event-count warning and the CPU time read the summaries -------
 
 
 def _with_events(ev):
@@ -654,7 +654,7 @@ def test_the_cpu_time_is_the_runs_cpu_time_final():
     assert summary_fields(comp, diagnostics=cpu)["sim_cpu"] == 0.3
 
 
-# -- the Statistics rows keep their look (R11) -------------------------------------
+# -- the Statistics rows keep their look -------------------------------------
 
 STATS_MAIN = FIXTURES / "stats_main"
 
@@ -818,7 +818,7 @@ def test_a_listed_name_neither_a_time_nor_a_count_is_a_value(tmp_path):
     assert (same.delta, same.changed) == ("+0.6%", False)
 
 
-# -- the card's `+` writes the one spelling (R12, R13) ---------------------------
+# -- the card's `+` writes the one spelling ---------------------------
 
 
 def test_the_cards_plus_on_cpu_time_writes_the_one_spelling_and_scores():
@@ -867,7 +867,7 @@ def _fake_view(recorded: dict, stored: dict | None = None, listed=PROJECT):
 
 
 def test_a_value_rows_plus_with_no_run_seeds_within_1pc_of_the_baseline():
-    """N1, N3: the `+` on a listed `h` that no run recorded reads the
+    """The `+` on a listed `h` that no run recorded reads the
     baseline's summary — within 1% of it, the row's `changed` rule."""
     from dstf.authoring.builtin.edit_tree import _quantity_leaf
 
@@ -952,7 +952,7 @@ def test_a_max_seeds_around_the_runs_max():
     assert (seed["min_value"], seed["max_value"]) == (2.8, 3.2)
 
 
-# -- one spelling: a dotted path is a statistic only (R8) ------------------------
+# -- one spelling: a dotted path is a statistic only ------------------------
 
 HINT = ' — a variable\'s number is written {{"variable": "{x}", "quantity": {{"reduce": "{f}"}}}}'
 
@@ -1018,7 +1018,7 @@ def test_a_path_is_read_from_the_statistics_alone():
     assert resolve_scalar_path("CPUtime.final", {"CPUtime": 1.0}) is None
 
 
-# -- numbers on the card, curves on plots (R1b) -----------------------------------
+# -- numbers on the card, curves on plots -----------------------------------
 
 CARD_LEAVES = [
     ({"quantity": {"reduce": "final"}}, "CPUtime", True),
@@ -1090,16 +1090,15 @@ def test_a_summary_leaf_on_a_listed_name_is_on_the_card_not_on_a_plot(tmp_path):
 
 
 def test_the_card_maps_a_summary_leaf_to_its_row(tmp_path):
-    from dstf.authoring.shell.stats_card import row_of
-    from dstf.comparison.tree_spec import parse_metric_tree
+    from dstf.comparison.tree_spec import card_row, parse_metric_tree
 
-    assert row_of(parse_metric_tree(FINAL_CPU)) == "CPUtime"
-    assert row_of(parse_metric_tree(MAX_CPU)) == "CPUtime.max"
+    assert card_row(parse_metric_tree(FINAL_CPU)) == "CPUtime"
+    assert card_row(parse_metric_tree(MAX_CPU)) == "CPUtime.max"
     statistic = {"metric": "scalar", "variable": "n", "quantity": "translation.n"}
-    assert row_of(parse_metric_tree(statistic)) == "translation.n"
+    assert card_row(parse_metric_tree(statistic)) == "translation.n"
     # The 1.1 path is a statistic's row like any: no longer the name's (S2).
     old = {"metric": "scalar", "variable": "CPUtime", "quantity": "CPUtime.final"}
-    assert row_of(parse_metric_tree(old)) == "CPUtime.final"
+    assert card_row(parse_metric_tree(old)) == "CPUtime.final"
 
 
 def test_the_same_leaf_on_an_unlisted_variable_is_on_its_plot(tmp_path):
@@ -1190,7 +1189,7 @@ def test_the_report_lists_a_listed_names_number_in_its_tree_not_its_plot(tmp_pat
     ]
 
 
-# -- the add form: every name a variable (R13, R14) --------------------------------
+# -- the add form: every name a variable --------------------------------
 
 
 def _add(session, A, variable, metric, path="/metrics"):
@@ -1251,7 +1250,7 @@ def test_a_scalar_on_cpu_time_writes_the_one_spelling(tmp_path, kind, warned):
 
 @pytest.mark.parametrize(("kind", "warned"), [("and", True), ("or", False)])
 def test_a_curve_criterion_on_cpu_time_warns_only_in_an_and(tmp_path, kind, warned):
-    """Q12: a time's curve moves with the load as its number does."""
+    """A time's curve moves with the load as its number does."""
     s, A = _tree_session(tmp_path, kind)
     value = _add(s, A, "CPUtime", "nrmse")
     leaf = value["children"][0] if warned else value
@@ -1312,7 +1311,7 @@ def test_adding_a_card_criterion_leaves_the_plot_cards_shape(tmp_path):
     assert TestPage.shape(page, s.tree_view(A)) != before
 
 
-# -- the review's fixes ---------------------------------------------------------
+# -- a number on the card, from a run or a baseline ---------------------------------------------------------
 
 
 def _plus(session, A, quantity):
@@ -1408,7 +1407,7 @@ def test_a_value_with_no_run_is_seeded_from_the_baselines_summary():
 
 @pytest.mark.parametrize(("run", "changes"), [(1.0099, False), (1.0101, True)])
 def test_a_value_rows_changed_is_exactly_its_plus_failing(run, changes):
-    """N3: with the baseline's summary the `+` seeds within 1% of it, the
+    """With the baseline's summary the `+` seeds within 1% of it, the
     `changed` rule: one is true exactly when the other fails."""
     from dstf.comparison.modes import ScalarConfig, ScalarMode
     from dstf.comparison.seeds import seed_variable_number
@@ -1514,7 +1513,7 @@ def _marks(figure: dict) -> tuple:
 
 
 def test_a_card_criterion_draws_nothing_on_a_plot_on_either_tier(tmp_path):
-    """F1: numbers on the card, curves on plots — a scalar final on CPUtime
+    """Numbers on the card, curves on plots — a scalar final on CPUtime
     beside its nrmse adds no trace and no shape to the CPUtime plot."""
     alone = _cpu_figures(*_figure_session(tmp_path / "alone", False))
     both = _cpu_figures(*_figure_session(tmp_path / "both", True))
@@ -1523,7 +1522,7 @@ def test_a_card_criterion_draws_nothing_on_a_plot_on_either_tier(tmp_path):
 
 
 def test_a_card_criterion_leaves_the_tracked_names_as_they_were(tmp_path):
-    """F2: a number on CPUtime keeps CPUtime out of Tracked — the Variables
+    """A number on CPUtime keeps CPUtime out of Tracked — the Variables
     drawer lists it under Diagnostics, as on main."""
     from dstf.authoring.session import PatchOp
     from test_session import A, _stats_session
@@ -1558,7 +1557,7 @@ def test_a_card_criterion_leaves_the_tracked_names_as_they_were(tmp_path):
 
 
 def test_the_closed_line_names_a_changed_value(tmp_path):
-    """F3: a listed `h` at 2.0 against 1.0 is named, as a changed time is."""
+    """A listed `h` at 2.0 against 1.0 is named, as a changed time is."""
     from dstf.authoring.shell.stats_card import line_text
     from dstf.reporting.stats_rows import statistics_rows
 
@@ -1578,7 +1577,7 @@ def test_the_closed_line_names_a_changed_value(tmp_path):
     "payload", [{"success": True, "time": [0.0, 1.0]}], ids=["no variables key"]
 )
 def test_the_json_driver_reads_a_payload_with_no_variables(tmp_path, payload):
-    """N4: as main read it — a run with nothing, never a KeyError."""
+    """As main read it — a run with nothing, never a KeyError."""
     from dstf.backends.python import backend as pr
 
     cfg = SimpleNamespace(
@@ -1596,7 +1595,7 @@ def test_the_json_driver_reads_a_payload_with_no_variables(tmp_path, payload):
 
 
 def test_a_listed_name_with_non_numeric_values_is_not_recorded(tmp_path):
-    """N4: as on main, where a listed name was never read: no diagnostic,
+    """As on main, where a listed name was never read: no diagnostic,
     and the test is not failed for it."""
     result = _json_result(
         tmp_path, {"y": [0, 1], "h": ["a", "b"], "CPUtime": [0.0, 0.5]}, ["h"]
@@ -1606,7 +1605,7 @@ def test_a_listed_name_with_non_numeric_values_is_not_recorded(tmp_path):
 
 
 def test_the_dashboards_cpu_time_is_its_recorded_digits():
-    """N5: the sidecar's `sim_cpu` (and the sort key) is main's 0.045845,
+    """The sidecar's `sim_cpu` (and the sort key) is main's 0.045845,
     not the float32's widening."""
     from dstf.reporting.rows import cpu_time
 
@@ -1626,7 +1625,7 @@ def test_the_dashboards_cpu_time_is_its_recorded_digits():
 
 
 def test_the_report_routes_a_listed_names_number_through_every_hop(tmp_path):
-    """N2: `_build_per_test_args` → `_render_one_test`, as `compare --report`
+    """`_build_per_test_args` → `_render_one_test`, as `compare --report`
     renders a page: a scalar on CPUtime is in no plot section (the CPUtime
     plot's criteria are its nrmse alone), and a scalar on EventCounter
     derives no plot."""

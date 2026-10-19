@@ -201,7 +201,7 @@ TIMES = frozenset({"CPUtime"})
 def quantity_kind(path: str) -> Literal["count", "time"]:
     """What kind of number the statistic ``path`` names (S5): a ``count``
     is scored exact, a ``time`` within 10%. A time by its path — the
-    ``timing`` section, CPUtime, and the ``*_time`` / ``*_wall`` /
+    ``timing`` section and the ``*_time`` / ``*_wall`` /
     ``cpu_time*`` keys; every other number a backend records is a count,
     whatever its type (a Dymola ``result_points`` can be written as a
     float). A listed name's kind is by its name alone
@@ -210,7 +210,6 @@ def quantity_kind(path: str) -> Literal["count", "time"]:
     last = path.rsplit(".", 1)[-1]
     if (
         head == "timing"
-        or last in TIMES
         or last.endswith(("_time", "_wall"))
         or last.startswith("cpu_time")
     ):
@@ -254,7 +253,7 @@ def warn_if_time(leaf: dict, time: bool, *, into: str) -> dict:
     most of all — and would fail a test whose model did not change.
     Anywhere else it is bare: a ``warn`` child passes whatever it scores, so
     under an ``or`` or a ``k-of-n`` it would pass its parent with nothing
-    else passing (Q12)."""
+    else passing."""
     if time and into == "and":
         return {"combinator": "warn", "children": [leaf]}
     return leaf

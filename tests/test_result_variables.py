@@ -286,7 +286,7 @@ class TestTreeVariablesAreTracked:
                 {
                     "metric": "scalar",
                     "variable": "ev",
-                    "quantity": "EventCounter.final",
+                    "quantity": "translation.continuous_time_states",
                 },
             ),
         )

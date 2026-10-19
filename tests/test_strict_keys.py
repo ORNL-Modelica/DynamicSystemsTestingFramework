@@ -907,7 +907,7 @@ def test_a_pair_and_a_quantity_as_they_are_read_are_taken():
         "combinator": "and",
         "children": [
             _scalar(quantity={"reduce": "max"}, tolerance={"lower": 0.1, "upper": 0.2}),
-            _scalar(quantity="CPUtime.final"),
+            _scalar(quantity="translation.continuous_time_states"),
             # inert on a trajectory metric, of any shape: not looked into
             {"metric": "nrmse", "variable": "x", "quantity": {"anything": 1}},
         ],
@@ -1712,7 +1712,7 @@ class TestTheSchemaIsAsStrictAsTheParser:
         entry = {"model": "L.M", "comparison": {"variable_overrides": {"x": override}}}
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate({"tests": [entry]}, schema)
-        for taken in ({"reduce": "max"}, "CPUtime.final"):
+        for taken in ({"reduce": "max"}, "translation.continuous_time_states"):
             leaf = {"metric": "scalar", "variable": "x", "quantity": taken}
             jsonschema.validate({"tests": [{"model": "L.M", "metrics": leaf}]}, schema)
 

@@ -3109,7 +3109,7 @@ async def test_the_picker_offers_every_result_name_in_sections(tmp_path):
 
 async def test_a_json_driver_run_records_a_listed_column_as_a_diagnostic(tmp_path):
     """The JSON driver records what the project lists (``CPUtime``, by
-    default) where its result holds it (review M7): the column is a
+    default) where its result holds it: the column is a
     diagnostic of the run — and a variable, offered as any is (D162)."""
     session = _wide_session(tmp_path, 0, columns=("CPUtime",))
     assert [
@@ -3353,7 +3353,7 @@ def _metric_select(user):
 async def test_a_listed_name_offers_every_metric_and_a_scalar_writes_its_number(
     tmp_path,
 ):
-    """Q2 under D162: a listed name is a variable — the Metric select
+    """Under D162 a listed name is a variable — the Metric select
     offers every metric for it, as for any — and a scalar Add writes its
     number in the one spelling, a count exact. Offered as the result FILE
     names them, as every name is."""
@@ -3505,7 +3505,7 @@ async def test_cpu_time_added_bare_under_an_or_reveals_its_leaf(tmp_path):
 
 async def test_a_curve_criterion_on_cpu_time_is_taken_and_warned_in_an_and(tmp_path):
     """D162: an nrmse on CPUtime is a criterion like any — no longer
-    refused — and, a time, warned where it lands in an `and` (Q12)."""
+    refused — and, a time, warned where it lands in an `and`."""
     session = _wide_session(tmp_path, 0)
     session.stage([PatchOp(A, "add", ROOT, {"combinator": "and", "children": _XY})])
     _with_diagnostics(session, CPUtime=1.0)

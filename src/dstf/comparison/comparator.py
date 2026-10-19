@@ -726,8 +726,9 @@ def compare_test(
             baselines,
             base_tolerance,
             dataset_kind,
-            # Stored scalars for `scalar` leaves reading a statistics /
-            # diagnostics path instead of a tracked series.
+            # The run's stored numbers: its statistics, for a `scalar` leaf
+            # reading a statistics path; its listed names, for a number
+            # read from a summary where no curve was extracted.
             ScalarSources(
                 statistics=result.statistics or {},
                 diagnostics=result.diagnostics,

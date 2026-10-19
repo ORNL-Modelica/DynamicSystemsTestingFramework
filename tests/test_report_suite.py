@@ -2059,7 +2059,7 @@ class TestPlotSections:
                 {
                     "metric": "scalar",
                     "variable": "x",
-                    "quantity": "CPUtime.final",
+                    "quantity": "translation.continuous_time_states",
                     "max_value": 1e9,
                 },
             ],
@@ -3324,7 +3324,6 @@ class TestTheStatisticsTable:
             "translation": {"nonlinear": [1, 1, 1], "nonlinear_count": 3},
             "simulation": {"state_events": 2},
             "timing": {"total_wall": 4.02},
-            "CPUtime": 1.12,
         }
 
     @property
@@ -3333,13 +3332,32 @@ class TestTheStatisticsTable:
             "translation": {"nonlinear": []},
             "simulation": {"state_events": 2},
             "timing": {"total_wall": 3.91},
-            "CPUtime": 0.80,
+        }
+
+    @staticmethod
+    def _cpu(final: float = 1.12) -> dict:
+        """The run's CPUtime diagnostic (``final``) and the baseline's
+        summary (0.8): the two sides of the CPUtime row."""
+        import numpy as np
+
+        from dstf.backends.types import VariableResult
+        from dstf.storage.baseline import DiagnosticSummary
+
+        run = VariableResult(
+            index=1,
+            time=np.array([0.0, 1.0]),
+            values=np.array([0.0, final]),
+            name="CPUtime",
+        )
+        return {
+            "run_diagnostics": [run],
+            "baseline_diagnostics": [DiagnosticSummary("CPUtime", final=0.8)],
         }
 
     def _sections(self):
         from dstf.reporting.context_builder import _build_statistics_sections
 
-        return _build_statistics_sections(self.BASE, self.RUN)
+        return _build_statistics_sections(self.BASE, self.RUN, **self._cpu())
 
     def _rows(self):
         return {r["label"]: r for s in self._sections() for r in s["rows"]}
@@ -3362,7 +3380,10 @@ class TestTheStatisticsTable:
         assert (row["current"], row["reference"]) == ("1.12 s", "0.8 s")
         from dstf.reporting.context_builder import _build_key_stats
 
-        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, self.RUN)}
+        stats = {
+            s["label"]: s
+            for s in _build_key_stats([], self.BASE, self.RUN, **self._cpu())
+        }
         assert stats["CPU Time"]["reference"] == "0.8 s"
 
     def test_the_sections_and_their_order_are_the_reports(self):
@@ -3377,10 +3398,10 @@ class TestTheStatisticsTable:
             ("Timing", ["Total wall"]),
         ]
 
-    def test_a_folded_diagnostic_takes_its_kind_from_the_runs_samples(self):
-        """A user-configured diagnostic folded into the statistics (`Wall`):
-        the report reads the run's samples as the tool's card does —
-        fractional, so a time, and 2.4 -> 2.5 is inside its 10%: untinted."""
+    def test_a_listed_name_reads_as_the_cards_value_row(self):
+        """A user-listed `Wall` (neither CPUtime nor EventCounter) is a
+        `value` in the report as on the tool's card: 2.4 -> 2.5 is beyond
+        the ordinary 1%, so tinted — and no unit."""
         import numpy as np
 
         from dstf.backends.types import TestResult, VariableResult
@@ -3390,8 +3411,11 @@ class TestTheStatisticsTable:
         wall = VariableResult(
             index=0, time=t, values=np.array([0.0, 1.5, 2.5]), name="Wall"
         )
-        run = {"Wall": 2.5, "simulation": {"state_events": 1}}
-        ref = {"statistics": {"Wall": 2.4, "simulation": {"state_events": 1}}}
+        run = {"simulation": {"state_events": 1}}
+        ref = {
+            "statistics": {"simulation": {"state_events": 1}},
+            "diagnostics": [{"name": "Wall", "final": 2.4}],
+        }
         ctx = _build_template_context(
             "M",
             [],
@@ -3401,7 +3425,8 @@ class TestTheStatisticsTable:
             result=TestResult("M", True, diagnostics=[wall], statistics=run),
         )
         rows = {r["label"]: r for s in ctx["statistics_sections"] for r in s["rows"]}
-        assert not rows["Wall"]["changed"]
+        assert rows["Wall"]["changed"]
+        assert (rows["Wall"]["current"], rows["Wall"]["reference"]) == ("2.5", "2.4")
 
     def test_the_inputs_are_never_written(self):
         from dstf.reporting.context_builder import (
@@ -3417,18 +3442,26 @@ class TestTheStatisticsTable:
     def test_key_stats_read_the_rows(self):
         from dstf.reporting.context_builder import _build_key_stats
 
-        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, self.RUN)}
+        stats = {
+            s["label"]: s
+            for s in _build_key_stats([], self.BASE, self.RUN, **self._cpu())
+        }
         nonlinear = stats["Nonlinear Systems"]
         assert (nonlinear["current"], nonlinear["reference"]) == ("3", "0")
         assert nonlinear["changed"]
         assert stats["CPU Time"]["changed"]
-        run = {**self.RUN, "CPUtime": 0.82}
-        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, run)}
+        stats = {
+            s["label"]: s
+            for s in _build_key_stats([], self.BASE, self.RUN, **self._cpu(0.82))
+        }
         assert not stats["CPU Time"]["changed"]
 
     def test_key_stats_a_side_not_recorded_reads_blank(self):
         from dstf.reporting.context_builder import _build_key_stats
 
-        stats = {s["label"]: s for s in _build_key_stats([], {}, {"CPUtime": 1.12})}
+        cpu = self._cpu()["run_diagnostics"]
+        stats = {
+            s["label"]: s for s in _build_key_stats([], {}, {}, run_diagnostics=cpu)
+        }
         assert stats["CPU Time"]["reference"] == ""
         assert not stats["CPU Time"]["changed"]

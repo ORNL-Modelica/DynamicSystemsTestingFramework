@@ -378,8 +378,10 @@ class TestFigure:
             min_value=None,
             max_value=None,
         )
-        vc.name = "CPUtime.final"
-        fig = variable_figure(build_view("CPUtime.final", leaves=[_stamped(vc)]))
+        vc.name = "translation.continuous_time_states"
+        fig = variable_figure(
+            build_view("translation.continuous_time_states", leaves=[_stamped(vc)])
+        )
         names = {s["name"] for s in fig["layout"]["shapes"]}
         assert {
             "/metrics/children/0/scalar/actual",

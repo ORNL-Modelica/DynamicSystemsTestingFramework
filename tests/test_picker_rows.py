@@ -1,4 +1,4 @@
-"""The add form's variable picker as data (the plan's Task 3, K2): two
+"""The add form's variable picker as data: two
 sections, filtered on the label OR the name, capped."""
 
 from __future__ import annotations

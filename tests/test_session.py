@@ -1398,7 +1398,11 @@ class TestRescoreAndStage:
         entry = next(e for e in doc["tests"] if e["model"] == D)
         entry["comparison"] = {
             "variable_overrides": {
-                "x": {"mode": "scalar", "quantity": "CPUtime.final", "max_value": 100}
+                "x": {
+                    "mode": "scalar",
+                    "quantity": "translation.continuous_time_states",
+                    "max_value": 100,
+                }
             }
         }
         (cfg.parent / "test_spec.json").write_text(
@@ -4782,7 +4786,7 @@ class TestTheStatisticsRows:
                             {
                                 "metric": "scalar",
                                 "variable": "CPUtime",
-                                "quantity": "CPUtime.final",
+                                "quantity": "translation.continuous_time_states",
                                 "tolerance": 0.1,
                                 "tolerance_mode": "rel",
                             },

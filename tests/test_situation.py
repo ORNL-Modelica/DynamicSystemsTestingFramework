@@ -450,7 +450,11 @@ def test_new_variables_counts_what_the_result_lacks():
                 "children": [
                     {"metric": "nrmse", "variable": "x"},
                     {"metric": "range", "variable": "y", "max_value": 1},
-                    {"metric": "scalar", "variable": "c", "quantity": "CPUtime.final"},
+                    {
+                        "metric": "scalar",
+                        "variable": "c",
+                        "quantity": "translation.continuous_time_states",
+                    },
                     {
                         "metric": "scalar",
                         "variable": "CPUtime",

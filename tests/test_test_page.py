@@ -2528,7 +2528,7 @@ async def test_watch_plots_with_no_derived_plot_say_so(shell):
             {
                 "metric": "scalar",
                 "variable": "x",
-                "quantity": "CPUtime.final",
+                "quantity": "translation.continuous_time_states",
                 "max_value": 1e9,
             }
         ],
@@ -3097,7 +3097,7 @@ async def test_a_tree_of_statistics_alone_has_no_plots_and_says_so(shell):
             {
                 "metric": "scalar",
                 "variable": "x",
-                "quantity": "CPUtime.final",
+                "quantity": "translation.continuous_time_states",
                 "max_value": 1e9,
             }
         ],
@@ -3160,7 +3160,7 @@ async def test_a_statistics_leaf_draws_no_row_on_its_variables_card(shell):
     stats = {
         "metric": "scalar",
         "variable": "x",
-        "quantity": "CPUtime.final",
+        "quantity": "translation.continuous_time_states",
         "max_value": 1e9,
     }
     tree = {
@@ -5368,7 +5368,7 @@ ON_NO_PLOT = {
         {
             "metric": "scalar",
             "variable": "y",
-            "quantity": "CPUtime.final",
+            "quantity": "translation.continuous_time_states",
             "max_value": 1e9,
         },
     ],
@@ -5390,7 +5390,7 @@ async def test_a_jump_to_a_statistics_criterion_opens_it_in_the_card(shell):
         await _settled(lambda: page.open == (STATS, T1))
         assert page.stats.is_open
         assert _none(user, f"editor:0:{T0}")
-        assert page.stats.slots["CPUtime.final"] in list(
+        assert page.stats.slots["translation.continuous_time_states"] in list(
             _ancestors(_one(user, f"stats-editor:{T1}"))
         )
         assert user.notify.messages == []
@@ -10936,17 +10936,16 @@ def test_only_a_final_is_its_names_row():
     """CPUtime's final is the CPUtime row; its max is not the number that
     row shows — it is its own row (S4). The 1.1 path `CPUtime.final` is a
     statistic's path like any, its own row (D162 ended S2)."""
-    from dstf.authoring.shell.stats_card import row_of
-    from dstf.comparison.tree_spec import parse_metric_tree
+    from dstf.comparison.tree_spec import card_row, parse_metric_tree
 
     def leaf(quantity):
         return parse_metric_tree(
             {"metric": "scalar", "variable": "CPUtime", "quantity": quantity}
         )
 
-    assert row_of(leaf({"reduce": "final"})) == "CPUtime"
-    assert row_of(leaf({"reduce": "max"})) == "CPUtime.max"
-    assert row_of(leaf("CPUtime.final")) == "CPUtime.final"
+    assert card_row(leaf({"reduce": "final"})) == "CPUtime"
+    assert card_row(leaf({"reduce": "max"})) == "CPUtime.max"
+    assert card_row(leaf("CPUtime.final")) == "CPUtime.final"
 
 
 async def test_a_row_that_stops_changing_loses_its_tint(stats_shell):

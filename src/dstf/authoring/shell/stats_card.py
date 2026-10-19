@@ -147,13 +147,6 @@ def cell_text(row: StatRow, side: int) -> str:
     return card_text(row.kind, value, row.digits[side]) or "—"
 
 
-def row_of(leaf: LeafSpec) -> str:
-    """The row a card leaf is shown on (`card_row`): a statistic's path, a
-    listed name's final its name's row, its min or max ``<name>.min`` /
-    ``<name>.max`` — as `statistics_rows` holds them."""
-    return card_row(leaf)
-
-
 def scored(
     leaves: Sequence[tuple[LeafSpec, str]],
     view: dict | None,
@@ -167,7 +160,7 @@ def scored(
     verdicts = {str(n["path"]): leaf_status(n) for n in leaves_of(view)}
     out: dict[str, list[dict]] = {}
     for leaf, path in leaves:
-        out.setdefault(row_of(leaf), []).append(
+        out.setdefault(card_row(leaf), []).append(
             {
                 "path": path,
                 "params": leaf.params,
@@ -423,7 +416,7 @@ class StatsCard:
             ),
             None,
         )
-        return None if leaf is None else row_of(leaf)
+        return None if leaf is None else card_row(leaf)
 
     def open_editor(self, leaf_path: str, view: dict | None) -> bool:
         """The criterion's editor under its row (the `PlotCard.open_editor`

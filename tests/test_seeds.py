@@ -436,7 +436,6 @@ def test_a_number_leaf_parses_and_scores_its_own_data():
         ("simulation.result_points", "count"),
         ("simulation.accepted_steps", "count"),
         ("EventCounter", "count"),
-        ("CPUtime", "time"),
         ("simulation.cpu_time_integration", "time"),
         ("simulation.wall_time", "time"),
         ("timing.total_wall", "time"),

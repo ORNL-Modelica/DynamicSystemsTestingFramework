@@ -187,9 +187,9 @@ def resolves_a_variable(leaf: LeafSpec) -> bool:
     """Does this leaf score a variable of the RESULT?
 
     False for a stored-scalar leaf — a metric that accepts ``quantity``
-    given a string one reads its numbers from the run's statistics or
-    diagnostics, and its ``variable`` is free text naming that leaf, not a
-    series anything resolves. Treated as a variable it registered
+    given a string one reads its number from the run's statistics, and its
+    ``variable`` is free text naming that leaf, not a series anything
+    resolves. Treated as a variable it registered
     ``CPUtime`` for the expression soft-check, which then compared a
     baseline's recorded expression against a quantity nothing measured.
     """

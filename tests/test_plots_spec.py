@@ -233,7 +233,12 @@ def test_a_string_quantity_scalar_leaf_adds_no_plot():
         "combinator": "and",
         "children": [
             _leaf("nrmse", "x"),
-            _leaf("scalar", "CPUtime", quantity="CPUtime.final", tolerance=1.0),
+            _leaf(
+                "scalar",
+                "CPUtime",
+                quantity="translation.continuous_time_states",
+                tolerance=1.0,
+            ),
         ],
     }
     assert [p.subject for p in _derive(_leaves(tree))] == [("x",)]

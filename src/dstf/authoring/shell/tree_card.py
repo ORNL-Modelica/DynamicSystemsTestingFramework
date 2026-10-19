@@ -367,7 +367,7 @@ def fold_text(node: dict) -> str:
 
 
 def show_tip(leaf: dict, listed: Collection[str]) -> str:
-    """The ⤓'s name (U5, Q7): where it shows the criterion — a card
+    """The ⤓'s name: where it shows the criterion — a card
     criterion (`on_the_card_view`: a statistic, or a number of a name the
     test lists, ``listed``) on the Statistics card, any other on its plot."""
     card = on_the_card_view(leaf, listed)

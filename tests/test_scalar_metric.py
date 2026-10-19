@@ -114,7 +114,7 @@ class TestScalarConfigValidation:
     def test_stats_path_quantity_defaults_to_final_reduction(self):
         # The evaluator hands stats-path leaves 1-sample arrays, so "final"
         # is the reduction that reads them back unchanged.
-        assert _mode(quantity="CPUtime.final").reduction == "final"
+        assert _mode(quantity="translation.continuous_time_states").reduction == "final"
 
 
 # ---------------------------------------------------------------------------
@@ -634,13 +634,19 @@ class TestScalarLeafEvaluation:
 
 class TestScalarLeafParsing:
     def test_variable_defaults_to_a_string_quantity(self):
-        leaf = parse_metric_tree({"metric": "scalar", "quantity": "CPUtime.final"})
-        assert leaf.variable == "CPUtime.final"
-        assert leaf.params["quantity"] == "CPUtime.final"
+        leaf = parse_metric_tree(
+            {"metric": "scalar", "quantity": "translation.continuous_time_states"}
+        )
+        assert leaf.variable == "translation.continuous_time_states"
+        assert leaf.params["quantity"] == "translation.continuous_time_states"
 
     def test_explicit_variable_is_the_display_label(self):
         leaf = parse_metric_tree(
-            {"metric": "scalar", "variable": "solver cost", "quantity": "CPUtime.final"}
+            {
+                "metric": "scalar",
+                "variable": "solver cost",
+                "quantity": "translation.continuous_time_states",
+            }
         )
         assert leaf.variable == "solver cost"
 
@@ -747,7 +753,11 @@ class TestQuantityGate:
             n_vars=1,
             variable_patterns=["x"],
             variable_overrides={
-                "x": {"mode": "scalar", "quantity": "CPUtime.final", "tolerance": 0.0}
+                "x": {
+                    "mode": "scalar",
+                    "quantity": "translation.continuous_time_states",
+                    "tolerance": 0.0,
+                }
             },
         )
         result = TestResult(

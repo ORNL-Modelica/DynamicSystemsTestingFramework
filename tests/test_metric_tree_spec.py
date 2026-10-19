@@ -394,7 +394,7 @@ class TestTreeVariables:
                             {
                                 "metric": "scalar",
                                 "variable": "cpu",
-                                "quantity": "CPUtime.final",
+                                "quantity": "translation.continuous_time_states",
                             }
                         ],
                     },

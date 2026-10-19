@@ -607,8 +607,9 @@ def _summary_arrays(
     as `_scalar_path_arrays` does. The reference is empty for a
     baseline-free mode (declared bounds). ``index`` is the run's curve's,
     else 0 — a diagnostic is numbered in its own series, and
-    `build_trajectories` pairs a comparison with a series by its index
-    (review M4). A side holding neither reads as the curve path's missing
+    `build_trajectories` pairs a comparison with a series by its index:
+    a diagnostic's index 1 drew the first tracked variable's curve under the
+    diagnostic's name. A side holding neither reads as the curve path's missing
     variable."""
     field_name = leaf.params["quantity"]["reduce"]
     ref_var = baseline.ref_vars_by_name.get(leaf.variable) if baseline else None

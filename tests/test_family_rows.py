@@ -327,7 +327,7 @@ def test_the_rows_of_a_plot_fold_whatever_else_the_tree_holds():
         {
             "metric": "scalar",
             "variable": "CPUtime",
-            "quantity": "CPUtime.final",
+            "quantity": "translation.continuous_time_states",
             "tolerance": 1,
         },
     )
