@@ -183,11 +183,20 @@ def test_other_sections_follow_and_top_level_scalars_alone_come_last():
 
 def test_openmodelica_and_fakelib_shapes():
     om = {"timing": {"frontend": 0.1, "total": 2.0, "total_wall": 2.1}}
-    rows = statistics_rows(om, om)
+    cpu = VariableResult(
+        index=1, time=np.array([0.0, 1.0]), values=np.array([0.0, 1.0]), name="CPUtime"
+    )
+    rows = statistics_rows(
+        om,
+        om,
+        run_diagnostics=[cpu],
+        baseline_diagnostics=[DiagnosticSummary("CPUtime", final=1.0)],
+    )
     assert {r.path for r in rows} == {
         "timing.frontend",
         "timing.total",
         "timing.total_wall",
+        "CPUtime",
     }
     assert all(r.kind == "time" and not r.changed for r in rows)
     fake = {"simulation": {"wall_time": 0.01}, "timing": {"sim_wall": 0.01}}

@@ -175,18 +175,23 @@ def card_text(kind: str, value: Any, digits: int = DOUBLE_SHOWN) -> str:
 def _delta(kind: str, run: float | None, baseline: float | None) -> str:
     """S6: a count reads ``0→3``, a time or a `value` ``+38%`` (a time
     ``+0.12 s`` over a zero baseline, a value ``+0.12``) — whenever both
-    sides are present and differ, changed or not. Under 1% it keeps one
-    decimal (``+0.3%``), and under 0.05% reads ``+<0.1%``: a number that
-    moved never reads ``+0%`` or ``+0.0%``."""
+    sides are present and differ, changed or not. The percentage is of the
+    baseline's magnitude: over a negative baseline a value that went down
+    reads down. Under 1% it keeps one decimal (``+0.3%``), and under 0.05%
+    reads ``+<0.1%``: a number that moved never reads ``+0%`` or ``+0.0%``;
+    likewise one that is not zero never reads ``-100%`` — only a fall to
+    zero does — but ``-<100%``."""
     if run is None or baseline is None or run == baseline:
         return ""
     if kind == "count":
         return f"{_count_text(baseline)}→{_count_text(run)}"
     if baseline == 0:
         return f"{run - baseline:+.2g}" + (" s" if kind == "time" else "")
-    ratio = (run - baseline) / baseline
+    ratio = (run - baseline) / abs(baseline)
     if abs(ratio) < 0.0005:
         return f"{'+' if ratio > 0 else '-'}<0.1%"
+    if run != 0 and -1 < ratio <= -0.995:
+        return "-<100%"
     return f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"
 
 

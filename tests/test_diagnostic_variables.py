@@ -1770,3 +1770,43 @@ def test_edit_on_plot_is_not_offered_for_a_card_criterion(tmp_path):
     )
     said = EditOnPlot().available(view)
     assert said == "/metrics/children/2 is not a criterion on CPUtime"
+
+
+# -- a value's delta reads its direction ------------------------------------------
+
+
+def _h_row(base: float, run: float):
+    from dstf.reporting.stats_rows import statistics_rows
+
+    t = np.linspace(0, 1, 3)
+    (row,) = statistics_rows(
+        {},
+        {},
+        run_diagnostics=[
+            VariableResult(index=1, time=t, values=np.array([0.0, 0.0, run]), name="h")
+        ],
+        baseline_diagnostics=[DiagnosticSummary("h", final=base)],
+    )
+    return row
+
+
+@pytest.mark.parametrize(
+    ("base", "run", "delta"), [(-2.0, -2.5, "-25%"), (-2.0, -1.5, "+25%")]
+)
+def test_a_negative_baselines_delta_reads_the_direction_it_moved(base, run, delta):
+    """Over a negative baseline the delta is relative to its magnitude: a
+    value that went down reads down, on the row and on the closed line."""
+    from dstf.authoring.shell.stats_card import line_text
+
+    row = _h_row(base, run)
+    assert (row.delta, row.changed) == (delta, True)
+    assert line_text([row], True) == f"no count changed · h {delta}"
+
+
+@pytest.mark.parametrize(
+    ("run", "delta"), [(4.6e-05, "-<100%"), (0.0, "-100%")], ids=["moved", "to zero"]
+)
+def test_a_value_that_is_not_zero_never_reads_minus_100_percent(run, delta):
+    """As a number that moved never reads +0%: one that is not zero never
+    reads -100% — only a fall to zero does."""
+    assert _h_row(0.5, run).delta == delta
