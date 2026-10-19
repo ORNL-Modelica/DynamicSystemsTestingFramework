@@ -216,7 +216,9 @@ LEAF: dict[str, Setting] = {
         None,
         "The variable this criterion scores, by its result-file name. A "
         "variable named here is recorded and stored even when the entry's "
-        "variables do not name it. A scalar criterion whose quantity is a path "
+        "variables do not name it — except a name in diagnostic_variables "
+        "that only a scalar's final, min or max names: its summary is "
+        "stored, not its curve. A scalar criterion whose quantity is a path "
         "may leave it out.",
     ),
     "against": Setting(
@@ -303,7 +305,9 @@ ENTRY: dict[str, Setting] = {
         'and ? are wildcards, and ["*"] tracks every variable the result '
         "holds. A UnitTests "
         "variable and a variable a criterion names are tracked whether "
-        "or not they are listed here. An entry that tracks nothing and "
+        "or not they are listed here — except a name in diagnostic_variables "
+        "that only a scalar's final, min or max names, whose summary is "
+        "stored and not its curve. An entry that tracks nothing and "
         "scores nothing passes when its simulation completes.",
     ),
     "simulation": Setting(
@@ -366,7 +370,8 @@ ENTRY: dict[str, Setting] = {
         "Names whose summary (final, min, max) this test's baseline stores, "
         "in addition to `testing.json`'s list. A listed name's curve is "
         "stored only when a criterion needs it — any criterion but a "
-        "scalar's final, min or max over the whole run.",
+        "scalar's final, min or max over the whole run — or when the "
+        "entry's variables name it.",
     ),
     **NOTES,
 }

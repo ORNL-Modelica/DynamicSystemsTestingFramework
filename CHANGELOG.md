@@ -22,8 +22,9 @@ this file says when they do.
   in DSTF reads (`unit`, `description`, …); one warning line names the keys
   it dropped and (up to three of) the variables that carried each.
 - CPUtime and EventCounter are variables: any criterion may score them. A
-  listed name's curve is stored only when a criterion needs it; a scalar's
-  final, min or max is scored from its stored summary.
+  listed name's curve is stored only when a criterion needs it or the
+  entry's `variables` names it; a scalar's final, min or max is scored from
+  its stored summary.
 - A variable's number is written
   `{"variable": "X", "quantity": {"reduce": "final"}}`. `"quantity": "X.final"`
   and `"quantity": "X"` now fail "not found", with a hint naming that
@@ -38,9 +39,10 @@ this file says when they do.
   variables, with every metric.
 - A listed name's Statistics row is there only while the test lists it,
   whatever a stored baseline still holds. The report's Statistics table
-  shows each listed name a side holds; the Test page's Statistics card
-  also shows one a card criterion scores and nothing holds yet (whose
-  criterion the report lists in its tree).
+  shows each listed name a side holds. The Test page's Statistics card also
+  has a row for each number its criteria score — a listed name nothing holds
+  yet, and a listed name's min or max (`X.min`, `X.max`) — and the report
+  lists those criteria in its metric tree.
 - A report's `comparison_data.json` no longer carries `diagnostic_summaries`,
   which no page showed: a listed name's numbers are its rows in
   `statistics_sections`.

@@ -305,7 +305,8 @@ TESTING_JSON: dict[str, Setting] = {
         ["CPUtime", "EventCounter"],
         "Names whose summary (final, min, max) every test's baseline stores "
         "when its result holds them; a test entry adds its own. A listed "
-        "name's curve is stored only when a criterion needs it.",
+        "name's curve is stored only when a criterion needs it or the "
+        "entry's variables name it.",
     ),
     "theme": Setting(
         # `reporting.theme.THEMES`, which `Config` holds the value to.

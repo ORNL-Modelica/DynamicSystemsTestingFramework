@@ -95,9 +95,9 @@ tree, `comparison.variable_overrides` scores nothing.
 Every name in the result is a variable, `CPUtime` and `EventCounter` included,
 and any criterion may score it. A name listed in `diagnostic_variables` —
 `testing.json`'s, or a test entry's own — has its summary (final, min, max)
-stored in the baseline, and its curve only when a criterion needs it: a
-`scalar`'s final, min or max over the whole run is scored from the summary;
-any other criterion stores the curve. A test that checks its event count
+stored in the baseline, and its curve only when a criterion needs it or the
+entry's `variables` names it: a `scalar`'s final, min or max over the whole
+run is scored from the summary; any other criterion stores the curve. A test that checks its event count
 exactly, warns when its CPU time moves by more than 10%, and scores the
 maximum of `pump.speed` within ±0.02 of the baseline's — read from the summary
 its listing keeps:
