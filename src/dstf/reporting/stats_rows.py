@@ -25,7 +25,7 @@ statistic of the log at 15. Storage and scoring are unchanged.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -231,12 +231,33 @@ def _diagnostic_values(diagnostics: Sequence, name: str) -> np.ndarray | None:
 
 
 def listed_names(
-    run_diagnostics: Iterable[Any], baseline_diagnostics: Iterable[Any]
+    listing: Collection[str],
+    run_diagnostics: Iterable[Any],
+    baseline_diagnostics: Iterable[Any],
+    scored: Collection[str] = (),
 ) -> set[str]:
-    """The listed names the rows are built from: every name the run
-    recorded or the baseline summarizes — a row each (and its ``+`` is
-    that name's number)."""
-    return {str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name}
+    """The listed names the rows are built from — a row each: the names
+    the test lists (``listing``, `diagnostic_names`: what a leaf is routed
+    to the card by) that the run recorded, the baseline summarizes, or a
+    card leaf scores (``scored``) — one never run has its row, to be seen,
+    edited and deleted. A subset of the listing by construction, so a
+    row's ``+``, which reads the listing too, always lands on the card. A
+    name the test does not list has no row, whatever a stored result
+    still holds of it (owner, 2026-10-19)."""
+    held = {str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name}
+    return {name for name in listing if name in held or name in scored}
+
+
+def _row_names(paths: Iterable[str]) -> set[str]:
+    """The names the card rows ``paths`` (`card_row`) are of: a name's own
+    row (its final) and ``<name>.min`` / ``<name>.max``."""
+    out: set[str] = set()
+    for path in paths:
+        out.add(path)
+        name, _, field_name = path.rpartition(".")
+        if field_name in ("min", "max"):
+            out.add(name)
+    return out
 
 
 def listed_kind(name: str) -> Kind:
@@ -323,14 +344,17 @@ def statistics_rows(
     run: Mapping | None,
     baseline: Mapping | None,
     *,
+    listing: Collection[str],
     run_diagnostics: Sequence = (),
     baseline_diagnostics: Sequence = (),
     extra_paths: Iterable[str] = (),
     baseline_digits: int = DOUBLE_SHOWN,
 ) -> list[StatRow]:
     """Every statistic the run or its baseline recorded, and the final of
-    every listed name either holds (the run's diagnostics, the baseline's
-    summaries), in the report's order (the module docstring), then a row
+    every listed name (:func:`listed_names` over ``listing``, the test's
+    `diagnostic_names`: one either side holds — the run's diagnostics, the
+    baseline's summaries — or an ``extra_paths`` row is of), in the
+    report's order (the module docstring), then a row
     per ``extra_paths`` entry no row holds (S4: a leaf's quantity always
     has a home). A system-size list on either side gives its three summary
     rows on both; a summary key a side lacks reads through
@@ -345,15 +369,23 @@ def statistics_rows(
         for k, v in src.items():
             if isinstance(v, Mapping) and k not in names:
                 names.append(k)
-    listed = listed_names(run_diagnostics, baseline_diagnostics)
-    # A top-level number that is no listed name keeps its row; one named
-    # like a listed name is the copy its final once had, never read.
+    extra_paths = list(dict.fromkeys(extra_paths))
+    listed = listed_names(
+        listing, run_diagnostics, baseline_diagnostics, _row_names(extra_paths)
+    )
+    # A top-level number that is no diagnostic keeps its row; one named
+    # like a diagnostic either side holds, or a listed name, is the copy
+    # its final once had, never read — and a name the test no longer lists
+    # has no row at all.
+    copies = {
+        str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name
+    } | listed
     top = sorted(
         {
             k
             for src in (baseline, run)
             for k, v in src.items()
-            if not isinstance(v, Mapping) and k not in listed
+            if not isinstance(v, Mapping) and k not in copies
         }
         | listed
     )
@@ -405,7 +437,7 @@ def statistics_rows(
     # sides' summaries, as its final's row is; any other path is a
     # statistic's.
     held = {row.path for row in rows if row.kind != "text"}
-    for path in dict.fromkeys(extra_paths):
+    for path in extra_paths:
         if path in held:
             continue
         name, _, field_name = path.rpartition(".")

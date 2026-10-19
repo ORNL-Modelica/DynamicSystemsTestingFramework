@@ -4605,10 +4605,20 @@ STATS_BASE = {
 }
 
 
-def _stats_session(tmp_path: Path, *, result: bool = True) -> Session:
+def _stats_session(
+    tmp_path: Path, *, result: bool = True, listed: tuple[str, ...] = ()
+) -> Session:
     """`_two_var_project` with A's baseline carrying `STATS_BASE` and its
-    in-memory result `STATS_RUN` (FakeLib records only walls)."""
+    in-memory result `STATS_RUN` (FakeLib records only walls); A's entry
+    lists ``listed`` beside the project's names."""
     cfg, work = _two_var_project(tmp_path)
+    if listed:
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == A:
+                entry["diagnostic_variables"] = list(listed)
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
     config = Config(config_file=cfg, work_dir=work)
     tt = np.asarray([i / 4 for i in range(5)])
     ReferenceStore(config).store_reference(
@@ -4725,7 +4735,7 @@ class TestTheStatisticsRows:
     def test_a_listed_names_row_takes_its_kind_from_its_name(self, tmp_path):
         """Whole samples or fractional, a listed name that is neither CPUtime
         nor EventCounter is a `value` (D162): its kind is never guessed."""
-        s = _stats_session(tmp_path)
+        s = _stats_session(tmp_path, listed=("Steps", "Wall"))
         tt = np.asarray([i / 4 for i in range(5)])
         res = s.project.results[A]
         res.diagnostics = [

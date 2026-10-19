@@ -513,7 +513,7 @@ class TestWorstNrmse:
     def test_key_stat_says_n_a_when_nothing_scored(self):
         from dstf.reporting.context_builder import _build_key_stats
 
-        stats = _build_key_stats([_nonfinite_comparison("bad")], {}, {})
+        stats = _build_key_stats([_nonfinite_comparison("bad")], {}, {}, listing=())
         worst = next(s for s in stats if s["label"] == "Worst NRMSE")
         assert worst["current"] == "n/a (1 unscored criterion)"
 
@@ -522,16 +522,26 @@ class TestWorstNrmse:
         from dstf.reporting.context_builder import _build_key_stats
 
         comps = [self._scored(0.28, mode="tube"), self._scored(4.264e-02)]
-        (worst,) = [s for s in _build_key_stats(comps, {}, {}) if "Worst" in s["label"]]
+        (worst,) = [
+            s
+            for s in _build_key_stats(comps, {}, {}, listing=())
+            if "Worst" in s["label"]
+        ]
         assert (worst["label"], worst["current"]) == ("Worst NRMSE", "4.2640e-02")
 
     def test_the_report_header_reads_a_dash_with_no_nrmse_criterion(self):
         from dstf.reporting.context_builder import _build_key_stats
 
         comps = [self._scored(0.28, mode="tube")]
-        (worst,) = [s for s in _build_key_stats(comps, {}, {}) if "Worst" in s["label"]]
+        (worst,) = [
+            s
+            for s in _build_key_stats(comps, {}, {}, listing=())
+            if "Worst" in s["label"]
+        ]
         assert (worst["label"], worst["current"]) == ("Worst NRMSE", "—")
-        assert [s for s in _build_key_stats([], {}, {}) if "Worst" in s["label"]] == []
+        assert [
+            s for s in _build_key_stats([], {}, {}, listing=()) if "Worst" in s["label"]
+        ] == []
 
 
 class TestEmbeddedFigures:
@@ -2577,6 +2587,7 @@ class TestBothTiersDrawTheSamePlots:
             test_model=project.test(A),
             result=result,
             metric_tree=comp.metric_tree,
+            diagnostics=(),
         )
         ctx.update(
             plot_page_keys(ctx, plots, extra, comp.metric_tree, None, diagnostics=())
@@ -3336,8 +3347,8 @@ class TestTheStatisticsTable:
 
     @staticmethod
     def _cpu(final: float = 1.12) -> dict:
-        """The run's CPUtime diagnostic (``final``) and the baseline's
-        summary (0.8): the two sides of the CPUtime row."""
+        """The listed CPUtime: the run's diagnostic (``final``) and the
+        baseline's summary (0.8), the two sides of its row."""
         import numpy as np
 
         from dstf.backends.types import VariableResult
@@ -3350,6 +3361,7 @@ class TestTheStatisticsTable:
             name="CPUtime",
         )
         return {
+            "listing": ["CPUtime"],
             "run_diagnostics": [run],
             "baseline_diagnostics": [DiagnosticSummary("CPUtime", final=0.8)],
         }
@@ -3423,6 +3435,7 @@ class TestTheStatisticsTable:
             run,
             None,
             result=TestResult("M", True, diagnostics=[wall], statistics=run),
+            diagnostics=["Wall"],
         )
         rows = {r["label"]: r for s in ctx["statistics_sections"] for r in s["rows"]}
         assert rows["Wall"]["changed"]
@@ -3435,8 +3448,8 @@ class TestTheStatisticsTable:
         )
 
         run, base = self.RUN, self.BASE
-        _build_statistics_sections(base, run)
-        _build_key_stats([], base, run)
+        _build_statistics_sections(base, run, listing=())
+        _build_key_stats([], base, run, listing=())
         assert (base, run) == (self.BASE, self.RUN)
 
     def test_key_stats_read_the_rows(self):
@@ -3461,7 +3474,10 @@ class TestTheStatisticsTable:
 
         cpu = self._cpu()["run_diagnostics"]
         stats = {
-            s["label"]: s for s in _build_key_stats([], {}, {}, run_diagnostics=cpu)
+            s["label"]: s
+            for s in _build_key_stats(
+                [], {}, {}, listing=["CPUtime"], run_diagnostics=cpu
+            )
         }
         assert stats["CPU Time"]["reference"] == ""
         assert not stats["CPU Time"]["changed"]

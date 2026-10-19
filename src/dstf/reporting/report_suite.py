@@ -537,6 +537,7 @@ def generate_comparison_plots(
         # names included, as the tool's `Session.variable_texts` includes
         # them: the plot still names them ("Not in this result: z").
         plot_series=[n for p in plots for n in p.series],
+        diagnostics=diagnostics,
     )
 
     if max_embedded_samples is None:

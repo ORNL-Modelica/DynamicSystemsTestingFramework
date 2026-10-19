@@ -1540,6 +1540,7 @@ class Session:
         return statistics_rows(
             result.statistics if result is not None else None,
             ref.baseline.statistics if ref is not None else None,
+            listing=self.diagnostic_names(model_id),
             run_diagnostics=(result.diagnostics or []) if result is not None else (),
             baseline_diagnostics=ref.baseline.diagnostics if ref is not None else (),
             extra_paths=statistic_paths(

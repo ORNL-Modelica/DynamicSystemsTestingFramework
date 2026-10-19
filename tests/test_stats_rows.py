@@ -35,9 +35,11 @@ BASE = {
     "simulation": {"cpu_time_integration": 0.5, "state_events": 2},
     "timing": {"total_wall": 3.91, "translation_wall": 1.0},
 }
-#: The listed names of the run (its diagnostics) and of the baseline (its
-#: summaries): CPU time 0.80 -> 1.12 s, an unchanged event count.
+#: The listed names (the test's listing), of the run (its diagnostics) and
+#: of the baseline (its summaries): CPU time 0.80 -> 1.12 s, an unchanged
+#: event count.
 LISTED = {
+    "listing": ["CPUtime", "EventCounter"],
     "run_diagnostics": [
         VariableResult(
             index=1,
@@ -95,6 +97,7 @@ def test_a_time_under_one_percent_off_reads_one_decimal():
         statistics_rows(
             {"timing": {"total_wall": 3.92, "sim_wall": 3.90, "other_wall": 1.0}},
             {"timing": {"total_wall": 3.91, "sim_wall": 3.91, "other_wall": 1.0}},
+            listing=(),
         )
     )
     assert rows["timing.total_wall"].delta == "+0.3%"
@@ -104,13 +107,17 @@ def test_a_time_under_one_percent_off_reads_one_decimal():
 
 def test_a_time_over_a_zero_baseline_reads_in_seconds():
     rows = _by_path(
-        statistics_rows({"timing": {"sim_wall": 0.12}}, {"timing": {"sim_wall": 0}})
+        statistics_rows(
+            {"timing": {"sim_wall": 0.12}}, {"timing": {"sim_wall": 0}}, listing=()
+        )
     )
     assert rows["timing.sim_wall"].delta == "+0.12 s"
 
 
 def test_a_value_only_on_one_side_is_never_changed():
-    rows = _by_path(statistics_rows({"simulation": {"state_events": 2}}, {}))
+    rows = _by_path(
+        statistics_rows({"simulation": {"state_events": 2}}, {}, listing=())
+    )
     assert not rows["simulation.state_events"].changed
     assert rows["simulation.state_events"].delta == ""
     assert rows["simulation.state_events"].baseline is None
@@ -157,7 +164,7 @@ def test_the_report_order_keys_alphabetical_top_level_folded_into_simulation():
         "simulation.state_events",
     ]
     run = {"timing": {"b": 1.0, "total_wall": 2.0, "a": 1.0, "translation_wall": 1.0}}
-    assert [r.key for r in statistics_rows(run, None)] == [
+    assert [r.key for r in statistics_rows(run, None, listing=())] == [
         "translation_wall",
         "total_wall",
         "a",
@@ -171,7 +178,7 @@ def test_other_sections_follow_and_top_level_scalars_alone_come_last():
     the top-level scalars are a Simulation section at the END."""
     run = {"zeta": {"k": 1}, "timing": {"total_wall": 1.0}, "CPUtime": 1.0}
     base = {"alpha": {"k": 1}, "CPUtime": 1.0, "EventCounter": 2.0}
-    rows = statistics_rows(run, base)
+    rows = statistics_rows(run, base, listing=())
     assert [(r.section, r.path) for r in rows] == [
         ("timing", "timing.total_wall"),
         ("alpha", "alpha.k"),
@@ -189,6 +196,7 @@ def test_openmodelica_and_fakelib_shapes():
     rows = statistics_rows(
         om,
         om,
+        listing=["CPUtime"],
         run_diagnostics=[cpu],
         baseline_diagnostics=[DiagnosticSummary("CPUtime", final=1.0)],
     )
@@ -200,7 +208,7 @@ def test_openmodelica_and_fakelib_shapes():
     }
     assert all(r.kind == "time" and not r.changed for r in rows)
     fake = {"simulation": {"wall_time": 0.01}, "timing": {"sim_wall": 0.01}}
-    rows = _by_path(statistics_rows(fake, None))
+    rows = _by_path(statistics_rows(fake, None, listing=()))
     assert rows["simulation.wall_time"].kind == "time"
     assert rows["simulation.wall_time"].baseline is None
 
@@ -217,12 +225,14 @@ def test_a_listed_name_takes_its_kind_from_its_name_never_its_values(samples):
     wall = VariableResult(index=0, time=t, values=np.array(samples), name="Wall")
     base = [DiagnosticSummary(name="Wall", final=samples[-1] * 0.96)]
     rows = _by_path(
-        statistics_rows({}, {}, run_diagnostics=[wall], baseline_diagnostics=base)
+        statistics_rows(
+            {}, {}, listing=["Wall"], run_diagnostics=[wall], baseline_diagnostics=base
+        )
     )
     assert rows["Wall"].kind == "value"
     assert rows["Wall"].changed  # 4% off: beyond 1%
     (section,) = _build_statistics_sections(
-        {}, {}, run_diagnostics=[wall], baseline_diagnostics=base
+        {}, {}, listing=["Wall"], run_diagnostics=[wall], baseline_diagnostics=base
     )
     assert [(r["label"], r["changed"]) for r in section["rows"]] == [("Wall", True)]
 
@@ -252,6 +262,7 @@ def test_only_a_top_level_row_holds_a_final_leaf():
         {"timing": {"total_wall": 1.0}},
         {"timing": {"total_wall": 1.0}},
         extra_paths=["timing.total_wall.final"],
+        listing=(),
     )
     assert [(r.section, r.path) for r in rows] == [
         ("timing", "timing.total_wall"),
@@ -263,7 +274,9 @@ def test_a_leaf_reading_a_list_statistic_gets_its_own_row():
     """A text row holds no leaf (the card never shows one, S1): a leaf
     reading `translation.nonlinear` gets an "other scored" row (S4)."""
     stats = {"translation": {"nonlinear": [1]}}
-    rows = statistics_rows(stats, stats, extra_paths=["translation.nonlinear"])
+    rows = statistics_rows(
+        stats, stats, extra_paths=["translation.nonlinear"], listing=()
+    )
     assert [(r.section, r.path, r.kind) for r in rows] == [
         ("translation", "translation.nonlinear", "text"),
         # the list's summaries (K4); its count unwritten, so read as none
@@ -284,6 +297,7 @@ def test_a_listed_names_final_is_its_own_row_on_every_backend():
     rows = statistics_rows(
         {},
         {},
+        listing=["CPUtime"],
         run_diagnostics=[cpu],
         baseline_diagnostics=[DiagnosticSummary(name="CPUtime", final=0.8, max=0.9)],
         extra_paths=["CPUtime", "CPUtime.max"],
@@ -307,7 +321,7 @@ def test_a_listed_names_final_is_its_own_row_on_every_backend():
 
 def test_the_inputs_are_never_written():
     run, base = copy.deepcopy(RUN), copy.deepcopy(BASE)
-    statistics_rows(run, base, extra_paths=["x.y"])
+    statistics_rows(run, base, extra_paths=["x.y"], listing=())
     assert run == RUN and base == BASE
 
 
@@ -367,6 +381,7 @@ def test_a_time_under_a_twentieth_of_a_percent_off_reads_under_a_tenth():
         statistics_rows(
             {"timing": {"total_wall": 100.04, "sim_wall": 99.96}},
             {"timing": {"total_wall": 100.0, "sim_wall": 100.0}},
+            listing=(),
         )
     )
     assert rows["timing.total_wall"].delta == "+<0.1%"
@@ -379,7 +394,7 @@ def test_a_system_size_list_on_either_side_gives_its_summaries_on_both():
     gave no "Nonlinear count" row, so nothing said the count stays 0 and
     no `+` could require it. The list's three summaries are rows on both
     sides — a side with no list reads nothing (`—` on the card)."""
-    rows = _by_path(statistics_rows({}, {"translation": {"nonlinear": []}}))
+    rows = _by_path(statistics_rows({}, {"translation": {"nonlinear": []}}, listing=()))
     for field in ("count", "total", "max"):
         row = rows[f"translation.nonlinear_{field}"]
         assert (row.kind, row.baseline, row.run) == ("count", 0, None)
@@ -391,6 +406,7 @@ def test_a_system_size_list_on_either_side_gives_its_summaries_on_both():
         statistics_rows(
             {"translation": {"nonlinear": [3, 5], "nonlinear_count": 2}},
             {"translation": {"nonlinear": []}},
+            listing=(),
         )
     )
     assert (rows["translation.nonlinear_count"].run,
@@ -398,13 +414,15 @@ def test_a_system_size_list_on_either_side_gives_its_summaries_on_both():
     assert rows["translation.nonlinear_max"].baseline == 0
     assert rows["translation.nonlinear_max"].run is None
     # A list of names sizes no system: no summary rows.
-    rows = _by_path(statistics_rows({"translation": {"state_names": ["a.x"]}}, {}))
+    rows = _by_path(
+        statistics_rows({"translation": {"state_names": ["a.x"]}}, {}, listing=())
+    )
     assert "translation.state_names_count" not in rows
 
 
 def test_a_run_sides_empty_list_gives_its_summaries():
     """A list on the RUN side alone gives its summaries too ("either side")."""
-    rows = _by_path(statistics_rows({"translation": {"nonlinear": []}}, {}))
+    rows = _by_path(statistics_rows({"translation": {"nonlinear": []}}, {}, listing=()))
     row = rows["translation.nonlinear_count"]
     assert (row.kind, row.run, row.baseline) == ("count", 0, None)
 
@@ -418,3 +436,20 @@ def test_changed_scores_the_seeds_number_as_a_tolerance():
     assert changed("simulation.wall_time", "time", 1.09, 1.0) is False
     assert changed("simulation.wall_time", "time", 0.91, 1.0) is False
     assert changed("simulation.wall_time", "time", 1.2, 1.0) is True
+
+
+def test_a_name_the_test_does_not_list_has_no_row_from_its_old_copy_either():
+    """An old file holds `h`'s final twice: its summary and the top-level
+    copy statistics once kept. Unlisted, `h` has no row — not from the
+    summary, nor from the copy as a statistic of its own; a top-level
+    number no side's diagnostics name keeps its row."""
+    base = {"h": 0.5, "steps": 3}
+    summaries = [DiagnosticSummary("h", final=0.5)]
+    rows = _by_path(
+        statistics_rows(None, base, listing=(), baseline_diagnostics=summaries)
+    )
+    assert "h" not in rows and "steps" in rows
+    rows = _by_path(
+        statistics_rows(None, base, listing=["h"], baseline_diagnostics=summaries)
+    )
+    assert (rows["h"].kind, rows["h"].baseline) == ("value", 0.5)

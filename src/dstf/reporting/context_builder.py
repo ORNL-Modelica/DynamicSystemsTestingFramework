@@ -314,6 +314,7 @@ def _build_statistics_sections(
     ref_stats: dict,
     cur_stats: dict,
     *,
+    listing: Sequence[str],
     run_diagnostics: Sequence = (),
     baseline_diagnostics: Sequence = (),
     baseline_digits: int = DOUBLE_SHOWN,
@@ -323,14 +324,16 @@ def _build_statistics_sections(
     changed}]}`` sections — the rows the tool's Statistics card shows, in
     the report's order, under one "changed" rule for both; printed in full
     (:func:`~.stats_rows.report_text`), where the card rounds. A section with
-    no key is no section. ``run_diagnostics`` and ``baseline_diagnostics``
-    are the two sides' listed names — a row each, its final — and
+    no key is no section. ``listing`` is the names the test lists
+    (`diagnostic_names`), ``run_diagnostics`` and ``baseline_diagnostics``
+    the two sides of them — a row each a side holds, its final — and
     ``baseline_digits`` the precision the baseline was recorded with, as
     the card's are."""
     sections: dict[str, dict] = {}
     for row in statistics_rows(
         cur_stats,
         ref_stats,
+        listing=listing,
         run_diagnostics=run_diagnostics,
         baseline_diagnostics=baseline_diagnostics,
         baseline_digits=baseline_digits,
@@ -536,6 +539,7 @@ def _build_key_stats(
     ref_stats: dict,
     cur_stats: dict,
     *,
+    listing: Sequence[str],
     run_diagnostics: Sequence = (),
     baseline_diagnostics: Sequence = (),
     baseline_digits: int = DOUBLE_SHOWN,
@@ -554,6 +558,7 @@ def _build_key_stats(
         for row in statistics_rows(
             cur_stats,
             ref_stats,
+            listing=listing,
             run_diagnostics=run_diagnostics,
             baseline_diagnostics=baseline_diagnostics,
             baseline_digits=baseline_digits,
@@ -876,6 +881,8 @@ def _build_template_context(
     overlays: list | None = None,
     run_metadata: dict | None = None,
     plot_series: Iterable[str] = (),
+    *,
+    diagnostics: Sequence[str],
 ) -> dict:
     """Build the full template context dict from comparison data.
 
@@ -886,6 +893,9 @@ def _build_template_context(
     plot-only ones included: they are part of the page's label scope
     (:func:`test_texts`), so a plot-only variable NAMED like another's
     expression is what makes that other one read its name too.
+    ``diagnostics`` is the names the test lists (`diagnostic_names`):
+    the Statistics rows of its listed names are of them alone, as the
+    tool's card's are.
     """
     if cur_stats is None:
         cur_stats = {}
@@ -898,6 +908,7 @@ def _build_template_context(
     # The baseline's side of the listed names' rows: its summaries, at the
     # precision its file was recorded with.
     sides = {
+        "listing": diagnostics,
         "run_diagnostics": run_diagnostics,
         "baseline_diagnostics": ref_data.baseline.diagnostics if ref_data else [],
         "baseline_digits": shown_digits(ref_data.sampling)

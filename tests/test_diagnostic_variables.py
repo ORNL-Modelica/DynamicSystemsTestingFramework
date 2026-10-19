@@ -684,12 +684,16 @@ def test_the_rows_and_the_report_read_as_main_read_the_old_file(tmp_path, name, 
         STATS_MAIN / f"{name}.json" if copy else _without_copy(name, tmp_path)
     )
 
-    ctx = _build_template_context("Lib.A", [], ref, run.statistics, None, result=run)
+    listing = ["CPUtime", "EventCounter"]  # the project's default listing
+    ctx = _build_template_context(
+        "Lib.A", [], ref, run.statistics, None, result=run, diagnostics=listing
+    )
     assert ctx["statistics_sections"] == expected["statistics_sections"]
     assert ctx["key_stats"] == expected["key_stats"]
     rows = statistics_rows(
         run.statistics,
         ref.baseline.statistics,
+        listing=listing,
         run_diagnostics=run.diagnostics,
         baseline_diagnostics=ref.baseline.diagnostics,
         baseline_digits=shown_digits(ref.sampling),
@@ -717,7 +721,13 @@ def _report_cells(tmp_path, document: dict, run) -> dict[str, tuple[str, str]]:
     path = tmp_path / "ref.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     ctx = _build_template_context(
-        "M", [], read_reference(path), run.statistics, None, result=run
+        "M",
+        [],
+        read_reference(path),
+        run.statistics,
+        None,
+        result=run,
+        diagnostics=[d.name for d in run.diagnostics],
     )
     return {
         row["label"]: (row["current"], row["reference"])
@@ -804,7 +814,9 @@ def test_a_listed_name_neither_a_time_nor_a_count_is_a_value(tmp_path):
         VariableResult(index=1, time=t, values=np.array([1.0, 2.0, 0.512]), name="h")
     ]
     base = [DiagnosticSummary("h", final=0.5, min=0.5, max=2.0)]
-    (row,) = statistics_rows({}, {}, run_diagnostics=run, baseline_diagnostics=base)
+    (row,) = statistics_rows(
+        {}, {}, listing=["h"], run_diagnostics=run, baseline_diagnostics=base
+    )
     assert (row.section, row.path, row.kind) == ("simulation", "h", "value")
     assert report_text(row.kind, row.run, row.digits[0]) == "0.512"
     assert card_text(row.kind, row.baseline, row.digits[1]) == "0.500"
@@ -812,6 +824,7 @@ def test_a_listed_name_neither_a_time_nor_a_count_is_a_value(tmp_path):
     (same,) = statistics_rows(
         {},
         {},
+        listing=["h"],
         run_diagnostics=run,
         baseline_diagnostics=[DiagnosticSummary("h", final=0.509)],
     )
@@ -1169,6 +1182,7 @@ def test_the_report_lists_a_listed_names_number_in_its_tree_not_its_plot(tmp_pat
         test_model=test,
         result=result,
         metric_tree=comp.metric_tree,
+        diagnostics=listed,
     )
     ctx.update(
         plot_page_keys(ctx, plots, extra, comp.metric_tree, None, diagnostics=listed)
@@ -1418,6 +1432,7 @@ def test_a_value_rows_changed_is_exactly_its_plus_failing(run, changes):
     (row,) = statistics_rows(
         {},
         {},
+        listing=["h"],
         run_diagnostics=[VariableResult(index=1, time=t, values=values, name="h")],
         baseline_diagnostics=[DiagnosticSummary("h", final=1.0)],
     )
@@ -1497,6 +1512,7 @@ def _cpu_figures(s, A) -> tuple[dict, dict]:
     ctx = _build_template_context(
         A, list(comp.variables), project.store.get_reference(A), None, None,
         test_model=test, result=result, metric_tree=comp.metric_tree,
+        diagnostics=listed,
     )  # fmt: skip
     keys = plot_page_keys(ctx, plots, extra, comp.metric_tree, None, diagnostics=listed)
     at = [tuple(r["subject"]) for r in keys["plots"]].index(("CPUtime",))
@@ -1565,6 +1581,7 @@ def test_the_closed_line_names_a_changed_value(tmp_path):
     rows = statistics_rows(
         {},
         {},
+        listing=["h"],
         run_diagnostics=[
             VariableResult(index=1, time=t, values=np.array([0.0, 1.0, 2.0]), name="h")
         ],
@@ -1783,6 +1800,7 @@ def _h_row(base: float, run: float):
     (row,) = statistics_rows(
         {},
         {},
+        listing=["h"],
         run_diagnostics=[
             VariableResult(index=1, time=t, values=np.array([0.0, 0.0, run]), name="h")
         ],
@@ -1904,22 +1922,118 @@ def test_a_bounds_seeds_tooltip_names_its_bounds(tmp_path):
     assert _requirement(seed) == "Add a requirement: in [1.42, 1.58]"
 
 
-def test_every_diagnostics_rows_plus_writes_the_one_spelling(tmp_path):
-    """A name the baseline summarizes that the test no longer lists (`g`)
-    still has its row; its `+` is its number — never a statistic path that
-    names nothing — and it scores."""
+H_FINAL = {
+    "metric": "scalar",
+    "variable": "h",
+    "quantity": {"reduce": "final"},
+    "tolerance": 0.01,
+    "tolerance_mode": "rel",
+}
+
+
+def _report_context(s, A) -> dict:
+    """The report's page context over the Session's files: its Statistics
+    table, its tree view and its plots, as `generate_comparison_plots`
+    builds them."""
+    from dstf.reporting.context_builder import _build_template_context
+    from dstf.reporting.report_suite import plot_inputs, plot_page_keys
+
+    project, comp = s.project, s.comparisons[A]
+    test, result = project.test(A), project.results[A]
+    listed = s.diagnostic_names(A)
+    plots, extra = plot_inputs(test, comp.variables, result, None, None, listed)
+    ctx = _build_template_context(
+        A,
+        list(comp.variables),
+        project.store.get_reference(A),
+        None,
+        None,
+        test_model=test,
+        result=result,
+        metric_tree=comp.metric_tree,
+        diagnostics=listed,
+    )
+    ctx.update(
+        plot_page_keys(ctx, plots, extra, comp.metric_tree, None, diagnostics=listed)
+    )
+    return ctx
+
+
+def _report_labels(ctx: dict) -> set[str]:
+    return {row["label"] for sec in ctx["statistics_sections"] for row in sec["rows"]}
+
+
+def test_a_name_the_test_does_not_list_has_no_row_on_either_tier(tmp_path):
+    """The run recorded `h` and the baseline summarizes it, but the test
+    lists only `x9` (owner, 2026-10-19): no `h` row on the card, none in
+    the report's Statistics table — whatever a stored result still holds.
+    Its `+` would have put a number on a plot: the rows are of the names
+    the test lists, the set a leaf is routed by."""
+    s, A = _h_session(tmp_path, run=1.0, stored=1.0, listed=("x9",))
+    assert "h" not in s.diagnostic_names(A)
+    assert "h" not in {r.path for r in s.statistics(A)}
+    assert "h" not in _report_labels(_report_context(s, A))
+    listed, A = _h_session(tmp_path / "listed", run=1.0, stored=1.0)
+    assert "h" in {r.path for r in listed.statistics(A)}
+    assert "h" in _report_labels(_report_context(listed, A))
+
+
+def test_every_rows_plus_lands_its_criterion_on_the_card(tmp_path):
+    """Each row's `+` writes a criterion the card shows (`statistic_leaves`,
+    `card_paths`) and no plot is derived for — a listed name's in its one
+    spelling, and it scores."""
     from dstf.authoring.session import PatchOp
 
-    s, A = _h_session(tmp_path, run=None, stored=1.0, listed=("x9",))
-    rows = {r.path for r in s.statistics(A)}
-    assert "h" in rows and "h" not in s.diagnostic_names(A)
-    value = _plus(s, A, "h")
-    assert (value["variable"], value["quantity"]) == ("h", {"reduce": "final"})
-    ran, A = _h_session(tmp_path / "ran", run=1.0, stored=1.0, listed=("x9",))
-    ran.stage([PatchOp(A, "add", "/metrics/children/-", value)])
-    vc = ran.comparisons[A].variables[-1]
+    s, A = _h_session(tmp_path, run=1.0, stored=1.0)
+    rows = [r.path for r in s.statistics(A) if r.kind != "text"]
+    assert "h" in rows
+    plots = [p.subject for p in s.plots(A)]
+    for row in rows:
+        value = _plus(s, A, row)
+        if row == "h":
+            assert (value["variable"], value["quantity"]) == ("h", {"reduce": "final"})
+        s.stage([PatchOp(A, "add", "/metrics/children/-", value)])
+        path = f"/metrics/children/{len(s.tree(A)['children']) - 1}"
+        assert path in [p for _, p in s.statistic_leaves(A)], row
+        assert path in s.card_paths(A), row
+        assert [p.subject for p in s.plots(A)] == plots, row
+    vc = next(v for v in s.comparisons[A].variables if v.name == "h")
     assert "error" not in (vc.diagnostics or {})
     assert (vc.actual_final, vc.reference_final, vc.passed) == (1.0, 1.0, True)
+
+
+def test_a_criterion_on_a_listed_name_never_run_has_its_row_on_both_tiers(tmp_path):
+    """A criterion on a listed name nothing holds yet (a fresh test, a
+    listing just added) is routed to the card: its row is there, with no
+    values, to see, edit and delete it — and its `+` is that name's number.
+    In the report, run against a baseline that holds no `h`, the tree lists
+    the criterion and no plot is derived for it."""
+    from dstf.authoring.session import PatchOp
+    from dstf.authoring.shell.stats_card import scored as scored_rows
+    from dstf.reporting.tree_rows import leaves_of
+
+    s, A = _h_session(tmp_path, run=None, stored=None)
+    s.stage([PatchOp(A, "add", "/metrics/children/-", H_FINAL)])
+    path = "/metrics/children/1"
+    (row,) = [r for r in s.statistics(A) if r.path == "h"]
+    assert (row.kind, row.run, row.baseline) == ("value", None, None)
+    assert [p for _, p in s.statistic_leaves(A)] == [path]
+    assert s.card_paths(A) == {path}
+    reads = scored_rows(s.statistic_leaves(A), s.tree_view(A))
+    assert [(c["path"], c["status"]) for c in reads["h"]] == [(path, "pending")]
+    assert [p.subject for p in s.plots(A)] == [("x",)]
+    value = _plus(s, A, "h")
+    assert (value["variable"], value["quantity"]) == ("h", {"reduce": "final"})
+
+    ran, A = _h_session(tmp_path / "ran", run=1.0, stored=None)
+    ran.stage([PatchOp(A, "add", "/metrics/children/-", H_FINAL)])
+    ctx = _report_context(ran, A)
+    assert [(n["path"], n["metric"]) for n in leaves_of(ctx["tree_view"])] == [
+        ("/metrics/children/0", "nrmse"),
+        (path, "scalar"),
+    ]
+    assert [tuple(r["subject"]) for r in ctx["plots"]] == [("x",)]
+    assert "h" in _report_labels(ctx)
 
 
 @pytest.mark.parametrize(

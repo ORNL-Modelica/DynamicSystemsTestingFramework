@@ -37,7 +37,6 @@ from ...comparison.seeds import (
 from ...comparison.sides import bounds_text, parse_sides, signed_sides
 from ...discovery.unit_tests import is_unit_test_variable
 from ...figures.families import family_of
-from ...reporting.stats_rows import listed_names
 from ..capabilities import Panel, Patch, Placement, plural
 from ..family_rows import Family, as_one, elements_text, family_in, fold_key
 from ..session import SIMULATE_ONLY, no_tree_error
@@ -739,15 +738,14 @@ def _into(tree: dict | None, node: dict, path: str) -> str:
 
 def _quantity_leaf(s: SessionView, model_id: str, quantity: str, into: str) -> dict:
     """The criterion a Statistics row's ``+`` on ``quantity`` stages,
-    landing in ``into``. A row of a listed name — one the run recorded or
-    the baseline summarizes, the set the rows are built from
-    (`stats_rows.listed_names`): its name (its final), ``<name>.min`` or
-    ``<name>.max`` (`card_row`) — is that variable's number, in its one
-    spelling (`_number_leaf`); any other row is a statistic, read through
-    its path (`seed_quantity`)."""
-    listed = listed_names(
-        _recorded(s, model_id), s.baseline_summaries(model_id).values()
-    )
+    landing in ``into``. A row of a listed name — its name (its final),
+    ``<name>.min`` or ``<name>.max`` (`card_row`) — is that variable's
+    number, in its one spelling (`_number_leaf`); any other row is a
+    statistic, read through its path (`seed_quantity`). Listed by the
+    test's listing (`diagnostic_names`), the set the leaf is routed by and
+    the rows are a subset of (`stats_rows.listed_names`): what the ``+``
+    adds is on the card."""
+    listed = s.diagnostic_names(model_id)
     if quantity in listed:
         return _number_leaf(s, model_id, quantity, "final", into)
     name, _, field_name = quantity.rpartition(".")
