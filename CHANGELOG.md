@@ -41,6 +41,9 @@ this file says when they do.
   shows each listed name a side holds; the Test page's Statistics card
   also shows one a card criterion scores and nothing holds yet (whose
   criterion the report lists in its tree).
+- A report's `comparison_data.json` no longer carries `diagnostic_summaries`,
+  which no page showed: a listed name's numbers are its rows in
+  `statistics_sections`.
 
 ## [1.1.0] - 2026-10-14
 

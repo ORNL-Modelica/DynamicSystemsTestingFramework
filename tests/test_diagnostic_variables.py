@@ -657,11 +657,11 @@ def test_the_cpu_time_is_the_runs_cpu_time_final():
 
 # -- the Statistics rows keep their look -------------------------------------
 
-STATS_MAIN = FIXTURES / "stats_main"
+STATS_BEFORE = FIXTURES / "stats_a3976796"
 
 
 def _without_copy(name: str, tmp_path) -> Path:
-    doc = json.loads((STATS_MAIN / f"{name}.json").read_text(encoding="utf-8"))
+    doc = json.loads((STATS_BEFORE / f"{name}.json").read_text(encoding="utf-8"))
     for key in ("CPUtime", "EventCounter"):
         del doc["statistics"][key]
     path = tmp_path / f"{name}.json"
@@ -671,18 +671,21 @@ def _without_copy(name: str, tmp_path) -> Path:
 
 @pytest.mark.parametrize("name", ["no_sampling", "single"])
 @pytest.mark.parametrize("copy", [True, False], ids=["old file", "new file"])
-def test_the_rows_and_the_report_read_as_main_read_the_old_file(tmp_path, name, copy):
-    """Expected: main's output over the old file (the copy in it), captured
-    once from a main archive — ``stats_main/expected.json``. The report's
+def test_the_rows_and_the_report_read_the_old_file_as_a3976796_did(
+    tmp_path, name, copy
+):
+    """Expected: the output of a3976796 (1.1.0 with the baseline codec,
+    before a listed name was a variable) over the old file (the copy in
+    it), captured once from an archive of it — ``stats_a3976796/expected.json``. The report's
     Reference cells are its caller's (`_build_template_context`)."""
     from dstf.reporting.context_builder import _build_template_context
     from dstf.reporting.stats_rows import card_text, statistics_rows
     from dstf.storage.baseline_codec import read_reference, shown_digits
 
-    expected = json.loads((STATS_MAIN / "expected.json").read_text())[name]
+    expected = json.loads((STATS_BEFORE / "expected.json").read_text())[name]
     run = _dymola_run(tmp_path)
     ref = read_reference(
-        STATS_MAIN / f"{name}.json" if copy else _without_copy(name, tmp_path)
+        STATS_BEFORE / f"{name}.json" if copy else _without_copy(name, tmp_path)
     )
 
     listing = ["CPUtime", "EventCounter"]  # the project's default listing
@@ -836,7 +839,7 @@ def test_a_listed_name_neither_a_time_nor_a_count_is_a_value(tmp_path):
 
 
 def test_the_cards_plus_on_cpu_time_writes_the_one_spelling_and_scores():
-    """Main scored 0.045 against the copy 0.04325; now against the summary."""
+    """1.1.0 scored 0.045 against the copy 0.04325; now against the summary."""
     from dstf.authoring.builtin.edit_tree import _quantity_leaf
     from dstf.comparison.tree_spec import parse_metric_tree
 
@@ -1163,7 +1166,7 @@ def test_a_cards_max_row_plus_seeds_a_criterion_that_scores(tmp_path):
 def test_the_report_lists_a_listed_names_number_in_its_tree_not_its_plot(tmp_path):
     """(b): a scalar final on CPUtime beside an nrmse on CPUtime: the
     CPUtime plot section's criteria are the nrmse alone; the metric tree
-    lists both — as main listed a statistic's criterion."""
+    lists both — as 1.1.0 listed a statistic's criterion."""
     from dstf.reporting.context_builder import _build_template_context
     from dstf.reporting.report_suite import plot_inputs, plot_page_keys
     from dstf.reporting.tree_rows import leaves_of
@@ -1540,7 +1543,7 @@ def test_a_card_criterion_draws_nothing_on_a_plot_on_either_tier(tmp_path):
 
 def test_a_card_criterion_leaves_the_tracked_names_as_they_were(tmp_path):
     """A number on CPUtime keeps CPUtime out of Tracked — the Variables
-    drawer lists it under Diagnostics, as on main."""
+    drawer lists it under Diagnostics, as in 1.1.0."""
     from dstf.authoring.session import PatchOp
     from test_session import A, _stats_session
 
@@ -1595,7 +1598,7 @@ def test_the_closed_line_names_a_changed_value(tmp_path):
     "payload", [{"success": True, "time": [0.0, 1.0]}], ids=["no variables key"]
 )
 def test_the_json_driver_reads_a_payload_with_no_variables(tmp_path, payload):
-    """As main read it — a run with nothing, never a KeyError."""
+    """As 1.1.0 read it — a run with nothing, never a KeyError."""
     from dstf.backends.python import backend as pr
 
     cfg = SimpleNamespace(
@@ -1613,7 +1616,7 @@ def test_the_json_driver_reads_a_payload_with_no_variables(tmp_path, payload):
 
 
 def test_a_listed_name_with_non_numeric_values_is_not_recorded(tmp_path):
-    """As on main, where a listed name was never read: no diagnostic,
+    """As in 1.1.0, where a listed name was never read: no diagnostic,
     and the test is not failed for it."""
     result = _json_result(
         tmp_path, {"y": [0, 1], "h": ["a", "b"], "CPUtime": [0.0, 0.5]}, ["h"]
@@ -1623,7 +1626,7 @@ def test_a_listed_name_with_non_numeric_values_is_not_recorded(tmp_path):
 
 
 def test_the_dashboards_cpu_time_is_its_recorded_digits():
-    """The sidecar's `sim_cpu` (and the sort key) is main's 0.045845,
+    """The sidecar's `sim_cpu` (and the sort key) is 1.1.0's 0.045845,
     not the float32's widening."""
     from dstf.reporting.rows import cpu_time
 
@@ -2030,7 +2033,7 @@ def test_the_reports_table_shows_what_a_side_holds_and_its_tree_every_criterion(
 ):
     """The test lists `h` and `x9`, each scored by a card criterion; the run
     recorded `h` and nothing holds `x9`. The card has both rows (it adds one
-    for a name a card criterion scores); the report's table has main's: the
+    for a name a card criterion scores); the report's table keeps 1.1.0's: the
     `h` a side holds, no `x9` — whose criterion its tree lists, as it lists
     `h`'s, with no plot derived for either."""
     from dstf.authoring.session import PatchOp

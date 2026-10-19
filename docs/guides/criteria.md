@@ -98,8 +98,9 @@ and any criterion may score it. A name listed in `diagnostic_variables` —
 stored in the baseline, and its curve only when a criterion needs it: a
 `scalar`'s final, min or max over the whole run is scored from the summary;
 any other criterion stores the curve. A test that checks its event count
-exactly, warns when its CPU time moves by more than 10%, and keeps a summary
-of `pump.speed`:
+exactly, warns when its CPU time moves by more than 10%, and scores the
+maximum of `pump.speed` within ±0.02 of the baseline's — read from the summary
+its listing keeps:
 
 <!-- snippet: test_spec -->
 ```json

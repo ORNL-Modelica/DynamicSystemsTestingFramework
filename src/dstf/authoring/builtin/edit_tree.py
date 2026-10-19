@@ -545,8 +545,8 @@ def _add_form(
 
     The picker (Q8) offers EVERY variable of the result file, tracked or
     not — a criterion on one is what tracks it (the next run records it) —
-    in sections: the plot's own series, the rest, the diagnostics the run
-    recorded. Its values are result-file names — a leaf is written against
+    in two sections (`picker_rows.SECTIONS`): the plot's own series, and
+    every other name, a listed name such as CPUtime among them. Its values are result-file names — a leaf is written against
     the name — and a row reads the label, with the name beside it. A list
     of ``unitTests.x[1..12]`` named nothing a person could choose between.
     The names are read when the form OPENS, never when the `+` is drawn.
