@@ -92,7 +92,9 @@ def _members(session, indices) -> tuple[str, ...]:
 def _folds(session) -> list[Fold]:
     view = session.tree_view(A)
     subject = [n for plot in session.plots(A) for n in plot.subject]
-    return [e for e in fold_rows(criteria_rows(view, subject)) if isinstance(e, Fold)]
+    return [
+        e for e in fold_rows(criteria_rows(view, subject, ())) if isinstance(e, Fold)
+    ]
 
 
 # -- the add form's Indices (R1) -----------------------------------------------------
@@ -517,7 +519,7 @@ def test_the_report_goes_on_listing_one_criteria_row_per_leaf(tmp_path):
     for i in range(1, 7):
         assert page.count(f'class="criteria-row" data-variable="{element(i)}"') == 1
     session = _session(cfg, work)
-    rows = criteria_rows(session.tree_view(A), [element(i) for i in range(1, 7)])
+    rows = criteria_rows(session.tree_view(A), [element(i) for i in range(1, 7)], ())
     assert [row["variable"] for row in rows] == [element(i) for i in range(1, 7)]
 
 

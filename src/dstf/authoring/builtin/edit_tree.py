@@ -26,13 +26,15 @@ from typing import TYPE_CHECKING, Any
 from ...backends.types import DatasetType
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
 from ...comparison.seeds import (
+    TIMES,
     SeedData,
     quantity_kind,
-    seed_diagnostic,
     seed_quantity,
+    seed_variable_number,
     seeded_leaf,
+    warn_if_time,
 )
-from ...comparison.sides import parse_sides, signed_sides
+from ...comparison.sides import bounds_text, parse_sides, signed_sides
 from ...discovery.unit_tests import is_unit_test_variable
 from ...figures.families import family_of
 from ..capabilities import Panel, Patch, Placement, plural
@@ -301,25 +303,17 @@ def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch |
         raise ValueError(f"{path} names no node of {model_id}")
     if action == "add":
         into = _into(tree, node, path)
-        diagnostics = _diagnostics(s, model_id)
         quantity = inputs.get("quantity")
         if quantity is not None and inputs.get("variable") is not None:
             raise ValueError("add takes a quantity or a variable, not both")
         if quantity is not None:
-            leaves = [_quantity_leaf(diagnostics, quantity, into)]
-        elif inputs["variable"] in diagnostics:
-            # A diagnostic is one stored number (K1): its final through
-            # a quantity path, never a trajectory — a `{"reduce": ...}`
-            # scalar on one never scores.
-            if inputs["metric"] not in _metrics_for(diagnostic=True):
-                raise ValueError(
-                    f"{inputs['variable']} is a diagnostic: scalar scores it"
-                )
-            leaves = [
-                seed_diagnostic(
-                    inputs["variable"], diagnostics[inputs["variable"]], into=into
-                )
-            ]
+            leaves = [_quantity_leaf(s, model_id, quantity, into)]
+        elif inputs["metric"] == "scalar" and inputs["variable"] in s.diagnostic_names(
+            model_id
+        ):
+            # A listed name's number, in its one spelling: CPUtime warned in
+            # an `and`, EventCounter exact, any other the ordinary seed.
+            leaves = [_number_leaf(s, model_id, inputs["variable"], "final", into)]
         else:
             # One criterion per chosen element of the variable's family
             # (D152) — the variable alone with no Indices text. Seeded: a
@@ -331,7 +325,16 @@ def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch |
             seeded = seeded_leaf(
                 inputs["metric"], names[0], seed_data(s, model_id, names[0])
             )
-            leaves = [{**copy.deepcopy(seeded), "variable": name} for name in names]
+            # A curve criterion on a time (CPUtime) moves with the load: in
+            # an `and`, inside a `warn`.
+            leaves = [
+                warn_if_time(
+                    {**copy.deepcopy(seeded), "variable": name},
+                    name in TIMES,
+                    into=into,
+                )
+                for name in names
+            ]
         if "combinator" in node:
             # At the end, in order.
             return Patch(
@@ -542,9 +545,10 @@ def _add_form(
 
     The picker (Q8) offers EVERY variable of the result file, tracked or
     not — a criterion on one is what tracks it (the next run records it) —
-    in sections: the plot's own series, the rest, the diagnostics the run
-    recorded. Its values are result-file names — a leaf is written against
-    the name — and a row reads the label, with the name beside it. A list
+    in two sections (`picker_rows.SECTIONS`): the plot's own series, and
+    every other name, a listed name such as CPUtime among them. Its values
+    are result-file names — a leaf is written against the name — and a row
+    reads the label, with the name beside it. A list
     of ``unitTests.x[1..12]`` named nothing a person could choose between.
     The names are read when the form OPENS, never when the `+` is drawn.
 
@@ -568,14 +572,8 @@ def _add_form(
     if variable and variable not in names:
         names = [variable, *names]
     on_plot = _plot_series(s, model_id, s.selection.variable)
-    diagnostics = list(_diagnostics(s, model_id))
     texts = s.variable_texts(model_id)
     first = variable or (on_plot or names or [""])[0]
-
-    #: The metric chosen on an ordinary variable while a diagnostic —
-    #: which offers scalar alone — is picked: back on an ordinary one, it is
-    #: chosen again, not the first metric of the list.
-    kept: dict[str, str] = {}
 
     #: The picked variable's family, read once per pick: the count below
     #: asks it on every key.
@@ -584,7 +582,7 @@ def _add_form(
     def offer_indices(name: str, only: bool = False) -> None:
         """The Indices field follows the pick: every element of its family
         — the picked element's own index with ``only`` — or no field."""
-        family = None if name in diagnostics else _family(s, model_id, name, names)
+        family = _family(s, model_id, name, names)
         picked["family"] = family
         indices.set_visibility(family is not None)
         counted.set_visibility(family is not None)
@@ -619,29 +617,13 @@ def _add_form(
         if title is not None:
             ui_panel.retitle(title(what))
 
-    def follow(name: str) -> None:
-        """The Metric select offers what can score ``name`` (Q2)."""
-        options = _metrics_for(diagnostic=name in diagnostics)
-        value = met.value
-        if name in diagnostics:
-            if list(met.options) != options:  # leaving an ordinary variable
-                kept["metric"] = met.value
-        else:
-            value = kept.pop("metric", value)
-        met.set_options(options, value=value if value in options else options[0])
-        offer_indices(name)
-
     var = VariablePicker(
-        lambda keep: picker_rows(
-            on_plot=on_plot,
-            names=names,
-            diagnostics=diagnostics,
-            texts=texts,
-            keep=keep,
-        ),
+        lambda keep: picker_rows(on_plot=on_plot, names=names, texts=texts, keep=keep),
         value=first,
         text_of=lambda name: texts[name].text if name in texts else name,
-        on_change=follow,
+        # The pick moves the Indices field; every name is offered every
+        # metric, a listed one too.
+        on_change=offer_indices,
         marker=f"{mark}:variable",
     )
     indices = (
@@ -651,7 +633,7 @@ def _add_form(
         .mark(f"{mark}:indices")
     )
     counted = ui.label().classes("dstf-why").mark(f"{mark}:count")
-    options = _metrics_for(diagnostic=first in diagnostics)
+    options = _metrics_for()
     met = (
         ui.select(
             options,
@@ -755,17 +737,39 @@ def _into(tree: dict | None, node: dict, path: str) -> str:
     return str((parent_node or {}).get("combinator"))
 
 
-def _quantity_leaf(diagnostics: dict[str, Any], quantity: str, into: str) -> dict:
-    """The criterion an add on ``quantity`` stages, landing in ``into``: a
-    stored number, no variable. One seed per path — a diagnostic's final
-    is the add form's diagnostic criterion, its kind read from its samples,
-    and a top-level statistic naming a diagnostic reads them too, as its
-    ``X.final`` would."""
+def _quantity_leaf(s: SessionView, model_id: str, quantity: str, into: str) -> dict:
+    """The criterion a Statistics row's ``+`` on ``quantity`` stages,
+    landing in ``into``. A row of a listed name — its name (its final),
+    ``<name>.min`` or ``<name>.max`` (`card_row`) — is that variable's
+    number, in its one spelling (`_number_leaf`); any other row is a
+    statistic, read through its path (`seed_quantity`). Listed by the
+    test's listing (`diagnostic_names`), the set the leaf is routed by and
+    the rows are a subset of (`stats_rows.listed_names`): what the ``+``
+    adds is on the card."""
+    listed = s.diagnostic_names(model_id)
+    if quantity in listed:
+        return _number_leaf(s, model_id, quantity, "final", into)
     name, _, field_name = quantity.rpartition(".")
-    if field_name == "final" and name in diagnostics:
-        return seed_diagnostic(name, diagnostics[name], into=into)
-    return seed_quantity(
-        quantity, quantity_kind(quantity, diagnostics.get(quantity)), into=into
+    if field_name in ("min", "max") and name in listed:
+        return _number_leaf(s, model_id, name, field_name, into)
+    return seed_quantity(quantity, quantity_kind(quantity), into=into)
+
+
+def _number_leaf(
+    s: SessionView, model_id: str, name: str, field_name: str, into: str
+) -> dict:
+    """The criterion on the listed name ``name``'s ``field_name`` (final,
+    min, max), seeded from the run's samples where it recorded the name and
+    against the baseline's summary where that holds the number
+    (`seed_variable_number`)."""
+    stored = s.baseline_summaries(model_id).get(name)
+    baseline = getattr(stored, field_name) if stored is not None else None
+    return seed_variable_number(
+        name,
+        _diagnostics(s, model_id).get(name),
+        into=into,
+        reduce=field_name,
+        baseline=baseline,
     )
 
 
@@ -773,8 +777,15 @@ def _requirement(leaf: dict) -> str:
     """What a Statistics row's `+` adds, in the words of its seed — the
     tolerance is the seed's, never a second copy of it. Read as any
     tolerance is (`parse_sides`): a number, or a lower/upper pair, whose
-    two sides — where they differ — read as its two edges."""
+    two sides — where they differ — read as its two edges. A bounds seed
+    says its bounds, as the card's requirement does (`bounds_text`); it is
+    never warned — only a time is (`warn_if_time`), seeded with a
+    tolerance."""
     inner = leaf["children"][0] if "combinator" in leaf else leaf
+    bounds = bounds_text(inner.get("min_value"), inner.get("max_value"))
+    if bounds is not None:
+        return f"Add a requirement: {bounds}"
+    warning = ", as a warning" if leaf.get("combinator") == "warn" else ""
     written = inner.get("tolerance")
     tolerance = parse_sides(0 if written is None else written, "tolerance")
     rel = inner.get("tolerance_mode") == "rel"
@@ -789,7 +800,6 @@ def _requirement(leaf: dict) -> str:
         what = f"within {tolerance.upper * 100:g}%"
     else:
         what = "exact match" if tolerance.upper == 0 else f"within ±{tolerance.upper:g}"
-    warning = ", as a warning" if leaf.get("combinator") == "warn" else ""
     return f"Add a requirement: {what}{warning}"
 
 
@@ -807,7 +817,7 @@ def _parent_of(path: str) -> str | None:
 def _first_leaf(tree: dict | None, path: str) -> str:
     """The first leaf at or under ``path``: what an Add reveals. A seed may
     be a combinator around its leaf — CPU time is added to an ``and``
-    inside a ``warn`` (`seed_diagnostic`) — and the editor opens on the
+    inside a ``warn`` (`warn_if_time`) — and the editor opens on the
     criterion."""
     node = node_or_none(tree, path)
     while node is not None and node.get("children"):
@@ -1265,10 +1275,11 @@ def _statistic_plus(
 ) -> None:
     """A Statistics row's `+` (U3): no form — the requirement is the seed
     (a count exact, a time within its tolerance, inside a `warn` where it
-    lands in an `and`), added at the END of the root (Q6 b), or as
-    ``and[leaf, new]`` under a root leaf; the new criterion's editor opens
-    after it. Grey with the add form's reason where nothing can take it:
-    a simulate-only test, a test with no tree to
+    lands in an `and`; a `value` row's within 1% of the baseline's summary,
+    else bounds around the run's number, else `VALUE_LEAF`), added at the
+    END of the root (Q6 b), or as ``and[leaf, new]`` under a root leaf; the
+    new criterion's editor opens after it. Grey with the add form's reason
+    where nothing can take it: a simulate-only test, a test with no tree to
     add to (the Session's `tree_or_reason`), a root that takes no child
     alone."""
     tree, why = s.tree_or_reason(model_id)
@@ -1286,7 +1297,7 @@ def _statistic_plus(
     if tip is None:
         assert tree is not None  # `reason` said so
         into = _into(tree, tree, ROOT)
-        tip = _requirement(_quantity_leaf(_diagnostics(s, model_id), quantity, into))
+        tip = _requirement(_quantity_leaf(s, model_id, quantity, into))
 
     def add() -> None:
         # From the tree as it is NOW, before the add moves the count.
@@ -1361,31 +1372,23 @@ def _kind_select(
     select.on_value_change(chosen)
 
 
-def _diagnostics(s: SessionView, model_id: str) -> dict[str, Any]:
-    """``{name: values}`` of the diagnostics the last run RECORDED — the
-    picker's "Diagnostics" (B4). Not `diagnostic_variables` against the
-    file's names: a JSON-driver run records none, and a `CPUtime` column in
-    its file is a variable a `CPUtime.final` quantity path never reads."""
+def _recorded(s: SessionView, model_id: str) -> list[Any]:
+    """The listed names the last run RECORDED, as its diagnostics."""
     project = s.project
     result = project.results.get(model_id) if project is not None else None
-    if result is None:
-        return {}
-    return {d.name: d.values for d in result.diagnostics or [] if d.name}
+    return list(result.diagnostics or []) if result is not None else []
 
 
-def _metrics_for(*, diagnostic: bool) -> list[str]:
-    """What the Metric select offers (Q2): a diagnostic is one stored
-    number, scored by a metric that takes a ``quantity``; any other
-    variable, every metric that scores a time series."""
-    return [
-        d.name
-        for d in metrics()
-        if (
-            d.accepts_quantity
-            if diagnostic
-            else DatasetType.TIME_SERIES in d.accepted_datasets
-        )
-    ]
+def _diagnostics(s: SessionView, model_id: str) -> dict[str, Any]:
+    """``{name: values}`` of the listed names the last run RECORDED: the
+    samples a number's seed reads (`seed_variable_number`)."""
+    return {d.name: d.values for d in _recorded(s, model_id) if d.name}
+
+
+def _metrics_for() -> list[str]:
+    """What the Metric select offers: every metric that scores a time
+    series — for every name, a listed one too."""
+    return [d.name for d in metrics() if DatasetType.TIME_SERIES in d.accepted_datasets]
 
 
 def _plot_series(s: SessionView, model_id: str, variable: str | None) -> list[str]:

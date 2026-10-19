@@ -118,22 +118,26 @@ def plots_to_raw(extras: Sequence[PlotExtra]) -> list[dict]:
     ]
 
 
-def tree_leaves(spec: SpecNode | None) -> list[LeafSpec] | None:
-    """The leaves of ``spec`` that name a series of the result, depth
-    first; ``None`` for no tree. A stored-scalar leaf (a string
-    ``quantity``) names a statistic, not a series, and has no plot.
+def tree_leaves(
+    spec: SpecNode | None, diagnostics: Collection[str]
+) -> list[LeafSpec] | None:
+    """The leaves of ``spec`` that a plot shows, depth first; ``None`` for
+    no tree. A leaf on the Statistics card (`on_the_card`: a statistic, or
+    a number one stored summary of a name the test lists — ``diagnostics``,
+    its `diagnostic_names`) has no plot: numbers on the card, curves on
+    plots.
 
     Walks the SPEC, never the materialized tree: the Session's plots are
     painted before any baseline is read."""
     if spec is None:
         return None
-    from ..comparison.tree_spec import LeafSpec, resolves_a_variable
+    from ..comparison.tree_spec import LeafSpec, on_the_card
 
     out: list[LeafSpec] = []
 
     def walk(node: SpecNode) -> None:
         if isinstance(node, LeafSpec):
-            if resolves_a_variable(node):
+            if not on_the_card(node, diagnostics):
                 out.append(node)
             return
         for child in node.children:
@@ -143,23 +147,27 @@ def tree_leaves(spec: SpecNode | None) -> list[LeafSpec] | None:
     return out
 
 
-def plot_leaves(test: TestModel, compared: Sequence[str]) -> list[LeafSpec] | None:
+def plot_leaves(
+    test: TestModel, compared: Sequence[str], diagnostics: Collection[str]
+) -> list[LeafSpec] | None:
     """The leaves a test's plots derive from, in tree order: its authored
     ``metrics`` tree — even with nothing compared yet, a test with no
     baseline: the tree names what will be scored — else the implicit tree of
     what was ``compared``; ``None`` with neither (one plot per tracked
     variable, the owner's ruling O2). ONE rule, for the tool's
-    `Session.plots` and the report."""
+    `Session.plots` and the report. ``diagnostics``: the names the test
+    lists (:func:`tree_leaves`)."""
     from ..comparison.tree_spec import synthesize_implicit_tree
 
     if test.metric_tree_spec is not None:
-        return tree_leaves(test.metric_tree_spec)
+        return tree_leaves(test.metric_tree_spec, diagnostics)
     if not compared:
         return None
     return tree_leaves(
         synthesize_implicit_tree(
             list(compared), variable_overrides=test.variable_overrides
-        )
+        ),
+        diagnostics,
     )
 
 
@@ -239,6 +247,7 @@ def plots_of_test(
     result: TestResult | None,
     *,
     listed: Iterable[str] | None,
+    diagnostics: Collection[str],
 ) -> tuple[ResolvedPlot, ...]:
     """The plots of one test — ONE rule, called by the tool's
     `Session.plots` and the report's `plot_inputs`, so both tiers draw the
@@ -249,6 +258,10 @@ def plots_of_test(
     names are UnitTests elements — never folded (O3) — is asked of every
     leaf AND every tracked name: a leaf the result does not carry is an
     element all the same.
+
+    ``diagnostics`` are the names the test lists (`diagnostic_names`): a
+    number one stored summary of one of them answers is on the Statistics
+    card, not a plot (:func:`tree_leaves`).
 
     ``listed`` is the result FILE's names, or ``None`` when it was not
     listed (the report lists it only for a test with extras). A name the
@@ -264,7 +277,7 @@ def plots_of_test(
 
     if result is not None and not result.success:
         return ()
-    leaves = plot_leaves(test, compared)
+    leaves = plot_leaves(test, compared, diagnostics)
     tracked = tracked_names(compared, result)
     names = [*(leaf.variable for leaf in leaves or ()), *tracked]
     available: list[str] | None = None

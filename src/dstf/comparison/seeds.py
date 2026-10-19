@@ -23,7 +23,7 @@ from typing import Literal
 
 import numpy as np
 
-from .algorithms import _compute_fft_spectrum, _find_top_n_peaks
+from .algorithms import _compute_fft_spectrum, _find_top_n_peaks, _reduce_series
 from .registry import metric as metric_descriptor
 
 #: The margin a seed leaves around the data, as a fraction of its span.
@@ -131,6 +131,24 @@ def seed_tube(data: SeedData) -> dict:
     return {"tube_width_mode": "band", "tube_abs": _outward(m, m, up=True)}
 
 
+#: A number within 1% of the baseline's: what `seed_scalar` seeds where it
+#: reads the reference, a listed name's `+` writes where no side is a
+#: finite number (`seed_variable_number`), and a `value` Statistics row's
+#: "changed" scores (`stats_rows.changed`) — the one leaf, so the tip, the
+#: card and the scorer agree.
+VALUE_LEAF: dict = {
+    "quantity": {"reduce": "final"},
+    "tolerance_mode": "rel",
+    "tolerance": 0.01,
+}
+
+
+def _value_leaf() -> dict:
+    """A fresh copy of `VALUE_LEAF`: a leaf written into a spec is the
+    caller's to change, the constant never."""
+    return {**VALUE_LEAF, "quantity": dict(VALUE_LEAF["quantity"])}
+
+
 def seed_scalar(data: SeedData) -> dict:
     """The final value: within 1% of the baseline's where the seed reads
     the reference, else between bounds 5% of its magnitude either side."""
@@ -142,7 +160,7 @@ def seed_scalar(data: SeedData) -> dict:
     # NaN, or none inside the window) seeds from the actual, and a
     # tolerance against it failed on its own data.
     if s is data.ref:
-        return {"quantity": quantity, "tolerance_mode": "rel", "tolerance": 0.01}
+        return _value_leaf()
     final = float(s[1][np.isfinite(s[1])][-1])
     half = SEED_MARGIN * (abs(final) or _span(s[1])[2])
     return {
@@ -191,45 +209,25 @@ def seeded_leaf(metric: str, variable: str, data: SeedData) -> dict:
     return {**leaf, **desc.seed(data)}
 
 
-#: Diagnostics whose kind is known by name (K1): a count is scored exact, a
+#: Listed names whose kind is known by name (K1): a count is scored exact, a
 #: time within 10%. A tiny model's CPUtime can end on a whole 0.0 or 1.0:
 #: read by its values alone it is a count, and a next run's 0.01 s fails.
 COUNTS = frozenset({"EventCounter"})
 TIMES = frozenset({"CPUtime"})
 
 
-def quantity_kind(
-    path: str, values: np.ndarray | None = None
-) -> Literal["count", "time"]:
-    """What kind of number ``path`` names (S5): a ``count`` is scored exact,
-    a ``time`` within 10%. A statistic is a time by its path — the
-    ``timing`` section, CPUtime, and the ``*_time`` / ``*_wall`` /
+def quantity_kind(path: str) -> Literal["count", "time"]:
+    """What kind of number the statistic ``path`` names (S5): a ``count``
+    is scored exact, a ``time`` within 10%. A time by its path — the
+    ``timing`` section and the ``*_time`` / ``*_wall`` /
     ``cpu_time*`` keys; every other number a backend records is a count,
     whatever its type (a Dymola ``result_points`` can be written as a
-    float).
-
-    A diagnostic's summary (``CPUtime.final``) takes K1's rule: by name
-    when known, else a count when every finite sample of ``values`` is a
-    whole number. A top-level statistic given the run's samples of the
-    diagnostic it names (``CPUtime``, folded in from the diagnostics) is
-    that diagnostic's final and takes the same rule — the Statistics row
-    and the add form's ``X.final`` leaf are one kind."""
-    name, _, field = path.rpartition(".")
-    if not name and values is not None:
-        name, field = path, "final"
-    if name and "." not in name and field in ("final", "min", "max"):
-        if name in COUNTS:
-            return "count"
-        if name in TIMES:
-            return "time"
-        finite = values[np.isfinite(values)] if values is not None else np.array([])
-        whole = finite.size > 0 and bool(np.all(finite == np.round(finite)))
-        return "count" if whole else "time"
+    float). A listed name's kind is by its name alone
+    (`seed_variable_number`), never guessed from its values."""
     head = path.split(".", 1)[0]
     last = path.rsplit(".", 1)[-1]
     if (
         head == "timing"
-        or last in TIMES
         or last.endswith(("_time", "_wall"))
         or last.startswith("cpu_time")
     ):
@@ -242,13 +240,9 @@ def seed_quantity(
     kind: Literal["count", "time"],
     *,
     into: str,
-    variable: str | None = None,
 ) -> dict:
-    """A ``scalar`` criterion on the stored number ``path`` names:
-    ``tolerance 0 abs`` for a count and ``0.1 rel`` for a time. With
-    ``variable`` (a diagnostic's name) the leaf names it: parsed without
-    one, its variable becomes the quantity text, and its row reads
-    ``scalar · CPUtime.final``.
+    """A ``scalar`` criterion on the statistic ``path`` names: ``tolerance
+    0 abs`` for a count and ``0.1 rel`` for a time.
 
     A time is seeded inside a ``warn`` when it lands in an ``and``
     (``into``, the kind of the combinator it is added to): a run's CPU time
@@ -257,25 +251,70 @@ def seed_quantity(
     bare: a ``warn`` child passes whatever it scores, so under an ``or`` or
     a ``k-of-n`` it would pass its parent with nothing else passing. A
     count stays bare: it only moves when the model does."""
+    leaf = {"metric": "scalar", "quantity": path, **_known_tolerance(kind)}
+    return warn_if_time(leaf, kind == "time", into=into)
+
+
+def _known_tolerance(kind: Literal["count", "time"]) -> dict:
+    """``tolerance 0 abs`` for a count, ``0.1 rel`` for a time."""
     count = kind == "count"
-    leaf: dict = {"metric": "scalar"}
-    if variable is not None:
-        leaf["variable"] = variable
-    leaf.update(
-        {
-            "quantity": path,
-            "tolerance": 0 if count else 0.1,
-            "tolerance_mode": "abs" if count else "rel",
-        }
-    )
-    if not count and into == "and":
+    return {
+        "tolerance": 0 if count else 0.1,
+        "tolerance_mode": "abs" if count else "rel",
+    }
+
+
+def warn_if_time(leaf: dict, time: bool, *, into: str) -> dict:
+    """``leaf`` inside a ``warn`` when it scores a time (``time``) and lands
+    in an ``and`` (``into``, the kind of the combinator it is added to): a
+    run's CPU time moves with the machine's load — under ``--parallel``
+    most of all — and would fail a test whose model did not change.
+    Anywhere else it is bare: a ``warn`` child passes whatever it scores, so
+    under an ``or`` or a ``k-of-n`` it would pass its parent with nothing
+    else passing."""
+    if time and into == "and":
         return {"combinator": "warn", "children": [leaf]}
     return leaf
 
 
-def seed_diagnostic(name: str, values: np.ndarray | None, *, into: str) -> dict:
-    """A criterion on the diagnostic ``name`` (the plan's K1): its stored
-    final through a quantity path, seeded by :func:`seed_quantity` at the
-    kind :func:`quantity_kind` reads from ``values``."""
-    path = f"{name}.final"
-    return seed_quantity(path, quantity_kind(path, values), into=into, variable=name)
+def seed_variable_number(
+    name: str,
+    values: np.ndarray | None,
+    *,
+    into: str,
+    reduce: str = "final",
+    baseline: float | None = None,
+) -> dict:
+    """A ``scalar`` criterion on the number ``name``'s run reduces to — its
+    ``final`` by default, or its ``min`` / ``max``: the one spelling of a
+    variable's number, ``{"reduce": ...}``, scored from a listed name's
+    summary where the curve is not stored (`reads_a_summary`).
+
+    CPUtime and EventCounter (`TIMES` | `COUNTS`) take their known
+    tolerances (:func:`seed_quantity`'s): a time within 10%, inside a
+    ``warn`` in an ``and``; a count exact, bare. Any other name takes the
+    ordinary scalar seed (:func:`seed_scalar`) — never a kind guessed from
+    its values (owner, 2026-10-18): within 1% of ``baseline``, the same
+    number of the baseline's summary, where it has one (the Statistics
+    row's `changed` rule); else bounds around the run's number (``values``,
+    reduced). With neither a finite number (NaN, inf, or nothing), the same
+    1% (`VALUE_LEAF`), written out: a bare leaf read "exact match" on the
+    tip and was scored by the test's base tolerance."""
+    quantity = {"reduce": reduce}
+    leaf: dict = {"metric": "scalar", "variable": name}
+    if name in TIMES or name in COUNTS:
+        kind: Literal["count", "time"] = "time" if name in TIMES else "count"
+        return warn_if_time(
+            {**leaf, "quantity": quantity, **_known_tolerance(kind)},
+            kind == "time",
+            into=into,
+        )
+    one = np.array([0.0])
+    act = None
+    if values is not None and len(values) > 0:
+        series = np.asarray(values, dtype=float)
+        number = _reduce_series(np.arange(float(series.size)), series, reduce)
+        act = (one, np.array([number]))
+    ref = (one, np.array([float(baseline)])) if baseline is not None else None
+    seeded = seed_scalar(SeedData(ref=ref, act=act)) or _value_leaf()
+    return {**leaf, **seeded, "quantity": quantity}

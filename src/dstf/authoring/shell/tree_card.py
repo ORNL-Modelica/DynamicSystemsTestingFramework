@@ -14,12 +14,13 @@ sync with the tree open)."""
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
-from ...comparison.tree_spec import reads_a_statistic
+from ...comparison.tree_spec import on_the_card_view
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
 from ..session import Selection
@@ -365,11 +366,12 @@ def fold_text(node: dict) -> str:
     return "· " + " · ".join(parts)
 
 
-def show_tip(leaf: dict) -> str:
-    """The ⤓'s name (U5, Q7): where it shows the criterion — a statistics
-    criterion is drawn on the Statistics card, any other on its plot."""
-    statistic = reads_a_statistic(str(leaf.get("metric")), leaf.get("params") or {})
-    return "Show on the Statistics card" if statistic else "Show on its plot"
+def show_tip(leaf: dict, listed: Collection[str]) -> str:
+    """The ⤓'s name: where it shows the criterion — a card
+    criterion (`on_the_card_view`: a statistic, or a number of a name the
+    test lists, ``listed``) on the Statistics card, any other on its plot."""
+    card = on_the_card_view(leaf, listed)
+    return "Show on the Statistics card" if card else "Show on its plot"
 
 
 def _ancestors(path: str) -> list[str]:
@@ -416,7 +418,7 @@ class _Row:
         #: drawn, which a mode switch moves without rebuilding the row.
         self.show = show
 
-    def paint(self, node: dict) -> None:
+    def paint(self, node: dict, listed: Collection[str]) -> None:
         if self.summary is not None:
             self.summary.set_text(fold_text(node))
         if self.chevron is not None:
@@ -438,7 +440,7 @@ class _Row:
         self.text.set_text(count_text(node) if led else node_text(node))
         if self.show is not None:
             button, tip = self.show
-            said = show_tip(node)
+            said = show_tip(node, listed)
             if _set_prop(button, "aria-label", said):
                 button.update()
                 tip.set_text(said)
@@ -513,6 +515,10 @@ class TreeCard:
 
     def _view(self) -> dict | None:
         return self.page.shell.session.tree_view(self.page.model_id)
+
+    def _listed(self) -> list[str]:
+        """The names the test lists (`Session.diagnostic_names`)."""
+        return self.page.shell.session.diagnostic_names(self.page.model_id)
 
     # -- the drag ------------------------------------------------------------------
 
@@ -727,8 +733,9 @@ class TreeCard:
             # Before the paint: a host rebuilt to its why-line empties its
             # row's lead, and the paint then reads the kind into the text.
             host.follow()
+        listed = self._listed()
         for node in nodes_of(view):
-            self.painters[str(node.get("path"))].paint(node)
+            self.painters[str(node.get("path"))].paint(node, listed)
         # The folded set may have been re-keyed under rows whose shape did
         # not move (twin groups trading places, the U5 review): it is drawn
         # on the rows standing, not left on the ones it was folded on.
@@ -997,7 +1004,7 @@ class TreeCard:
         row — scrolled to and flashed; nothing opens. The page owns the
         jump, as it owns the closed line's named buttons. Its click is
         stopped in the browser: the row's own click opens the editor."""
-        tip = show_tip(node)
+        tip = show_tip(node, self._listed())
         button = (
             ui.button(icon="vertical_align_bottom")
             .props("flat dense round size=sm")
@@ -1166,6 +1173,6 @@ class TreeCard:
         self.painters[path] = _Row(pill, text, readout, lead, summary, chevron, show)
         # Once the host has drawn: whether its lead holds the kind decides
         # the text.
-        self.painters[path].paint(node)
+        self.painters[path].paint(node, self._listed())
         for child in node.get("children") or []:
             self._row(child, depth + 1, folded)

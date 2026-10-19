@@ -91,6 +91,7 @@ class TestStrictJsonArtifacts:
             result=None,
             comparisons=[_nonfinite_comparison()],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
         text = (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
         # Strict parse: any Infinity/NaN token trips the parse_constant hook.
@@ -106,6 +107,7 @@ class TestStrictJsonArtifacts:
             result=None,
             comparisons=[_nonfinite_comparison()],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
         html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
         # The only inline script is the window.MT_REPORT data block; no
@@ -126,6 +128,7 @@ def test_a_template_comment_is_no_line_of_the_page(tmp_path):
         result=None,
         comparisons=[_nonfinite_comparison()],
         plot_dir=plot_dir,
+        diagnostics=(),
     )
     html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
     (after,) = re.findall(r'<div class="summary" id="summary">(\s*)\S', html)
@@ -152,6 +155,7 @@ class TestRunMetadataBanner:
                 "dstf_version": "0.1.0",
                 "generated_str": "2026-07-07 14:30",
             },
+            diagnostics=(),
         )
         html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
         assert 'class="run-meta"' in html
@@ -168,6 +172,7 @@ class TestRunMetadataBanner:
             result=None,
             comparisons=[_nonfinite_comparison()],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
         html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
         assert 'class="run-meta"' not in html
@@ -322,6 +327,7 @@ def test_template_emits_plot_order(tmp_path):
             short_name="Order",
             n_vars=2,
         ),
+        diagnostics=(),
     )
     html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
     assert _page_data(html, "PLOT_SERIES") == [["zeta"], ["123"]]
@@ -346,6 +352,7 @@ class TestVendoredPlotly:
             result=None,
             comparisons=[_nonfinite_comparison()],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
 
     def test_reports_root_gets_one_plotly(self, tmp_path):
@@ -495,6 +502,7 @@ class TestWorstNrmse:
                 self._scored(0.9, mode="tube"),
             ],
             plot_dir=plot_dir,
+            diagnostics=(),
         )
         summary = json.loads(
             (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
@@ -505,7 +513,7 @@ class TestWorstNrmse:
     def test_key_stat_says_n_a_when_nothing_scored(self):
         from dstf.reporting.context_builder import _build_key_stats
 
-        stats = _build_key_stats([_nonfinite_comparison("bad")], {}, {})
+        stats = _build_key_stats([_nonfinite_comparison("bad")], {}, {}, listing=())
         worst = next(s for s in stats if s["label"] == "Worst NRMSE")
         assert worst["current"] == "n/a (1 unscored criterion)"
 
@@ -514,16 +522,26 @@ class TestWorstNrmse:
         from dstf.reporting.context_builder import _build_key_stats
 
         comps = [self._scored(0.28, mode="tube"), self._scored(4.264e-02)]
-        (worst,) = [s for s in _build_key_stats(comps, {}, {}) if "Worst" in s["label"]]
+        (worst,) = [
+            s
+            for s in _build_key_stats(comps, {}, {}, listing=())
+            if "Worst" in s["label"]
+        ]
         assert (worst["label"], worst["current"]) == ("Worst NRMSE", "4.2640e-02")
 
     def test_the_report_header_reads_a_dash_with_no_nrmse_criterion(self):
         from dstf.reporting.context_builder import _build_key_stats
 
         comps = [self._scored(0.28, mode="tube")]
-        (worst,) = [s for s in _build_key_stats(comps, {}, {}) if "Worst" in s["label"]]
+        (worst,) = [
+            s
+            for s in _build_key_stats(comps, {}, {}, listing=())
+            if "Worst" in s["label"]
+        ]
         assert (worst["label"], worst["current"]) == ("Worst NRMSE", "—")
-        assert [s for s in _build_key_stats([], {}, {}) if "Worst" in s["label"]] == []
+        assert [
+            s for s in _build_key_stats([], {}, {}, listing=()) if "Worst" in s["label"]
+        ] == []
 
 
 class TestEmbeddedFigures:
@@ -573,6 +591,7 @@ class TestEmbeddedFigures:
             test_model=test,
             metric_tree=comp.metric_tree,
             max_embedded_samples=500,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         sidecar = json.loads(
@@ -678,10 +697,17 @@ class TestEmbeddedFigures:
             tmp_path / "plots",
             test_model=test,
             metric_tree=comp.metric_tree,
+            diagnostics=(),
         )
         # No baseline, no comparisons: one plot per tracked variable.
         report_suite.generate_comparison_plots(
-            "M", None, result, [], tmp_path / "nb_plots", test_model=test
+            "M",
+            None,
+            result,
+            [],
+            tmp_path / "nb_plots",
+            test_model=test,
+            diagnostics=(),
         )
         assert len(built) == 2 and len(page_built) == 2
         figures, diag, nb = (
@@ -866,6 +892,7 @@ class TestEmbeddedFigures:
             test_model=test,
             metric_tree=comp.metric_tree,
             max_embedded_samples=500,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         figures = _page_data(page, "PLOT_FIGURES")
@@ -973,6 +1000,7 @@ class TestEmbeddedFigures:
             test_model=test,
             metric_tree=comp.metric_tree,
             max_embedded_samples=500,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         figures = _page_data(page, "PLOT_FIGURES")
@@ -1158,6 +1186,7 @@ class TestServerRenderedTree:
             test_model=test,
             metric_tree=comp.metric_tree,
             max_embedded_samples=500,
+            diagnostics=(),
         )
         return html.read_text(encoding="utf-8"), comp
 
@@ -1350,6 +1379,7 @@ class TestRestoredViewingChecks:
             metric_tree=metric_tree,
             max_embedded_samples=500,
             overlays=overlays,
+            diagnostics=(),
         )
         assert html is not None
         return html.read_text(encoding="utf-8")
@@ -1565,7 +1595,7 @@ class TestPlotSections:
         comp = compare_test(test, result, decode_reference(ref))
         if "plots" not in kw:
             kw["plots"], kw["extra_series"] = plot_inputs(
-                test, comp.variables, result, None, None
+                test, comp.variables, result, None, None, ()
             )
         plot_dir = tmp_path / "plots"
         html = generate_comparison_plots(
@@ -1577,6 +1607,7 @@ class TestPlotSections:
             test_model=test,
             metric_tree=comp.metric_tree,
             **kw,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         sidecar = json.loads(
@@ -1617,10 +1648,10 @@ class TestPlotSections:
             n_vars=2,
             plots=parse_plots(layout) if layout is not None else None,
         )
-        kw["plots"], kw["extra_series"] = plot_inputs(test, [], result, None, None)
+        kw["plots"], kw["extra_series"] = plot_inputs(test, [], result, None, None, ())
         plot_dir = tmp_path / "plots"
         html = generate_comparison_plots(
-            "M", None, result, [], plot_dir, test_model=test, **kw
+            "M", None, result, [], plot_dir, test_model=test, **kw, diagnostics=()
         )
         page = html.read_text(encoding="utf-8")
         sidecar = json.loads(
@@ -1778,7 +1809,7 @@ class TestPlotSections:
             x_expressions=expr,
         )
         comp = compare_test(test, result, decode_reference(ref))
-        plots, extra = plot_inputs(test, comp.variables, result, None, None)
+        plots, extra = plot_inputs(test, comp.variables, result, None, None, ())
         html = generate_comparison_plots(
             "M",
             decode_reference(ref),
@@ -1789,6 +1820,7 @@ class TestPlotSections:
             metric_tree=comp.metric_tree,
             plots=plots,
             extra_series=extra,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         # In the tree's order, which is the index order here — x[10] last.
@@ -1852,7 +1884,7 @@ class TestPlotSections:
             ),
         )
         comp = compare_test(test, result, decode_reference(ref))
-        plots, extra = plot_inputs(test, comp.variables, result, None, None)
+        plots, extra = plot_inputs(test, comp.variables, result, None, None, ())
         html = generate_comparison_plots(
             "M",
             decode_reference(ref),
@@ -1863,6 +1895,7 @@ class TestPlotSections:
             metric_tree=comp.metric_tree,
             plots=plots,
             extra_series=extra,
+            diagnostics=(),
         )
         page = html.read_text(encoding="utf-8")
         assert _page_data(page, "PLOT_SERIES") == [names]
@@ -2036,7 +2069,7 @@ class TestPlotSections:
                 {
                     "metric": "scalar",
                     "variable": "x",
-                    "quantity": "CPUtime.final",
+                    "quantity": "translation.continuous_time_states",
                     "max_value": 1e9,
                 },
             ],
@@ -2082,7 +2115,9 @@ class TestPlotSections:
         from dstf.reporting.report_suite import generate_comparison_plots
 
         with pytest.raises(ValueError, match="plots"):
-            generate_comparison_plots("M", None, None, [], tmp_path / "p")
+            generate_comparison_plots(
+                "M", None, None, [], tmp_path / "p", diagnostics=()
+            )
 
     def test_a_failed_run_has_no_plots_whatever_its_tree_and_extras(self):
         """O2, literally: a run that failed has no plots on either tier —
@@ -2111,7 +2146,7 @@ class TestPlotSections:
             metric_tree_spec=parse_metric_tree(self.XY),
             plots=parse_plots([{"var": "x", "context": ["z"]}, {"var": "w"}]),
         )
-        assert plot_inputs(test, [], result, None, None) == ((), {})
+        assert plot_inputs(test, [], result, None, None, ()) == ((), {})
 
 
 class TestReviewPlotsPath:
@@ -2212,7 +2247,7 @@ def test_a_context_series_the_result_carries_is_read_from_memory(tmp_path):
             VariableResult(name="y", index=2, time=t, values=2 * t),
         ],
     )
-    plots, extra = plot_inputs(test, scored, result, Files, tmp_path)
+    plots, extra = plot_inputs(test, scored, result, Files, tmp_path, ())
     assert [(p.subject, p.context, p.missing) for p in plots] == [(("x",), ("y",), ())]
     assert list(extra) == ["y"]
     assert extra["y"][1].tolist() == (2 * t).tolist()
@@ -2252,7 +2287,7 @@ def test_unit_tests_elements_the_result_lacks_never_fold():
             }
         ),
     )
-    plots, _ = plot_inputs(test, [], result, None, None)
+    plots, _ = plot_inputs(test, [], result, None, None, ())
     assert [p.subject for p in plots] == [("unitTests.x[5]",), ("unitTests.x[6]",)]
 
 
@@ -2536,7 +2571,7 @@ class TestBothTiersDrawTheSamePlots:
         comp = s.comparisons[A]
         result = project.results.get(A)
         plots, extra = plot_inputs(
-            project.test(A), comp.variables, result, type(project.backend), None
+            project.test(A), comp.variables, result, type(project.backend), None, ()
         )
         assert [(p.subject, p.watch) for p in plots] == [
             (("y",), False),
@@ -2552,8 +2587,11 @@ class TestBothTiersDrawTheSamePlots:
             test_model=project.test(A),
             result=result,
             metric_tree=comp.metric_tree,
+            diagnostics=(),
         )
-        ctx.update(plot_page_keys(ctx, plots, extra, comp.metric_tree, None))
+        ctx.update(
+            plot_page_keys(ctx, plots, extra, comp.metric_tree, None, diagnostics=())
+        )
         section = next(s for s in ctx["plot_sections"] if s["series"] == [UT1])
         figure = ctx["plot_figures"][section["index"]]
         (trace,) = [tr for tr in figure["data"] if tr["meta"]["kind"] == "act"]
@@ -2863,7 +2901,7 @@ class TestAVariableReadsAsItsExpression:
                 return {n: (t, np.cos(t)) for n in wanted if n in extra}
 
         resolved, extra_series = plot_inputs(
-            test, comp.variables, result, Files, tmp_path
+            test, comp.variables, result, Files, tmp_path, ()
         )
         html = generate_comparison_plots(
             "M",
@@ -2876,6 +2914,7 @@ class TestAVariableReadsAsItsExpression:
             max_embedded_samples=samples,
             plots=resolved,
             extra_series=extra_series,
+            diagnostics=(),
         )
         return html.read_text(encoding="utf-8"), json.loads(
             (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")
@@ -2990,7 +3029,7 @@ class TestAVariableReadsAsItsExpression:
             source="unit_tests",
             x_expressions=[expressions[n] for n in names],
         )
-        plots, extra = plot_inputs(test, [], result, None, None)
+        plots, extra = plot_inputs(test, [], result, None, None, ())
         html = generate_comparison_plots(
             "M",
             None,
@@ -3000,6 +3039,7 @@ class TestAVariableReadsAsItsExpression:
             test_model=test,
             plots=plots,
             extra_series=extra,
+            diagnostics=(),
         )
         return html.read_text(encoding="utf-8"), json.loads(
             (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")
@@ -3295,7 +3335,6 @@ class TestTheStatisticsTable:
             "translation": {"nonlinear": [1, 1, 1], "nonlinear_count": 3},
             "simulation": {"state_events": 2},
             "timing": {"total_wall": 4.02},
-            "CPUtime": 1.12,
         }
 
     @property
@@ -3304,13 +3343,33 @@ class TestTheStatisticsTable:
             "translation": {"nonlinear": []},
             "simulation": {"state_events": 2},
             "timing": {"total_wall": 3.91},
-            "CPUtime": 0.80,
+        }
+
+    @staticmethod
+    def _cpu(final: float = 1.12) -> dict:
+        """The listed CPUtime: the run's diagnostic (``final``) and the
+        baseline's summary (0.8), the two sides of its row."""
+        import numpy as np
+
+        from dstf.backends.types import VariableResult
+        from dstf.storage.baseline import DiagnosticSummary
+
+        run = VariableResult(
+            index=1,
+            time=np.array([0.0, 1.0]),
+            values=np.array([0.0, final]),
+            name="CPUtime",
+        )
+        return {
+            "listing": ["CPUtime"],
+            "run_diagnostics": [run],
+            "baseline_diagnostics": [DiagnosticSummary("CPUtime", final=0.8)],
         }
 
     def _sections(self):
         from dstf.reporting.context_builder import _build_statistics_sections
 
-        return _build_statistics_sections(self.BASE, self.RUN)
+        return _build_statistics_sections(self.BASE, self.RUN, **self._cpu())
 
     def _rows(self):
         return {r["label"]: r for s in self._sections() for r in s["rows"]}
@@ -3333,7 +3392,10 @@ class TestTheStatisticsTable:
         assert (row["current"], row["reference"]) == ("1.12 s", "0.8 s")
         from dstf.reporting.context_builder import _build_key_stats
 
-        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, self.RUN)}
+        stats = {
+            s["label"]: s
+            for s in _build_key_stats([], self.BASE, self.RUN, **self._cpu())
+        }
         assert stats["CPU Time"]["reference"] == "0.8 s"
 
     def test_the_sections_and_their_order_are_the_reports(self):
@@ -3348,10 +3410,10 @@ class TestTheStatisticsTable:
             ("Timing", ["Total wall"]),
         ]
 
-    def test_a_folded_diagnostic_takes_its_kind_from_the_runs_samples(self):
-        """A user-configured diagnostic folded into the statistics (`Wall`):
-        the report reads the run's samples as the tool's card does —
-        fractional, so a time, and 2.4 -> 2.5 is inside its 10%: untinted."""
+    def test_a_listed_name_reads_as_the_cards_value_row(self):
+        """A user-listed `Wall` (neither CPUtime nor EventCounter) is a
+        `value` in the report as on the tool's card: 2.4 -> 2.5 is beyond
+        the ordinary 1%, so tinted — and no unit."""
         import numpy as np
 
         from dstf.backends.types import TestResult, VariableResult
@@ -3361,8 +3423,11 @@ class TestTheStatisticsTable:
         wall = VariableResult(
             index=0, time=t, values=np.array([0.0, 1.5, 2.5]), name="Wall"
         )
-        run = {"Wall": 2.5, "simulation": {"state_events": 1}}
-        ref = {"statistics": {"Wall": 2.4, "simulation": {"state_events": 1}}}
+        run = {"simulation": {"state_events": 1}}
+        ref = {
+            "statistics": {"simulation": {"state_events": 1}},
+            "diagnostics": [{"name": "Wall", "final": 2.4}],
+        }
         ctx = _build_template_context(
             "M",
             [],
@@ -3370,9 +3435,11 @@ class TestTheStatisticsTable:
             run,
             None,
             result=TestResult("M", True, diagnostics=[wall], statistics=run),
+            diagnostics=["Wall"],
         )
         rows = {r["label"]: r for s in ctx["statistics_sections"] for r in s["rows"]}
-        assert not rows["Wall"]["changed"]
+        assert rows["Wall"]["changed"]
+        assert (rows["Wall"]["current"], rows["Wall"]["reference"]) == ("2.5", "2.4")
 
     def test_the_inputs_are_never_written(self):
         from dstf.reporting.context_builder import (
@@ -3381,25 +3448,36 @@ class TestTheStatisticsTable:
         )
 
         run, base = self.RUN, self.BASE
-        _build_statistics_sections(base, run)
-        _build_key_stats([], base, run)
+        _build_statistics_sections(base, run, listing=())
+        _build_key_stats([], base, run, listing=())
         assert (base, run) == (self.BASE, self.RUN)
 
     def test_key_stats_read_the_rows(self):
         from dstf.reporting.context_builder import _build_key_stats
 
-        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, self.RUN)}
+        stats = {
+            s["label"]: s
+            for s in _build_key_stats([], self.BASE, self.RUN, **self._cpu())
+        }
         nonlinear = stats["Nonlinear Systems"]
         assert (nonlinear["current"], nonlinear["reference"]) == ("3", "0")
         assert nonlinear["changed"]
         assert stats["CPU Time"]["changed"]
-        run = {**self.RUN, "CPUtime": 0.82}
-        stats = {s["label"]: s for s in _build_key_stats([], self.BASE, run)}
+        stats = {
+            s["label"]: s
+            for s in _build_key_stats([], self.BASE, self.RUN, **self._cpu(0.82))
+        }
         assert not stats["CPU Time"]["changed"]
 
     def test_key_stats_a_side_not_recorded_reads_blank(self):
         from dstf.reporting.context_builder import _build_key_stats
 
-        stats = {s["label"]: s for s in _build_key_stats([], {}, {"CPUtime": 1.12})}
+        cpu = self._cpu()["run_diagnostics"]
+        stats = {
+            s["label"]: s
+            for s in _build_key_stats(
+                [], {}, {}, listing=["CPUtime"], run_diagnostics=cpu
+            )
+        }
         assert stats["CPU Time"]["reference"] == ""
         assert not stats["CPU Time"]["changed"]

@@ -378,8 +378,10 @@ class TestFigure:
             min_value=None,
             max_value=None,
         )
-        vc.name = "CPUtime.final"
-        fig = variable_figure(build_view("CPUtime.final", leaves=[_stamped(vc)]))
+        vc.name = "translation.continuous_time_states"
+        fig = variable_figure(
+            build_view("translation.continuous_time_states", leaves=[_stamped(vc)])
+        )
         names = {s["name"] for s in fig["layout"]["shapes"]}
         assert {
             "/metrics/children/0/scalar/actual",
@@ -640,14 +642,18 @@ def test_leaves_by_variable_groups_stamped_leaves():
     vcs[0].name, vcs[1].name, vcs[2].name = "x", "y", "x"
     tree = implicit_and_tree(vcs)  # stamps /metrics/children/{i}
 
-    grouped = leaves_by_variable(tree)
+    grouped = leaves_by_variable(tree, ())
     assert set(grouped) == {"x", "y"}
     assert [path for path, _ in grouped["x"]] == [
         "/metrics/children/0",
         "/metrics/children/2",
     ]
     assert all(vc.name == name for name, pairs in grouped.items() for _, vc in pairs)
-    assert leaves_by_variable(None) == {}
+    assert leaves_by_variable(None, ()) == {}
+    # A card leaf (its path among `card`) is drawn on no plot.
+    assert [p for p, _ in leaves_by_variable(tree, {"/metrics/children/2"})["x"]] == [
+        "/metrics/children/0"
+    ]
 
 
 def _spectrum_view():

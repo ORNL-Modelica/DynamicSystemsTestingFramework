@@ -237,7 +237,7 @@ class TestReferenceStore:
                     index=1, time=time, values=np.linspace(0, 1, 101), name="CPUtime"
                 ),
             ],
-            statistics={"CPUtime": 1.0, "EventCounter": 5},
+            statistics={"translation": {"nonlinear_count": 2}},
         )
 
     def test_store_and_load(self, sample_models_dir, tmp_path):
@@ -326,7 +326,8 @@ class TestReferenceStore:
         assert "values" not in diag
 
     def test_statistics_stored(self, sample_models_dir, tmp_path):
-        """Statistics with diagnostic finals are stored."""
+        """Statistics are stored; a listed name's final is its summary's,
+        never a statistic."""
         config = Config(
             source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
@@ -338,8 +339,9 @@ class TestReferenceStore:
         store.store_reference(test, result, provenance=PROVENANCE)
         ref = store.get_reference(test.model_id)
 
-        assert ref.baseline.statistics["CPUtime"] == 1.0
-        assert ref.baseline.statistics["EventCounter"] == 5
+        assert ref.baseline.statistics == {"translation": {"nonlinear_count": 2}}
+        (cpu,) = ref.baseline.diagnostics
+        assert (cpu.name, cpu.final, cpu.min, cpu.max) == ("CPUtime", 1.0, 0.0, 1.0)
 
     def test_failed_result_not_stored(self, sample_models_dir, tmp_path):
         """Failed simulations are not stored as references."""
@@ -503,7 +505,7 @@ class TestBaselineView:
             "last_updated": "2026-02-20T12:30:00+00:00",
             "simulation": {"stop_time": 10.0, "tolerance": 1e-4},
             "comparison": {"tolerance": 0.01},
-            "statistics": {"CPUtime": 2.5},
+            "statistics": {"Foo": 2.5},
             "time": [0.0, 1.0, 2.0],
             "variables": [{"index": 1, "name": "x", "values": [0.0, 1.0, 2.0]}],
             "diagnostics": [{"name": "CPUtime", "values": [0.1, 0.2, 0.3]}],
@@ -515,7 +517,7 @@ class TestBaselineView:
         assert b.time == [0.0, 1.0, 2.0]
         assert b.simulation["stop_time"] == 10.0
         assert ref.comparison["tolerance"] == 0.01
-        assert b.statistics["CPUtime"] == 2.5
+        assert b.statistics["Foo"] == 2.5
         assert len(b.variables) == 1
         (d,) = b.diagnostics
         assert (d.name, d.final, d.min, d.max) == ("CPUtime", 0.3, 0.1, 0.3)

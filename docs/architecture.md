@@ -278,7 +278,8 @@ backend.read_results(manifests, tests)
     → lists variable names from .mat (fast header scan, no data loaded)
     → resolves variable patterns against available names
     → reads only needed variables from .mat via numpy.memmap (selective row access)
-    → auto-captures diagnostic variables (configurable, default: CPUtime, EventCounter)
+    → records the listed names it holds as diagnostics (`diagnostic_names`: testing.json's
+      diagnostic_variables, default CPUtime, EventCounter, then the entry's own)
     → returns dict[model_id → TestResult]
 
 compare_all(tests, results, store, default_tolerance, default_points)
@@ -345,8 +346,7 @@ order the codec writes them (optional ones only when present):
       "nonlinear": [3, 1], "nonlinear_count": 2, "nonlinear_total": 4, "nonlinear_max": 3,
       "init_nonlinear": [5], "init_nonlinear_count": 1, ...
     },
-    "simulation": {"cpu_time_integration": 0.5, ...},
-    "CPUtime": 12.3, "EventCounter": 42
+    "simulation": {"cpu_time_integration": 0.5, ...}
   },
   "diagnostics": [
     {"name": "CPUtime", "final": 12.3, "min": 0.0, "max": 12.3},
@@ -361,9 +361,12 @@ order the codec writes them (optional ones only when present):
 `sampling` says what accept did to the run's rows (D153) and the precision
 the arrays are read back through: a `"single"` file's numbers are written with
 9 significant digits and read back through float32, a `"double"` file's with
-17 — the run's own numbers either way. A diagnostic is stored as a summary
-(`final`, `min`, `max`), never a trajectory; an old `{name, values}` entry is
-summarized by the codec on read.
+17 — the run's own numbers either way. A listed name is stored as a summary
+(`final`, `min`, `max`); its curve is stored, in `variables`, only when a
+criterion needs it (any but a scalar's final, min or max over the whole run)
+or the entry's `variables` match it (D162). An old `{name, values}` entry is
+summarized by the codec on read, and a 1.1 copy of a listed name's final under
+`statistics` (`"CPUtime": 12.3`) is dropped on read and never written.
 
 `provenance` is written by every accept (`storage/accept.py::_provenance`):
 the `RunMetadata` of the run that produced the accepted result — read from the
@@ -1102,8 +1105,8 @@ or belongs in the status strip's ⋮ menu.
 | `VARIABLE` | a plot card's criteria header, for the plot's first tracked series | inline: the panel alone at the header's right end (Edit tree's `+`), its forms a row under the header — no dialog | `tests` (one), `variable`, and `texts` (the page's scope, so the panel reads the variable as the page does) | that card's plot |
 | `CRITERION` | the open criterion's editor, below its row | inline: the panel alone, no button, no heading | `tests` (one), `variable`, `leaf_path` | the plot the row sits under |
 | `NODE` | a tree node's row, and a criteria row under a plot | inline: the panel alone, no button, no heading | `tests` (one), `node_path` (a leaf OR a combinator), and `variable` on a criteria row | raises on `on` |
-| `STATISTIC` | the end of a Statistics-card row no criterion reads (D143) | inline: the panel alone (Edit tree's `+`), no button, no heading | `tests` (one), `quantity` (the row's quantity path, e.g. `translation.nonlinear_count`) | raises on `on` |
-| `STATISTIC_CRITERION` | the editor of a criterion scored through a statistic, under its Statistics row (D143) | inline: the panel alone, no button, no heading — CRITERION's editor with no plot, so a capability that needs one is not offered there | `tests` (one), `leaf_path` | raises on `on` |
+| `STATISTIC` | the end of a Statistics-card row no criterion reads (D143) | inline: the panel alone (Edit tree's `+`), no button, no heading | `tests` (one), `quantity` (the row's path: a statistic, e.g. `translation.nonlinear_count`; a listed name, e.g. `CPUtime`; or `<name>.min` / `<name>.max`, D162). Its `+` writes a statistic's row as `"quantity": <path>` and a listed name's as `{"variable": <name>, "quantity": {"reduce": ...}}` (its final, min or max) | raises on `on` |
+| `STATISTIC_CRITERION` | the editor of a card criterion under its Statistics row (D143): a statistic's, or a listed name's final, min or max (`{"variable": <name>, "quantity": {"reduce": ...}}`, D162) | inline: the panel alone, no button, no heading — CRITERION's editor with no plot, so a capability that needs one is not offered there | `tests` (one), `leaf_path` | raises on `on` |
 | `TREE_CRITERION` | the editor of any criterion opened under its row in the criteria tree (D146) | inline: the panel alone, no button, no heading — CRITERION's editor with no plot, like `STATISTIC_CRITERION`'s | `tests` (one), `leaf_path` | raises on `on` |
 | `FAMILY_CRITERION` | the editor of a folded criteria row under a family's plot: one criterion on several elements of an array (D152) | inline: the panel alone, no button, no heading — CRITERION's editor for every member at once, with no plot (nothing of twenty criteria is dragged), so a capability that edits ONE leaf is not offered there | `tests` (one), `leaf_paths` (every member, in tree order), `leaf_path` (the first) and its `variable` | raises on `on` |
 

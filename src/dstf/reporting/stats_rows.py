@@ -1,34 +1,59 @@
 """The Statistics rows both tiers render: the report's Statistics table and
 the tool's Statistics card.
 
-One row per statistic the run or its baseline recorded, side by side. A
-row is ``changed`` when the criterion its ``+`` would add would fail — the
-scalar mode's own verdict over the seed
-:func:`~dstf.comparison.seeds.seed_quantity` writes, so the tolerance lives
-in one place. Not the report's old "any difference": a CPU time 3% off is
-not a change the tool would score.
+One row per statistic the run or its baseline recorded, side by side.
+Where both sides are finite numbers, a row is ``changed`` when the
+criterion its ``+`` would add would fail — the scalar mode's own verdict
+over the leaf it writes (:func:`~dstf.comparison.seeds.seed_quantity`'s
+for a count or a time, `~dstf.comparison.seeds.VALUE_LEAF` for a value),
+so the tolerance lives in one place. Not the report's old "any
+difference": a CPU time 3% off is not a change the tool would score. A
+side that is no finite number has its own rule, no criterion's: the row
+changed when one side is NaN or infinite, or both are and differ; not
+when both are the same.
 
 The rows keep the report's order and sections: translation, simulation,
 timing, then any other section in the order they appear (the baseline's
 first); keys alphabetical inside a section, ``timing`` its fixed four
-first; the top-level scalars (``CPUtime``, ``EventCounter``, folded in from
-the diagnostics) sorted in among the Simulation keys — or, with no
+first; the listed names' finals (``CPUtime``, ``EventCounter``, a test's
+own ``diagnostic_variables``: the run's diagnostics and the baseline's
+summaries) sorted in among the Simulation keys — or, with no
 ``simulation`` section on either side, a Simulation section of their own
 at the end.
+
+A number is shown at the precision it was recorded with (owner,
+2026-10-18): a listed name's final at 7 significant digits from a float32
+run or a single-precision baseline, 15 otherwise (`StatRow.digits`); a
+statistic of the log at 15. Storage and scoring are unchanged.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+import math
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
 
-from ..backends.common.statistics import SUMMARIES, read_summary, sizes_systems
+from ..backends.common.statistics import (
+    SUMMARIES,
+    diagnostic_final,
+    read_summary,
+    sizes_systems,
+)
 from ..comparison.modes import ScalarConfig, ScalarMode
-from ..comparison.seeds import quantity_kind, seed_quantity
+from ..comparison.seeds import (
+    COUNTS,
+    TIMES,
+    VALUE_LEAF,
+    quantity_kind,
+    seed_quantity,
+)
 from ..comparison.tree_eval import resolve_scalar_path
+from ..storage.baseline_codec import DOUBLE_SHOWN, recorded_digits
+
+Kind = Literal["count", "time", "value"]
 
 #: The section a leaf's quantity lands in when no row holds it (S4).
 OTHER = "other scored"
@@ -51,26 +76,43 @@ class StatRow:
     key: str  # the key inside its section ("nonlinear_count", "CPUtime")
     path: str  # the quantity path a leaf reads ("translation.nonlinear_count")
     label: str  # "Nonlinear count"; a top-level name as is
-    kind: Literal["count", "time", "text"]
+    #: a `value` is a listed name that is neither a time nor a count (a
+    #: height): no unit, a percentage delta
+    kind: Literal["count", "time", "value", "text"]
     run: Any  # a number, or a list / string for a `text` row; None: not recorded
     baseline: Any
     changed: bool
     delta: str  # "0→3" | "+38%" | "+0.12 s" | "" (S6)
+    #: the significant digits each side was recorded with, (run, baseline):
+    #: what `report_text` and `card_text` show it at
+    digits: tuple[int, int] = (DOUBLE_SHOWN, DOUBLE_SHOWN)
 
 
 def changed(
     path: str,
-    kind: Literal["count", "time"],
+    kind: Kind,
     run: float | None,
     baseline: float | None,
 ) -> bool:
-    """Would the criterion a ``+`` on this row adds fail? Never when a side
-    has no value (S3): there is nothing to compare, and an accept records
-    it."""
+    """For finite numbers on both sides: would the criterion a ``+`` on
+    this row adds fail? Never when a side has no value (S3): there is
+    nothing to compare, and an accept records it. A non-finite side is no
+    number to score against, and has its own rule: the row changed when one
+    side is non-finite, or both are and differ (nan and inf, +inf and -inf)
+    — never when both are the same. A `value` takes the 1% the
+    ``+`` writes against a baseline's summary (`VALUE_LEAF`) — the leaf
+    itself, never a seed, which comes back empty off a non-finite baseline
+    — a count and a time their known ones."""
     if run is None or baseline is None:
         return False
-    seed = seed_quantity(path, kind, into="and")
-    leaf = seed["children"][0] if "combinator" in seed else seed
+    r, b = float(run), float(baseline)
+    if not (math.isfinite(r) and math.isfinite(b)):
+        return not (r == b or (math.isnan(r) and math.isnan(b)))
+    if kind == "value":
+        leaf = VALUE_LEAF
+    else:
+        seed = seed_quantity(path, kind, into="and")
+        leaf = seed["children"][0] if "combinator" in seed else seed
     params = {k: v for k, v in leaf.items() if k not in ("metric", "variable")}
     got = ScalarMode(ScalarConfig(**params)).compare(
         np.array([0.0]),
@@ -101,49 +143,81 @@ def _rounded(v: float) -> str:
     return f"{v:.0f}" if abs(v) >= 999.5 else f"{v:#.3g}".rstrip(".")
 
 
-def _value_text(kind: str, value: Any, time: Callable[[float], str]) -> str:
+def _shown(value: float, digits: int) -> float:
+    """``value`` at the ``digits`` it was recorded with (`StatRow.digits`):
+    a float32's CPU time ``0.04324999824166298`` is ``0.04325``."""
+    return float(f"{value:.{digits}g}")
+
+
+def _value_text(
+    kind: str, value: Any, number: Callable[[float], str], digits: int
+) -> str:
     if value is None:
         return ""
     if kind == "text" or not _is_number(value):
         return _text(value)
     if kind == "time":
-        return f"{time(float(value))} s"
+        return f"{number(_shown(float(value), digits))} s"
+    if kind == "value":
+        return number(_shown(float(value), digits))
     return _count_text(value)
 
 
-def report_text(kind: str, value: Any) -> str:
-    """A row's value as the REPORT prints it, in full: a time with its unit
-    (``0.045845 s``, ``1.600425 s``, ``1234567.89 s`` — ``:.15g``, where
-    ``:g`` stopped at six figures, ``1.60042 s``), a count whole
-    (``1234567``, never ``1.23457e+06``), a list joined; ``""`` for a side
-    that recorded none. The report is where a number is read to its last
-    digit."""
-    return _value_text(kind, value, lambda v: f"{v:.15g}")
+def report_text(kind: str, value: Any, digits: int = DOUBLE_SHOWN) -> str:
+    """A row's value as the REPORT prints it, in full — to the ``digits``
+    it was recorded with (`StatRow.digits`): a time with its unit
+    (``0.045845 s``, ``1.600425 s``, ``1234567.89 s`` — where ``:g``
+    stopped at six figures, ``1.60042 s``), a `value` without one, a count
+    whole (``1234567``, never ``1.23457e+06``), a list joined; ``""`` for a
+    side that recorded none. The report is where a number is read to its
+    last digit."""
+    return _value_text(kind, value, lambda v: f"{v:.15g}", digits)
 
 
-def card_text(kind: str, value: Any) -> str:
+def card_text(kind: str, value: Any, digits: int = DOUBLE_SHOWN) -> str:
     """A row's value as the tool's CARD prints it, rounded to be compared
     at a glance: a time to 3 significant figures keeping its zeros
-    (``0.800 s``), whole seconds from 999.5 s (``1234 s``); otherwise as
-    :func:`report_text`."""
-    return _value_text(kind, value, _rounded)
+    (``0.800 s``), whole seconds from 999.5 s (``1234 s``), a `value` the
+    same without the unit — each from the number at the ``digits`` it was
+    recorded with; otherwise as :func:`report_text`."""
+    return _value_text(kind, value, _rounded, digits)
 
 
 def _delta(kind: str, run: float | None, baseline: float | None) -> str:
-    """S6: a count reads ``0→3``, a time ``+38%`` (``+0.12 s`` over a zero
-    baseline) — whenever both sides are present and differ, changed or
-    not. Under 1% a time keeps one decimal (``+0.3%``), and under 0.05%
-    reads ``+<0.1%``: a time that moved never reads ``+0%`` or ``+0.0%``."""
+    """S6: a count reads ``0→3``, a time or a `value` ``+38%`` (a time
+    ``+0.12 s`` over a zero baseline, a value ``+0.12``) — whenever both
+    sides are present and differ, changed or not. The percentage is of the
+    baseline's magnitude: over a negative baseline a value that went down
+    reads down, and -2 -> -4 reads ``-100%``. Under 1% it keeps one decimal
+    (``+0.3%``), and under 0.05% reads ``+<0.1%``: a number that moved never
+    reads ``+0%`` or ``+0.0%``. A run of zero reads 100% toward zero —
+    ``-100%`` over a positive baseline, ``+100%`` over a negative one. A
+    run on the baseline's side of zero whose change reads that, rounded,
+    moved by less than all of the baseline and reads ``-<100%`` /
+    ``+<100%``; one on the other side crossed zero, moved by more, and
+    reads its change rounded (1 -> -0.004 reads ``-100%``). Away from zero
+    the magnitude rule stands too (-2 -> -4 reads ``-100%``)."""
     if run is None or baseline is None or run == baseline:
         return ""
+    if not (math.isfinite(run) and math.isfinite(baseline)):
+        return ""  # no change to read off a non-finite side
     if kind == "count":
         return f"{_count_text(baseline)}→{_count_text(run)}"
     if baseline == 0:
-        return f"{run - baseline:+.2g} s"
-    ratio = (run - baseline) / baseline
+        return f"{run - baseline:+.2g}" + (" s" if kind == "time" else "")
+    toward_zero = f"{'-' if baseline > 0 else '+'}100%"
+    if run == 0:
+        return toward_zero
+    ratio = (run - baseline) / abs(baseline)
+    if not math.isfinite(ratio):
+        return ""  # too large to be a number: 1e308 -> -1e308
     if abs(ratio) < 0.0005:
         return f"{'+' if ratio > 0 else '-'}<0.1%"
-    return f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"
+    text = f"{ratio:+.1%}" if abs(ratio) < 0.01 else f"{ratio:+.0%}"
+    # Decided by the text, not by a band of the ratio: a band and the
+    # rounding meet at the same edge, where a float decides which wins.
+    kept_sign = (run > 0) == (baseline > 0)
+    return f"{toward_zero[0]}<100%" if text == toward_zero and kept_sign else text
 
 
 def _text(v: object) -> str:
@@ -172,8 +246,48 @@ def _diagnostic_values(diagnostics: Sequence, name: str) -> np.ndarray | None:
     for entry in diagnostics:
         if getattr(entry, "name", None) == name:
             values = getattr(entry, "values", None)
-            return None if values is None else np.asarray(values, dtype=float)
+            return None if values is None else np.asarray(values)
     return None
+
+
+def listed_names(
+    listing: Collection[str],
+    run_diagnostics: Iterable[Any],
+    baseline_diagnostics: Iterable[Any],
+    scored: Collection[str] = (),
+) -> set[str]:
+    """The listed names the rows are built from — a row each: the names
+    the test lists (``listing``, `diagnostic_names`: what a leaf is routed
+    to the card by) that the run recorded or the baseline summarizes, and
+    those a card leaf scores (``scored``). The tiers differ by ``scored``:
+    the card passes its card leaves' rows, so a name never run has its row
+    there, to be seen, edited and deleted; the report's table passes none
+    and shows what a side holds — its tree lists such a criterion. A
+    subset of the listing by construction, so a row's ``+``, which reads
+    the listing too, always lands on the card. A name the test does not
+    list has no row, whatever a stored result still holds of it (owner,
+    2026-10-19)."""
+    held = {str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name}
+    return {name for name in listing if name in held or name in scored}
+
+
+def _row_names(paths: Iterable[str]) -> set[str]:
+    """The names the card rows ``paths`` (`card_row`) are of: a name's own
+    row (its final) and ``<name>.min`` / ``<name>.max``."""
+    out: set[str] = set()
+    for path in paths:
+        out.add(path)
+        name, _, field_name = path.rpartition(".")
+        if field_name in ("min", "max"):
+            out.add(name)
+    return out
+
+
+def listed_kind(name: str) -> Kind:
+    """A listed name's row kind, by its name alone: CPUtime a time,
+    EventCounter a count, any other a `value` — never guessed from its
+    values (a height is no time)."""
+    return "time" if name in TIMES else "count" if name in COUNTS else "value"
 
 
 def _row(
@@ -184,12 +298,17 @@ def _row(
     baseline: object,
     *,
     top_level: bool = False,
-    samples: np.ndarray | None = None,
+    kind: Kind | None = None,
+    digits: tuple[int, int] = (DOUBLE_SHOWN, DOUBLE_SHOWN),
 ) -> StatRow:
     label = _label(key, top_level)
     if (run is None or _is_number(run)) and (baseline is None or _is_number(baseline)):
-        kind = quantity_kind(path, samples)
+        kind = kind or quantity_kind(path)
         r, b = _number(run), _number(baseline)
+        # The delta reads the numbers as they are shown; whether the row
+        # changed is the scorer's verdict, over the numbers it scores.
+        shown_r = None if r is None else _shown(r, digits[0])
+        shown_b = None if b is None else _shown(b, digits[1])
         return StatRow(
             section,
             key,
@@ -199,7 +318,8 @@ def _row(
             run,
             baseline,
             changed(path, kind, r, b),
-            _delta(kind, r, b),
+            _delta(kind, shown_r, shown_b),
+            digits,
         )
     # A list or a string: the report's rule — formatted text differs, both
     # sides non-empty. Nothing scores it, so the card never shows it (S1).
@@ -247,43 +367,72 @@ def statistics_rows(
     run: Mapping | None,
     baseline: Mapping | None,
     *,
+    listing: Collection[str],
     run_diagnostics: Sequence = (),
     baseline_diagnostics: Sequence = (),
     extra_paths: Iterable[str] = (),
+    baseline_digits: int = DOUBLE_SHOWN,
 ) -> list[StatRow]:
-    """Every statistic the run or its baseline recorded, in the report's
-    order (the module docstring), then a row per ``extra_paths`` entry no
-    row holds (S4: a leaf's quantity always has a home). A system-size
-    list on either side gives its three summary rows on both; a summary
-    key a side lacks reads through :func:`read_summary` (a baseline's empty
-    ``nonlinear`` gives ``nonlinear_count`` 0). Never writes into its
-    inputs."""
+    """Every statistic the run or its baseline recorded, and the final of
+    every listed name (:func:`listed_names` over ``listing``, the test's
+    `diagnostic_names`: one either side holds — the run's diagnostics, the
+    baseline's summaries — or an ``extra_paths`` row is of), in the
+    report's order (the module docstring), then a row
+    per ``extra_paths`` entry no row holds (S4: a leaf's quantity always
+    has a home). A system-size list on either side gives its three summary
+    rows on both; a summary key a side lacks reads through
+    :func:`read_summary` (a baseline's empty ``nonlinear`` gives
+    ``nonlinear_count`` 0). ``baseline_digits`` is the precision the
+    baseline's file says it was recorded with
+    (`~dstf.storage.baseline_codec.shown_digits`); a run's is its array's.
+    Never writes into its inputs."""
     run, baseline = run or {}, baseline or {}
     names: list[str] = []
     for src in (baseline, run):
         for k, v in src.items():
             if isinstance(v, Mapping) and k not in names:
                 names.append(k)
+    extra_paths = list(dict.fromkeys(extra_paths))
+    listed = listed_names(
+        listing, run_diagnostics, baseline_diagnostics, _row_names(extra_paths)
+    )
+    # A top-level number that is no diagnostic keeps its row; one named
+    # like a diagnostic either side holds, or a listed name, is the copy
+    # its final once had, never read — and a name the test no longer lists
+    # has no row at all.
+    copies = {
+        str(d.name) for d in (*run_diagnostics, *baseline_diagnostics) if d.name
+    } | listed
     top = sorted(
         {
             k
             for src in (baseline, run)
             for k, v in src.items()
-            if not isinstance(v, Mapping)
+            if not isinstance(v, Mapping) and k not in copies
         }
+        | listed
     )
     ordered = [n for n in _PREFERRED if n in names]
     ordered += [n for n in names if n not in _PREFERRED]
 
     def top_row(key: str) -> StatRow:
+        if key not in listed:
+            return _row(
+                "simulation", key, key, run.get(key), baseline.get(key), top_level=True
+            )
+        samples = _diagnostic_values(run_diagnostics, key)
         return _row(
             "simulation",
             key,
             key,
-            run.get(key),
-            baseline.get(key),
+            diagnostic_final(run_diagnostics, key),
+            diagnostic_final(baseline_diagnostics, key),
             top_level=True,
-            samples=_diagnostic_values(run_diagnostics, key),
+            kind=listed_kind(key),
+            digits=(
+                recorded_digits(samples) if samples is not None else DOUBLE_SHOWN,
+                baseline_digits,
+            ),
         )
 
     rows: list[StatRow] = []
@@ -306,16 +455,54 @@ def statistics_rows(
     if "simulation" not in names:
         rows += [top_row(key) for key in top]
 
-    # A text row holds no leaf: the card never shows one (S1). `X.final`
-    # is the row `X` only for a top-level `X` (S2).
+    # A text row holds no leaf: the card never shows one (S1). A listed
+    # name's min or max (`card_row`: `X.min`, `X.max`) is read from the two
+    # sides' summaries, as its final's row is; any other path is a
+    # statistic's.
     held = {row.path for row in rows if row.kind != "text"}
-    for path in dict.fromkeys(extra_paths):
-        name, _, field = path.rpartition(".")
-        if path in held or (field == "final" and "." not in name and name in held):
+    for path in extra_paths:
+        if path in held:
             continue
-        r = resolve_scalar_path(path, dict(run), list(run_diagnostics))
-        b = resolve_scalar_path(path, dict(baseline), list(baseline_diagnostics))
-        samples = _diagnostic_values(run_diagnostics, name or path)
-        rows.append(_row(OTHER, path, path, r, b, top_level=True, samples=samples))
+        name, _, field_name = path.rpartition(".")
+        if name in listed and field_name in ("min", "max"):
+            samples = _diagnostic_values(run_diagnostics, name)
+            rows.append(
+                _row(
+                    OTHER,
+                    path,
+                    path,
+                    _summary(run_diagnostics, name, field_name),
+                    _summary(baseline_diagnostics, name, field_name),
+                    top_level=True,
+                    kind=listed_kind(name),
+                    digits=(
+                        recorded_digits(samples)
+                        if samples is not None
+                        else DOUBLE_SHOWN,
+                        baseline_digits,
+                    ),
+                )
+            )
+        else:
+            r = resolve_scalar_path(path, dict(run))
+            b = resolve_scalar_path(path, dict(baseline))
+            rows.append(_row(OTHER, path, path, r, b, top_level=True))
         held.add(path)
     return rows
+
+
+def _summary(entries: Sequence, name: str, field_name: str) -> float | None:
+    """The ``min`` or ``max`` of the listed name ``name`` among ``entries``:
+    a run's diagnostic over its samples, a baseline's summary's field."""
+    for entry in entries:
+        if getattr(entry, "name", None) != name:
+            continue
+        if hasattr(entry, field_name):
+            value = getattr(entry, field_name)
+            return None if value is None else float(value)
+        raw = getattr(entry, "values", None)
+        values = np.asarray([] if raw is None else raw, dtype=float)
+        if values.size == 0:
+            return None
+        return float(values.min() if field_name == "min" else values.max())
+    return None

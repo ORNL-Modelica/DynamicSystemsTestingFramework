@@ -216,8 +216,10 @@ LEAF: dict[str, Setting] = {
         None,
         "The variable this criterion scores, by its result-file name. A "
         "variable named here is recorded and stored even when the entry's "
-        "variables do not name it. A scalar criterion whose quantity is a path "
-        "may leave it out.",
+        "variables do not match it — except a name in diagnostic_variables "
+        "that only a scalar's final, min or max over the whole run names: "
+        "its summary is stored, not its curve. A scalar criterion whose "
+        "quantity is a path may leave it out.",
     ),
     "against": Setting(
         {"type": "string", "minLength": 1},
@@ -303,7 +305,10 @@ ENTRY: dict[str, Setting] = {
         'and ? are wildcards, and ["*"] tracks every variable the result '
         "holds. A UnitTests "
         "variable and a variable a criterion names are tracked whether "
-        "or not they are listed here. An entry that tracks nothing and "
+        "or not they are listed here — but a name in diagnostic_variables "
+        "that only a scalar's final, min or max over the whole run names is "
+        "not: its summary is stored, and its curve only when this list "
+        "matches it. An entry that tracks nothing and "
         "scores nothing passes when its simulation completes.",
     ),
     "simulation": Setting(
@@ -359,6 +364,15 @@ ENTRY: dict[str, Setting] = {
         '"all" — every point the simulator wrote — or a whole number of 2 '
         "or more, which thins a longer run to at most that many. Without "
         "this key testing.json's baseline_points applies.",
+    ),
+    "diagnostic_variables": Setting(
+        {"type": "array", "items": {"type": "string"}},
+        [],
+        "Names whose summary (final, min, max) this test's baseline stores, "
+        "in addition to `testing.json`'s list. A listed name's curve is "
+        "stored only when a criterion needs it — any criterion but a "
+        "scalar's final, min or max over the whole run — or when the "
+        "entry's variables match it.",
     ),
     **NOTES,
 }

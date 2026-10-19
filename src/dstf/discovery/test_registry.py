@@ -2,7 +2,7 @@
 
 import copy
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -39,6 +39,9 @@ class TestModel:
         output_interval: Seconds between output points, or None.
         timeout: Seconds the test may run, or None for the run's limit.
         variable_patterns: The entry's ``variables``: names and patterns.
+        diagnostic_variables: The entry's own ``diagnostic_variables``,
+            listed after the project's: names whose final, min and max its
+            baseline stores.
     """
 
     model_id: str
@@ -99,6 +102,10 @@ class TestModel:
     # run. None when the entry has no such key: the project's applies
     # (``Config.baseline_points``).
     baseline_points: int | str | None = None
+
+    # The entry's own ``diagnostic_variables``: names whose summary this
+    # test's runs record beside the project's (`diagnostic_names`).
+    diagnostic_variables: list[str] = field(default_factory=list)
 
     # PTA.4 — richer-contract fields settable via recognizers. Additive;
     # defaults preserve pre-PTA behavior.
@@ -178,6 +185,24 @@ class TestModel:
         ):
             self.field_sources.setdefault(fname, "default")
         return self
+
+
+def diagnostic_names(test: TestModel, project: Sequence[str]) -> list[str]:
+    """The names a test lists, whose final, min and max its baseline
+    stores: what a backend's ``read_result`` records as the result's
+    ``diagnostics``, one for each of these names its result holds.
+
+    Args:
+        test: The test, whose entry may list its own
+            (``test.diagnostic_variables``).
+        project: The project's list (``config.diagnostic_variables``).
+
+    Returns:
+        The project's names first, then the test's own, each name once, in
+        that order. A name listed by both is one name: project and test
+        names mean the same thing.
+    """
+    return list(dict.fromkeys([*project, *test.diagnostic_variables]))
 
 
 def _build_test_model_from_recognizer_results(
@@ -450,6 +475,7 @@ def merge_tests(
                 existing.plots = spec_test.plots
             if spec_test.baseline_points is not None:
                 existing.baseline_points = spec_test.baseline_points
+            existing.diagnostic_variables = spec_test.diagnostic_variables
         else:
             # Provenance for spec-set fields was stamped by parse_test_spec;
             # unset fields get "default" in finalize_defaults — review

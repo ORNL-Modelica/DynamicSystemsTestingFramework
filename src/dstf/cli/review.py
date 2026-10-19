@@ -1,7 +1,7 @@
 """The interactive review loop (`run -i`): accept / skip / detail / plot."""
 
 from ..backends.types import label_with_name
-from ..discovery.test_registry import TestModel
+from ..discovery.test_registry import TestModel, diagnostic_names
 from ..reporting.status import (
     FAIL,
     NO_REF,
@@ -328,8 +328,11 @@ def _generate_and_open_plots(
         artifact_files = ()
 
     # The page's layout, through the one helper the suite path uses.
+    diagnostics = (
+        diagnostic_names(test, config.diagnostic_variables) if test is not None else []
+    )
     plots, extra_series = plot_inputs(
-        test, comp.variables, result, backend_cls, test_dir
+        test, comp.variables, result, backend_cls, test_dir, diagnostics
     )
 
     html_path = generate_comparison_plots(
@@ -349,6 +352,7 @@ def _generate_and_open_plots(
         theme=config.theme,
         plots=plots,
         extra_series=extra_series,
+        diagnostics=diagnostics,
     )
 
     if html_path:

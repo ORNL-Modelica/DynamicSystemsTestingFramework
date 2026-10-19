@@ -92,6 +92,46 @@ criterion scores is still recorded and plotted, and each report names it in a
 warning, so a new variable that needs a criterion does not go unnoticed. Under a
 tree, `comparison.variable_overrides` scores nothing.
 
+Every name in the result is a variable, `CPUtime` and `EventCounter` included,
+and any criterion may score it. A name listed in `diagnostic_variables` —
+`testing.json`'s, or a test entry's own — has its summary (final, min, max)
+stored in the baseline. Its curve is stored too when the entry's `variables`
+match it or a criterion needs it: any criterion but a `scalar`'s final, min
+or max over the whole run, which is scored from the summary. A test that
+checks its event count exactly, warns when its CPU time moves by more than
+10%, and scores the maximum of `pump.speed` within ±0.02 of the baseline's —
+read from the summary its listing keeps:
+
+<!-- snippet: test_spec -->
+```json
+{
+  "tests": [
+    {
+      "model": "MyLib.Examples.PipeTest",
+      "variables": ["pipe.T[1]"],
+      "diagnostic_variables": ["pump.speed"],
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {"metric": "nrmse", "variable": "pipe.T[1]", "tolerance": 0.01},
+          {"metric": "scalar", "variable": "EventCounter",
+           "quantity": {"reduce": "final"}, "tolerance": 0, "tolerance_mode": "abs"},
+          {"metric": "scalar", "variable": "pump.speed",
+           "quantity": {"reduce": "max"}, "tolerance": 0.02},
+          {"combinator": "warn", "children": [
+            {"metric": "scalar", "variable": "CPUtime",
+             "quantity": {"reduce": "final"}, "tolerance": 0.1, "tolerance_mode": "rel"}
+          ]}
+        ]
+      }
+    }
+  ]
+}
+```
+
+A dotted `quantity` string names a statistic of the simulator's log, such as
+`"translation.nonlinear_count"`, never a variable.
+
 ## A tolerance with two sides
 
 A tolerance is one number, or a pair that sets each side on its own. With
@@ -131,9 +171,12 @@ queue that runs the selected tests again:
 ![dstf author's Suite page: the tests with their status, Criteria and times](../img/author-suite.png)
 
 A test's page draws a plot per scored variable with its criteria under it. A
-criterion opens into its fields beside the plot it scores; its bounds, bands
-and checkpoints can also be dragged on the plot, and Ctrl+click adds a row —
-a checkpoint, a tube's control point — that settles on the data:
+number — a statistic of the log, or a listed name's final, min or max — is
+not on a plot: its criterion is on the page's Statistics card, and in the
+report it is in the metric tree. A criterion opens into its fields beside the
+plot it scores; its bounds, bands and checkpoints can also be dragged on the
+plot, and Ctrl+click adds a row — a checkpoint, a tube's control point — that
+settles on the data:
 
 ![A range criterion open under its plot, with its bounds as fields and as dashed lines](../img/author-editor.png)
 

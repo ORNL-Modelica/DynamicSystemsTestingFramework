@@ -349,6 +349,7 @@ class TestAStatementIsNotAChange:
             tmp_path / "plots",
             warnings=comp.warnings,
             plots=[],
+            diagnostics=(),
         )
         page = Path(html).read_text(encoding="utf-8")
         block = re.search(

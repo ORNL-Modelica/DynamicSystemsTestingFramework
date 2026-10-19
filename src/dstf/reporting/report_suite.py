@@ -14,17 +14,18 @@ import re
 import shutil
 import subprocess
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from ..comparison.comparator import VariableComparison
 from ..comparison.types import TestComparison
 from ..config_shape import default
+from ..discovery.test_registry import diagnostic_names
 from ..storage.baseline import ReferenceFile
 from .context_builder import _build_template_context
 from .rows import summary_fields
 from .status import classify_with_class, refusal
-from .tree_rows import criteria_rows
+from .tree_rows import card_paths, criteria_rows
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -145,7 +146,7 @@ def _sanitize_filename(name: str) -> str:
     return name
 
 
-def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
+def plot_inputs(test, comp_variables, result, backend_cls, test_dir, diagnostics):
     """``(plots, extra_series)`` for one test's page: the plots it draws and
     every series of theirs the page's scored and no-baseline entries do not
     answer — context series and watch plots.
@@ -161,6 +162,9 @@ def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
     TRANSFORM reports pay nothing, and what the result carries is what the
     plots can draw. An extra's series is taken from the result in memory
     when it is there, and read from the file only when it is not.
+
+    ``diagnostics`` are the names the test lists (`diagnostic_names`): a
+    number one stored summary of one answers is on no plot.
     """
     from ..discovery.plots import plots_of_test
 
@@ -173,6 +177,7 @@ def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
         [v.name for v in comp_variables or ()],
         result,
         listed=backend_cls.result_names(test_dir) if readable else None,
+        diagnostics=diagnostics,
     )
     derived = {name for plot in plots if not plot.watch for name in plot.subject}
     wanted = [
@@ -222,7 +227,14 @@ def _context_labels(context: dict, key: str = "label") -> dict[str, str]:
 
 
 def plot_page_keys(
-    context, plots, extra_series, metric_tree, max_samples, theme: str = "default"
+    context,
+    plots,
+    extra_series,
+    metric_tree,
+    max_samples,
+    theme: str = "default",
+    *,
+    diagnostics: Sequence[str],
 ) -> dict:
     """``plots`` (the sidecar's record), ``plot_figures``, ``plot_series``
     and ``plot_sections`` from a render context, one of each per plot of
@@ -245,7 +257,9 @@ def plot_page_keys(
 
     The ONE producer of the page's plot keys: the template loops over plot
     sections, so a caller or a fixture that hand-rolled them would be a
-    second layout nobody renders through.
+    second layout nobody renders through. ``diagnostics`` (the names the
+    test lists) keep a number read from a listed name's summary out of
+    every section's criteria (`criteria_rows`): the metric tree lists it.
     """
     from ..figures.assemble import leaves_by_variable, view_from_trajectory
     from ..figures.families import family_label, group_families
@@ -264,9 +278,11 @@ def plot_page_keys(
     # beside (the section heading), `texts` everywhere else.
     labels = _context_labels(context)
     texts = _context_labels(context, "text")
-    leaves_by_var = leaves_by_variable(metric_tree)
-    budget = max_samples if max_samples and max_samples > 0 else None
     tree_view = context.get("tree_view")
+    # A card leaf (a statistic, a listed name's number) is in the metric
+    # tree and on no plot: neither a section's criteria nor its marks.
+    leaves_by_var = leaves_by_variable(metric_tree, card_paths(tree_view, diagnostics))
+    budget = max_samples if max_samples and max_samples > 0 else None
 
     def curve(n: str) -> tuple:
         """``(time, values)`` of a series' actual curve, from whichever
@@ -354,7 +370,7 @@ def plot_page_keys(
             if lone in nobaseline
             else None
         ) or []
-        criteria = criteria_rows(tree_view, plot.subject)
+        criteria = criteria_rows(tree_view, plot.subject, diagnostics)
         records.append(
             {
                 "kind": plot.kind,
@@ -466,6 +482,10 @@ def generate_comparison_plots(
     run_metadata: dict | None = None,
     plots=None,
     extra_series=None,
+    *,
+    # The names the test lists (`diagnostic_names`). A number read from
+    # one's summary is in the metric tree, never on a plot.
+    diagnostics: Sequence[str],
 ) -> Path | None:
     """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
 
@@ -488,7 +508,9 @@ def generate_comparison_plots(
                 "generate_comparison_plots needs plots= or the test_model "
                 "they derive from"
             )
-        plots, extra_series = plot_inputs(test_model, comparisons, result, None, None)
+        plots, extra_series = plot_inputs(
+            test_model, comparisons, result, None, None, diagnostics
+        )
     if plot_dir.exists():
         shutil.rmtree(plot_dir)
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -515,6 +537,7 @@ def generate_comparison_plots(
         # names included, as the tool's `Session.variable_texts` includes
         # them: the plot still names them ("Not in this result: z").
         plot_series=[n for p in plots for n in p.series],
+        diagnostics=diagnostics,
     )
 
     if max_embedded_samples is None:
@@ -524,7 +547,13 @@ def generate_comparison_plots(
     # LAYOUT — names, no arrays — joins the sidecar; the figures are popped
     # out and put back after the dump, where _build_figures is called.
     page_keys = plot_page_keys(
-        context, plots, extra_series, metric_tree, max_embedded_samples, theme=theme
+        context,
+        plots,
+        extra_series,
+        metric_tree,
+        max_embedded_samples,
+        theme=theme,
+        diagnostics=diagnostics,
     )
     context["plots"] = page_keys.pop("plots")
 
@@ -558,6 +587,7 @@ def generate_comparison_plots(
         ),
         warnings=warnings,
         stats=cur_stats if isinstance(cur_stats, dict) else None,
+        diagnostics=(result.diagnostics or []) if result is not None else (),
         ref_id=ref_id,
         ref_file=ref_file,
         field_sources=getattr(test_model, "field_sources", None) or {},
@@ -794,8 +824,11 @@ def _build_per_test_args(
 
     # The page's plots, through the one helper (it derives them from the
     # tree itself, so this path and cli/review.py cannot drift).
+    diagnostics = (
+        diagnostic_names(test, config.diagnostic_variables) if test is not None else []
+    )
     plots, extra_series = plot_inputs(
-        test, comp.variables, result, backend_cls, test_dir
+        test, comp.variables, result, backend_cls, test_dir, diagnostics
     )
 
     ref_file = None
@@ -841,6 +874,7 @@ def _build_per_test_args(
         "overlays": overlays,
         "plots": plots,
         "extra_series": extra_series,
+        "diagnostics": diagnostics,
     }
 
 
@@ -871,6 +905,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         run_metadata=args.get("run_metadata"),
         plots=args.get("plots"),
         extra_series=args.get("extra_series"),
+        diagnostics=args["diagnostics"],
     )
     render_elapsed = _time.monotonic() - t0
     return {

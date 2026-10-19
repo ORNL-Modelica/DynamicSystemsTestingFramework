@@ -3061,7 +3061,8 @@ def _wide_session(tmp_path, extra: int, columns=()):
 
 def _with_diagnostics(session, **finals):
     """A's in-memory result carries these diagnostics (a Dymola run's
-    `CPUtime` / `EventCounter`); the JSON driver records none."""
+    `CPUtime` / `EventCounter`), set by hand, in place of what the JSON
+    driver recorded."""
     import numpy as np
 
     from dstf.backends.types import VariableResult
@@ -3094,9 +3095,7 @@ async def _open_plus(user, variable: str):
 
 async def test_the_picker_offers_every_result_name_in_sections(tmp_path):
     """Q8: the plot's series, then every other name of the result FILE —
-    tracked or not — then the diagnostics the run RECORDED (B4): an
-    `EventCounter` column of the file that no run recorded as a diagnostic
-    is a variable like any other (a `.final` path would never read it)."""
+    tracked or not, listed or not: every name is a variable (D162)."""
     session = _wide_session(tmp_path, 3, columns=("CPUtime", "EventCounter"))
     _with_diagnostics(session, CPUtime=0.5)
     sel = Selection(tests=frozenset({A}), variable="y")
@@ -3105,16 +3104,25 @@ async def test_the_picker_offers_every_result_name_in_sections(tmp_path):
         assert picker.value == "y"
         assert _sections(picker) == {
             "On this plot": ["y"],
-            "Other variables": ["x", "v0", "v1", "v2", "EventCounter"],
-            "Diagnostics": ["CPUtime"],
+            "Other variables": ["x", "v0", "v1", "v2", "CPUtime", "EventCounter"],
         }
 
 
-async def test_a_run_that_records_no_diagnostics_has_no_diagnostics_section(tmp_path):
+async def test_a_json_driver_run_records_a_listed_column_as_a_diagnostic(tmp_path):
+    """The JSON driver records what the project lists (``CPUtime``, by
+    default) where its result holds it: the column is a
+    diagnostic of the run — and a variable, offered as any is (D162)."""
     session = _wide_session(tmp_path, 0, columns=("CPUtime",))
+    assert [
+        (d.index, d.name, list(d.values))
+        for d in session.project.results[A].diagnostics
+    ] == [(1, "CPUtime", [1.0, 2.0, 3.0, 4.0, 5.0])]
     sel = Selection(tests=frozenset({A}), variable="y")
     async with host(session, EditTree(), sel) as (user, _errors, _figure):
-        assert "Diagnostics" not in _sections(await _open_plus(user, "y"))
+        assert _sections(await _open_plus(user, "y")) == {
+            "On this plot": ["y"],
+            "Other variables": ["x", "CPUtime"],
+        }
 
 
 async def test_the_picker_filters_by_glob_regex_and_says_a_bad_one(tmp_path):
@@ -3343,61 +3351,34 @@ def _metric_select(user):
     )
 
 
-async def test_a_diagnostic_offers_scalar_only_and_seeds_a_quantity_path(tmp_path):
-    """Q2 + K1: a diagnostic is one stored number — the Metric select offers
-    what takes a ``quantity`` (scalar), and Add writes its final through a
-    quantity path, a count exact. Back on an ordinary variable, every metric
-    that scores a time series, and the one chosen there before."""
-    session = _wide_session(tmp_path, 0)
+async def test_a_listed_name_offers_every_metric_and_a_scalar_writes_its_number(
+    tmp_path,
+):
+    """Under D162 a listed name is a variable — the Metric select
+    offers every metric for it, as for any — and a scalar Add writes its
+    number in the one spelling, a count exact. Offered as the result FILE
+    names them, as every name is."""
+    session = _wide_session(tmp_path, 0, columns=("CPUtime", "EventCounter"))
     _with_diagnostics(session, CPUtime=0.37, EventCounter=4.0)
     sel = Selection(tests=frozenset({A}), variable="y")
     async with host(session, EditTree(), sel) as (user, errors, _figure):
-        picker = await _open_plus(user, "y")
+        await _open_plus(user, "y")
         met = _metric_select(user)
         everything = list(met.options)
-        assert "scalar" in everything and len(everything) > 1
-        assert _sections(picker)["Diagnostics"] == ["CPUtime", "EventCounter"]
+        assert "scalar" in everything and "nrmse" in everything
         user.find(marker="apply-add:y:variable:pick:EventCounter").click()
-        assert list(met.options) == ["scalar"] and met.value == "scalar"
+        assert list(met.options) == everything
+        met.set_value("scalar")
         user.find(marker="apply-add:y").click()
         await _settled(lambda: len(session.tree(A)["children"]) == 3)
         assert session.tree(A)["children"][-1] == {
             "metric": "scalar",
             "variable": "EventCounter",
-            "quantity": "EventCounter.final",
+            "quantity": {"reduce": "final"},
             "tolerance": 0,
             "tolerance_mode": "abs",
         }
         assert errors == {}
-        picker = await _open_plus(user, "y")
-        met = _metric_select(user)
-        met.set_value("tube")
-        user.find(marker="apply-add:y:variable:pick:CPUtime").click()
-        assert list(met.options) == ["scalar"]
-        user.find(marker="apply-add:y:variable:pick:EventCounter").click()
-        # back on an ordinary variable, the metric chosen before the
-        # diagnostics, not the list's first
-        user.find(marker="apply-add:y:variable:pick:x").click()
-        assert list(met.options) == everything and met.value == "tube"
-
-
-async def test_a_metric_kept_across_a_diagnostic_is_restored_once(tmp_path):
-    """The metric kept over a diagnostic comes back ONCE, on the first
-    ordinary variable after it; a metric chosen after that is the one kept
-    when the choice moves to another ordinary variable, not the old one."""
-    session = _wide_session(tmp_path, 1)
-    _with_diagnostics(session, CPUtime=0.37)
-    sel = Selection(tests=frozenset({A}), variable="y")
-    async with host(session, EditTree(), sel) as (user, _errors, _figure):
-        await _open_plus(user, "y")
-        met = _metric_select(user)
-        met.set_value("tube")
-        user.find(marker="apply-add:y:variable:pick:CPUtime").click()
-        user.find(marker="apply-add:y:variable:pick:x").click()
-        assert met.value == "tube"
-        met.set_value("points")
-        user.find(marker="apply-add:y:variable:pick:v0").click()
-        assert met.value == "points"
 
 
 async def test_cpu_time_is_seeded_relative(tmp_path):
@@ -3410,7 +3391,7 @@ async def test_cpu_time_is_seeded_relative(tmp_path):
     (op,) = patch.ops
     assert op.value["combinator"] == "warn"  # CPU time moves with the load
     (leaf,) = op.value["children"]
-    assert leaf["quantity"] == "CPUtime.final"
+    assert leaf["quantity"] == {"reduce": "final"}
     assert (leaf["tolerance"], leaf["tolerance_mode"]) == (0.1, "rel")
 
 
@@ -3481,7 +3462,7 @@ async def test_cpu_time_warns_only_where_it_lands_in_an_and(
     assert op.path == at
     leaf = op.value["children"][0] if warned else op.value
     assert op.value.get("combinator") == ("warn" if warned else None)
-    assert leaf["quantity"] == "CPUtime.final"
+    assert leaf["quantity"] == {"reduce": "final"}
     assert (leaf["tolerance"], leaf["tolerance_mode"]) == (0.1, "rel")
 
 
@@ -3508,7 +3489,7 @@ async def test_cpu_time_beside_a_root_leaf_warns_in_the_and_it_makes(tmp_path):
 
 async def test_cpu_time_added_bare_under_an_or_reveals_its_leaf(tmp_path):
     """Added bare, the criterion IS the leaf: the reveal opens it."""
-    session = _wide_session(tmp_path, 0)
+    session = _wide_session(tmp_path, 0, columns=("CPUtime",))
     session.stage([PatchOp(A, "add", ROOT, {"combinator": "or", "children": _XY})])
     _with_diagnostics(session, CPUtime=0.4)
     sel = Selection(tests=frozenset({A}), variable="y")
@@ -3523,14 +3504,16 @@ async def test_cpu_time_added_bare_under_an_or_reveals_its_leaf(tmp_path):
         assert reveals == [f"{ROOT}/children/2"] and errors == {}
 
 
-async def test_a_diagnostic_refuses_a_trajectory_metric(tmp_path):
-    """B4: `act` decides "diagnostic" from what the run recorded, and a
-    metric that takes no quantity cannot score one."""
+async def test_a_curve_criterion_on_cpu_time_is_taken_and_warned_in_an_and(tmp_path):
+    """D162: an nrmse on CPUtime is a criterion like any — no longer
+    refused — and, a time, warned where it lands in an `and`."""
     session = _wide_session(tmp_path, 0)
+    session.stage([PatchOp(A, "add", ROOT, {"combinator": "and", "children": _XY})])
     _with_diagnostics(session, CPUtime=1.0)
     view = SessionView(session, Selection(tests=frozenset({A}), variable="y"))
-    with pytest.raises(ValueError, match="scalar"):
-        EditTree().act(
+    (op,) = (
+        EditTree()
+        .act(
             view,
             action="add",
             model_id=A,
@@ -3538,6 +3521,12 @@ async def test_a_diagnostic_refuses_a_trajectory_metric(tmp_path):
             variable="CPUtime",
             metric="nrmse",
         )
+        .ops
+    )
+    assert op.value == {
+        "combinator": "warn",
+        "children": [{"metric": "nrmse", "variable": "CPUtime"}],
+    }
 
 
 # -- values in effect (U2, Task 5) -----------------------------------------------
@@ -3882,7 +3871,10 @@ async def test_a_count_lands_at_the_end_of_an_and_root(tmp_path, flat):
 
 
 async def test_cpu_time_warns_in_an_and_root_and_goes_bare_in_an_or(tmp_path):
+    """The CPUtime row's `+` is the variable's number (D162): the row is the
+    run's recorded CPUtime."""
     session = _wide_session(tmp_path, 0)
+    _with_diagnostics(session, CPUtime=0.4)
     session.stage([PatchOp(A, "add", ROOT, {"combinator": "and", "children": _XY})])
     (op,) = _add_quantity(session, "CPUtime")
     assert op.value == {
@@ -3890,7 +3882,8 @@ async def test_cpu_time_warns_in_an_and_root_and_goes_bare_in_an_or(tmp_path):
         "children": [
             {
                 "metric": "scalar",
-                "quantity": "CPUtime",
+                "variable": "CPUtime",
+                "quantity": {"reduce": "final"},
                 "tolerance": 0.1,
                 "tolerance_mode": "rel",
             }
@@ -3909,37 +3902,46 @@ async def test_a_quantity_beside_a_root_leaf_makes_an_and_of_both(tmp_path):
     assert op.value == {"combinator": "and", "children": [_XY[0], _COUNT_LEAF]}
 
 
-async def test_a_diagnostic_final_goes_through_its_seed(tmp_path):
+async def test_a_recorded_names_row_goes_through_its_numbers_seed(tmp_path):
+    """The `EventCounter` row's `+`: the variable's number, exact (D162)."""
     session = _wide_session(tmp_path, 0)
     _with_diagnostics(session, EventCounter=4.0)
-    (op,) = _add_quantity(session, "EventCounter.final")
+    (op,) = _add_quantity(session, "EventCounter")
     assert op.value == {
         "metric": "scalar",
         "variable": "EventCounter",
-        "quantity": "EventCounter.final",
+        "quantity": {"reduce": "final"},
         "tolerance": 0,
         "tolerance_mode": "abs",
     }
 
 
-async def test_a_diagnostic_max_is_added_on_its_own_path(tmp_path):
+async def test_a_recorded_names_max_row_writes_its_max(tmp_path):
     session = _wide_session(tmp_path, 0)
     _with_diagnostics(session, EventCounter=4.0)
     (op,) = _add_quantity(session, "EventCounter.max")
-    assert op.value["quantity"] == "EventCounter.max"
+    assert (op.value["variable"], op.value["quantity"]) == (
+        "EventCounter",
+        {"reduce": "max"},
+    )
 
 
-async def test_a_top_level_statistic_naming_a_diagnostic_takes_its_kind(tmp_path):
-    """A user-configured diagnostic folded into the statistics: its row's
-    `+` reads the run's samples, as the add form's `Wall.final` does — a
-    time, warned in an `and` (Corrections A5)."""
+async def test_a_listed_names_plus_writes_its_number_in_the_one_spelling(tmp_path):
+    """A user-listed name's row (`Wall`): its `+` writes the variable's
+    number, ``{"reduce": "final"}``, seeded as any scalar is — bounds
+    around the run's final, bare in an `and`: a name that is no CPU time is
+    never warned, whatever its samples (D162)."""
     session = _wide_session(tmp_path, 0)
+    session.project.test(A).diagnostic_variables = ["Wall"]  # the entry lists it
     _with_diagnostics(session, Wall=2.5)  # samples 0 .. 2.5: fractional
     (op,) = _add_quantity(session, "Wall")
-    assert op.value["combinator"] == "warn"
-    (leaf,) = op.value["children"]
-    assert (leaf["quantity"], leaf["tolerance_mode"]) == ("Wall", "rel")
-    assert "variable" not in leaf
+    assert op.value == {
+        "metric": "scalar",
+        "variable": "Wall",
+        "quantity": {"reduce": "final"},
+        "min_value": 2.3,
+        "max_value": 2.7,
+    }
 
 
 async def test_a_quantity_and_a_variable_together_raise(tmp_path):

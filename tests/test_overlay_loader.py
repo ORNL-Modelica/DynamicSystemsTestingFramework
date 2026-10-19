@@ -1376,7 +1376,9 @@ class TestTheRepoSExampleCompanions:
                 data = json.loads(ref_file.read_text(encoding="utf-8"))
                 model = data["model_id"]
                 held = [v["name"] for v in data["variables"]]
-                plots = plots_of_test(tests[model], held, None, listed=None)
+                plots = plots_of_test(
+                    tests[model], held, None, listed=None, diagnostics=()
+                )
                 drawn = {
                     name for plot in plots if not plot.watch for name in plot.subject
                 }

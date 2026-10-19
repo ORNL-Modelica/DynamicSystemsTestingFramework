@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING, Any
 from nicegui import ui
 
 from ...backends.pool import ItemState
-from ...comparison.tree_spec import reads_a_statistic
+from ...comparison.tree_spec import on_the_card_view
 from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
 from ...discovery.plots import PlotExtra, ResolvedPlot
+from ...discovery.test_registry import diagnostic_names
 from ...reporting.status import (
     SCORING_CLASS,
     SCORING_FAILED,
@@ -1099,18 +1100,18 @@ class TestPage:
         the criteria and their variables, the plots themselves — each
         one's subject, context, whether it is a watch plot, and what the
         result lacks. NOT a leaf's
-        metric — a mode switch repaints a row's name in place. NOT a
-        statistics leaf: it is on no plot, and a `+` in the Statistics card
-        rebuilt every plot card — Focus ended, a zoom was lost, every figure
-        was re-sent."""
+        metric — a mode switch repaints a row's name in place. NOT a card
+        leaf (`on_the_card_view`: a statistic, or a number of a listed
+        name): it is on no plot, and a `+` in the Statistics card rebuilt
+        every plot card — Focus ended, a zoom was lost, every figure was
+        re-sent."""
         session = self.shell.session
+        listed = session.diagnostic_names(self.model_id)
         return (
             tuple(
                 (leaf["path"], leaf.get("variable"))
                 for leaf in leaves_of(view)
-                if not reads_a_statistic(
-                    str(leaf.get("metric")), leaf.get("params") or {}
-                )
+                if not on_the_card_view(leaf, listed)
             ),
             tuple(
                 (plot.subject, plot.context, plot.watch, plot.missing)
@@ -1181,6 +1182,7 @@ class TestPage:
         loading = self.shell.load.in_progress
         has_result = self.run_state() != "none"
         statuses = [leaf_status(leaf) for leaf in leaves_of(view)]
+        test = project.test(model_id)
         return strip_for(
             queue=queue_row(session, model_id),
             edits=edits,
@@ -1204,9 +1206,11 @@ class TestPage:
             # The merged TestModel carries the EFFECTIVE tree (`stage`
             # re-merges `project.tests`): a staged criterion counts.
             new_variables=new_variables(
-                project.test(model_id),
+                test,
                 self.result() if has_result else None,
-                project.config.diagnostic_variables,
+                diagnostic_names(test, project.config.diagnostic_variables)
+                if test is not None
+                else (),
             ),
             refused=refusal(comp) if comp is not None else None,
             partial=session.partial(model_id),

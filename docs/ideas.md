@@ -2148,3 +2148,66 @@ accepted from `dstf run --batch` stores `library_versions: null` where the
 default persistent lane stores `{"Modelica": "4.1.0", ...}`. Filling it means
 the `.mos` script writing the loaded libraries' `version` annotations
 somewhere the backend reads back.
+
+**Example libraries that show off the metrics: a "kitchen-sink" test (owner,
+2026-10-18; explore in a dedicated session).** The example libraries should
+keep giving a newcomer a test to try for every kind of check DSTF has, and
+they should grow as the checks grow. Today ModelicaTestingLib has one test
+per mode and combinator, plus `MetricTreeTest`, which uses windowed leaves and
+a companion over a step response. JuliaMtkTestingLib mirrors most of these but
+has no event test and no `event-timing` criterion. Neither library has
+anything for eigenvalues or linearization; that waits on the "what a baseline
+holds" session. The owner's proposal is ONE example system with ONE metric
+tree that exercises many metrics at once. For example: a multi-layered
+sinusoid with events in it, scored together by `dominant-frequency`,
+`event-timing`, `tube`, `range`, `points`, `scalar` and the combinators. It
+would be a demo, a stress test of the tree, and a slide figure in one, and it
+would exist in both Modelica and Julia (and so cross-check the two backends).
+To settle in that session:
+- whether it replaces any single-mode tests or sits beside them;
+- whether its references stay small;
+- whether events in Julia/MTK give the same timing as Dymola and OM;
+- which new metrics each future feature should add an example for.
+
+Grill before planning.
+
+**CI speed and a test-value audit (owner, 2026-10-18; investigate in depth
+before any work).** CI's `quality` job took 54 min on PR #6, and a full local
+run takes 40–55 min. The suite is ~8,100 tests in one serial job, with
+coverage on and no parallel runner (`pytest-xdist` is not in the lock), and
+many tests start real processes (the `dstf` CLI, workers, the tool's server).
+Coverage (66% floor) says a line ran, not that a test would catch it
+breaking. Planted-bug checks are done per build on changed code (PR #6: ~40
+planted, 6 uncaught and then pinned) but never across the whole suite. The
+session should cover:
+- where the time goes (per-test durations by file);
+- what parallel running buys, and which tests are not safe in parallel;
+- which tests catch nothing, or duplicate each other, measured with planted
+  bugs over the core modules;
+- what a fast tier for every push vs a full tier would look like.
+
+First measurement (2026-10-18, CI's marker selection run serially on this
+machine, 39 min, 8,059 passed): `tests/test_test_page.py` alone is 1,701 s
+of the 2,149 s spent in tests over 0.5 s — 489 of its 514 tests at a median
+3.4 s each, all in the test body (not fixtures). Every other file is under
+90 s. The Test page's tests are where the session starts.
+
+Measure before proposing; the owner wants an in-depth investigation first.
+
+**A standard spec document, mined from the plans (owner, 2026-10-19; a
+dedicated session).** `docs/superpowers/` holds 40 plans and design specs
+written build by build since April, each in its own shape. The session
+mines them, together with the code as it stands, for what a build's spec
+needs in order to be planned, built and reviewed well. It then writes one
+standard spec document for future builds, and changes to the process
+where that mining shows a gap. Until then the files stay where they are:
+whether they are kept, moved or removed is decided in that session, not
+before.
+
+**A code-review session over the plug-in API (owner, 2026-10-19; a
+dedicated session).** `diagnostic_names(test, config_list)` became public
+API so a plug-in backend records the same listed names DSTF's own backends
+do; every backend calls it as
+`diagnostic_names(test, self.config.diagnostic_variables)` (31 call sites).
+Whether it belongs on `Backend` as a method, and what else a plug-in author
+has to rebuild from internals, is reviewed in that session, not piecemeal.

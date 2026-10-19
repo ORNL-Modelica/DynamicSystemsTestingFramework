@@ -89,7 +89,7 @@ def test_the_entry_is_one_tube_per_element_and_one_criterion_of_its_own():
 
 def test_the_criteria_fold_into_one_row_and_the_own_one_follows():
     view = spec_to_view(_test().metric_tree_spec)
-    rows = criteria_rows(view, [leaf["variable"] for leaf in leaves_of(view)])
+    rows = criteria_rows(view, [leaf["variable"] for leaf in leaves_of(view)], ())
     fold, own = fold_rows(rows)
     assert isinstance(fold, Fold) and fold.name == "tube · T[1:20]"
     assert fold.variables == ELEMENTS and fold.crumbs == "and ›"

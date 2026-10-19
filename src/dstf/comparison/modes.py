@@ -491,12 +491,14 @@ class ScalarConfig:
       sides. ``integral`` is the trapezoid rule over the windowed series and
       ``mean`` is that integral over the time span — time-weighted, so a
       finer output grid doesn't move the score; ``sample_mean`` is the plain
-      arithmetic mean of the samples, which does move with the grid.
-    * ``"<dotted.path>"`` — a stored scalar: a dotted lookup into the run's
-      ``statistics``, falling back to a diagnostics summary field
-      (``"CPUtime.final"``). Resolved by
-      :func:`~.tree_eval.resolve_scalar_path`; the leaf window does not
-      apply because a stored scalar is not a time series.
+      arithmetic mean of the samples, which does move with the grid. A
+      variable's number — CPUtime's too — is written this way; a name the
+      test lists is scored from its stored summary for ``final``, ``min``
+      and ``max`` over the whole run.
+    * ``"<dotted.path>"`` — a statistic of the simulator's log: a dotted
+      lookup into the run's ``statistics`` (``"translation.nonlinear_count"``).
+      Resolved by :func:`~.tree_eval.resolve_scalar_path`; the leaf window
+      does not apply because a statistic is not a time series.
 
     The object shape is what keeps the field extensible: a later
     ``{"expr": ...}`` quantity slots in as a third shape without breaking
@@ -516,8 +518,10 @@ class ScalarConfig:
                 'The number scored: a reduction of the criterion\'s variable, {"reduce": '
                 '"max"} or "min", "mean" (weighted by time), "sample_mean" (of the '
                 'samples, so it moves with the output grid), "final" or "integral"; '
-                "or the dotted path of a statistic of the run, such as "
-                '"CPUtime.final". A criterion with a path needs no variable.'
+                "a variable's number, CPUtime's too, is written this way. Or the "
+                "dotted path of a statistic of the simulator's log, such as "
+                '"translation.nonlinear_count". A criterion with a path needs no '
+                "variable."
             ),
         },
     )

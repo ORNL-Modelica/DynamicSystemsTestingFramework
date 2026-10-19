@@ -432,6 +432,9 @@ class Config:
         parallel: How many tests run at once.
         timeout: Seconds a test may run.
         tolerance: The project's base tolerance.
+        diagnostic_variables: The names whose final, min and max every
+            test's baseline stores when its result holds them
+            (``testing.json``'s ``diagnostic_variables``).
         backend_settings: The backend's settings block, after construction.
 
     Raises:
@@ -505,7 +508,7 @@ class Config:
     # Test spec file (external test definitions)
     test_spec_file: Path | None = None
 
-    # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
+    # The names whose summary every run records (a test entry adds its own)
     diagnostic_variables: list[str] = field(
         default_factory=lambda: _default("diagnostic_variables")
     )

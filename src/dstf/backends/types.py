@@ -211,8 +211,9 @@ class TestResult:
         model_id: The test's model.
         success: Whether the run produced a result that could be read.
         variables: The tracked variables.
-        diagnostics: Variables recorded and shown but not compared, such as
-            ``CPUtime``.
+        diagnostics: The listed names the result holds (``CPUtime``, a test's
+            own ``diagnostic_variables``): each stored as its summary, and
+            scored from it by a criterion one stored number answers.
         error_message: Why there is no result, when ``success`` is false.
         statistics: Numbers the simulator reported about the run (its system
             size, its timings), shown on the test's page and scorable by the

@@ -28,7 +28,7 @@ from dstf.backends.types import (
     resolve_variable_patterns,
 )
 from dstf.config_shape import Setting
-from dstf.discovery.test_registry import TestModel
+from dstf.discovery.test_registry import TestModel, diagnostic_names
 
 #: The file a run writes into its test's directory, and the read gets back.
 RESULT_FILE = "result.json"
@@ -89,14 +89,20 @@ class DecayBackend(Backend):
         except (OSError, ValueError) as exc:
             return TestResult(test.model_id, False, error_message=f"{path}: {exc}")
         t = np.asarray(result.pop("time"), dtype=float)
-        names = resolve_variable_patterns(test.variable_patterns, list(result))
+
+        def series(names: list[str]) -> list[VariableResult]:
+            return [
+                VariableResult(index=i, time=t, values=np.asarray(result[n]), name=n)
+                for i, n in enumerate(names, start=1)
+            ]
+
+        tracked = resolve_variable_patterns(test.variable_patterns, list(result))
+        # The names the test lists that the result holds: the baseline
+        # stores each one's final, min and max.
+        listed = diagnostic_names(test, self.config.diagnostic_variables)
         return TestResult(
             test.model_id,
             True,
-            variables=[
-                VariableResult(
-                    index=i, time=t, values=np.asarray(result[name]), name=name
-                )
-                for i, name in enumerate(names, start=1)
-            ],
+            variables=series(tracked),
+            diagnostics=series([name for name in listed if name in result]),
         )

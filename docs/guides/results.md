@@ -67,9 +67,12 @@ from the Test column of the dashboard:
 It shows the test's criteria tree with the verdict, the measure and the
 details of each criterion, and a plot per scored variable: the run, the
 baseline, and what each criterion checks — a tube's band, a range's bounds, a
-checkpoint's box, a time window. Zoom and hover to read values off a plot; the
-error select draws the difference from the baseline. Soft checks and
-companions can be shown on a plot from its overlay picker.
+checkpoint's box, a time window. A number — a statistic of the log, or a
+listed name's final, min or max — has no plot: its criterion is in the
+metric tree alone (in `dstf author`, on the Statistics card). Zoom and hover
+to read values off a plot; the error select draws the difference from the
+baseline. Soft checks and companions can be shown on a plot from its overlay
+picker.
 
 The page reads nothing from a server and changes nothing: it opens from disk,
 also on a machine without a network. Its plotting library is one shared copy

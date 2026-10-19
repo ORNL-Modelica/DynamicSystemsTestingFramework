@@ -303,8 +303,11 @@ TESTING_JSON: dict[str, Setting] = {
     "diagnostic_variables": Setting(
         _STRINGS,
         ["CPUtime", "EventCounter"],
-        "Variables recorded from every simulation and shown in the reports, "
-        "but not compared.",
+        "Names whose summary (final, min, max) every test's baseline stores "
+        "when its result holds them; a test entry adds its own. A listed "
+        "name's curve is stored only when a criterion needs it (any but a "
+        "scalar's final, min or max over the whole run) or the entry's "
+        "variables match it.",
     ),
     "theme": Setting(
         # `reporting.theme.THEMES`, which `Config` holds the value to.

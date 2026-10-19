@@ -1608,21 +1608,28 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
 
 
 def _cpu_time_only(cfg: Path) -> None:
-    """A's run kept no wall time and a result whose statistics carry a CPU
-    time, as a Dymola result's do (a run_stats.json from a batch run: its
-    walls null)."""
-    (cfg.parent.parent.parent / "work" / "test_0001" / "run_stats.json").write_text(
+    """A's run kept no wall time (a run_stats.json from a batch run: its
+    walls null) and its result records a CPU time — a `CPUtime` column the
+    project lists, as a Dymola result's does: a diagnostic, never a
+    statistic."""
+    test_dir = cfg.parent.parent.parent / "work" / "test_0001"
+    (test_dir / "run_stats.json").write_text(
         json.dumps(
             {
                 "model_id": A,
                 "translation_wall": None,
                 "sim_wall": None,
                 "elapsed": None,
-                "statistics": {"CPUtime": 0.046},
+                "statistics": None,
             }
         ),
         encoding="utf-8",
     )
+    path = test_dir / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    n = len(payload["time"])
+    payload["variables"]["CPUtime"] = [0.046 * i / (n - 1) for i in range(n)]
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_a_cpu_time_in_sim_reads_its_tag_and_says_what_it_is(

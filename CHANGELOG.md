@@ -13,12 +13,41 @@ this file says when they do.
 - Accepted baselines record what produced them — backend, simulator and
   library versions, DSTF version, OS, when the run started (`provenance`).
   Existing baselines gain it at their next accept.
+- A test entry's own `diagnostic_variables`: names whose summary its
+  baseline stores, beside `testing.json`'s.
+- `dstf.discovery.test_registry.diagnostic_names` is public API for a
+  plug-in backend: the names its `read_result` records as `diagnostics`.
 
 ### Changed
 
 - `soft-check add` no longer stores a source's per-variable keys that nothing
   in DSTF reads (`unit`, `description`, …); one warning line names the keys
   it dropped and (up to three of) the variables that carried each.
+- CPUtime and EventCounter are variables: any criterion may score them. A
+  listed name's curve is stored only when a criterion needs it or the
+  entry's `variables` match it; a scalar's final, min or max over the whole
+  run is scored from its stored summary.
+- A variable's number is written
+  `{"variable": "X", "quantity": {"reduce": "final"}}`. `"quantity": "X.final"`
+  and `"quantity": "X"` now fail "not found", with a hint naming that
+  spelling; a dotted `quantity` names a statistic of the log only.
+- Baselines no longer hold `statistics.CPUtime` / `statistics.EventCounter`:
+  ignored on read, gone at the next accept.
+- FMPy, Julia and Python now record the listed names their results hold.
+- On the Test page a listed name's number (a scalar's final, min or max) is
+  on the Statistics card, not a plot; in the report it is in the metric tree
+  and in no plot's criteria, as a statistic's criterion always was. The add
+  form's picker has no Diagnostics section: every name is under Other
+  variables, with every metric.
+- A listed name's Statistics row is there only while the test lists it,
+  whatever a stored baseline still holds. The report's Statistics table
+  shows each listed name a side holds. The Test page's Statistics card also
+  has a row for a number its criteria score that the table lacks — a listed
+  name nothing holds yet, and a listed name's min or max (`X.min`, `X.max`)
+  — and the report lists those criteria in its metric tree.
+- A report's `comparison_data.json` no longer carries `diagnostic_summaries`,
+  which no page showed: a listed name's numbers are its rows in
+  `statistics_sections`.
 
 ## [1.1.0] - 2026-10-14
 

@@ -186,5 +186,7 @@ def test_a_dymola_row_after_a_reload_shows_the_result_files_cpu_time(tmp_path):
     s.open(config_dir / "testing.json", work_dir=work)
     (row,) = suite_rows(s, [model], failed=set())
     sim = {c.key: c for c in COLUMNS}["sim"]
+    # The CPUtime diagnostic's final at the digits it was recorded with
+    # (a float32's 7): 1.1.0's number.
     assert (row.sim_wall, row.sim_cpu, row.sim_source) == (None, 0.002, "cpu")
     assert (sim.text(row), sim.tag(row)) == ("0.00", "cpu")

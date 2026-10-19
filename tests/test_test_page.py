@@ -2528,7 +2528,7 @@ async def test_watch_plots_with_no_derived_plot_say_so(shell):
             {
                 "metric": "scalar",
                 "variable": "x",
-                "quantity": "CPUtime.final",
+                "quantity": "translation.continuous_time_states",
                 "max_value": 1e9,
             }
         ],
@@ -2986,45 +2986,48 @@ async def test_a_watch_cards_plus_adds_a_seeded_range_on_untracked_w(extras_shel
         await _settled(lambda: page.strip.situation.value == "edits")
 
 
-async def test_a_criterion_on_a_diagnostic_is_revealed_in_the_statistics_card(
-    extras_shell,
+async def test_a_number_of_a_listed_name_is_revealed_in_the_statistics_card(
+    tmp_path,
 ):
-    """B6, closed by U3: a diagnostic's criterion is scored through a
-    quantity path and has no plot, so an Add from a plot's `+` has no row
-    there to open: the Statistics card opens, with the new criterion's
-    editor under the CPUtime row."""
-    import numpy as np
-
-    from dstf.backends.types import VariableResult
-
-    shell = extras_shell
-    result = shell.session.project.results[A]
-    t = np.asarray(result.variables[0].time)
-    result.diagnostics = [
-        VariableResult(
-            index=0, time=t, values=np.linspace(0, 0.4, len(t)), name="CPUtime"
-        )
-    ]
+    """B6, closed by U3; D162: a scalar added on CPUtime from a plot's `+`
+    is its number, read from its summary, on the Statistics card — no plot
+    has a row for it: the card opens, with the new criterion's editor
+    under the CPUtime row."""
+    cfg, work = _nested_project(
+        tmp_path, [{"var": "x", "context": ["z"]}, {"var": "w"}]
+    )
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["variables"]["CPUtime"] = [0.1 * v for v in payload["time"]]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    shell = _opened(cfg, work)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert page.stats is not None and not page.stats.is_open
         before = len(shell.session.tree(A)["children"])
+        cards = [c.resolved.subject for c in page.cards]
         _click_in(user, "add-for:x", within="criteria-header:1")
         await _settled(lambda: not _none(user, "apply-add:x:variable"))
         user.find(marker="apply-add:x:variable:pick:CPUtime").click()
+        metric = next(
+            e
+            for e in user.find(kind=ui.select).elements
+            if e.props.get("label") == "Metric"
+        )
+        metric.set_value("scalar")
         user.find(marker="apply-add:x").click()
         # CPU time is seeded inside a warn: the reveal is its LEAF's row
         added = f"/metrics/children/{before}/children/0"
         await _settled(lambda: len(shell.session.tree(A)["children"]) == before + 1)
         assert shell.session.tree(A)["children"][-1]["combinator"] == "warn"
         leaf = shell.session.tree(A)["children"][-1]["children"][0]
-        assert leaf["quantity"] == "CPUtime.final"
+        assert (leaf["variable"], leaf["quantity"]) == ("CPUtime", {"reduce": "final"})
         await _settled(lambda: page.open == (STATS, added))
         assert page.stats.is_open and not page.tree.is_open
         editor = _one(user, f"stats-editor:{added}")
-        # FakeLib folds no diagnostic into its statistics: the criterion's
-        # home is the "Other scored quantities" row (S4, B14).
-        assert page.stats.slots["CPUtime.final"] in list(_ancestors(editor))
+        assert page.stats.slots["CPUtime"] in list(_ancestors(editor))
+        # A number on the card: no plot card came with it.
+        assert [c.resolved.subject for c in page.cards] == cards
 
 
 async def test_a_context_series_is_listed_with_an_x_that_takes_it_off(extras_shell):
@@ -3094,7 +3097,7 @@ async def test_a_tree_of_statistics_alone_has_no_plots_and_says_so(shell):
             {
                 "metric": "scalar",
                 "variable": "x",
-                "quantity": "CPUtime.final",
+                "quantity": "translation.continuous_time_states",
                 "max_value": 1e9,
             }
         ],
@@ -3157,7 +3160,7 @@ async def test_a_statistics_leaf_draws_no_row_on_its_variables_card(shell):
     stats = {
         "metric": "scalar",
         "variable": "x",
-        "quantity": "CPUtime.final",
+        "quantity": "translation.continuous_time_states",
         "max_value": 1e9,
     }
     tree = {
@@ -5365,7 +5368,7 @@ ON_NO_PLOT = {
         {
             "metric": "scalar",
             "variable": "y",
-            "quantity": "CPUtime.final",
+            "quantity": "translation.continuous_time_states",
             "max_value": 1e9,
         },
     ],
@@ -5387,7 +5390,7 @@ async def test_a_jump_to_a_statistics_criterion_opens_it_in_the_card(shell):
         await _settled(lambda: page.open == (STATS, T1))
         assert page.stats.is_open
         assert _none(user, f"editor:0:{T0}")
-        assert page.stats.slots["CPUtime.final"] in list(
+        assert page.stats.slots["translation.continuous_time_states"] in list(
             _ancestors(_one(user, f"stats-editor:{T1}"))
         )
         assert user.notify.messages == []
@@ -10413,10 +10416,10 @@ async def test_a_times_plus_says_it_warns_only_under_an_and(stats_shell):
 
 
 async def test_a_scored_row_shows_its_criterion_and_no_plus(stats_shell):
-    """S2: U2's add form writes `CPUtime.final`; it is the CPUtime row. Two
-    leaves on one statistic: the first's pill, and `+1` beside it (B10)."""
+    """CPUtime's number (D162) is the CPUtime row's criterion. Two leaves
+    on one row: the first's pill, and `+1` beside it (B10)."""
     shell = stats_shell
-    cpu = {"metric": "scalar", "variable": "CPUtime", "quantity": "CPUtime.final",
+    cpu = {"metric": "scalar", "variable": "CPUtime", "quantity": {"reduce": "final"},
            "tolerance": 0.1, "tolerance_mode": "rel"}  # fmt: skip
     _stage_tree(shell, A, {"combinator": "and", "children": [
         {"metric": "nrmse", "variable": "x"}, cpu,
@@ -10681,9 +10684,15 @@ def _ref_override_project(tmp_path, on="x"):
     from dstf.backends.types import TestResult, VariableResult
     from dstf.config import Config
     from dstf.storage.reference_store import ReferenceStore
-    from test_session import DYMOLA_BASE, DYMOLA_RUN, make_test_model
+    from test_session import (
+        DYMOLA_BASE,
+        DYMOLA_RUN,
+        make_test_model,
+        with_dymola_diagnostics,
+    )
 
     cfg, work = _two_var_project(tmp_path, ref_models=())
+    baseline_diagnostics = with_dymola_diagnostics(work, "test_0001")
     (work / "test_0001" / "run_stats.json").write_text(
         json.dumps(
             {
@@ -10711,6 +10720,7 @@ def _ref_override_project(tmp_path, on="x"):
                 VariableResult(index=2, time=t, values=2.1 * t, name="y"),
             ],
             statistics=copy.deepcopy(DYMOLA_BASE),
+            diagnostics=baseline_diagnostics,
         ),
         provenance=PROVENANCE,
     )
@@ -10929,13 +10939,20 @@ def test_a_zero_bound_is_a_bound():
     assert summary(leaf(max_value=0)) == "≤ 0"
 
 
-def test_only_a_final_folds_onto_its_statistics_row():
-    """S2: `CPUtime.final` is the CPUtime row; `CPUtime.max` is not the
-    number that row shows — it is its own row (S4)."""
-    from dstf.authoring.shell.stats_card import row_of
+def test_only_a_final_is_its_names_row():
+    """CPUtime's final is the CPUtime row; its max is not the number that
+    row shows — it is its own row (S4). The 1.1 path `CPUtime.final` is a
+    statistic's path like any, its own row (D162 ended S2)."""
+    from dstf.comparison.tree_spec import card_row, parse_metric_tree
 
-    assert row_of("CPUtime.final", ["CPUtime"]) == "CPUtime"
-    assert row_of("CPUtime.max", ["CPUtime"]) == "CPUtime.max"
+    def leaf(quantity):
+        return parse_metric_tree(
+            {"metric": "scalar", "variable": "CPUtime", "quantity": quantity}
+        )
+
+    assert card_row(leaf({"reduce": "final"})) == "CPUtime"
+    assert card_row(leaf({"reduce": "max"})) == "CPUtime.max"
+    assert card_row(leaf("CPUtime.final")) == "CPUtime.final"
 
 
 async def test_a_row_that_stops_changing_loses_its_tint(stats_shell):

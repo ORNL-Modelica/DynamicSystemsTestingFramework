@@ -377,15 +377,29 @@ class TestStructuralChanges:
         assert warnings[0].current_value == "5"
 
     def test_event_counter_change(self):
-        ref = {"statistics": {"EventCounter": 42}}
+        """The event count is the EventCounter summary's final against the
+        run's diagnostic's — not a statistic of that name."""
+        ref = {
+            "statistics": {"EventCounter": 50},
+            "diagnostics": [{"name": "EventCounter", "final": 42.0}],
+        }
         result = TestResult(
             model_id="Test",
             success=True,
-            statistics={"EventCounter": 50},
+            diagnostics=[
+                VariableResult(
+                    index=1,
+                    time=np.array([0.0, 1.0]),
+                    values=np.array([0.0, 50.0]),
+                    name="EventCounter",
+                )
+            ],
+            statistics={"EventCounter": 42},
         )
         warnings = _check_structural_changes(decode_reference(ref), result)
-        assert len(warnings) == 1
-        assert "Event" in warnings[0].field
+        assert [(w.field, w.reference_value, w.current_value) for w in warnings] == [
+            ("Event count", "42.0", "50.0")
+        ]
 
     def test_missing_stats_no_crash(self):
         """Missing statistics on either side should not crash."""

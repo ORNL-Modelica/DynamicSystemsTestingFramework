@@ -547,6 +547,48 @@ class TestFmpyTracksTheCriteriasVariables:
             (3, "g"),
         ]
 
+    def test_a_listed_name_the_model_has_is_asked_for_and_read_as_a_diagnostic(
+        self, tmp_path, monkeypatch
+    ):
+        """A name the test lists is recorded beside the tracked ones and read
+        as a diagnostic, never as a tracked variable; a listed name the
+        model lacks is not asked for."""
+        captured: dict = {}
+        backend = self._backend(tmp_path, monkeypatch, captured)
+        fmu = tmp_path / "Model.fmu"
+        fmu.write_bytes(b"fake fmu")
+        test = _tm(
+            "Model",
+            source_file=fmu,
+            variable_patterns=["h"],
+            diagnostic_variables=["v"],
+        )
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success, rr.error_message
+        assert captured["output"] == ["h", "v"]
+        result = backend.read_result(test, "test_0001", rr)
+        assert [(v.index, v.name) for v in result.variables] == [(1, "h")]
+        assert [(d.index, d.name) for d in result.diagnostics] == [(1, "v")]
+
+    def test_a_listed_name_with_no_patterns_keeps_fmpys_default_set(
+        self, tmp_path, monkeypatch
+    ):
+        """``output=`` names fmpy's default set as well: a listed name alone
+        there would have REPLACED it."""
+        captured: dict = {}
+        backend = self._backend(tmp_path, monkeypatch, captured)
+        fmu = tmp_path / "Model.fmu"
+        fmu.write_bytes(b"fake fmu")
+        test = _tm(
+            "Model", source_file=fmu, variable_patterns=[], diagnostic_variables=["g"]
+        )
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success, rr.error_message
+        assert captured["output"] == ["h", "g"]
+        result = backend.read_result(test, "test_0001", rr)
+        assert result.variables == []
+        assert [(d.index, d.name) for d in result.diagnostics] == [(1, "g")]
+
     def test_a_criterion_on_a_name_the_file_lacks_warns_on_read(
         self, tmp_path, monkeypatch, caplog
     ):

@@ -515,7 +515,7 @@ class PlotCard:
                 # rows are where the tree has them, each with its crumb —
                 # the report's walk (`criteria_rows`), so both tiers lead a
                 # row the same way.
-                rows = criteria_rows(view, self.subject)
+                rows = criteria_rows(view, self.subject, self.listed())
                 crumb_ch = max((len(row["crumbs"]) for row in rows), default=0)
                 for row in rows:
                     path = str(row["leaf"]["path"])
@@ -629,13 +629,18 @@ class PlotCard:
                     # On the props dict: a name can hold a `"`.
                     button.props["aria-label"] = f"Remove {text} from this plot"
 
-    @staticmethod
-    def _leaves(view: dict | None, variable: str) -> list[dict]:
+    def _leaves(self, view: dict | None, variable: str) -> list[dict]:
+        listed = self.listed()
         return [
             leaf
             for leaf in leaves_of(view)
-            if leaf.get("variable") == variable and names_a_series(leaf)
+            if leaf.get("variable") == variable and names_a_series(leaf, listed)
         ]
+
+    def listed(self) -> list[str]:
+        """The names the test lists (`Session.diagnostic_names`): a number
+        read from one's summary is on the Statistics card, no row here."""
+        return self.page.shell.session.diagnostic_names(self.page.model_id)
 
     def _view(self, view: Any = UNREAD) -> dict | None:
         """The page's read of this sync, or one of this card's own when it
@@ -733,9 +738,12 @@ class PlotCard:
         """Every leaf on this plot's SUBJECT, in tree order: its rows, what
         it draws, what its signature signs. Not its context — a context
         variable scored on another plot draws nothing of its criteria here —
-        and no stored-scalar leaf, whose ``variable`` names the leaf, not a
-        series (`names_a_series`)."""
-        return [row["leaf"] for row in criteria_rows(view, self.resolved.subject)]
+        and no card leaf (a statistic, or a listed name's number), which is
+        on the Statistics card (`names_a_series`)."""
+        return [
+            row["leaf"]
+            for row in criteria_rows(view, self.resolved.subject, self.listed())
+        ]
 
     def is_open(self, path: str) -> bool:
         """Whether ``path`` is the open criterion — the page's word, the ONE
@@ -986,7 +994,7 @@ class PlotCard:
         path = self.open_path if path is None else path
         comp = self.page.shell.session.comparisons.get(self.page.model_id)
         tree = comp.metric_tree if comp is not None else None
-        for pairs in leaves_by_variable(tree).values():
+        for pairs in leaves_by_variable(tree, ()).values():
             for at, vc in pairs:
                 if at == path:
                     return vc

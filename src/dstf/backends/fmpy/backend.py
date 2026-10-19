@@ -50,7 +50,7 @@ import numpy as np
 
 from ...config import Config
 from ...config_shape import Setting
-from ...discovery.test_registry import TestModel
+from ...discovery.test_registry import TestModel, diagnostic_names
 from ...discovery.unit_tests import unit_test_variables
 from .. import register
 from ..base import Backend, Diagnosis
@@ -253,11 +253,9 @@ class FmpyBackend(Backend):
             with _MODEL_DESCRIPTION_LOCK:
                 md = fmpy.read_model_description(str(fmu_path))
             available = _list_scalar_variables(md)
+            listed = diagnostic_names(test, self.config.diagnostic_variables)
             requested = _tracked(
-                test,
-                _resolve_requested_outputs(test, available),
-                available,
-                self.config.diagnostic_variables,
+                test, _resolve_requested_outputs(test, available), available, listed
             )
             if requested and not test.variable_patterns:
                 # No patterns: what fmpy records by default stays recorded
@@ -267,6 +265,21 @@ class FmpyBackend(Backend):
                 requested = list(
                     dict.fromkeys([*_default_outputs(fmpy, md), *requested])
                 )
+            # The names the test lists that the model has, recorded beside
+            # what is tracked (and read as diagnostics, `read_result`) —
+            # after fmpy's default set where nothing is requested: alone,
+            # they would replace it.
+            have = set(available)
+            recorded = [n for n in listed if n in have]
+            output = (
+                list(
+                    dict.fromkeys(
+                        [*(requested or _default_outputs(fmpy, md)), *recorded]
+                    )
+                )
+                if recorded
+                else requested
+            )
 
             solver = _SOLVER_MAP.get(test.method, "CVode")
             sim_kwargs = {
@@ -279,7 +292,7 @@ class FmpyBackend(Backend):
                 # `_get_output_variables`: outputs, else up to five states,
                 # else local variables) — never every variable. Empty:
                 # nothing is compared, so what fmpy picks is only plotted.
-                "output": requested or None,
+                "output": output or None,
             }
             if test.output_interval is not None:
                 sim_kwargs["output_interval"] = test.output_interval
@@ -401,16 +414,15 @@ class FmpyBackend(Backend):
                 requested = available
             elif not test.variable_patterns:
                 requested = []
-        requested = _tracked(
-            test, requested, available, self.config.diagnostic_variables
-        )
+        listed = diagnostic_names(test, self.config.diagnostic_variables)
+        requested = _tracked(test, requested, available, listed)
         # Loud on every backend (`extract_variables`): a variable the
         # UnitTests or a criterion names that the saved columns lack is a
         # spec/model mismatch, not something to swallow.
         for name in dict.fromkeys(
             [
                 *(v.name for v in unit_test_variables(test)),
-                *criterion_variables(test, self.config.diagnostic_variables),
+                *criterion_variables(test, listed),
             ]
         ):
             if name not in requested:
@@ -421,6 +433,18 @@ class FmpyBackend(Backend):
                 )
 
         time_arr = np.asarray(arr["time"], dtype=np.float64)
+        # The listed names the saved columns hold, numbered from 1 as a
+        # .mat backend's are (`extract_variables`).
+        saved = set(available)
+        diagnostics = [
+            VariableResult(
+                index=i + 1,
+                name=name,
+                time=time_arr,
+                values=np.asarray(arr[name], dtype=np.float64),
+            )
+            for i, name in enumerate(n for n in listed if n in saved)
+        ]
         variables = [
             VariableResult(
                 index=i + 1,
@@ -435,7 +459,7 @@ class FmpyBackend(Backend):
             model_id=test.model_id,
             success=True,
             variables=variables,
-            diagnostics=[],  # FMPy doesn't surface CPUtime/EventCounter equivalents today
+            diagnostics=diagnostics,
             statistics=run_result.statistics if run_result else None,
         )
 

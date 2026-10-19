@@ -12,12 +12,15 @@ per-test sidecar writes them, and the dashboard reads them back through
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from ..backends.common.statistics import diagnostic_final
+from ..backends.types import VariableResult
 from ..comparison.types import TestComparison
+from ..storage.baseline_codec import recorded_digits
 from .context_builder import worst_nrmse
 from .status import (
     CANCELLED,
@@ -286,15 +289,17 @@ EDITS = Column(
 )
 
 
-def cpu_time(stats: Mapping[str, Any] | None) -> float | None:
-    """The final value of the result's ``CPUtime`` diagnostic, as Dymola's
-    ``read_result`` folds it into the statistics (DSTF sets
-    ``OutputCPUtime := true``); None where the result has none — every
-    other backend."""
-    value = stats.get("CPUtime") if isinstance(stats, Mapping) else None
-    if isinstance(value, bool) or not isinstance(value, int | float):
+def cpu_time(diagnostics: Sequence[VariableResult]) -> float | None:
+    """The final value of the result's ``CPUtime`` diagnostic (Dymola: DSTF
+    sets ``OutputCPUtime := true``), at the digits it was recorded with
+    (`recorded_digits`, as the Statistics row shows it: a float32's
+    0.045845, never its widening 0.045844998210668564); None where the
+    result recorded none."""
+    value = diagnostic_final(diagnostics, "CPUtime")
+    if value is None:
         return None
-    return float(value)
+    values = next(d.values for d in diagnostics if d.name == "CPUtime")
+    return float(f"{value:.{recorded_digits(values)}g}")
 
 
 def summary_fields(
@@ -302,6 +307,7 @@ def summary_fields(
     *,
     warnings: list | None = None,
     stats: Mapping[str, Any] | None = None,
+    diagnostics: Sequence[VariableResult] = (),
     ref_id: str | None = None,
     ref_file: Path | None = None,
     field_sources: Mapping[str, str] | None = None,
@@ -310,8 +316,8 @@ def summary_fields(
     ``summary`` carries them (bar its ``model_id`` / ``written_at``).
 
     *warnings* defaults to the comparison's own; *stats* is the result's
-    statistics, whose ``timing`` block holds the phase walls and whose
-    ``CPUtime`` is the result file's CPU time.
+    statistics, whose ``timing`` block holds the phase walls; *diagnostics*
+    the result's recorded diagnostics, whose ``CPUtime`` is its CPU time.
     """
     status, status_class = classify_with_class(comp)
     variables = comp.variables
@@ -338,7 +344,7 @@ def summary_fields(
         "n_warnings": len(warns) if warns else 0,
         "translation_wall": timing.get("translation_wall"),
         "sim_wall": timing.get("sim_wall"),
-        "sim_cpu": cpu_time(stats),
+        "sim_cpu": cpu_time(diagnostics),
         "total_wall": timing.get("total_wall"),
         "field_sources": dict(field_sources or {}),
     }

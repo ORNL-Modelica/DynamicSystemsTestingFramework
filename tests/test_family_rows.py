@@ -136,13 +136,13 @@ def _leaf(i: int, metric: str = "nrmse", name: str = "pipe.T", **more) -> dict:
 def _rows(tree: dict, subject: list[str]) -> list[dict]:
     """The criteria rows of ``tree`` on ``subject``, as a plot card reads
     them off the view of the parsed tree (no verdicts)."""
-    return criteria_rows(spec_to_view(parse_metric_tree(tree)), subject)
+    return criteria_rows(spec_to_view(parse_metric_tree(tree)), subject, ())
 
 
 def _all_rows(tree: dict) -> list[dict]:
     """`_rows` for a card whose subject is every variable the tree names."""
     view = spec_to_view(parse_metric_tree(tree))
-    return criteria_rows(view, [leaf["variable"] for leaf in leaves_of(view)])
+    return criteria_rows(view, [leaf["variable"] for leaf in leaves_of(view)], ())
 
 
 def _shape(entries) -> list:
@@ -327,7 +327,7 @@ def test_the_rows_of_a_plot_fold_whatever_else_the_tree_holds():
         {
             "metric": "scalar",
             "variable": "CPUtime",
-            "quantity": "CPUtime.final",
+            "quantity": "translation.continuous_time_states",
             "tolerance": 1,
         },
     )

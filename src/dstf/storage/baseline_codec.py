@@ -42,6 +42,12 @@ DOUBLE_DIGITS = 17
 SINGLE = "single"
 DOUBLE = "double"
 
+#: Significant digits a number is SHOWN with, by the precision it was
+#: recorded with: all a float32 holds (7), all a float64 does (15). Shown,
+#: never stored — storage is `SINGLE_DIGITS` / `DOUBLE_DIGITS`.
+SINGLE_SHOWN = 7
+DOUBLE_SHOWN = 15
+
 
 # --- numbers ---------------------------------------------------------------
 
@@ -52,6 +58,26 @@ def stored_numbers(arr: np.ndarray) -> list[float]:
     :data:`DOUBLE_DIGITS` otherwise)."""
     sig = SINGLE_DIGITS if arr.dtype == np.float32 else DOUBLE_DIGITS
     return [float(f"%.{sig}g" % v) for v in arr]
+
+
+def recorded_digits(arr: np.ndarray) -> int:
+    """The digits a RUN's number is shown with: its array's precision."""
+    return SINGLE_SHOWN if np.asarray(arr).dtype == np.float32 else DOUBLE_SHOWN
+
+
+def shown_digits(sampling: Sampling | None) -> int:
+    """The digits a stored baseline's number is shown with: the precision
+    its file says it was recorded with. The one place a missing
+    ``sampling`` is read for display.
+
+    A file without ``sampling`` was written before it existed, under the
+    float32 default (the owner, 2026-10-18: "the default is float32
+    currently"); the next accept writes ``sampling``, so this default only
+    ever applies to old data. For display only: its arrays are still read
+    as they always were (:func:`_is_single`)."""
+    if sampling is None:
+        return SINGLE_SHOWN
+    return SINGLE_SHOWN if sampling.precision == SINGLE else DOUBLE_SHOWN
 
 
 def _through_single(values: list) -> list:
@@ -151,13 +177,25 @@ def decode_series(data: dict, name: str) -> Baseline:
     ``name="primary"``) a reference file's own."""
     single = _is_single(data)
     time = data.get("time") or []
+    diagnostics = [_diagnostic(d) for d in data.get("diagnostics") or []]
+    # Old data: a top-level number named like one of the file's own
+    # diagnostics is the copy of its final a baseline held before 1.2
+    # (`statistics.CPUtime`). Dropped on read, never written: the next
+    # accept writes the file without it. A key naming no diagnostic, and a
+    # section, stay.
+    named = {d.name for d in diagnostics}
+    statistics = {
+        key: value
+        for key, value in dict(data.get("statistics") or {}).items()
+        if isinstance(value, dict) or key not in named
+    }
     return Baseline(
         name=name,
         time=_through_single(time) if single else list(time),
         variables=[_variable(v, single) for v in data.get("variables") or []],
-        diagnostics=[_diagnostic(d) for d in data.get("diagnostics") or []],
+        diagnostics=diagnostics,
         simulation=dict(data.get("simulation") or {}),
-        statistics=dict(data.get("statistics") or {}),
+        statistics=statistics,
         provenance=dict(data.get("provenance") or {}),
     )
 

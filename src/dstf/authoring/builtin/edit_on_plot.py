@@ -102,7 +102,10 @@ def _leaf_paths(s: SessionView, model_id: str, variable: str) -> list[tuple[str,
     order. Cheap: no figure, no view."""
     comp = s.comparisons.get(model_id)
     tree = comp.metric_tree if comp is not None else None
-    return [(path, vc.mode) for path, vc in leaves_by_variable(tree).get(variable, [])]
+    card = s.card_paths(model_id)
+    return [
+        (path, vc.mode) for path, vc in leaves_by_variable(tree, card).get(variable, [])
+    ]
 
 
 def _list_fields(name: str) -> list[tuple[str, Columns]]:

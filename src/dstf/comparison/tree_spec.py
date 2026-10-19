@@ -23,7 +23,7 @@ locate the offending entry quickly in a large spec.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -186,12 +186,15 @@ def collect_variables(spec: SpecNode) -> list[str]:
 def resolves_a_variable(leaf: LeafSpec) -> bool:
     """Does this leaf score a variable of the RESULT?
 
-    False for a stored-scalar leaf — a metric that accepts ``quantity``
-    given a string one reads its numbers from the run's statistics or
-    diagnostics, and its ``variable`` is free text naming that leaf, not a
-    series anything resolves. Treated as a variable it registered
-    ``CPUtime`` for the expression soft-check, which then compared a
-    baseline's recorded expression against a quantity nothing measured.
+    False for a path leaf — a metric that accepts ``quantity`` given a
+    string one reads its number from the statistics, and its ``variable``
+    is free text naming that leaf (the path, e.g.
+    ``translation.nonlinear_count``, or a label), not a series anything
+    resolves. Treated as a variable it would be looked for in the result
+    (`tree_variables`) and in the expression soft-check
+    (`collect_variables_by_baseline`) — which, when a string quantity still
+    read a listed name, registered ``CPUtime`` and compared a baseline's
+    recorded expression against a quantity nothing measured.
     """
     return not reads_a_statistic(leaf.metric, leaf.params)
 
@@ -207,48 +210,139 @@ def reads_a_statistic(metric_name: str, params: Mapping[str, Any]) -> bool:
     )
 
 
-def tree_variables(spec: SpecNode | None, diagnostics: Iterable[str] = ()) -> list[str]:
+#: The fields of a listed name's stored summary (`DiagnosticSummary`).
+SUMMARY_FIELDS = ("final", "min", "max")
+
+
+def reads_a_summary(leaf: LeafSpec) -> bool:
+    """A criterion one stored number answers: a quantity-taking metric
+    (scalar) reducing its variable to its final, min or max over the
+    whole run. What a listed name's stored summary can score; any other
+    criterion on a variable needs its curve (owner, 2026-10-18: a mean,
+    integral or windowed scalar stores the curve)."""
+    windowed = leaf.window_start is not None or leaf.window_end is not None
+    return _reads_a_summary(leaf.metric, leaf.params, windowed)
+
+
+def _reads_a_summary(
+    metric_name: str, params: Mapping[str, Any], windowed: bool
+) -> bool:
+    """:func:`reads_a_summary` over what a leaf and its view both carry."""
+    desc = metric(metric_name)
+    quantity = params.get("quantity")
+    return (
+        desc is not None
+        and desc.accepts_quantity
+        and isinstance(quantity, dict)
+        and quantity.get("reduce") in SUMMARY_FIELDS
+        and not windowed
+    )
+
+
+def on_the_card(leaf: LeafSpec, listed: Collection[str]) -> bool:
+    """A leaf the Statistics card holds, not a plot: one that reads a
+    statistic (a string quantity), or one that reads a LISTED name's
+    summary (:func:`reads_a_summary`; ``listed``: the test's
+    `diagnostic_names`). Owner, 2026-10-18: numbers on the card, curves on
+    plots — and in the report, which has no card, such a leaf is in no
+    plot's criteria, as a statistic's never was. Every place that routes a
+    leaf to the card or to a plot asks this, or its view twin
+    :func:`on_the_card_view`."""
+    windowed = leaf.window_start is not None or leaf.window_end is not None
+    return _on_the_card(leaf.metric, leaf.params, leaf.variable, windowed, listed)
+
+
+def on_the_card_view(node: Mapping[str, Any], listed: Collection[str]) -> bool:
+    """:func:`on_the_card` over a leaf of a `spec_to_view` (its ``metric``,
+    ``params``, ``variable`` and ``window``): the same predicate, for the
+    surfaces that hold a view, as :func:`reads_a_statistic` is
+    :func:`resolves_a_variable`'s."""
+    return _on_the_card(
+        str(node.get("metric")),
+        node.get("params") or {},
+        node.get("variable"),
+        bool(node.get("window")),
+        listed,
+    )
+
+
+def _on_the_card(
+    metric_name: str,
+    params: Mapping[str, Any],
+    variable: object,
+    windowed: bool,
+    listed: Collection[str],
+) -> bool:
+    return reads_a_statistic(metric_name, params) or (
+        _reads_a_summary(metric_name, params, windowed) and variable in listed
+    )
+
+
+def card_row(leaf: LeafSpec) -> str:
+    """The Statistics row a card leaf (:func:`on_the_card`) is shown on: a
+    statistic's path; a listed name's final its own row (the name), its
+    min or max ``<name>.min`` / ``<name>.max``."""
+    quantity = leaf.params["quantity"]
+    if isinstance(quantity, str):
+        return quantity
+    field_name = quantity["reduce"]
+    return leaf.variable if field_name == "final" else f"{leaf.variable}.{field_name}"
+
+
+def tree_variables(spec: SpecNode | None, listed: Iterable[str] = ()) -> list[str]:
     """The variables a tree makes a run track: every leaf's ``variable``
-    that resolves one (:func:`resolves_a_variable`), unique, in tree order,
-    without the ``diagnostics`` — a diagnostic is scored through a quantity
-    path over its stored summary, never extracted as a trajectory. A backend
-    APPENDS these after the UnitTests variables and the ``variables``
-    patterns, so a criterion added later renumbers neither of those two.
-    ``[]`` for no tree (the implicit tree scores only what is tracked)."""
+    that resolves one (:func:`resolves_a_variable`), unique, in tree order.
+    A backend APPENDS these after the UnitTests variables and the
+    ``variables`` patterns, so a criterion added later renumbers neither of
+    those two. ``[]`` for no tree (the implicit tree scores only what is
+    tracked).
+
+    A listed name (``listed``: the test's `diagnostic_names`) that only
+    summary-reading criteria name (:func:`reads_a_summary`) is not
+    extracted for them — they score its summary; one criterion that needs
+    the curve extracts it, and accept stores it (a ``variables`` pattern or
+    a UnitTests variable extracts it as well)."""
     if spec is None:
         return []
-    skip = set(diagnostics)
+    leaves = [
+        leaf
+        for leaf, _ in _walk_leaves_with_paths(spec, "/metrics")
+        if resolves_a_variable(leaf)
+    ]
+    needs_the_curve = {leaf.variable for leaf in leaves if not reads_a_summary(leaf)}
+    summary_only = set(listed) - needs_the_curve
     out: list[str] = []
-    for leaf, _ in _walk_leaves_with_paths(spec, "/metrics"):
-        if not resolves_a_variable(leaf):
-            continue
-        if leaf.variable in skip or leaf.variable in out:
+    for leaf in leaves:
+        if leaf.variable in summary_only or leaf.variable in out:
             continue
         out.append(leaf.variable)
     return out
 
 
-def statistic_leaves(spec: SpecNode | None) -> list[tuple[LeafSpec, str]]:
-    """The tree's statistics leaves (:func:`reads_a_statistic`) with their
-    paths, in tree order: which Statistics rows the tree scores. ``[]``
-    for no tree."""
+def statistic_leaves(
+    spec: SpecNode | None, listed: Collection[str]
+) -> list[tuple[LeafSpec, str]]:
+    """The tree's card leaves (:func:`on_the_card`) with their paths, in
+    tree order: which Statistics rows the tree scores. ``[]`` for no
+    tree."""
     if spec is None:
         return []
     return [
         (leaf, path)
         for leaf, path in _walk_leaves_with_paths(spec, "/metrics")
-        if reads_a_statistic(leaf.metric, leaf.params)
+        if on_the_card(leaf, listed)
     ]
 
 
-def statistic_paths(spec: SpecNode | None) -> list[str]:
-    """The quantity paths the tree's statistics leaves read, unique, in
-    tree order: what a Statistics row must exist for. ``[]`` for no tree."""
+def statistic_paths(spec: SpecNode | None, listed: Collection[str]) -> list[str]:
+    """The rows the tree's card leaves are shown on (:func:`card_row`),
+    unique, in tree order: what a Statistics row must exist for. ``[]``
+    for no tree."""
     out: list[str] = []
-    for leaf, _ in statistic_leaves(spec):
-        path = str(leaf.params["quantity"])
-        if path not in out:
-            out.append(path)
+    for leaf, _ in statistic_leaves(spec, listed):
+        row = card_row(leaf)
+        if row not in out:
+            out.append(row)
     return out
 
 
@@ -610,11 +704,11 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
         and quantity
     ):
         # For a metric that declares ``accepts_quantity``, a string quantity
-        # names a stored scalar (statistics path / diagnostics summary), so
-        # the leaf has no tracked series to name — the path doubles as the
-        # display label. An explicit ``variable`` alongside it stays as the
-        # label the user chose. Every other metric scores a trajectory and
-        # still requires ``variable``.
+        # names a statistic of the log (a dotted path), so the leaf has no
+        # tracked series to name — the path doubles as the display label.
+        # An explicit ``variable`` alongside it stays as the label the user
+        # chose. Every other metric scores a trajectory and still requires
+        # ``variable``.
         variable = quantity
     if not isinstance(variable, str) or not variable:
         raise MetricSpecError(f"{path}.variable", "required string field")

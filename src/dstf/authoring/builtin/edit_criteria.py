@@ -25,8 +25,8 @@ from ...comparison.registry import metric, metrics
 from ...comparison.seeds import seeded_leaf
 from ...comparison.tree_spec import (
     LeafSpec,
+    on_the_card_view,
     parse_metric_tree,
-    reads_a_statistic,
     spec_to_raw,
     spec_to_view,
 )
@@ -172,11 +172,12 @@ class EditCriteria:
             "against": leaf.get("against") or "primary",
             "window": dict(leaf.get("window") or {}),
         }
-        # A statistics criterion (U3): only `scalar` scores a stored number
-        # (no mode select, and `set_metric`'s reseed never runs on one), a
+        # A card criterion (U3; `on_the_card_view`: a statistic, or a
+        # listed name's number): only `scalar` scores a stored number (no
+        # mode select, and `set_metric`'s reseed never runs on one), a
         # stored number has no window, and the Statistics row the editor
         # sits under names the quantity — none of the three is a field.
-        statistic = reads_a_statistic(state["metric"], state["params"])
+        statistic = on_the_card_view(state, s.diagnostic_names(model_id))
         # No heading: the criterion's own row sits directly above this panel
         # and names it, and a second name there made the editor read as two
         # panels rather than one (brief §3.2).

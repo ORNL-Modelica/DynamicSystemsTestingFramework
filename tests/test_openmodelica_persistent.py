@@ -433,6 +433,24 @@ class TestWorkerRunTest:
         assert 'outputFormat="mat"' in expr
         assert 'fileNamePrefix="result"' in expr
 
+    def test_the_filter_keeps_a_tests_own_diagnostic_name(self, tmp_path):
+        """A test entry's ``diagnostic_variables`` reach the worker's
+        ``variableFilter`` after the project's, as the batch run's do."""
+        test = _make_test(diagnostic_variables=["h"])
+        test_dir = tmp_path / "work" / "test_0001"
+        captured: dict = {}
+
+        def fake_simulate(expr: str):
+            captured["expr"] = expr
+            _write_stub_mat(test_dir / "result_res.mat", stop_time=test.stop_time)
+            return {"resultFile": str(test_dir / "result_res.mat"), "messages": ""}
+
+        worker, _, _ = self._bootstrap_worker(
+            tmp_path, responses={"simulate(": fake_simulate}
+        )
+        worker.run_test(test, "test_0001")
+        assert 'variableFilter="^(time|x|CPUtime|EventCounter|h)$"' in captured["expr"]
+
     def test_mat_sync_is_in_the_simulate_call_only_for_a_watched_run(self, tmp_path):
         """``Config.live_results`` is the one switch: off (every CLI run) the
         expression is the one above; on, it ends with the simflags."""

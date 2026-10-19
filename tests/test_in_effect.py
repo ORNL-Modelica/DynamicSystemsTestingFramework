@@ -203,7 +203,10 @@ def test_a_stats_path_quantity_on_the_flat_path_says_the_tolerance(tmp_path):
             entry["comparison"] = {
                 "tolerance": 0.01,
                 "variable_overrides": {
-                    "x": {"mode": "scalar", "quantity": "CPUtime.final"}
+                    "x": {
+                        "mode": "scalar",
+                        "quantity": "translation.continuous_time_states",
+                    }
                 },
             }
     spec_path.write_text(json.dumps(spec), encoding="utf-8")

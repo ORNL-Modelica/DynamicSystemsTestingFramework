@@ -1398,7 +1398,11 @@ class TestRescoreAndStage:
         entry = next(e for e in doc["tests"] if e["model"] == D)
         entry["comparison"] = {
             "variable_overrides": {
-                "x": {"mode": "scalar", "quantity": "CPUtime.final", "max_value": 100}
+                "x": {
+                    "mode": "scalar",
+                    "quantity": "translation.continuous_time_states",
+                    "max_value": 100,
+                }
             }
         }
         (cfg.parent / "test_spec.json").write_text(
@@ -2353,6 +2357,13 @@ class TestSessionView:
             "figure",
             "plot_figure",
             "plots",
+            # the names the test lists: a scalar added on one is its
+            # number's criterion (D162)
+            "diagnostic_names",
+            # what a number's seed reads where no run recorded the name
+            "baseline_summaries",
+            # the leaves on the Statistics card: drawn on no plot
+            "card_paths",
             "variable_names",
             # `labels` is a reader like the rest: a capability's caption
             # ("Add a criterion for pipe.T[1]") reads what the page's titles
@@ -4586,20 +4597,37 @@ STATS_RUN = {
     "translation": {"nonlinear": [1, 1, 1], "nonlinear_count": 3},
     "simulation": {"state_events": 2},
     "timing": {"total_wall": 4.02},
-    "CPUtime": 1.12,
 }
 STATS_BASE = {
     "translation": {"nonlinear": []},
     "simulation": {"state_events": 2},
     "timing": {"total_wall": 3.91},
-    "CPUtime": 0.80,
 }
 
 
-def _stats_session(tmp_path: Path, *, result: bool = True) -> Session:
+def _stats_session(
+    tmp_path: Path,
+    *,
+    result: bool = True,
+    listed: tuple[str, ...] = (),
+    project_listing: list[str] | None = None,
+) -> Session:
     """`_two_var_project` with A's baseline carrying `STATS_BASE` and its
-    in-memory result `STATS_RUN` (FakeLib records only walls)."""
+    in-memory result `STATS_RUN` (FakeLib records only walls); A's entry
+    lists ``listed`` beside the project's names — `testing.json`'s
+    ``project_listing`` where given, else its default."""
     cfg, work = _two_var_project(tmp_path)
+    if project_listing is not None:
+        doc = json.loads(cfg.read_text(encoding="utf-8"))
+        doc["diagnostic_variables"] = project_listing
+        cfg.write_text(json.dumps(doc), encoding="utf-8")
+    if listed:
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == A:
+                entry["diagnostic_variables"] = list(listed)
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
     config = Config(config_file=cfg, work_dir=work)
     tt = np.asarray([i / 4 for i in range(5)])
     ReferenceStore(config).store_reference(
@@ -4673,7 +4701,7 @@ class TestTheStatisticsRows:
                 {
                     "metric": "scalar",
                     "variable": "CPUtime",
-                    "quantity": "CPUtime.final",
+                    "quantity": {"reduce": "final"},
                     "tolerance": 0.1,
                     "tolerance_mode": "rel",
                 },
@@ -4683,9 +4711,8 @@ class TestTheStatisticsRows:
         rows = s.statistics(A)
         assert (rows[-1].path, rows[-1].section) == ("translation.typo", "other scored")
         assert rows[-1].run is None and rows[-1].baseline is None
-        # `CPUtime.final` is the `CPUtime` row (S2): no second one.
+        # CPUtime's number is the `CPUtime` row: no second one.
         assert [r.path for r in rows].count("CPUtime") == 1
-        assert "CPUtime.final" not in [r.path for r in rows]
 
     def test_an_implicit_tree_is_never_materialized_for_them(self, tmp_path):
         """The extra rows come from the ENTRY's own tree: an implicit tree
@@ -4714,20 +4741,23 @@ class TestTheStatisticsRows:
         s.statistics(A)
         assert s._reads_for(A).ref == before
 
-    def test_the_rows_take_each_diagnostics_own_samples(self, tmp_path):
-        s = _stats_session(tmp_path)
+    def test_a_listed_names_row_takes_its_kind_from_its_name(self, tmp_path):
+        """Whole samples or fractional, a listed name that is neither CPUtime
+        nor EventCounter is a `value` (D162): its kind is never guessed."""
+        s = _stats_session(tmp_path, listed=("Steps", "Wall"))
         tt = np.asarray([i / 4 for i in range(5)])
         res = s.project.results[A]
-        res.statistics = {**res.statistics, "Steps": 4.0, "Wall": 2.5}
         res.diagnostics = [
             VariableResult(index=0, time=tt, values=4 * tt, name="Steps"),  # whole
             VariableResult(
                 index=0, time=tt, values=2.5 * tt, name="Wall"
             ),  # fractional
+            VariableResult(index=0, time=tt, values=tt, name="CPUtime"),
         ]
         by = {r.path: r for r in s.statistics(A)}
-        assert by["Wall"].kind == "time"
-        assert by["Steps"].kind == "count"
+        assert (by["Wall"].kind, by["Wall"].run) == ("value", 2.5)
+        assert (by["Steps"].kind, by["Steps"].run) == ("value", 4.0)
+        assert by["CPUtime"].kind == "time"
 
     def test_a_diagnostic_max_leaf_gets_its_own_row_from_both_sides(self, tmp_path):
         s = _stats_session(tmp_path)
@@ -4773,7 +4803,7 @@ class TestTheStatisticsRows:
                             {
                                 "metric": "scalar",
                                 "variable": "CPUtime",
-                                "quantity": "CPUtime.final",
+                                "quantity": "translation.continuous_time_states",
                                 "tolerance": 0.1,
                                 "tolerance_mode": "rel",
                             },
@@ -4790,9 +4820,9 @@ class TestTheStatisticsRows:
 #: Dymola-shaped statistics at TRANSFORM's lengths (the keys `log_parser`
 #: writes), for the Statistics card: the baseline was stored before the
 #: parser wrote a list's zero summaries (an empty `nonlinear`, no `_count`),
-#: and the run's model grew three nonlinear systems. CPU time moved
-#: 0.80 -> 1.12 s (+40%); the total wall by 3%, inside the 10% a time's
-#: requirement allows.
+#: and the run's model grew three nonlinear systems. The total wall moved by
+#: 3%, inside the 10% a time's requirement allows. CPU time (0.80 -> 1.12 s,
+#: +40%) and the event count are diagnostics (`with_dymola_diagnostics`).
 DYMOLA_BASE = {
     "translation": {
         "scalar_unknowns": 8715,
@@ -4818,8 +4848,6 @@ DYMOLA_BASE = {
         "other_wall": 0.61,
         "total_wall": 3.91,
     },
-    "CPUtime": 0.80,
-    "EventCounter": 0,
 }
 DYMOLA_RUN = copy.deepcopy(DYMOLA_BASE)
 DYMOLA_RUN["translation"].update(
@@ -4831,7 +4859,23 @@ DYMOLA_RUN["translation"].update(
     }
 )
 DYMOLA_RUN["timing"]["total_wall"] = 4.02
-DYMOLA_RUN["CPUtime"] = 1.12
+
+
+def with_dymola_diagnostics(work: Path, key: str) -> list[VariableResult]:
+    """The run at ``key`` records CPUtime (to 1.12 s) and EventCounter (0)
+    as a Dymola run does — columns of its result the JSON driver reads as
+    diagnostics — and the baseline's: CPUtime to 0.80 s, EventCounter 0."""
+    path = work / key / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    n = len(payload["time"])
+    payload["variables"]["CPUtime"] = [1.12 * i / (n - 1) for i in range(n)]
+    payload["variables"]["EventCounter"] = [0.0] * n
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    tt = np.asarray([i / 4 for i in range(5)])
+    return [
+        VariableResult(index=1, time=tt, values=0.80 * tt, name="CPUtime"),
+        VariableResult(index=2, time=tt, values=0.0 * tt, name="EventCounter"),
+    ]
 
 
 def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -4842,6 +4886,7 @@ def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
     and B has no baseline (NO_REF: nothing is scored)."""
     cfg, work = _two_var_project(tmp_path, ref_models=())
     for key, model in (("test_0001", A), ("test_0002", B)):
+        baseline_diagnostics = with_dymola_diagnostics(work, key)
         (work / key / "run_stats.json").write_text(
             json.dumps(
                 {
@@ -4865,6 +4910,7 @@ def _stats_project(tmp_path: Path) -> tuple[Path, Path]:
                 VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
             ],
             statistics=copy.deepcopy(DYMOLA_BASE),
+            diagnostics=baseline_diagnostics,
         ),
         provenance=PROVENANCE,
     )

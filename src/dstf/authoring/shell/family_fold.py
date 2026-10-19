@@ -154,7 +154,8 @@ class FoldRow:
         the open editor's fields say. ``None`` when they no longer share
         one, or are no longer all there: the editor has nothing to show."""
         wanted = set(self.fold.paths)
-        rows = criteria_rows(view, self.folding.card.subject)
+        card = self.folding.card
+        rows = criteria_rows(view, card.subject, card.listed())
         leaves = [row["leaf"] for row in rows if str(row["leaf"]["path"]) in wanted]
         if len(leaves) != len(wanted):
             return None
@@ -314,7 +315,7 @@ class Folding:
             # what keeps a UnitTests element out of every fold: each is a
             # plot of its own (D140, `derive_plots`).
             return
-        criteria = criteria_rows(view, card.subject)
+        criteria = criteria_rows(view, card.subject, card.listed())
         standing = {path for path in rows if not is_fold(path)}
         if {str(row["leaf"]["path"]) for row in criteria} != standing:
             # The rows standing are another tree's — a leaf came or went,

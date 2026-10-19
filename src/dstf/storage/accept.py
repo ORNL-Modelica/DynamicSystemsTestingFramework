@@ -15,7 +15,7 @@ from ..comparison.comparator import (
     refused_base_tolerance,
 )
 from ..config import Config
-from ..discovery.test_registry import TestModel
+from ..discovery.test_registry import TestModel, diagnostic_names
 from .baseline import ReferenceFile
 from .batch_manifest import BatchManifest, unfinished_run_models
 from .ref_index import RefIndex
@@ -104,7 +104,11 @@ def lost_variables_warnings(
     holds = set(_variable_names(store.get_reference(model_id)))
     lost = [name for name in held_before if name and name not in holds]
     tracked = tracks(test)
-    by_criterion = set(criterion_variables(test, store.config.diagnostic_variables))
+    by_criterion = set(
+        criterion_variables(
+            test, diagnostic_names(test, store.config.diagnostic_variables)
+        )
+    )
     asked = [name for name in lost if tracked(name) or name in by_criterion]
     dropped = [name for name in lost if name not in asked]
 

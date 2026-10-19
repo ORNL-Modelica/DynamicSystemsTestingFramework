@@ -11,12 +11,11 @@ import math
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-import numpy as np
-
 from ..backends.types import VariableText, display_label, variable_texts
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
-from ..storage.baseline import DiagnosticSummary, ReferenceFile, StoredVariable
+from ..storage.baseline import ReferenceFile, StoredVariable
+from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 from .stats_rows import SECTION_TITLES, report_text, statistics_rows
 
 logger = logging.getLogger(__name__)
@@ -313,17 +312,30 @@ def _build_statistics_sections(
     ref_stats: dict,
     cur_stats: dict,
     *,
+    listing: Sequence[str],
     run_diagnostics: Sequence = (),
+    baseline_diagnostics: Sequence = (),
+    baseline_digits: int = DOUBLE_SHOWN,
 ) -> list:
     """The Statistics table: :func:`~.stats_rows.statistics_rows` rendered
     into the template's ``{title, rows: [{label, current, reference,
     changed}]}`` sections — the rows the tool's Statistics card shows, in
     the report's order, under one "changed" rule for both; printed in full
     (:func:`~.stats_rows.report_text`), where the card rounds. A section with
-    no key is no section. ``run_diagnostics`` are the run's samples: a
-    folded diagnostic's row takes its kind from them, as the card's does."""
+    no key is no section. ``listing`` is the names the test lists
+    (`diagnostic_names`), ``run_diagnostics`` and ``baseline_diagnostics``
+    the two sides of them — a row each a side holds, its final — and
+    ``baseline_digits`` the precision the baseline was recorded with, as
+    the card's are."""
     sections: dict[str, dict] = {}
-    for row in statistics_rows(cur_stats, ref_stats, run_diagnostics=run_diagnostics):
+    for row in statistics_rows(
+        cur_stats,
+        ref_stats,
+        listing=listing,
+        run_diagnostics=run_diagnostics,
+        baseline_diagnostics=baseline_diagnostics,
+        baseline_digits=baseline_digits,
+    ):
         if row.section not in sections:
             title = (
                 SECTION_TITLES.get(row.section) or row.section.replace("_", " ").title()
@@ -334,8 +346,8 @@ def _build_statistics_sections(
         sections[row.section]["rows"].append(
             {
                 "label": row.label,
-                "current": report_text(row.kind, row.run),
-                "reference": report_text(row.kind, row.baseline),
+                "current": report_text(row.kind, row.run, row.digits[0]),
+                "reference": report_text(row.kind, row.baseline, row.digits[1]),
                 "changed": row.changed,
             }
         )
@@ -348,10 +360,11 @@ def build_trajectories(
     ref_data: ReferenceFile | None,
     texts: dict[str, VariableText] | None = None,
 ) -> tuple[list, list, list]:
-    """Build the trajectory triple — primary tracked variables, diagnostic
-    variables (CPUtime / EventCounter), and the no-baseline pass-through
-    used when a test runs without a reference. A stored diagnostic is a
-    summary, not a trajectory: a diagnostic's entry draws the run alone.
+    """Build the trajectory triple — primary tracked variables, the listed
+    names the run recorded (CPUtime, EventCounter, a test's own), and the
+    no-baseline pass-through used when a test runs without a reference. A
+    listed name is stored as its summary, not a trajectory: its entry
+    draws the run alone.
 
     ``texts`` is the test's label scope (:func:`test_texts`). Every entry
     carries BOTH readings: ``label`` for the surfaces that show the muted
@@ -445,39 +458,6 @@ def build_trajectories(
     return trajectories, diag_trajectories, nobaseline_trajectories
 
 
-def _build_diag_summaries(result, ref_data: ReferenceFile | None) -> list:
-    """Diagnostic-variable summary rows (current final/min/max vs reference
-    summary). Replaces the pre-D78 full-trajectory comparison for
-    diagnostics — the trajectory is informational; the summary values
-    are the actual regression signal (final CPUtime, total event count).
-    """
-    if not (result and result.diagnostics):
-        return []
-    ref_diags_by_name: dict[str, DiagnosticSummary] = {}
-    if ref_data:
-        for rd in ref_data.baseline.diagnostics:
-            ref_diags_by_name[rd.name] = rd
-    diag_summaries = []
-    for diag in result.diagnostics:
-        values = np.asarray(diag.values)
-        cur_final = float(values[-1]) if values.size else None
-        ref_entry = ref_diags_by_name.get(diag.name)
-        ref_final = ref_entry.final if ref_entry is not None else None
-        diag_summaries.append(
-            {
-                "name": diag.name,
-                "current": _format_value(cur_final) if cur_final is not None else "",
-                "reference": _format_value(ref_final) if ref_final is not None else "",
-                "changed": (
-                    cur_final is not None
-                    and ref_final is not None
-                    and cur_final != ref_final
-                ),
-            }
-        )
-    return diag_summaries
-
-
 def _build_artifacts(
     test_dir: Path | None,
     artifact_files: tuple[tuple[str, str], ...],
@@ -524,7 +504,10 @@ def _build_key_stats(
     ref_stats: dict,
     cur_stats: dict,
     *,
+    listing: Sequence[str],
     run_diagnostics: Sequence = (),
+    baseline_diagnostics: Sequence = (),
+    baseline_digits: int = DOUBLE_SHOWN,
 ) -> list:
     """Top-level summary row: the worst NRMSE (`worst_nrmse`), plus a small
     fixed pick of structural stats (continuous states, nonlinear
@@ -538,7 +521,12 @@ def _build_key_stats(
     rows = {
         row.path: row
         for row in statistics_rows(
-            cur_stats, ref_stats, run_diagnostics=run_diagnostics
+            cur_stats,
+            ref_stats,
+            listing=listing,
+            run_diagnostics=run_diagnostics,
+            baseline_diagnostics=baseline_diagnostics,
+            baseline_digits=baseline_digits,
         )
     }
 
@@ -549,8 +537,8 @@ def _build_key_stats(
         key_stats.append(
             {
                 "label": label,
-                "current": report_text(row.kind, row.run),
-                "reference": report_text(row.kind, row.baseline),
+                "current": report_text(row.kind, row.run, row.digits[0]),
+                "reference": report_text(row.kind, row.baseline, row.digits[1]),
                 "changed": row.changed,
             }
         )
@@ -683,10 +671,11 @@ def _tree_summary(view: dict | None) -> dict | None:
     }
 
 
-def _spec_for(comparisons: list, test_model):
-    """The tree the view walks: the authored one, else the implicit tree
-    synthesized from what was scored. Both the tree view and the
-    per-variable entries read it, so they agree by construction."""
+def scored_spec(comparisons: list, test_model):
+    """The tree a test is scored by — the tree the view walks: the authored
+    one, else the implicit tree synthesized from what was scored. The tree
+    view, the per-variable entries and the tool's Statistics card read it,
+    so they agree by construction."""
     from ..comparison.tree_spec import (
         synthesize_implicit_tree as _synthesize_implicit_tree,
     )
@@ -732,7 +721,7 @@ def build_tree_view(
         spec_to_view as _spec_to_view,
     )
 
-    spec = _spec_for(comparisons, test_model)
+    spec = scored_spec(comparisons, test_model)
     eval_by_path = _flatten_evaluation(metric_tree) if metric_tree is not None else {}
 
     # Leaves are addressed by the path a patch op would use — stamped by the
@@ -801,7 +790,7 @@ def _build_tree_view_and_variables(
     tree_view = build_tree_view(comparisons, test_model, metric_tree, texts)
     if tree_view is None:
         return None, {}
-    spec = _spec_for(comparisons, test_model)
+    spec = scored_spec(comparisons, test_model)
     all_leaves = _view_leaves(tree_view)
 
     # Look the trajectory up by variable name — ``build_trajectories``
@@ -857,6 +846,8 @@ def _build_template_context(
     overlays: list | None = None,
     run_metadata: dict | None = None,
     plot_series: Iterable[str] = (),
+    *,
+    diagnostics: Sequence[str],
 ) -> dict:
     """Build the full template context dict from comparison data.
 
@@ -867,6 +858,9 @@ def _build_template_context(
     plot-only ones included: they are part of the page's label scope
     (:func:`test_texts`), so a plot-only variable NAMED like another's
     expression is what makes that other one read its name too.
+    ``diagnostics`` is the names the test lists (`diagnostic_names`):
+    the Statistics rows of its listed names are of them alone, as the
+    tool's card's are.
     """
     if cur_stats is None:
         cur_stats = {}
@@ -876,9 +870,17 @@ def _build_template_context(
     ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
     sim_params = _build_sim_params(test_model, ref_sim)
     run_diagnostics = (result.diagnostics or []) if result is not None else []
-    statistics_sections = _build_statistics_sections(
-        ref_stats, cur_stats, run_diagnostics=run_diagnostics
-    )
+    # The baseline's side of the listed names' rows: its summaries, at the
+    # precision its file was recorded with.
+    sides = {
+        "listing": diagnostics,
+        "run_diagnostics": run_diagnostics,
+        "baseline_diagnostics": ref_data.baseline.diagnostics if ref_data else [],
+        "baseline_digits": shown_digits(ref_data.sampling)
+        if ref_data
+        else DOUBLE_SHOWN,
+    }
+    statistics_sections = _build_statistics_sections(ref_stats, cur_stats, **sides)
     texts = test_texts(comparisons, result, plot_series)
     trajectories, diag_trajectories, nobaseline_trajectories = build_trajectories(
         comparisons,
@@ -886,16 +888,13 @@ def _build_template_context(
         ref_data,
         texts,
     )
-    diag_summaries = _build_diag_summaries(result, ref_data)
     artifacts = _build_artifacts(test_dir, artifact_files)
     n_passed, _n_nobaseline, is_simulate_only, sim_failed = _compute_summary_flags(
         comparisons,
         result,
         test_model,
     )
-    key_stats = _build_key_stats(
-        comparisons, ref_stats, cur_stats, run_diagnostics=run_diagnostics
-    )
+    key_stats = _build_key_stats(comparisons, ref_stats, cur_stats, **sides)
     warning_rows = _build_warning_rows(warnings)
 
     last_run_str = ""
@@ -937,7 +936,6 @@ def _build_template_context(
         "ref_info": ref_info,
         "sim_params": sim_params,
         "statistics_sections": statistics_sections,
-        "diagnostic_summaries": diag_summaries,
         "artifacts": artifacts,
         "trajectories": trajectories,
         "diag_trajectories": diag_trajectories,

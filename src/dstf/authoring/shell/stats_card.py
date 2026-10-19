@@ -1,13 +1,16 @@
 """The Statistics card (U3): every statistic the run and its baseline
-recorded, side by side, above the criteria tree. Closed it is one line
-naming the counts that changed, then briefly the times; open, a row per count or time under its
-section, each ending in whatever attaches at STATISTIC (a `+` that adds a
-requirement on it) — or, for a row a criterion reads, that criterion's
-pill and its requirement in a word or two. The card is a VIEW of the one
-tree (Q1 b): which rows are scored is the tree as authored, staged edits
-included (`Session.statistic_leaves`); the tree view only says each
-criterion's verdict. A statistics criterion is edited under its row, by
-whatever attaches at STATISTIC_CRITERION. It knows no capability by name.
+recorded, and the listed names' numbers, side by side, above the criteria
+tree. Closed it is one line naming the counts that changed, then briefly
+the times and values; open, a row per count, time or value (a listed name
+that is neither a time nor a count) under its section, each ending in
+whatever attaches at STATISTIC (a `+` that adds a requirement on it) — or,
+for a row a criterion reads, that criterion's pill and its requirement in a
+word or two. The card is a VIEW of the one tree (Q1 b): which rows are
+scored is the SCORED tree — the authored one, staged edits included, else
+a flat entry's implicit one (`Session.statistic_leaves`); the tree view
+only says each criterion's verdict. A card criterion is edited under its
+row, by whatever attaches at STATISTIC_CRITERION. It knows no capability by
+name.
 
 The rows are `Session.statistics` (`reporting.stats_rows`), the row model
 the report renders too: a row is "changed" when the criterion its `+`
@@ -21,13 +24,14 @@ import json
 import math
 from collections.abc import Sequence
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nicegui import ui
 
 from ...backends.common.statistics import SUMMARIES
 from ...comparison.modes import ScalarConfig
-from ...comparison.sides import parse_sides, sides_text, signed_sides
+from ...comparison.sides import bounds_text, parse_sides, sides_text, signed_sides
+from ...comparison.tree_spec import card_row
 from ...reporting.stats_rows import SECTION_TITLES, StatRow, card_text
 from ...reporting.tree_rows import leaves_of
 from ..capabilities import Placement
@@ -59,22 +63,28 @@ def _entry(row: StatRow) -> tuple[tuple[str, str], int]:
 
 def _moved(row: StatRow) -> float:
     """How far a changed time moved, relative to its baseline: its rank
-    on the closed line. Off a zero baseline, farther than any."""
+    on the closed line. Off a zero baseline, or to or from a non-finite
+    value, farther than any."""
     run, base = float(row.run), float(row.baseline)
-    return abs((run - base) / base) if base else math.inf
+    if not (math.isfinite(run) and math.isfinite(base)) or not base:
+        return math.inf
+    return abs((run - base) / base)
 
 
 def _more(named: Sequence[StatRow], cap: int) -> str:
-    text = ", ".join(f"{r.label} {r.delta}" for r in named[:cap])
+    """The rows named, each by its label and its delta — by its label
+    alone where there is no delta to read (a non-finite side)."""
+    text = ", ".join(f"{r.label} {r.delta}".rstrip() for r in named[:cap])
     return f"{text} +{len(named) - cap} more" if len(named) > cap else text
 
 
 def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
     """The closed line after "run vs baseline ·": the changed COUNTS — in
     section order, at most `NAMED` named, then `+N more` — or `no count
-    changed`; then, after a `·`, the changed times, the farthest moved
-    first, at most `TIMES`. `all match` where no count and no time
-    changed; or why it names none — "no run result" where ``has_run`` is
+    changed`; then, after a `·`, the changed times and the changed
+    `value` rows (a listed name that is neither a time nor a count, also
+    read as a percentage), the farthest moved first, at most `TIMES`.
+    `all match` where nothing changed; or why it names none — "no run result" where ``has_run`` is
     false: no run, or one that failed. The owner's ruling
     (2026-09-30): over TRANSFORM CPUtime ran ~2.2x its baseline on 324 of
     331 tests, so a line naming times among the counts named CPUtime on
@@ -99,7 +109,9 @@ def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
         key=lambda r: sections.index(r.section),
     )
     times = sorted(
-        (r for r in shown if r.changed and r.kind == "time"), key=_moved, reverse=True
+        (r for r in shown if r.changed and r.kind in ("time", "value")),
+        key=_moved,
+        reverse=True,
     )
     if not counts and not times:
         return "all match"
@@ -117,13 +129,9 @@ def summary(leaf: dict) -> str:
     reads `−0.5 / +1`, `−5% / +10%`. A value the leaf leaves out is the
     scalar mode's default."""
     p = leaf.get("params") or {}
-    lo, hi = p.get("min_value"), p.get("max_value")
-    if lo is not None and hi is not None:
-        return f"in [{lo:g}, {hi:g}]"
-    if lo is not None:
-        return f"≥ {lo:g}"
-    if hi is not None:
-        return f"≤ {hi:g}"
+    bounds = bounds_text(p.get("min_value"), p.get("max_value"))
+    if bounds is not None:
+        return bounds
     tol = parse_sides(p.get("tolerance", ScalarConfig.tolerance), "tolerance")
     rel = p.get("tolerance_mode", ScalarConfig.tolerance_mode) == "rel"
     if not tol.equal:
@@ -135,38 +143,28 @@ def summary(leaf: dict) -> str:
     return "exact" if tol.upper == 0 else f"±{tol.upper:g}"
 
 
-def cell_text(row: StatRow, value: Any) -> str:
-    """A value as the card prints it, rounded (`card_text`); `—` for a
+def cell_text(row: StatRow, side: int) -> str:
+    """A side's value (0: the run, 1: the baseline) as the card prints it,
+    rounded from the digits it was recorded with (`card_text`); `—` for a
     side that recorded none."""
-    return card_text(row.kind, value) or "—"
-
-
-def row_of(quantity: str, paths: Sequence[str] | set[str]) -> str:
-    """The row a leaf's quantity is shown on: its own, or — U2's add form
-    writes `CPUtime.final` — the top-level statistic's (S2), as
-    `statistics_rows` holds it."""
-    if quantity in paths:
-        return quantity
-    name, _, field = quantity.rpartition(".")
-    return name if field == "final" and name in paths else quantity
+    value = row.baseline if side else row.run
+    return card_text(row.kind, value, row.digits[side]) or "—"
 
 
 def scored(
     leaves: Sequence[tuple[LeafSpec, str]],
     view: dict | None,
-    paths: Sequence[str],
 ) -> dict[str, list[dict]]:
-    """Row path -> the criteria reading it, in tree order: the AUTHORED
-    tree's statistics leaves (``leaves``, `Session.statistic_leaves`), each
-    as ``{"path", "params", "status"}`` — its status the view's verdict,
+    """Row path -> the criteria reading it, in tree order: the card leaves
+    (`on_the_card`) of the scored tree (``leaves``, `Session.statistic_leaves`),
+    each as ``{"path", "params", "status"}`` — its status the view's verdict,
     "pending" where the view has none. Read from the view, a test with
     nothing compared (no baseline: no view) showed a staged criterion's row
     as unscored, and its `+` staged the same leaf again."""
-    held = set(paths)
     verdicts = {str(n["path"]): leaf_status(n) for n in leaves_of(view)}
     out: dict[str, list[dict]] = {}
     for leaf, path in leaves:
-        out.setdefault(row_of(str(leaf.params["quantity"]), held), []).append(
+        out.setdefault(card_row(leaf), []).append(
             {
                 "path": path,
                 "params": leaf.params,
@@ -193,8 +191,8 @@ class _Row:
         self.pill, self.rule, self.more = pill, rule, more
 
     def paint(self, stat: StatRow, leaves: list[dict]) -> None:
-        self.run.set_text(cell_text(stat, stat.run))
-        self.base.set_text(cell_text(stat, stat.baseline))
+        self.run.set_text(cell_text(stat, 0))
+        self.base.set_text(cell_text(stat, 1))
         self.delta.set_text(stat.delta)
         if stat.changed:
             self.row.classes(add="dstf-stat-changed")
@@ -266,7 +264,7 @@ class StatsCard:
             return
         shown = [r for r in stats if r.kind != "text"]
         paths = [r.path for r in shown]
-        reads = scored(session.statistic_leaves(model), view, paths)
+        reads = scored(session.statistic_leaves(model), view)
         tree = session.tree(model)
         shape = (
             model,
@@ -410,9 +408,9 @@ class StatsCard:
     # -- the one open editor -------------------------------------------------
 
     def row_for(self, leaf_path: str) -> str | None:
-        """The row a statistics criterion is shown on, or None — a leaf
-        that reads no statistic, or none at that path. The authored tree's,
-        as `scored` reads it."""
+        """The row a card leaf (`on_the_card`) of the scored tree is shown
+        on, or None — a leaf that is no card leaf, or none at that path. The
+        scored tree's, as `scored` reads it."""
         session, model = self.page.shell.session, self.page.model_id
         leaf = next(
             (
@@ -422,10 +420,7 @@ class StatsCard:
             ),
             None,
         )
-        if leaf is None:
-            return None
-        paths = [r.path for r in session.statistics(model)]
-        return row_of(str(leaf.params["quantity"]), paths)
+        return None if leaf is None else card_row(leaf)
 
     def open_editor(self, leaf_path: str, view: dict | None) -> bool:
         """The criterion's editor under its row (the `PlotCard.open_editor`

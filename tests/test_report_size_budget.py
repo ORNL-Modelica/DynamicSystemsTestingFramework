@@ -102,6 +102,7 @@ def _render_real_page(tmp_path, n_vars: int, n_samples: int, cap: int):
         test_model=test,
         metric_tree=comp.metric_tree,
         max_embedded_samples=cap,
+        diagnostics=(),
     )
     return html, plot_dir
 

@@ -79,7 +79,17 @@ What each part does:
   base and one `VariableResult` per tracked variable. A variable's `name` is
   the one its result file gives it; `expression` is only for a source that
   wrote another text for the same variable, as a Modelica `UnitTests`
-  component does.
+  component does. It also records, as `diagnostics`, one `VariableResult`
+  for each listed name its result holds:
+  {func}`~dstf.discovery.test_registry.diagnostic_names` gives them —
+  `diagnostic_names(test, self.config.diagnostic_variables)`, the project's
+  `diagnostic_variables` and then the entry's own, each once, in that order.
+  The baseline stores each one's final, min and max; a `scalar`'s final, min
+  or max over the whole run of a name whose curve the result does not hold is
+  scored from them. The example records each listed name its result holds,
+  built as its tracked variables are; an entry that lists `y` stores `y`'s
+  summary, and a listed name the model does not write, such as the default
+  `CPUtime`, is skipped.
 
 ## Capabilities
 

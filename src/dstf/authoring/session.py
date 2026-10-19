@@ -68,6 +68,7 @@ from ..discovery.spec_update import (
 from ..discovery.test_registry import (
     SpecModelLocator,
     TestModel,
+    diagnostic_names,
     merge_tests,
     scan_files,
     scan_source_tests,
@@ -75,7 +76,7 @@ from ..discovery.test_registry import (
 )
 from ..figures.assemble import leaves_by_variable, view_from_trajectory
 from ..figures.view import VariableView, error_series
-from ..storage.baseline import PRIMARY_BASELINE, ReferenceFile
+from ..storage.baseline import PRIMARY_BASELINE, DiagnosticSummary, ReferenceFile
 from ..storage.reference_store import ReferenceStore
 from .capabilities import (
     Artifact,
@@ -932,9 +933,9 @@ class Session:
                     if series is not None
                     else {}
                 )
-        leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
-            variable, []
-        )
+        leaves = leaves_by_variable(
+            comp.metric_tree if comp is not None else None, self.card_paths(model_id)
+        ).get(variable, [])
         return view_from_trajectory(variable, traj, leaves)
 
     def _unfinished_view(
@@ -1069,13 +1070,18 @@ class Session:
 
         project = self._require_project()
         comp, result = self._layout_source(model_id)
-        # A statistics leaf scores a stored number: its parsed `variable`
-        # (its quantity path, or a diagnostic's name) is no variable, and
-        # listed here the add form's picker offered `translation.*` paths
-        # as "Other variables". A name a trajectory leaf scores too stays.
-        spec = self._entry_tree(model_id)
+        # A card leaf scores a stored number: a statistic's parsed
+        # `variable` (its quantity path) is no variable — listed here, the
+        # add form's picker offered `translation.*` paths as "Other
+        # variables" — and a listed name only numbers score is no tracked
+        # one: the drawer lists it under Diagnostics. A name a curve
+        # criterion scores too stays (`tree_variables`).
+        spec = self._scored_spec(model_id)
         numbers = (
-            set(collect_variables(spec)) - set(tree_variables(spec)) if spec else set()
+            set(collect_variables(spec))
+            - set(tree_variables(spec, self.diagnostic_names(model_id)))
+            if spec
+            else set()
         )
         scored = (
             [vc.name for vc in comp.variables if vc.name not in numbers]
@@ -1194,10 +1200,13 @@ class Session:
         by_id = {t.model_id: t for t in tests}
         out: set[str] = set()
         for model_id in models:
+            test = by_id.get(model_id)
             missing = unrecorded_variables(
-                by_id.get(model_id),
+                test,
                 project.results.get(model_id),
-                project.config.diagnostic_variables,
+                diagnostic_names(test, project.config.diagnostic_variables)
+                if test is not None
+                else (),
             )
             if missing and not set(missing).isdisjoint(self._file_names(model_id)):
                 out.add(model_id)
@@ -1242,6 +1251,38 @@ class Session:
             raise KeyError(model_id)
         return tuple(test.plots or ())
 
+    def diagnostic_names(self, model_id: str) -> list[str]:
+        """The names ``model_id`` lists (`diagnostic_names`: the project's
+        `diagnostic_variables`, then the test's own). An unknown model is a
+        KeyError."""
+        project = self._require_project()
+        test = project.test(model_id)
+        if test is None:
+            raise KeyError(model_id)
+        return diagnostic_names(test, project.config.diagnostic_variables)
+
+    def card_paths(self, model_id: str) -> set[str]:
+        """The tree paths of the test's leaves on the Statistics card, over
+        the scored tree (`tree_rows.card_paths`, the report's rule): drawn
+        on no plot (`leaves_by_variable`). The view is the spec's alone,
+        never `tree_view`, which scores and labels every leaf."""
+        from ..comparison.tree_spec import spec_to_view
+        from ..reporting.tree_rows import card_paths
+
+        spec = self._scored_spec(model_id)
+        view = spec_to_view(spec) if spec is not None else None
+        return card_paths(view, self.diagnostic_names(model_id))
+
+    def baseline_summaries(self, model_id: str) -> dict[str, DiagnosticSummary]:
+        """The summaries the test's baseline stores of the names it listed,
+        by name — read from the CACHED reference; ``{}`` without one. What
+        a number's seed reads where no run recorded the name. An unknown
+        model is a KeyError."""
+        if self._require_project().test(model_id) is None:
+            raise KeyError(model_id)
+        ref = self._reads_for(model_id).ref
+        return {d.name: d for d in ref.baseline.diagnostics} if ref is not None else {}
+
     def _plot_leaves(self, model_id: str) -> list[LeafSpec] | None:
         """:func:`~dstf.discovery.plots.plot_leaves` for this test: the
         leaves its plots derive from, ``None`` for one plot per tracked
@@ -1251,7 +1292,7 @@ class Session:
             raise KeyError(model_id)
         comp, _result = self._layout_source(model_id)
         compared = [vc.name for vc in comp.variables] if comp is not None else []
-        return plot_leaves(test, compared)
+        return plot_leaves(test, compared, self.diagnostic_names(model_id))
 
     def plots_from_tree(self, model_id: str) -> bool:
         """Whether the test's plots derive from a tree — the authored one,
@@ -1283,6 +1324,7 @@ class Session:
             [vc.name for vc in comp.variables] if comp is not None else [],
             result,
             listed=reads.names,
+            diagnostics=self.diagnostic_names(model_id),
         )
         if reads.names_read:
             return plots
@@ -1408,9 +1450,9 @@ class Session:
             if not self._is_running(model_id):
                 reads.bases[variable] = base
         comp = self.comparisons.get(model_id)
-        leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
-            variable, []
-        )
+        leaves = leaves_by_variable(
+            comp.metric_tree if comp is not None else None, self.card_paths(model_id)
+        ).get(variable, [])
         # The leaves are decimated on their own (no arrays but their
         # geometry) and joined to the cached base; the figure is then built
         # WITHOUT a budget, or `variable_figure` would decimate the base a
@@ -1432,7 +1474,7 @@ class Session:
             raise KeyError(model_id)
         comp = self.comparisons.get(model_id)
         if comp is None or not comp.evaluated:
-            return self._unscored_view(test)
+            return self._unscored_view(model_id)
         base = (
             (comp.base_tolerance, comp.tolerance_source)
             if comp.base_tolerance is not None and comp.tolerance_source is not None
@@ -1447,28 +1489,20 @@ class Session:
             base,
         )
 
-    def _unscored_view(self, test: TestModel) -> dict | None:
+    def _unscored_view(self, model_id: str) -> dict | None:
         """The criteria of a test with nothing scored BECAUSE OF A RUN —
         in progress, or ended without finishing (D151) — as a tree view
         with a word in place of every verdict (`live_rows.unscored_view`):
         the tree as authored, pending edits included, else the implicit
-        tree of what its last result scored. None for any other test, and
+        tree of what its last result scored (:meth:`_scored_spec`, the
+        tree the card and the report read). None for any other test, and
         for one with neither."""
-        from ..comparison.tree_spec import synthesize_implicit_tree
-
-        model_id = test.model_id
         word = self.live_runs.word(model_id)
         if word is None:
             return None
-        spec = test.metric_tree_spec
+        spec = self._scored_spec(model_id)
         if spec is None:
-            comp, _result = self._layout_source(model_id)
-            compared = [vc.name for vc in comp.variables] if comp is not None else []
-            if not compared:
-                return None
-            spec = synthesize_implicit_tree(
-                compared, variable_overrides=test.variable_overrides
-            )
+            return None
         return unscored_view(spec, self.variable_texts(model_id), word)
 
     def partial(self, model_id: str) -> Partial | None:
@@ -1480,14 +1514,15 @@ class Session:
     def statistics(self, model_id: str) -> list[StatRow]:
         """The test's Statistics rows (:func:`~dstf.reporting.stats_rows.
         statistics_rows`): the last run's statistics beside its baseline's,
-        plus a row for every quantity a statistics leaf of the entry's tree
-        reads that no recorded statistic holds. The baseline's rows alone
+        plus a row for every quantity a card leaf of the scored tree reads
+        that no recorded statistic holds. The baseline's rows alone
         with no result; with neither, only those leaves' "other scored"
         rows (``[]`` when the tree reads no statistic). Reads the CACHED
         reference, which `statistics_rows` never writes. An unknown model is a
         KeyError, as for :meth:`tree`."""
         from ..comparison.tree_spec import statistic_paths
         from ..reporting.stats_rows import statistics_rows
+        from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 
         project = self._require_project()
         if project.test(model_id) is None:
@@ -1497,32 +1532,47 @@ class Session:
         return statistics_rows(
             result.statistics if result is not None else None,
             ref.baseline.statistics if ref is not None else None,
+            listing=self.diagnostic_names(model_id),
             run_diagnostics=(result.diagnostics or []) if result is not None else (),
             baseline_diagnostics=ref.baseline.diagnostics if ref is not None else (),
-            extra_paths=statistic_paths(self._entry_tree(model_id)),
+            extra_paths=statistic_paths(
+                self._scored_spec(model_id), self.diagnostic_names(model_id)
+            ),
+            baseline_digits=shown_digits(ref.sampling)
+            if ref is not None
+            else DOUBLE_SHOWN,
         )
 
     def statistic_leaves(self, model_id: str) -> list[tuple[LeafSpec, str]]:
-        """The statistics leaves of the entry's OWN tree, staged edits
-        included, with their paths (:func:`~dstf.comparison.tree_spec.
-        statistic_leaves`): which Statistics rows are scored. Read from the
-        tree as authored, not from :meth:`tree_view` — a test with nothing
-        compared (no baseline) has no view, and its criteria are criteria
-        all the same. An unknown model is a KeyError."""
+        """The card leaves of the scored tree (`on_the_card`: a statistic,
+        or a listed name's number), staged edits included, with their paths
+        (:func:`~dstf.comparison.tree_spec.statistic_leaves`): which
+        Statistics rows are scored — a flat entry's override on the card
+        too. An unknown model is a KeyError."""
         from ..comparison.tree_spec import statistic_leaves
 
-        if self._require_project().test(model_id) is None:
+        return statistic_leaves(
+            self._scored_spec(model_id), self.diagnostic_names(model_id)
+        )
+
+    def _scored_spec(self, model_id: str) -> SpecNode | None:
+        """The tree the test is scored by (`scored_spec`, the rule the tree
+        view and the report walk): the authored one, staged edits included —
+        criteria all the same with nothing compared yet — else the implicit
+        tree of what the LAYOUT's comparison compared (:meth:`_layout_source`:
+        while a run has taken the result, the one it replaced, so a flat
+        entry's card leaf stays on the card); None with neither. Never the
+        tree :meth:`tree` materializes, which reads the baseline."""
+        from ..reporting.context_builder import scored_spec
+
+        test = self._require_project().test(model_id)
+        if test is None:
             raise KeyError(model_id)
-        return statistic_leaves(self._entry_tree(model_id))
-
-    def _entry_tree(self, model_id: str) -> SpecNode | None:
-        """The entry's OWN tree, parsed; None when it has none. Never the
-        tree :meth:`tree` materializes for a flat entry: that reads the
-        baseline, and an implicit tree holds no statistics leaf."""
-        from ..comparison.tree_spec import parse_metric_tree
-
-        raw = (self.spec.entry(model_id) or {}).get("metrics")
-        return parse_metric_tree(raw) if raw is not None else None
+        comp, _ = self._layout_source(model_id)
+        compared = list(comp.variables) if comp is not None else []
+        if test.metric_tree_spec is None and not compared:
+            return None
+        return scored_spec(compared, test)
 
     def tree(self, model_id: str) -> dict | None:
         """The raw tree a Patch edits (:meth:`tree_or_reason`'s tree)."""
@@ -2957,6 +3007,15 @@ class SessionView:
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         return self._session.plots(model_id)
+
+    def diagnostic_names(self, model_id: str) -> list[str]:
+        return self._session.diagnostic_names(model_id)
+
+    def baseline_summaries(self, model_id: str) -> dict[str, DiagnosticSummary]:
+        return self._session.baseline_summaries(model_id)
+
+    def card_paths(self, model_id: str) -> set[str]:
+        return self._session.card_paths(model_id)
 
     def plot_figure(
         self,

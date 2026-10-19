@@ -25,7 +25,7 @@ from typing import ClassVar
 
 import numpy as np
 
-from ...discovery.test_registry import TestModel
+from ...discovery.test_registry import TestModel, diagnostic_names
 from ..base import Backend
 from ..types import (
     TestResult,
@@ -366,7 +366,9 @@ class JsonDriverBackend(Backend):
                 statistics=stats,
             )
 
-        available = list(payload.get("variables", {}).keys())
+        # Read once: a payload without the key is a run with no variables.
+        columns = payload.get("variables") or {}
+        available = list(columns.keys())
         requested = resolve_variable_patterns(test.variable_patterns, available)
         if not requested:
             if "*" in test.variable_patterns:
@@ -377,7 +379,8 @@ class JsonDriverBackend(Backend):
         # indices stay put); one the payload lacks is loud, as a missing
         # UnitTests variable is on the .mat backends.
         requested = list(requested)
-        for name in criterion_variables(test, self.config.diagnostic_variables):
+        listed = diagnostic_names(test, self.config.diagnostic_variables)
+        for name in criterion_variables(test, listed):
             if name in requested:
                 continue
             if name in available:
@@ -395,10 +398,10 @@ class JsonDriverBackend(Backend):
         # rest. The index is a display/ordering handle, not a key — reference
         # matching is by name — so the gap is harmless and kept deliberately.
         for i, name in enumerate(requested):
-            if name not in payload["variables"]:
+            if name not in columns:
                 continue
             try:
-                values = np.asarray(payload["variables"][name], dtype=np.float64)
+                values = np.asarray(columns[name], dtype=np.float64)
             except (ValueError, TypeError) as exc:
                 return TestResult(
                     model_id=test.model_id,
@@ -418,11 +421,33 @@ class JsonDriverBackend(Backend):
                 )
             )
 
+        # The listed names the payload holds, numbered from 1 as a .mat
+        # backend's are (`extract_variables`): each is summarized in the
+        # baseline, and scored from that summary (`reads_a_summary`). One
+        # whose values are no numbers is not recorded — a tracked variable
+        # that is none fails the test above; a listed name never did.
+        diagnostics = []
+        for name in listed:
+            if name not in columns:
+                continue
+            try:
+                values = np.asarray(columns[name], dtype=np.float64)
+            except (ValueError, TypeError):
+                continue
+            diagnostics.append(
+                VariableResult(
+                    index=len(diagnostics) + 1,
+                    name=name,
+                    time=time_arr,
+                    values=values,
+                )
+            )
+
         return TestResult(
             model_id=test.model_id,
             success=True,
             variables=variables,
-            diagnostics=[],
+            diagnostics=diagnostics,
             statistics=stats,
         )
 
