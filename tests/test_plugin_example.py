@@ -98,6 +98,29 @@ def test_the_setting_is_read(installed, tmp_path):
     assert data["y"][-1] == pytest.approx(math.exp(-0.5 * 4))
 
 
+def test_a_listed_name_the_result_holds_is_recorded_and_one_it_lacks_is_not(
+    installed, tmp_path
+):
+    """The entry lists `y` and `z` (its own `diagnostic_variables`, after
+    the project's default CPUtime and EventCounter): the example records
+    `y`, which its result holds, as a diagnostic — the baseline stores its
+    final, min and max — and skips every name the result lacks."""
+    project = tmp_path / "project"
+    shutil.copytree(EXAMPLE / "project", project)
+    spec_path = project / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["tests"][0]["diagnostic_variables"] = ["y", "z"]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    config = str(project / "testing.json")
+    assert main(["run", "--config", config, "--accept", "--no-browser"]) == 0
+    stored = next((project / "ReferenceResults" / "Decay").glob("*/ref_*.json"))
+    diagnostics = json.loads(stored.read_text(encoding="utf-8")).get("diagnostics", [])
+    assert [d["name"] for d in diagnostics] == ["y"]
+    (y,) = diagnostics
+    assert y["final"] == pytest.approx(math.exp(-0.5 * 4), rel=1e-6)
+    assert y["max"] == pytest.approx(1.0)
+
+
 def _documented() -> set[str]:
     """Every object the API page documents, by its dotted name: each
     ``auto…::`` directive's target."""
