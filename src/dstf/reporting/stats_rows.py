@@ -1,12 +1,16 @@
 """The Statistics rows both tiers render: the report's Statistics table and
 the tool's Statistics card.
 
-One row per statistic the run or its baseline recorded, side by side. A
-row is ``changed`` when the criterion its ``+`` would add would fail — the
-scalar mode's own verdict over the seed
-:func:`~dstf.comparison.seeds.seed_quantity` writes, so the tolerance lives
-in one place. Not the report's old "any difference": a CPU time 3% off is
-not a change the tool would score.
+One row per statistic the run or its baseline recorded, side by side.
+Where both sides are finite numbers, a row is ``changed`` when the
+criterion its ``+`` would add would fail — the scalar mode's own verdict
+over the leaf it writes (:func:`~dstf.comparison.seeds.seed_quantity`'s
+for a count or a time, `~dstf.comparison.seeds.VALUE_LEAF` for a value),
+so the tolerance lives in one place. Not the report's old "any
+difference": a CPU time 3% off is not a change the tool would score. A
+side that is no finite number has its own rule, no criterion's: the row
+changed when one side is NaN or infinite, or both are and differ; not
+when both are the same.
 
 The rows keep the report's order and sections: translation, simulation,
 timing, then any other section in the order they appear (the baseline's
@@ -90,11 +94,12 @@ def changed(
     run: float | None,
     baseline: float | None,
 ) -> bool:
-    """Would the criterion a ``+`` on this row adds fail? Never when a side
-    has no value (S3): there is nothing to compare, and an accept records
-    it. A non-finite side is no number to score against: the row changed
-    when one side is non-finite, or both are and differ (nan and inf, +inf
-    and -inf) — never when both are the same. A `value` takes the 1% the
+    """For finite numbers on both sides: would the criterion a ``+`` on
+    this row adds fail? Never when a side has no value (S3): there is
+    nothing to compare, and an accept records it. A non-finite side is no
+    number to score against, and has its own rule: the row changed when one
+    side is non-finite, or both are and differ (nan and inf, +inf and -inf)
+    — never when both are the same. A `value` takes the 1% the
     ``+`` writes against a baseline's summary (`VALUE_LEAF`) — the leaf
     itself, never a seed, which comes back empty off a non-finite baseline
     — a count and a time their known ones."""
