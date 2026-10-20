@@ -97,12 +97,13 @@ def test_every_row_is_served_once_in_order_while_a_writer_appends(
     payload = mat.rows(0)
     done = threading.Event()
     polled = threading.Event()
+    stop = threading.Event()
 
     def write() -> None:
         with open(path, "ab", buffering=0) as f:
             for i in range(0, len(payload), 37):
                 f.write(payload[i : i + 37])
-                if i % (37 * 10) == 0:
+                if i % (37 * 10) == 0 and not stop.is_set():
                     # Wait for a poll here: a sleep let a loaded host run
                     # the whole write before the reader's first poll.
                     polled.clear()
@@ -118,6 +119,9 @@ def test_every_row_is_served_once_in_order_while_a_writer_appends(
             trace.take(reader.poll(NAMES))
             polled.set()
     finally:
+        # a reader that raised: the writer finishes without waiting for it
+        stop.set()
+        polled.set()
         writer.join()
     last = trace.take(reader.poll(NAMES))
 
