@@ -2194,6 +2194,30 @@ of the 2,149 s spent in tests over 0.5 s — 489 of its 514 tests at a median
 
 Measure before proposing; the owner wants an in-depth investigation first.
 
+Investigated 2026-10-19/20. The time went into a leak, not into the tests' work:
+each user-simulation test's Shell and page tree stayed alive. FastAPI's
+endpoint caches held `Shell.mount`'s routes (zauberzeug/nicegui#6373), and
+NiceGUI's reset forgets clients without deleting them. NiceGUI then runs a
+`gc.collect()` per test over the growing heap. A real `dstf author` does not
+leak, because its server deletes clients.
+
+The fix made the routes reach the Shell by a weak reference, deleted the
+leftover clients after each test, and added `-n 4` with three tests made safe
+to run in parallel. CI's selection went from 43 min serial to 4.4 min with
+`-n 4` and coverage, measured locally. Shortening the fixed waits and adding
+`gc.freeze()` measured within noise.
+
+The test-value half: about 16% of tests are coupled to internals, and about
+3% are tautological, shape-only, duplicate or weak. Still to do, in the
+owner's order:
+- route the 149 direct calls to the private `_compare_*` functions through
+  `resolve_mode(...).compare`;
+- give test_cli a fake backend in place of patching `_get_backend` /
+  `discover_tests`;
+- run a planted-bug pass over the core modules, using a per-test coverage map.
+
+No fast/full tiers: one tier of a few minutes is simpler.
+
 **A standard spec document, mined from the plans (owner, 2026-10-19; a
 dedicated session).** `docs/superpowers/` holds 40 plans and design specs
 written build by build since April, each in its own shape. The session

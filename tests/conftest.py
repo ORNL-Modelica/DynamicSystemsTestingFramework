@@ -293,3 +293,26 @@ def _join_session_threads(_scan_cache_home):
     for thread in threading.enumerate():
         if thread.name in _SESSION_THREADS:
             thread.join(timeout=30.0)
+
+
+@pytest.fixture(autouse=True)
+def _end_the_ui_simulation():
+    """What a user simulation leaves behind goes with its test. NiceGUI's
+    reset forgets the previous simulation's clients (`Client.instances.clear()`)
+    without deleting them, where a real server deletes a client after its
+    browser's reconnect timeout. Undeleted, every `ui.dialog` stays alive:
+    its canary element's `weakref.finalize` callback holds the dialog, the
+    dialog reaches the Shell, its pages and their client, and the client's
+    elements hold the canary — a cycle the finalizer registry roots, so
+    every test's Shell, Session and element tree stayed, and every later
+    `gc.collect()` walked them (`tests/test_ui_leak.py`). Deleting them is
+    what the server does."""
+    yield
+    import sys
+
+    if "nicegui" not in sys.modules:  # a test that never imported it simulated nothing
+        return
+    from nicegui import Client
+
+    for client in list(Client.instances.values()):
+        client.delete()

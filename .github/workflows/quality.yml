@@ -51,8 +51,9 @@ jobs:
         # not all such tests self-skip — the Julia smoke tests, for instance,
         # shell out to `dstf run` and fail when no Julia worker can start.
         # Playwright is import-skipped at collection but deselected too.
+        # `-n 4`: ubuntu-latest has 4 vCPUs (`auto` may count fewer).
         run: >
-          uv run pytest -q
+          uv run pytest -q -n 4
           -m "not playwright and not dymola and not fmpy and not ompython and not julia and not reference_fmus"
           --cov=dstf --cov-report=term-missing
 

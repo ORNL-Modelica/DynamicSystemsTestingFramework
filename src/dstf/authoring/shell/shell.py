@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import threading
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -466,8 +467,21 @@ class Shell:
 
         app.add_static_file(local_file=GRIPS_JS, url_path=GRIPS_URL)
 
+        # The routes reach this Shell by a weak reference, never a closure
+        # over it: FastAPI (0.141+) keeps every endpoint it has classified in
+        # module-level caches of 4096 entries (`fastapi/dependencies/models.py`,
+        # zauberzeug/nicegui#6373), so an endpoint that held the Shell would
+        # hold it, its Session and every page it registered for the life of
+        # the process — after its routes were removed. One Shell per `dstf
+        # author` process does not notice; a test suite that builds a Shell
+        # per test kept them all (`tests/test_ui_leak.py`).
+        shell = weakref.ref(self)
+
         @app.get("/dashboard/{path:path}")
         def _dashboard(path: str) -> Any:
+            self = shell()
+            if self is None:  # only a test outlives its Shell
+                return JSONResponse({"error": "no shell"}, status_code=410)
             project = self.session.project
             if project is None:
                 return JSONResponse({"error": "no project open"}, status_code=409)
@@ -482,6 +496,9 @@ class Shell:
         async def _test(model_id: str) -> None:
             from .test_page import TestPage
 
+            self = shell()
+            if self is None:  # only a test outlives its Shell
+                return
             self.start()
             await TestPage(self).build(unquote(model_id))
 
