@@ -111,7 +111,8 @@ src/dstf/
 │   ├── julia/                # JuliaBackend (subprocess) + PersistentJuliaBackend (stdin-JSON pipe)
 │   └── python/               # PythonBackend — subprocess-per-test, any `simulate(stop_time, tol) -> dict`
 ├── comparison/
-│   ├── comparator.py         # compare_test / compare_all orchestration; per-mode scoring functions
+│   ├── comparator.py         # compare_test / compare_all orchestration
+│   ├── algorithms.py         # per-mode scoring functions, called by the modes
 │   ├── modes.py              # ComparisonMode ABC + 7 modes (nrmse, tube, points, range, event-timing,
 │   │                         #   dominant-frequency, scalar); typed configs; resolve_mode()
 │   ├── mode_schema.py        # derive_schema — per-mode schema from typed comparison configs

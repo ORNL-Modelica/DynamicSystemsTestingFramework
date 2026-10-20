@@ -2,9 +2,7 @@
 
 Lives separately from :mod:`.comparator` (orchestration) and
 :mod:`.algorithms` (per-mode math) so both can import the result types
-without an import cycle. Re-exported from :mod:`.comparator` for
-historical-import compatibility, but new code should prefer
-``from dstf.comparison.types import VariableComparison``.
+without an import cycle.
 """
 
 from __future__ import annotations

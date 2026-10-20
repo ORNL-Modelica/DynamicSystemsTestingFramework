@@ -4,14 +4,14 @@ import numpy as np
 import pytest
 
 from dstf.backends.types import TestResult
-from dstf.comparison.comparator import (
-    _check_structural_changes,
+from dstf.comparison.algorithms import (
     _compare_points,
     _compare_trajectories,
     _dedup_time_series,
     _find_event_boundaries,
     _split_segments,
 )
+from dstf.comparison.comparator import _check_structural_changes
 from dstf.comparison.sides import Sides
 from dstf.storage.baseline_codec import decode_reference
 
@@ -422,11 +422,8 @@ class TestStructuralChanges:
 from pathlib import Path
 
 from dstf.backends.types import VariableResult
-from dstf.comparison.comparator import (
-    _compare_tube,
-    _interpolate_tube_widths,
-    compare_test,
-)
+from dstf.comparison.algorithms import _compare_tube, _interpolate_tube_widths
+from dstf.comparison.comparator import compare_test
 from dstf.discovery.test_registry import TestModel
 
 
@@ -1262,7 +1259,7 @@ class TestPointsDeclaredPath:
 
     def test_implicit_final_check_unchanged(self):
         """Empty points list → behaves identically to legacy final-only."""
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t, ref_v, act_t, act_v = self._make_traj()
         result = _compare_points(
@@ -1273,7 +1270,7 @@ class TestPointsDeclaredPath:
         assert result.diagnostics["delta"] == pytest.approx(0.001)
 
     def test_single_ref_relative_point_passes(self):
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # Point at t=3: target = ref(3) = 3.0; act(3) = 3.001; delta = 0.001.
@@ -1287,7 +1284,7 @@ class TestPointsDeclaredPath:
 
     def test_single_ref_relative_point_fails(self):
         """Point at t=2 hits the 0.05 act offset → exceeds 0.01 tolerance."""
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t, ref_v, act_t, act_v = self._make_traj()
         result = _compare_points(
@@ -1303,7 +1300,7 @@ class TestPointsDeclaredPath:
         """
         import numpy as np
 
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         # Empty ref arrays: an absolute-value point should still score.
         ref_t = np.array([])
@@ -1324,7 +1321,7 @@ class TestPointsDeclaredPath:
     def test_per_point_tolerance_overrides_global(self):
         """A wider per-point tolerance lets a point pass that the
         global tolerance would fail."""
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # Point at t=2: delta=0.05. Global tolerance=0.01 (would fail);
@@ -1341,7 +1338,7 @@ class TestPointsDeclaredPath:
 
     def test_relative_tolerance_mode(self):
         """tolerance_mode='rel' scales tol by |target|."""
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # Point at t=4: target=ref(4)=4.0; act(4)=4.001; delta=0.001.
@@ -1369,7 +1366,7 @@ class TestPointsDeclaredPath:
     def test_null_time_resolves_to_trace_end(self):
         """time: null sentinel = the trace's final time (act_time[-1]
         when ref_time is empty, else ref_time[-1])."""
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # Point at time=null: target = ref(5) = 5.0; act(5) = 5.001; delta=0.001.
@@ -1386,7 +1383,7 @@ class TestPointsDeclaredPath:
 
     def test_multiple_points_all_must_match(self):
         """A leaf with 3 points fails if any one fails."""
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # t=1 (delta=0.001 ✓), t=2 (delta=0.05 ✗), t=3 (delta=0.001 ✓).
@@ -1410,7 +1407,7 @@ class TestPointsDeclaredPath:
         """
         import numpy as np
 
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         # ref doesn't matter — point has explicit value.
         ref_t = np.array([0.0, 5.0])
@@ -1437,7 +1434,7 @@ class TestPointsDeclaredPath:
         """If the act curve never enters the box, point fails."""
         import numpy as np
 
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t = np.array([0.0, 5.0])
         ref_v = np.array([0.0, 0.0])
@@ -1462,7 +1459,7 @@ class TestPointsDeclaredPath:
         """time_tolerance=0 must behave identically to a single-point check."""
         import numpy as np
 
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t = np.array([0.0, 5.0])
         ref_v = np.array([0.0, 0.0])
@@ -1500,7 +1497,7 @@ class TestPointsDeclaredPath:
         — so we don't miss a curve entering between samples."""
         import numpy as np
 
-        from dstf.comparison.comparator import _compare_points
+        from dstf.comparison.algorithms import _compare_points
 
         ref_t = np.array([0.0, 5.0])
         ref_v = np.array([0.0, 0.0])
@@ -3928,7 +3925,7 @@ class TestABaseToleranceIsANumber:
         assert comp.variables[0].tolerance_used == Sides(1e-4, 1e-4)
 
     def test_the_sentence_cuts_a_long_value_at_60_characters(self):
-        from dstf.comparison.comparator import base_tolerance_refused
+        from dstf.comparison.sides import base_tolerance_refused
 
         at_60 = "a" * 58  # the two quotes make 60
         assert base_tolerance_refused("X", at_60) == (

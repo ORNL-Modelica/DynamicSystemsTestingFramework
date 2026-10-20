@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..comparison.comparator import TestComparison
+from ..comparison.types import TestComparison
 from ..storage.ref_index import _atomic_write_text
 from .context_builder import build_tree_view, test_texts
 from .status import STATUS_LABELS, STATUS_ORDER, classify, count_by_status, exit_code

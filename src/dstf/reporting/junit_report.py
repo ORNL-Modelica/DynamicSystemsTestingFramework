@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
-from ..comparison.comparator import TestComparison
+from ..comparison.types import TestComparison
 from .status import (
     FAIL,
     NO_REF,

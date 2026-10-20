@@ -12,8 +12,8 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from ..backends.types import VariableText, display_label, variable_texts
-from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
+from ..comparison.types import VariableComparison
 from ..storage.baseline import ReferenceFile, StoredVariable
 from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 from .stats_rows import SECTION_TITLES, report_text, statistics_rows

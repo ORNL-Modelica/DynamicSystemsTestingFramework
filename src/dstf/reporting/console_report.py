@@ -2,7 +2,7 @@
 
 import sys
 
-from ..comparison.comparator import TestComparison
+from ..comparison.types import TestComparison
 from .status import (
     FAIL,
     NO_REF,

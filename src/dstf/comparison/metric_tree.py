@@ -22,8 +22,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from .comparator import VariableComparison
 from .sides import as_written
+from .types import VariableComparison
 
 # ---------------------------------------------------------------------------
 # Uniform metric result (combinator output shape)

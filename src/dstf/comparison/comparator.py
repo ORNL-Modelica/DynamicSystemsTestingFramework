@@ -15,16 +15,11 @@ The comparison surface is split across three modules:
     orchestration: pulls the right baseline, dispatches to the right
     algorithm via the :class:`MetricTree` evaluator, threads structural
     warnings, derives the final :class:`TestComparison.passed` flag.
-
-For historical-import compatibility, :class:`VariableComparison` /
-:class:`StructuralWarning` / :class:`TestComparison` and the
-``_compare_*`` algorithm functions are re-exported here. New code
-should import them from :mod:`.types` and :mod:`.algorithms` directly.
 """
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
@@ -41,28 +36,6 @@ from ..storage.baseline import (
     StoredVariable,
 )
 from ..storage.reference_store import ReferenceStore
-
-# Re-export facade (see module docstring): modes/tree_eval/metric_tree and the
-# test suite import the per-mode algorithm functions from here, not from
-# .algorithms directly. comparator.py does not call them itself, so they read
-# as unused — keep the noqa to preserve the public import surface.
-from .algorithms import (  # noqa: F401
-    _compare_dominant_frequency,
-    _compare_event_timing,
-    _compare_points,
-    _compare_range,
-    _compare_scalar,
-    _compare_trajectories,
-    _compare_tube,
-    _compute_fft_spectrum,
-    _dedup_time_series,
-    _find_event_boundaries,
-    _find_strongest_peak_in_window,
-    _find_top_n_peaks,
-    _interpolate_tube_widths,
-    _min_delta_in_box,
-    _split_segments,
-)
 from .registry import metric as registry_metric
 from .sides import base_tolerance_refused, is_base_tolerance, parse_sides
 from .types import (
@@ -71,12 +44,6 @@ from .types import (
     TestComparison,
     VariableComparison,
 )
-
-if TYPE_CHECKING:
-    # Annotation-only — runtime import is inside compare_test() to break the
-    # comparator <-> metric_tree cycle (metric_tree imports VariableComparison
-    # from .types).
-    pass
 
 logger = logging.getLogger(__name__)
 
