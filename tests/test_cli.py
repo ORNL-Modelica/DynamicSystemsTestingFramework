@@ -1238,7 +1238,8 @@ class TestAcceptExitCodeAndScope:
         test: what `dstf spec add <model>` then `run --accept` printed, and
         `compare --accept` after it. Not a warning and not a skip — the
         exit code is what it was."""
-        tank = {"model": "Lib.Tank"}  # the entry `dstf spec add` writes
+        # The entry `dstf spec add` writes.
+        tank = {"model": "Lib.Tank", "variables": []}
         results = {"Lib.Tank": _mk_result("Lib.Tank")}
         run_env.make([tank], results=results, prior_results=results)
         args = build_arg_parser().parse_args(
