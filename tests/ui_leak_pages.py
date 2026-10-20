@@ -18,10 +18,10 @@ from dstf.authoring.shell.shell import Shell  # noqa: E402
 from test_session import A, _two_var_project  # noqa: E402
 
 PAGES = 6
-#: NiceGUI keeps the last simulation's root function (`core.root`) past its
-#: exit, and with it the last page test's Shell: one stays (measured), one
-#: more is margin. A leak keeps every test's, `PAGES` of them.
-MOST = 2
+#: The one Shell that stays is the last page test's: NiceGUI keeps the last
+#: simulation's root function (`core.root`, that Shell's `index`) past its
+#: exit. A leak keeps every test's, `PAGES` of them.
+MOST = 1
 
 
 @pytest.mark.parametrize("i", range(PAGES))

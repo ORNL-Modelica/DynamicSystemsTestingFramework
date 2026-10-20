@@ -20,11 +20,7 @@ TESTS = Path(__file__).parent
 
 
 def test_a_ui_test_s_shell_is_collected_after_it():
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith(("PYTEST_", "COV_CORE_"))
-    }
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
     run = subprocess.run(
         [
             sys.executable,
@@ -32,6 +28,9 @@ def test_a_ui_test_s_shell_is_collected_after_it():
             "pytest",
             "-p",
             "no:cacheprovider",
+            # the sequence runs in one process whatever the ini adds (`-n`)
+            "-o",
+            "addopts=",
             "-q",
             str(TESTS / "ui_leak_pages.py"),
         ],
@@ -42,3 +41,5 @@ def test_a_ui_test_s_shell_is_collected_after_it():
         timeout=300,
     )
     assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-2000:]
+    # the six page tests and the count ran: a run that skipped them proves nothing
+    assert "7 passed" in run.stdout, run.stdout[-3000:]
