@@ -61,6 +61,24 @@ def test_range_summary_reads_the_max_violation():
     assert "→ FAIL (requires 0)" in s.criterion
 
 
+def test_a_range_on_one_sample_outside_its_bounds_fails_at_that_sample():
+    s = summarize(
+        score(
+            {"mode": "range", "max_value": 1.0},
+            np.array([]),
+            np.array([]),
+            np.array([2.5]),
+            np.array([3.0]),
+        )
+    )
+    assert s.criterion == "max violation 2.000e+00 → FAIL (requires 0)"
+    assert s.details == (
+        ("bounds", "[-inf, 1]"),
+        ("worst violation", "2.000000e+00 at t=2.5"),
+        ("inside", "0.0% of samples"),
+    )
+
+
 def test_event_timing_summary_counts_events():
     ref_t = np.array([0.0, 1.0, 1.0, 2.0])
     s = summarize(

@@ -914,6 +914,73 @@ class TestTubeComparison:
         assert vc_floor.passed
         assert vc_floor.tube_points_inside == 1.0
 
+    @pytest.mark.parametrize(
+        "row,act",
+        [({"upper": 0.5}, [0.0, -0.5, 0.0]), ({"lower": 0.5}, [0.0, 0.5, 0.0])],
+        ids=["only upper", "only lower"],
+    )
+    def test_a_control_point_giving_one_side_has_no_width_on_the_other(self, row, act):
+        t = np.array([0.0, 1.0, 2.0])
+        vc = score(
+            {
+                "mode": "tube",
+                "tube_width_mode": "band",
+                "tube_points": [{"time": 0, **row}, {"time": 2, **row}],
+            },
+            t,
+            np.zeros(3),
+            t,
+            np.array(act),
+        )
+        s = summarize(vc)
+        assert s.criterion == "66.7% inside tube → FAIL (requires 100%)"
+        assert s.details[0] == ("worst violation", "5.000000e-01 at t=1")
+
+    @pytest.mark.parametrize(
+        "cfg,ref,worst",
+        [
+            ({"tube_width_mode": "band"}, 0.0, "5.000000e-01"),
+            ({"tube_width_mode": "band", "tube_min_width": 0.25}, 0.0, "2.500000e-01"),
+            ({"tube_width_mode": "rel"}, 1.0, "5.000000e-01"),
+            ({"tube_width_mode": "rel", "tube_min_width": 0.25}, 1.0, "2.500000e-01"),
+        ],
+        ids=["band", "band with a floor", "rel", "rel with a floor"],
+    )
+    def test_a_tube_without_its_width_is_only_as_wide_as_its_floor(
+        self, cfg, ref, worst
+    ):
+        t = np.array([0.0, 1.0, 2.0])
+        vc = score(
+            {"mode": "tube", **cfg},
+            t,
+            np.full(3, ref),
+            t,
+            np.array([ref, ref + 0.5, ref]),
+        )
+        s = summarize(vc)
+        assert s.criterion == "66.7% inside tube → FAIL (requires 100%)"
+        assert s.details[0] == ("worst violation", f"{worst} at t=1")
+
+    @pytest.mark.parametrize(
+        "ref_t,ref_v,act_v,final",
+        [
+            ([0, 1, 2], [1, 2, 3], [1, 2, 3.5], "ref=3.000000e+00  act=3.500000e+00"),
+            ([1], [5], [5, 5.25, 5], "ref=5.000000e+00  act=5.250000e+00"),
+        ],
+        ids=["a ramp", "a one-sample reference"],
+    )
+    def test_the_finals_are_at_the_references_last_time(
+        self, ref_t, ref_v, act_v, final
+    ):
+        vc = score(
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 1.0},
+            np.array(ref_t, dtype=float),
+            np.array(ref_v, dtype=float),
+            np.array([0.0, 1.0, 2.0]),
+            np.array(act_v),
+        )
+        assert dict(summarize(vc).details)["final"] == final
+
 
 # ---------------------------------------------------------------------------
 # Comparison mode strategies (modes.py)

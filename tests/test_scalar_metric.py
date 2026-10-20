@@ -185,18 +185,40 @@ class TestScalarReductions:
         vc = mode.compare(t, v, t, v)
         assert vc.actual_final == pytest.approx(float(np.mean(v)))
 
-    def test_mean_of_single_sample_is_the_sample_mean(self):
-        t, v = np.array([0.0]), np.array([7.0])
+    @pytest.mark.parametrize(
+        "t,act,expected",
+        [
+            ([2.0, 3.0, 4.0], [0.0, 0.0, 8.0], 2.0),
+            ([0.0, 0.25, 1.0], [0.0, 0.0, 2.0], 0.75),
+        ],
+        ids=["a span starting at 2", "a span shorter than 1"],
+    )
+    def test_mean_is_the_area_over_the_series_own_span(self, t, act, expected):
+        t, v = np.array(t), np.array(act)
         vc = _mode(quantity={"reduce": "mean"}, tolerance=0.0).compare(t, v, t, v)
+        assert vc.actual_final == pytest.approx(expected)
+
+    @pytest.mark.parametrize("stamp", [0.0, np.nan, np.inf])
+    def test_mean_of_single_sample_is_the_sample_mean(self, stamp):
+        t, v = np.array([stamp]), np.array([7.0])
+        vc = _mode(quantity={"reduce": "mean"}, tolerance=0.0).compare(t, v, t, v)
+        assert vc.passed is True
         assert vc.actual_final == pytest.approx(7.0)
 
-    def test_integral_is_the_trapezoid_rule(self):
-        # y = 2t on [0, 3] → area 9. Non-uniform spacing on purpose.
-        t = np.array([0.0, 0.5, 2.0, 3.0])
-        v = 2.0 * t
+    @pytest.mark.parametrize(
+        "t,v,area",
+        [
+            # y = 2t on [0, 3] → area 9. Non-uniform spacing on purpose.
+            ([0.0, 0.5, 2.0, 3.0], [0.0, 1.0, 4.0, 6.0], 9.0),
+            ([0.0, 2.0], [1.0, 5.0], 6.0),
+        ],
+        ids=["non-uniform", "two samples"],
+    )
+    def test_integral_is_the_trapezoid_rule(self, t, v, area):
+        t, v = np.array(t), np.array(v)
         mode = _mode(quantity={"reduce": "integral"}, tolerance=1e-9)
         vc = mode.compare(t, v, t, v)
-        assert vc.actual_final == pytest.approx(9.0)
+        assert vc.actual_final == pytest.approx(area)
 
     def test_integral_of_single_sample_is_zero(self):
         t, v = np.array([0.0]), np.array([5.0])
