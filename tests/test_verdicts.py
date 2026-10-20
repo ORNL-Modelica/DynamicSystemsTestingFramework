@@ -43,10 +43,12 @@ def _ran(tmp_path):
     return config, tests, dstf
 
 
-# Each fixture is its own copy, never changed by a test that reads it: a
-# test that changed a shared one (the baseline moved, then accepted) passed
-# only after the test before it on the same process, and pytest-xdist
-# hands a module's tests to different workers.
+# Each fixture is its own copy, and no test that reads it changes its
+# baselines: a test that changed a shared one (the baseline moved, then
+# accepted) passed only after the test before it on the same process, and
+# pytest-xdist hands a module's tests to different workers. The `broken`
+# tests do rewrite `verdicts.json` and the reports, but each writes them
+# before it reads them, so neither depends on the other's order.
 
 
 @pytest.fixture(scope="module")
@@ -144,8 +146,11 @@ def test_the_tree_is_the_one_the_report_page_holds(broken):
 
 
 def test_an_accept_scores_nothing_and_leaves_no_stale_verdict(tmp_path):
-    """It rewrites the baselines: a project of its own."""
+    """Over the FAIL a compare left in `verdicts.json`. It rewrites the
+    baselines: a project of its own."""
     config, _tests, dstf = _ran(tmp_path)
+    _break_ramp(config)
+    assert dstf("compare") == 1
     assert (config.work_dir / "verdicts.json").exists()
     assert dstf("compare", "--accept") == 0
     assert not (config.work_dir / "verdicts.json").exists()
