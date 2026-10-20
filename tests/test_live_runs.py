@@ -474,8 +474,11 @@ def test_a_partial_result_s_file_is_parsed_once_for_every_name_its_page_draws(
 def test_a_running_file_s_header_is_parsed_once_for_its_rows_and_its_names(
     h, monkeypatch
 ):
-    """The first poll parses the header; listing the file's variables for
-    the pickers parsed it a second time, on the loop too."""
+    """Listing the file's variables for the pickers parses nothing of its
+    own: it parsed the header a second time, on the loop too. How many
+    parses the reader's polls made is when they landed — until the first
+    row is on disk each poll reads the header again (D151 #7), and a poll
+    between the fake run's header and its first row is a second parse."""
     s = h.session
     parsed = _header_parses(monkeypatch)
     h.steer(A, hold=5)
@@ -483,9 +486,11 @@ def test_a_running_file_s_header_is_parsed_once_for_its_rows_and_its_names(
     h.running(A)
     h.ask(A, "x")
     h.at(A, 0.2)
+    polls = len(parsed)
+    assert polls >= 1
     assert s.variable_names(A) == ["x", "y", "z"]
     assert s.variable_names(A) == ["x", "y", "z"]
-    assert len(parsed) == 1
+    assert len(parsed) == polls
 
 
 def test_a_partial_result_is_refused_as_a_baseline_with_a_sentence(h):
