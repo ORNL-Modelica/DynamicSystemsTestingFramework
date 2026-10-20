@@ -12,7 +12,6 @@ import os
 import shutil
 import sys
 import threading
-import time as clock
 from pathlib import Path
 
 import numpy as np
@@ -97,13 +96,17 @@ def test_every_row_is_served_once_in_order_while_a_writer_appends(
     mat = _result(path, tool, dtype, n=300, points=0, declared=declared)
     payload = mat.rows(0)
     done = threading.Event()
+    polled = threading.Event()
 
     def write() -> None:
         with open(path, "ab", buffering=0) as f:
             for i in range(0, len(payload), 37):
                 f.write(payload[i : i + 37])
-                if i % (37 * 40) == 0:
-                    clock.sleep(0.001)
+                if i % (37 * 10) == 0:
+                    # Wait for a poll here: a sleep let a loaded host run
+                    # the whole write before the reader's first poll.
+                    polled.clear()
+                    polled.wait(5.0)
         done.set()
 
     reader = LiveMatReader(path)
@@ -113,6 +116,7 @@ def test_every_row_is_served_once_in_order_while_a_writer_appends(
     try:
         while not done.is_set():
             trace.take(reader.poll(NAMES))
+            polled.set()
     finally:
         writer.join()
     last = trace.take(reader.poll(NAMES))
