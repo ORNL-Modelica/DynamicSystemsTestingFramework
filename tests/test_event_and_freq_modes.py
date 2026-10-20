@@ -1064,3 +1064,59 @@ class TestAMalformedRowIsTheLeafsConfigError:
             f'peaks[1].tolerance must be a number or {{"lower": …, "upper": …}}, '
             f"got {json.dumps(bad)}"
         )
+
+
+@pytest.mark.parametrize(
+    "override,row",
+    [
+        ({"mode": "points", "points": [{"time": 0.5, "tolerance": "abc"}]}, "points"),
+        (
+            {"mode": "event-timing", "events": [{"time": 0.5, "tolerance": "abc"}]},
+            "events",
+        ),
+        (
+            {
+                "mode": "dominant-frequency",
+                "peaks": [{"freq": 1.0, "tolerance": "abc"}],
+            },
+            "peaks",
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) else None,
+)
+def test_a_malformed_row_is_refused_where_the_mode_is_built(override, row):
+    with pytest.raises(ValueError) as box:
+        resolve_mode(override, 1e-3)
+    assert str(box.value) == (
+        f'{row}[0].tolerance must be a number or {{"lower": …, "upper": …}}, got "abc"'
+    )
+
+
+class TestAFrequencyCriterionsBaseline:
+    """Declared peaks are matched in the run's own spectrum: no baseline is
+    read. Without them the criterion reads the reference's peaks."""
+
+    def _evaluate(self, leaf):
+        from dstf.backends.types import VariableResult
+        from dstf.comparison.tree_eval import collect_leaf_variables, evaluate_spec
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        spec = parse_metric_tree(
+            {"metric": "dominant-frequency", "variable": "y", **leaf}
+        )
+        y = VariableResult(1, _PEAK_T, _PEAK_SIG, name="y")
+        result = evaluate_spec(spec, {"y": y}, {}, 1e-3)
+        (vc,) = collect_leaf_variables(result)
+        return result, vc
+
+    def test_declared_peaks_are_scored_with_no_baseline_stored(self):
+        result, vc = self._evaluate({"peaks": [{"freq": 1.0, "tolerance": 0.1}]})
+        assert result.passed is True
+        assert vc.against is None
+
+    def test_without_them_the_primary_baseline_is_needed(self):
+        result, vc = self._evaluate({})
+        assert result.passed is False
+        assert summarize(vc).criterion == (
+            "dominant-frequency criterion not scored — no primary baseline is stored"
+        )

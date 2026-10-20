@@ -9,6 +9,7 @@ one — comment out its ``register_metric`` call and it fails at parse.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -154,6 +155,13 @@ class TestBuiltinRegistrations:
             "dominant-frequency",
             "scalar",
         ]
+
+    def test_every_builtin_config_is_frozen(self):
+        for desc in registry.metrics():
+            config = desc.config_cls()
+            first = dataclasses.fields(config)[0].name
+            with pytest.raises(dataclasses.FrozenInstanceError):
+                setattr(config, first, None)
 
     def test_unknown_lookups_return_none(self):
         assert registry.metric("no-such-metric") is None

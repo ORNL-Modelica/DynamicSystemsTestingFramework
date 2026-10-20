@@ -1147,6 +1147,114 @@ class TestSentinelLeavesKeepTheirName:
         assert "timing.nope" in error
         assert "current run" in error
 
+    _T = np.linspace(0.0, 1.0, 5)
+    _X = VariableResult(1, _T, np.full(5, 3.0), name="x")
+    _Y = VariableResult(2, _T, _T * 2.0, name="y")
+
+    @pytest.mark.parametrize(
+        "leaf,results,baselines,kind",
+        [
+            ({"metric": "nrmse", "variable": "y"}, "xy", "primary", "spectrum"),
+            ({"metric": "range", "variable": "y"}, "xy", "primary", "time"),
+            ({"metric": "nrmse", "variable": "y"}, "xy", "none", "time"),
+            ({"metric": "nrmse", "variable": "y"}, "x", "primary", "time"),
+        ],
+        ids=["incompatible dataset", "config error", "missing baseline", "lost"],
+    )
+    def test_each_draws_its_own_variables_curve(self, leaf, results, baselines, kind):
+        """The figure pairs a sentinel with the run's curve of ITS name,
+        never with the curve at the index a sentinel does not have."""
+        from dstf.backends.types import DatasetType
+        from dstf.reporting.context_builder import build_trajectories
+
+        stored = {
+            n: {"time": self._T.tolist(), "values": v.values.tolist()}
+            for n, v in (("x", self._X), ("y", self._Y))
+        }
+        tree = evaluate_spec(
+            parse_metric_tree(leaf),
+            var_results_by_name={"x": self._X, "y": self._Y}
+            if results == "xy"
+            else {"x": self._X},
+            baselines=_primary(stored) if baselines == "primary" else {},
+            base_tolerance=1e-3,
+            dataset_kind=DatasetType.SPECTRUM
+            if kind == "spectrum"
+            else DatasetType.TIME_SERIES,
+        )
+        trajectories, _, _ = build_trajectories(
+            collect_leaf_variables(tree),
+            TestResult("Test.Model", True, variables=[self._X, self._Y]),
+            None,
+        )
+        (entry,) = [e for e in trajectories if e["name"] == "y"]
+        assert list(entry["act_values"]) == list(self._T * 2.0)
+
+    @pytest.mark.parametrize(
+        "statistics", [{"translation": {"n": 4}}, {}], ids=["read", "missing"]
+    )
+    def test_a_statistic_draws_no_curve(self, statistics):
+        """A path into the run's statistics names no variable: its entry
+        draws nothing, not the curve at the first index."""
+        from dstf.comparison.tree_eval import ScalarSources
+        from dstf.reporting.context_builder import build_trajectories
+
+        tree = evaluate_spec(
+            parse_metric_tree(
+                {
+                    "metric": "scalar",
+                    "variable": "translation.n",
+                    "quantity": "translation.n",
+                }
+            ),
+            var_results_by_name={"x": self._X, "y": self._Y},
+            baselines={
+                PRIMARY_BASELINE: BaselineView(
+                    PRIMARY_BASELINE, {}, self._T, {"translation": {"n": 4}}
+                )
+            },
+            base_tolerance=1e-3,
+            scalars=ScalarSources(statistics),
+        )
+        trajectories, _, _ = build_trajectories(
+            collect_leaf_variables(tree),
+            TestResult("Test.Model", True, variables=[self._X, self._Y]),
+            None,
+        )
+        (entry,) = [e for e in trajectories if e["name"] == "translation.n"]
+        assert list(entry["act_values"]) == []
+
+    def test_a_variable_with_no_samples_fails_its_criterion_not_the_run(self):
+        spec = parse_metric_tree({"metric": "nrmse", "variable": "y"})
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={
+                "y": VariableResult(2, np.array([]), np.array([]), name="y")
+            },
+            baselines=_primary({"x": {"time": [0.0, 1.0], "values": [0.0, 1.0]}}),
+            base_tolerance=1e-3,
+        )
+        assert not tree.passed
+        assert (
+            tree.diagnostics["variable"].diagnostics["error"]
+            == "variable 'y' not found in the baseline"
+        )
+
+    def test_a_window_holding_no_sample_of_a_one_sample_baseline_is_not_scored(self):
+        spec = parse_metric_tree(
+            {"metric": "nrmse", "variable": "y", "window": {"start": 0.5, "end": 1.0}}
+        )
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={"y": self._Y},
+            baselines=_primary({"y": {"time": [0.0], "values": [5.0]}}),
+            base_tolerance=1e-3,
+        )
+        assert not tree.passed
+        assert tree.diagnostics["variable"].diagnostics["error"] == (
+            "no reference samples to compare (empty baseline or window)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # A leaf's tolerance is a number or a lower/upper pair

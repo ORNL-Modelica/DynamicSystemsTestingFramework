@@ -141,6 +141,18 @@ class TestKOfNCombinator:
         r = KOfNCombinator(k=2).combine(children)
         assert not r.passed
 
+    def test_its_score_is_its_kth_highest_child_score(self):
+        children = [
+            MetricResult(passed=True, score=s, label=str(s)) for s in (0.1, 0.5, 0.3)
+        ]
+        assert KOfNCombinator(k=2).combine(children).score == 0.3
+
+    def test_with_k_above_its_children_its_score_is_their_lowest(self):
+        children = [
+            MetricResult(passed=True, score=s, label=str(s)) for s in (0.1, 0.5)
+        ]
+        assert KOfNCombinator(k=5).combine(children).score == 0.1
+
     def test_negative_k_rejected(self):
         with pytest.raises(ValueError):
             KOfNCombinator(k=-1)

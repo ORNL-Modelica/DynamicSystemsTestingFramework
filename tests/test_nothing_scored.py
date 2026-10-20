@@ -310,17 +310,25 @@ def test_the_lost_criterion_is_the_one_a_tree_would_report():
     assert by_flat.variables[1].tolerance_used == by_flat.variables[0].tolerance_used
 
 
-def test_a_lost_variable_keeps_its_overrides_metric_and_tolerance():
+@pytest.mark.parametrize(
+    "override,against",
+    [
+        ({"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.1}, "primary"),
+        ({"mode": "event-timing"}, "primary"),
+        ({"mode": "dominant-frequency"}, "primary"),
+        ({"mode": "range", "min_value": 0, "max_value": 2}, None),
+    ],
+    ids=lambda v: v["mode"] if isinstance(v, dict) else None,
+)
+def test_a_lost_variable_keeps_its_overrides_metric_and_tolerance(override, against):
     test = make_test_model(
         variable_patterns=["x", "y"],
-        variable_overrides={
-            "y": {"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.1}
-        },
+        variable_overrides={"y": override},
         comparison_tolerance=0.05,
     )
     comp = compare_one(test, _result("x"), _Store(BOTH))
     (y,) = [v for v in comp.variables if v.name == "y"]
-    assert (y.mode, y.against, y.passed) == ("tube", "primary", False)
+    assert (y.mode, y.against, y.passed) == (override["mode"], against, False)
     assert y.tolerance_used.lower == y.tolerance_used.upper == 0.05
 
 

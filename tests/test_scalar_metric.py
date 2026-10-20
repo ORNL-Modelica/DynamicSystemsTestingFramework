@@ -14,6 +14,7 @@ import pytest
 from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.algorithms import SCALAR_REDUCTIONS
 from dstf.comparison.modes import ScalarConfig, ScalarMode, resolve_mode
+from dstf.comparison.registry import summarize
 from dstf.comparison.sides import Sides
 from dstf.comparison.tree_eval import (
     PRIMARY_BASELINE,
@@ -434,6 +435,83 @@ class TestScalarLeafEvaluation:
         assert vc.actual_final == pytest.approx(1.2)
         assert vc.reference_final == pytest.approx(1.0)
         assert node.passed
+
+    def test_a_listed_name_with_one_sample_is_scored_from_it(self):
+        spec = parse_metric_tree(
+            {"metric": "scalar", "variable": "CPUtime", "quantity": {"reduce": "max"}}
+        )
+        baseline = _baselines(
+            diagnostics=[{"name": "CPUtime", "final": 7.0, "min": 7.0, "max": 7.0}]
+        )
+        run = ScalarSources(
+            diagnostics=[
+                VariableResult(
+                    index=1,
+                    name="CPUtime",
+                    time=np.array([0.0]),
+                    values=np.array([7.0]),
+                )
+            ]
+        )
+        node = evaluate_spec(spec, {}, baseline, 1e-3, scalars=run)
+        assert node.passed
+        assert summarize(node.diagnostics["variable"]).criterion == (
+            "Scalar 7 vs baseline 7: absolute deviation 0.000e+00 vs tolerance "
+            "1.000e-03 → PASS"
+        )
+
+    def test_a_boolean_statistic_is_not_a_number(self):
+        spec = parse_metric_tree(
+            {
+                "metric": "scalar",
+                "variable": "flag",
+                "quantity": "a.flag",
+                "min_value": 0,
+                "max_value": 2,
+            }
+        )
+        node = evaluate_spec(
+            spec, {}, {}, 1e-3, scalars=ScalarSources(statistics={"a": {"flag": True}})
+        )
+        assert not node.passed
+        assert node.diagnostics["variable"].diagnostics["error"] == (
+            "quantity 'a.flag' not found in current run"
+        )
+
+    @pytest.mark.parametrize("listed", [True, False], ids=["listed", "not listed"])
+    def test_a_reduction_over_an_unmigrated_baseline_carries_the_hint(self, listed):
+        """A UnitTests variable the baseline still stores under its
+        expression: the reason names where the baseline has it, whether or
+        not the test also lists the name."""
+        t = np.linspace(0.0, 1.0, 5)
+        u = VariableResult(2, t, t * 2.0, name="unitTests.x[1]", expression="a.Q")
+        spec = parse_metric_tree(
+            {
+                "metric": "scalar",
+                "variable": "unitTests.x[1]",
+                "quantity": {"reduce": "final"},
+            }
+        )
+        baseline = {
+            PRIMARY_BASELINE: BaselineView(
+                PRIMARY_BASELINE,
+                {"a.Q": StoredVariable(1, "a.Q", None, list(t * 2.0))},
+                t,
+            )
+        }
+        node = evaluate_spec(
+            spec,
+            {"unitTests.x[1]": u},
+            baseline,
+            1e-3,
+            scalars=ScalarSources(diagnostics=[u] if listed else []),
+        )
+        assert not node.passed
+        assert node.diagnostics["variable"].diagnostics["error"] == (
+            "variable 'unitTests.x[1]' not found in the baseline — the baseline "
+            "stores it under its expression 'a.Q'; the stored name must be the "
+            "result-file name 'unitTests.x[1]'"
+        )
 
     @pytest.mark.parametrize("field_name,expected", [("min", 0.1), ("max", 1.2)])
     def test_a_variables_min_and_max_read_their_fields(self, field_name, expected):
