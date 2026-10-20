@@ -11,6 +11,7 @@ from dstf.figures.families import HUES, family_of, group_families, ramp, slice_t
 from dstf.figures.palette import palette_of
 from dstf.figures.plotly import PLOT_CONFIG, plot_figure, variable_figure
 from dstf.figures.view import build_view
+from scoring import score
 
 T = np.linspace(0.0, 1.0, 5)
 
@@ -292,12 +293,16 @@ def test_a_family_keeps_its_legend_entry_when_its_first_member_has_no_result():
 
 
 def _spectrum_view(name="s"):
-    from test_figures import _compare_dominant_frequency, _stamped
+    from test_figures import _stamped
 
     t = np.linspace(0.0, 10.0, 1001)
     sig = np.sin(2 * np.pi * 2.0 * t)
-    vc = _compare_dominant_frequency(
-        t, sig, t, sig, peaks=[{"freq": 2.0, "tolerance": 0.05}]
+    vc = score(
+        {"mode": "dominant-frequency", "peaks": [{"freq": 2.0, "tolerance": 0.05}]},
+        t,
+        sig,
+        t,
+        sig,
     )
     vc.name = name
     return build_view(
@@ -749,13 +754,18 @@ def test_a_label_holding_markup_reaches_plotly_escaped(build):
 
 
 def test_a_plot_of_several_takes_visibility():
-    from dstf.comparison.algorithms import _compare_range
     from dstf.figures.plotly import Visibility
     from test_figures import RANGE_P, _stamped, _tube_and_range_view
 
     vx = _tube_and_range_view()
     hidden = "/metrics/children/2"
-    rng = _compare_range(vx.act_time, vx.act_values, min_value=-1.0, max_value=1.0)
+    rng = score(
+        {"mode": "range", "min_value": -1.0, "max_value": 1.0},
+        vx.act_time,
+        np.zeros_like(vx.act_time),
+        vx.act_time,
+        vx.act_values,
+    )
     rng.name = "y"
     vy = build_view(
         "y",

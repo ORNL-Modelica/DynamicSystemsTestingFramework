@@ -23,7 +23,7 @@ from ..backends import VariableResult
 from ..backends.common.statistics import read_summary
 from ..backends.types import DatasetType
 from ..storage.baseline import DiagnosticSummary, StoredVariable
-from .comparator import VariableComparison, migration_hint
+from .comparator import migration_hint
 from .geometry import Window
 from .metric_tree import (
     Combinator,
@@ -44,6 +44,7 @@ from .tree_spec import (
     reads_a_summary,
     resolves_a_variable,
 )
+from .types import VariableComparison
 
 logger = logging.getLogger(__name__)
 

@@ -25,6 +25,7 @@ from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.discovery.test_registry import TestModel
 from dstf.storage.baseline import StoredVariable
 from dstf.storage.baseline_codec import decode_reference, decode_series
+from scoring import score
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -973,19 +974,14 @@ class TestZeroCountRule:
 
 
 def _scalar_sides(ref, act, tol, mode="abs"):
-    from dstf.comparison.algorithms import _compare_scalar
-
     t = np.linspace(0.0, 10.0, 11)
-    return _compare_scalar(
+    return score(
+        {"mode": "scalar", "quantity": {"reduce": "final"}, "tolerance_mode": mode},
         t,
         np.full_like(t, ref),
         t,
         np.full_like(t, act),
-        reduction="final",
         tolerance=tol,
-        tolerance_mode=mode,
-        min_value=None,
-        max_value=None,
     )
 
 

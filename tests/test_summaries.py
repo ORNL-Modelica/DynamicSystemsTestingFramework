@@ -5,15 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import (
-    _compare_event_timing,
-    _compare_range,
-    _compare_trajectories,
-    _compare_tube,
-)
 from dstf.comparison.registry import metrics, summarize
 from dstf.comparison.types import ScoreSummary, VariableComparison
 from dstf.storage.baseline_codec import decode_reference
+from scoring import score
 
 
 def _vc(**kw) -> VariableComparison:
@@ -48,7 +43,9 @@ def test_an_error_sentinel_is_mode_agnostic():
 
 def test_tube_summary_reads_the_inside_fraction():
     t = np.linspace(0.0, 1.0, 11)
-    vc = _compare_tube(t, t, t, t + 0.5, {"tube_width_mode": "band", "tube_abs": 0.1})
+    vc = score(
+        {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.1}, t, t, t, t + 0.5
+    )
     s = summarize(vc)
     assert s.display == "0.0% in tube"
     assert s.criterion.endswith("→ FAIL (requires 100%)")
@@ -57,20 +54,30 @@ def test_tube_summary_reads_the_inside_fraction():
 
 def test_range_summary_reads_the_max_violation():
     t = np.linspace(0.0, 1.0, 11)
-    s = summarize(_compare_range(t, t * 2, min_value=None, max_value=1.0))
+    s = summarize(
+        score({"mode": "range", "max_value": 1.0}, t, np.zeros_like(t), t, t * 2)
+    )
     assert s.display.startswith("max_viol 1.000e+00")
     assert "→ FAIL (requires 0)" in s.criterion
 
 
 def test_event_timing_summary_counts_events():
     ref_t = np.array([0.0, 1.0, 1.0, 2.0])
-    s = summarize(_compare_event_timing(ref_t, ref_t, time_tolerance=1e-3))
+    s = summarize(
+        score(
+            {"mode": "event-timing", "time_tolerance": 1e-3},
+            ref_t,
+            np.zeros_like(ref_t),
+            ref_t,
+            np.zeros_like(ref_t),
+        )
+    )
     assert s.display == "Δt 0.000e+00 (1/1 events)"
 
 
 def test_nrmse_is_the_default_shape():
     t = np.linspace(0.0, 1.0, 11)
-    s = summarize(_compare_trajectories(t, t, t, t + 0.001, tolerance=0.1))
+    s = summarize(score({"mode": "nrmse"}, t, t, t, t + 0.001, tolerance=0.1))
     assert s.display.startswith("NRMSE ") and s.score_label == "NRMSE"
     assert "→ PASS" in s.criterion
 
@@ -91,7 +98,7 @@ class TestDetails:
 
     def test_nrmse_details_are_the_old_review_block(self):
         t = np.linspace(0.0, 1.0, 11)
-        s = summarize(_compare_trajectories(t, t, t, t + 0.001, tolerance=0.1))
+        s = summarize(score({"mode": "nrmse"}, t, t, t, t + 0.001, tolerance=0.1))
         keys = [k for k, _ in s.details]
         assert keys == ["RMSE", "max |err|", "final"]
         assert "at t=" in dict(s.details)["max |err|"]
@@ -100,15 +107,22 @@ class TestDetails:
     def test_a_constant_reference_says_so(self):
         t = np.linspace(0.0, 1.0, 11)
         s = summarize(
-            _compare_trajectories(
-                t, np.full_like(t, 2.0), t, np.full_like(t, 2.1), tolerance=0.1
+            score(
+                {"mode": "nrmse"},
+                t,
+                np.full_like(t, 2.0),
+                t,
+                np.full_like(t, 2.1),
+                tolerance=0.1,
             )
         )
         assert "(constant signal)" in dict(s.details)["RMSE"]
 
     def test_range_never_labels_its_violation_as_nrmse(self):
         t = np.linspace(0.0, 1.0, 11)
-        s = summarize(_compare_range(t, t * 2, min_value=None, max_value=1.0))
+        s = summarize(
+            score({"mode": "range", "max_value": 1.0}, t, np.zeros_like(t), t, t * 2)
+        )
         keys = [k for k, _ in s.details]
         assert "NRMSE" not in keys and "RMSE" not in keys
         assert dict(s.details)["bounds"] == "[-inf, 1]"
@@ -117,8 +131,12 @@ class TestDetails:
     def test_tube_names_its_worst_violation_and_its_real_companions(self):
         t = np.linspace(0.0, 1.0, 11)
         s = summarize(
-            _compare_tube(
-                t, t, t, t + 0.5, {"tube_width_mode": "band", "tube_abs": 0.1}
+            score(
+                {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.1},
+                t,
+                t,
+                t,
+                t + 0.5,
             )
         )
         d = dict(s.details)
@@ -129,20 +147,21 @@ class TestDetails:
         assert "NRMSE" not in d
 
     def test_points_lists_each_failed_checkpoint(self):
-        from dstf.comparison.algorithms import _compare_points
-
         t = np.linspace(0.0, 10.0, 101)
         act = t + 0.05 * (t > 5.0)
         s = summarize(
-            _compare_points(
+            score(
+                {
+                    "mode": "points",
+                    "points": [
+                        {"time": 2.0, "tolerance": 0.01},
+                        {"time": 8.0, "tolerance": 0.01},
+                    ],
+                },
                 t,
                 t,
                 t,
                 act,
-                points=[
-                    {"time": 2.0, "tolerance": 0.01},
-                    {"time": 8.0, "tolerance": 0.01},
-                ],
             )
         )
         d = dict(s.details)
@@ -258,26 +277,45 @@ class TestAnUnevenToleranceSaysWhichSide:
 
     def test_the_signed_keys_are_recorded_for_uneven_sides_only(self):
         """A leaf with a number carries the diagnostics it always carried."""
-        from dstf.comparison.algorithms import _compare_points
         from dstf.comparison.sides import Sides
 
         rows = [{"time": 5.0}]
         assert "worst_signed_delta" not in (
-            _compare_points(self.T, self.T, self.T, self.T + 0.1, rows, 0.5).diagnostics
+            score(
+                {"mode": "points", "points": rows},
+                self.T,
+                self.T,
+                self.T,
+                self.T + 0.1,
+                tolerance=0.5,
+            ).diagnostics
         )
         uneven = Sides(0.25, 0.5)
-        assert _compare_points(
-            self.T, self.T, self.T, self.T + 0.1, rows, uneven
+        assert score(
+            {"mode": "points", "points": rows},
+            self.T,
+            self.T,
+            self.T,
+            self.T + 0.1,
+            tolerance=uneven,
         ).diagnostics["worst_signed_delta"] == pytest.approx(0.1)
         ref = np.array([0.0, 5.0, 5.0, 10.0])
         act = np.array([0.0, 4.75, 4.75, 10.0])
         for declared in (None, [{"time": 5.0}]):
-            even = _compare_event_timing(
-                ref, act, time_tolerance=0.5, declared_events=declared
+            even = score(
+                {"mode": "event-timing", "time_tolerance": 0.5, "events": declared},
+                ref,
+                np.zeros_like(ref),
+                act,
+                np.zeros_like(act),
             )
             assert "max_time_delta_signed" not in even.diagnostics
-            odd = _compare_event_timing(
-                ref, act, time_tolerance=uneven, declared_events=declared
+            odd = score(
+                {"mode": "event-timing", "time_tolerance": uneven, "events": declared},
+                ref,
+                np.zeros_like(ref),
+                act,
+                np.zeros_like(act),
             )
             assert odd.diagnostics["max_time_delta_signed"] == -0.25
 
@@ -290,21 +328,17 @@ class TestAnUnevenToleranceSaysWhichSide:
         assert crit.startswith("Point at t=5: error +0.000e+00 vs tolerance")
 
     def _scalar(self, act_final, tolerance, mode, ref_final=4.0):
-        from dstf.comparison.algorithms import _compare_scalar
         from dstf.comparison.sides import parse_sides
 
         ref = np.full(3, ref_final)
         act = np.array([ref_final, ref_final, act_final])
-        vc = _compare_scalar(
+        vc = score(
+            {"mode": "scalar", "quantity": {"reduce": "final"}, "tolerance_mode": mode},
             self.T[:3],
             ref,
             self.T[:3],
             act,
-            reduction="final",
             tolerance=tolerance,
-            tolerance_mode=mode,
-            min_value=None,
-            max_value=None,
         )
         vc.tolerance_used = parse_sides(tolerance, "tolerance")
         return summarize(vc).criterion
@@ -365,13 +399,27 @@ class TestAnUnevenToleranceSaysWhichSide:
             (late, early_only, "+2.500e-01", "−5.000e-01 / +0.000e+00", "FAIL"),
         ):
             act = np.array([0.0, at, at, 10.0])
-            auto = _compare_event_timing(ref, act, time_tolerance=sides)
+            auto = score(
+                {"mode": "event-timing", "time_tolerance": sides},
+                ref,
+                np.zeros_like(ref),
+                act,
+                np.zeros_like(act),
+            )
             assert summarize(auto).criterion == (
                 f"Max event Δt {delta} vs {band} "
                 f"(1 actual events / 1 reference) → {verdict}"
             )
-            declared = _compare_event_timing(
-                ref, act, time_tolerance=sides, declared_events=[{"time": 5.0}]
+            declared = score(
+                {
+                    "mode": "event-timing",
+                    "time_tolerance": sides,
+                    "events": [{"time": 5.0}],
+                },
+                ref,
+                np.zeros_like(ref),
+                act,
+                np.zeros_like(act),
             )
             assert declared.passed is (verdict == "PASS")
             # Outside its window a declared event claims nothing: it is not
@@ -392,29 +440,52 @@ class TestAnUnevenToleranceSaysWhichSide:
         worst_early = np.array([0.0, 2.0625, 2.0625, 4.875, 4.875, 10.0])
         uneven = Sides(0.25, 0.5)
         assert summarize(
-            _compare_event_timing(ref, worst_early, time_tolerance=uneven)
+            score(
+                {"mode": "event-timing", "time_tolerance": uneven},
+                ref,
+                np.zeros_like(ref),
+                worst_early,
+                np.zeros_like(worst_early),
+            )
         ).criterion == (
             "Max event Δt −1.250e-01 vs −2.500e-01 / +5.000e-01 "
             "(2 actual events / 2 reference) → PASS"
         )
         worst_late = np.array([0.0, 2.25, 2.25, 4.875, 4.875, 10.0])
         assert summarize(
-            _compare_event_timing(ref, worst_late, time_tolerance=uneven)
+            score(
+                {"mode": "event-timing", "time_tolerance": uneven},
+                ref,
+                np.zeros_like(ref),
+                worst_late,
+                np.zeros_like(worst_late),
+            )
         ).criterion == (
             "Max event Δt +2.500e-01 vs −2.500e-01 / +5.000e-01 "
             "(2 actual events / 2 reference) → PASS"
         )
         declared = summarize(
-            _compare_event_timing(
+            score(
+                {
+                    "mode": "event-timing",
+                    "time_tolerance": uneven,
+                    "events": [{"time": 2.0}, {"time": 5.0}],
+                },
                 ref,
+                np.zeros_like(ref),
                 worst_early,
-                time_tolerance=uneven,
-                declared_events=[{"time": 2.0}, {"time": 5.0}],
+                np.zeros_like(worst_early),
             )
         )
         assert declared.criterion.startswith("Event at t=5: Δt −1.250e-01 vs ")
         assert summarize(
-            _compare_event_timing(ref, worst_early, time_tolerance=0.5)
+            score(
+                {"mode": "event-timing", "time_tolerance": 0.5},
+                ref,
+                np.zeros_like(ref),
+                worst_early,
+                np.zeros_like(worst_early),
+            )
         ).criterion.startswith("Max event Δt 1.250e-01 vs 5.000e-01 ")
 
 
@@ -565,14 +636,13 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
     REF = np.array([0.0, 2.0, 2.0, 5.0, 5.0, 10.0])
 
     def _events(self, first, second, tolerance, declared=None):
-        from dstf.comparison.sides import parse_sides
-
         act = np.array([0.0, 2.0 + first, 2.0 + first, 5.0 + second, 5.0 + second, 10])
-        vc = _compare_event_timing(
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": tolerance, "events": declared},
             self.REF,
+            np.zeros_like(self.REF),
             act,
-            time_tolerance=parse_sides(tolerance, "time_tolerance"),
-            declared_events=declared,
+            np.zeros_like(act),
         )
         return vc, summarize(vc).criterion
 
@@ -649,12 +719,26 @@ def test_an_event_timing_criterion_says_early_and_late():
 
     ref = np.array([0.0, 5.0, 5.0, 10.0])
     act = np.array([0.0, 5.25, 5.25, 10.0])
-    even = summarize(_compare_event_timing(ref, act, time_tolerance=0.5))
+    even = summarize(
+        score(
+            {"mode": "event-timing", "time_tolerance": 0.5},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
+        )
+    )
     assert even.criterion == (
         "Max event Δt 2.500e-01 vs 5.000e-01 (1 actual events / 1 reference) → PASS"
     )
     uneven = summarize(
-        _compare_event_timing(ref, act, time_tolerance=Sides(0.125, 0.5))
+        score(
+            {"mode": "event-timing", "time_tolerance": Sides(0.125, 0.5)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
+        )
     )
     assert uneven.criterion == (
         "Max event Δt +2.500e-01 vs −1.250e-01 / +5.000e-01 "
@@ -673,8 +757,12 @@ class TestADeclaredEventNeverFound:
     def _events(self, actual, tolerance, declared=DECLARED):
         act = np.array([0.0, *(t for at in actual for t in (at, at)), 10.0])
         ref = np.array([0.0, 2.0, 2.0, 5.0, 5.0, 8.0, 8.0, 10.0])
-        vc = _compare_event_timing(
-            ref, act, time_tolerance=tolerance, declared_events=declared
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": tolerance, "events": declared},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
         )
         return vc, summarize(vc)
 
@@ -811,7 +899,13 @@ class TestADeclaredEventNeverFound:
     def test_auto_detected_events_are_untouched(self):
         ref = np.array([0.0, 2.0, 2.0, 5.0, 5.0, 8.0, 8.0, 10.0])
         act = np.array([0.0, 2.0, 2.0, 5.2, 5.2, 8.0, 8.0, 10.0])
-        vc = _compare_event_timing(ref, act, time_tolerance=0.1)
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": 0.1},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
+        )
         assert set(vc.diagnostics) == {
             "ref_event_count",
             "act_event_count",
@@ -1054,17 +1148,16 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         """An empty run, or a ref-relative checkpoint with no reference: the
         row fails without a delta, so it is the `unscored_point` the
         sentence reports — not a row among the scored ones."""
-        from dstf.comparison.algorithms import _compare_points
         from dstf.comparison.sides import Sides
 
         times = {"T": self.T, "empty": np.array([])}
-        vc = _compare_points(
+        vc = score(
+            {"mode": "points", "points": [{"time": 0.5}]},
             times[ref_time],
             times[ref_time],
             times[act_time],
             times[act_time],
-            [{"time": 0.5}],
-            Sides(0.03, 0.03),
+            tolerance=Sides(0.03, 0.03),
         )
         vc.tolerance_used = Sides(0.03, 0.03)
         assert not vc.passed
@@ -1123,36 +1216,33 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         )
 
     def test_the_trace_end_row_is_named_by_its_time(self):
-        from dstf.comparison.algorithms import _compare_points
-
         act = self.T.copy()
         act[-1] += 0.02
-        vc = _compare_points(
+        vc = score(
+            {"mode": "points", "points": [{"time": None}]},
             self.T,
             self.T,
             self.T,
             act,
-            [{"time": None}],
-            {"lower": 0.01, "upper": 0.05},
+            tolerance={"lower": 0.01, "upper": 0.05},
         )
         assert summarize(vc).criterion.startswith("Point at t=1: error +2.000e-02 ")
 
     def test_a_row_with_a_time_box_is_named_by_its_declared_time(self):
         """Not by where in its box the curve came closest (the box's first
         sample here, t=0.4), which is the score's time."""
-        from dstf.comparison.algorithms import _compare_points
         from dstf.comparison.sides import Sides
 
         ref = np.ones_like(self.T)
         act = ref.copy()
         act[4:7] += 0.1
-        vc = _compare_points(
+        vc = score(
+            {"mode": "points", "points": [{"time": 0.5, "time_tolerance": 0.1}]},
             self.T,
             ref,
             self.T,
             act,
-            [{"time": 0.5, "time_tolerance": 0.1}],
-            Sides(0.01, 0.05),
+            tolerance=Sides(0.01, 0.05),
         )
         assert vc.max_abs_error_time == pytest.approx(0.4)
         assert vc.diagnostics["worst_point_time"] == 0.5
@@ -1165,11 +1255,15 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         """A checkpoint the run never reached is not scored, and it is the
         failure: the sentence read "Final value error +0.000e+00 vs
         tolerance −1.000e+00 / +2.000e+00 → FAIL", an error of nothing."""
-        from dstf.comparison.algorithms import _compare_points
         from dstf.comparison.sides import Sides
 
-        vc = _compare_points(
-            self.T, self.T, self.T, self.T, [{"time": 5.0, "value": 1.0}], Sides(1, 2)
+        vc = score(
+            {"mode": "points", "points": [{"time": 5.0, "value": 1.0}]},
+            self.T,
+            self.T,
+            self.T,
+            self.T,
+            tolerance=Sides(1, 2),
         )
         vc.tolerance_used = Sides(1, 2)
         assert vc.diagnostics["scored_points"] == 0
@@ -1214,11 +1308,15 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         assert dict(summarize(vc).details)["checkpoints"] == said
 
     def test_with_no_scored_point_the_checkpoints_line_counts_the_unscored(self):
-        from dstf.comparison.algorithms import _compare_points
         from dstf.comparison.sides import Sides
 
-        vc = _compare_points(
-            self.T, self.T, self.T, self.T, [{"time": 5.0, "value": 1.0}], Sides(1, 2)
+        vc = score(
+            {"mode": "points", "points": [{"time": 5.0, "value": 1.0}]},
+            self.T,
+            self.T,
+            self.T,
+            self.T,
+            tolerance=Sides(1, 2),
         )
         assert dict(summarize(vc).details)["checkpoints"] == (
             "1 of 1 failed, 1 not scored"
@@ -1238,8 +1336,12 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
 
     def _events(self, actual, tolerance, rows):
         act = np.array([0.0, *(t for at in actual for t in (at, at)), 10.0])
-        vc = _compare_event_timing(
-            np.array([]), act, time_tolerance=tolerance, declared_events=rows
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": tolerance, "events": rows},
+            np.array([]),
+            np.array([]),
+            act,
+            np.zeros_like(act),
         )
         return vc, summarize(vc).criterion
 
@@ -1356,7 +1458,13 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
     def test_auto_detected_events_keep_the_leafs_sentence(self):
         ref = np.array([0.0, 5.0, 5.0, 10.0])
         act = np.array([0.0, 5.04, 5.04, 10.0])
-        vc = _compare_event_timing(ref, act, time_tolerance=self.PAIR)
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": self.PAIR},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
+        )
         assert "worst_sides" not in vc.diagnostics
         assert summarize(vc).criterion == (
             "Max event Δt +4.000e-02 vs −1.000e-02 / +5.000e-02 "

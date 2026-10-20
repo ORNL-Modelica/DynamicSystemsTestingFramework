@@ -7,18 +7,10 @@ import random
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import (
-    _compare_dominant_frequency,
-    _compare_event_timing,
-    _compare_points,
-    _compare_range,
-    _compare_scalar,
-    _compare_tube,
-    _find_event_boundaries,
-    _tube_bounds,
-)
+from dstf.comparison.algorithms import _find_event_boundaries, _tube_bounds
 from dstf.comparison.geometry import Band, Box, HLine, Marker, Series, VLine, Window
 from dstf.comparison.types import ScoreSummary, VariableComparison
+from scoring import score
 
 
 def _vc(**kw) -> VariableComparison:
@@ -148,7 +140,7 @@ class TestTubeGeometry:
         passing_cases = failing_cases = 0
         for _ in range(400):
             ref_t, ref_v, act_t, act_v, cfg = _random_tube_case(rng)
-            vc = _compare_tube(ref_t, ref_v, act_t, act_v, cfg)
+            vc = score({"mode": "tube", **cfg}, ref_t, ref_v, act_t, act_v)
             band = next(p for p in vc.geometry if isinstance(p, Band))
             assert band.id == "tube/band" and band.kind == "result"
             # The band IS _tube_bounds on the band's own grid — nothing re-derived.
@@ -183,13 +175,21 @@ class TestTubeGeometry:
         ]
         with_far = [on_span[0], {"time": 7.0, "upper": 0.2, "lower": 0.2}, on_span[1]]
         cfg = {"tube_width_mode": "rel"}
-        vc = _compare_tube(
-            ref_t, ref_v, ref_t, ref_v + 0.05, {**cfg, "tube_points": with_far}
+        vc = score(
+            {"mode": "tube", **cfg, "tube_points": with_far},
+            ref_t,
+            ref_v,
+            ref_t,
+            ref_v + 0.05,
         )
         ids = sorted(p.id for p in vc.geometry if isinstance(p, Marker))
         assert ids == ["tube/lower/0", "tube/lower/2", "tube/upper/0", "tube/upper/2"]
-        without = _compare_tube(
-            ref_t, ref_v, ref_t, ref_v + 0.05, {**cfg, "tube_points": on_span}
+        without = score(
+            {"mode": "tube", **cfg, "tube_points": on_span},
+            ref_t,
+            ref_v,
+            ref_t,
+            ref_v + 0.05,
         )
         assert vc.passed == without.passed
         assert vc.tube_worst_violation == pytest.approx(without.tube_worst_violation)
@@ -201,8 +201,12 @@ class TestTubeGeometry:
             {"time": 2.5, "upper": 0.2, "lower": 0.1},
             {"time": 0.5, "upper": 0.4, "lower": 0.4},
         ]
-        vc = _compare_tube(
-            ref_t, ref_v, ref_t, ref_v, {"tube_width_mode": "rel", "tube_points": pts}
+        vc = score(
+            {"mode": "tube", "tube_width_mode": "rel", "tube_points": pts},
+            ref_t,
+            ref_v,
+            ref_t,
+            ref_v,
         )
         handles = {p.id: p for p in vc.geometry if isinstance(p, Marker)}
         assert set(handles) == {
@@ -223,12 +227,12 @@ class TestTubeGeometry:
         )
 
     def test_no_data_sentinel_has_no_geometry(self):
-        vc = _compare_tube(
+        vc = score(
+            {"mode": "tube", "tube_width_mode": "band"},
             np.array([]),
             np.array([]),
             np.array([0.0]),
             np.array([1.0]),
-            {"tube_width_mode": "band"},
         )
         assert vc.geometry == () and not vc.passed
 
@@ -243,7 +247,7 @@ class TestPointsGeometry:
             {"time": 8.0, "tolerance": 0.01},
             {"time": 9.0, "tolerance": 0.1, "time_tolerance": 0.2},
         ]
-        vc = _compare_points(ref_t, ref_v, ref_t, act_v, points=pts)
+        vc = score({"mode": "points", "points": pts}, ref_t, ref_v, ref_t, act_v)
         boxes = {p.id: p for p in vc.geometry if isinstance(p, Box)}
         markers = [p for p in vc.geometry if isinstance(p, Marker)]
         # A marker is a checkpoint's target or one side of its tolerance.
@@ -269,14 +273,21 @@ class TestPointsGeometry:
 
     def test_an_unresolvable_point_has_no_geometry(self):
         ref_t = np.array([0.0, 1.0])
-        vc = _compare_points(ref_t, ref_t, ref_t, ref_t, points=[{"time": 5.0}])
+        vc = score(
+            {"mode": "points", "points": [{"time": 5.0}]}, ref_t, ref_t, ref_t, ref_t
+        )
         assert vc.geometry == () and not vc.passed
 
     def test_final_only_emits_one_checkpoint_at_the_trace_end(self):
         ref_t = np.array([0.0, 1.0])
         ref_v = np.array([0.0, 1.0])
-        vc = _compare_points(
-            ref_t, ref_v, ref_t, np.array([0.0, 1.0005]), points=None, tolerance=1e-3
+        vc = score(
+            {"mode": "points"},
+            ref_t,
+            ref_v,
+            ref_t,
+            np.array([0.0, 1.0005]),
+            tolerance=1e-3,
         )
         assert [p.id for p in vc.geometry] == [
             "points/target/final",
@@ -297,12 +308,15 @@ class TestPointsGeometry:
         t = np.linspace(0.0, 10.0, 11)
         act = t + 3.0
         act[5] = np.nan
-        vc = _compare_points(
+        vc = score(
+            {
+                "mode": "points",
+                "points": [{"time": 5.0, "tolerance": 0.1, "time_tolerance": 1.5}],
+            },
             t,
             t,
             t,
             act,
-            points=[{"time": 5.0, "tolerance": 0.1, "time_tolerance": 1.5}],
         )
         assert vc.passed is False
         box = next(p for p in vc.geometry if p.id == "points/box/0")
@@ -316,12 +330,18 @@ class TestPointsGeometry:
             "tolerance": {"lower": 0.125, "upper": 0.5},
             "time_tolerance": {"lower": 1.0, "upper": 2.0},
         }
-        vc = _compare_points(t, flat, t, flat, points=[row])
+        vc = score({"mode": "points", "points": [row]}, t, flat, t, flat)
         box = next(p for p in vc.geometry if p.id == "points/box/0")
         assert (box.t0, box.t1, box.y0, box.y1) == (4.0, 7.0, 1.875, 2.5)
         # rel: each side is that fraction of |target|, below and above it.
         ref = np.full_like(t, -8.0)
-        vc = _compare_points(t, ref, t, ref, points=[{**row, "tolerance_mode": "rel"}])
+        vc = score(
+            {"mode": "points", "points": [{**row, "tolerance_mode": "rel"}]},
+            t,
+            ref,
+            t,
+            ref,
+        )
         box = next(p for p in vc.geometry if p.id == "points/box/0")
         assert (box.y0, box.y1) == (-9.0, -4.0)
 
@@ -330,7 +350,7 @@ class TestPointsGeometry:
 
         t = np.linspace(0.0, 10.0, 11)
         flat = np.full_like(t, 2.0)
-        vc = _compare_points(t, flat, t, flat, tolerance=Sides(0.125, 0.5))
+        vc = score({"mode": "points"}, t, flat, t, flat, tolerance=Sides(0.125, 0.5))
         box = next(p for p in vc.geometry if p.id == "points/box/final")
         assert (box.t0, box.t1, box.y0, box.y1) == (10.0, 10.0, 1.875, 2.5)
 
@@ -338,12 +358,15 @@ class TestPointsGeometry:
         t = np.linspace(0.0, 10.0, 11)
         act = t.copy()
         act[4:7] = np.nan
-        vc = _compare_points(
+        vc = score(
+            {
+                "mode": "points",
+                "points": [{"time": 5.0, "tolerance": 0.1, "time_tolerance": 0.5}],
+            },
             t,
             t,
             t,
             act,
-            points=[{"time": 5.0, "tolerance": 0.1, "time_tolerance": 0.5}],
         )
         assert vc.passed is False
 
@@ -356,12 +379,15 @@ class TestPointsGeometry:
         ref_t = np.linspace(0.0, 10.0, 11)
         ref_v = ref_t.copy()
         ref_v[5] = np.nan
-        vc = _compare_points(
+        vc = score(
+            {
+                "mode": "points",
+                "points": [{"time": 5.0, "tolerance": 0.1, "tolerance_mode": "rel"}],
+            },
             ref_t,
             ref_v,
             ref_t,
             ref_t,
-            points=[{"time": 5.0, "tolerance": 0.1, "tolerance_mode": "rel"}],
         )
         assert vc.passed is False
         target = next(p for p in vc.geometry if p.id == "points/target/0")
@@ -373,7 +399,13 @@ class TestRangeGeometry:
     def test_each_declared_bound_is_a_handle_with_its_own_verdict(self):
         t = np.linspace(0.0, 1.0, 11)
         v = np.linspace(0.0, 2.0, 11)  # exceeds max=1.5, never below min=-1
-        vc = _compare_range(t, v, min_value=-1.0, max_value=1.5)
+        vc = score(
+            {"mode": "range", "min_value": -1.0, "max_value": 1.5},
+            t,
+            np.zeros_like(t),
+            t,
+            v,
+        )
         lines = {p.id: p for p in vc.geometry if isinstance(p, HLine)}
         assert set(lines) == {"range/min", "range/max"}
         assert lines["range/min"].value == -1.0 and lines["range/min"].passed is True
@@ -383,23 +415,26 @@ class TestRangeGeometry:
 
     def test_an_absent_bound_emits_nothing(self):
         t = np.linspace(0.0, 1.0, 11)
-        vc = _compare_range(t, t, min_value=None, max_value=5.0)
+        vc = score({"mode": "range", "max_value": 5.0}, t, np.zeros_like(t), t, t)
         assert [p.id for p in vc.geometry] == ["range/max"]
 
 
 class TestScalarGeometry:
     def test_bounds_form_draws_actual_and_both_bounds(self):
         t = np.linspace(0.0, 1.0, 11)
-        vc = _compare_scalar(
+        vc = score(
+            {
+                "mode": "scalar",
+                "quantity": {"reduce": "max"},
+                "tolerance_mode": "abs",
+                "min_value": 0.0,
+                "max_value": 2.0,
+            },
             t,
             t,
             t,
             t * 3.0,
-            reduction="max",
             tolerance=0.1,
-            tolerance_mode="abs",
-            min_value=0.0,
-            max_value=2.0,
         )
         lines = {p.id: p for p in vc.geometry if isinstance(p, HLine)}
         assert set(lines) == {"scalar/actual", "scalar/min", "scalar/max"}
@@ -410,16 +445,17 @@ class TestScalarGeometry:
 
     def test_baseline_form_draws_actual_and_reference(self):
         t = np.linspace(0.0, 1.0, 11)
-        vc = _compare_scalar(
+        vc = score(
+            {
+                "mode": "scalar",
+                "quantity": {"reduce": "final"},
+                "tolerance_mode": "rel",
+            },
             t,
             t,
             t,
             t * 1.01,
-            reduction="final",
             tolerance=0.05,
-            tolerance_mode="rel",
-            min_value=None,
-            max_value=None,
         )
         lines = {p.id: p for p in vc.geometry if isinstance(p, HLine)}
         assert set(lines) == {
@@ -435,16 +471,19 @@ class TestScalarGeometry:
     @staticmethod
     def _allowed(ref, tol, mode="abs", **bounds):
         t = np.linspace(0.0, 1.0, 11)
-        vc = _compare_scalar(
+        vc = score(
+            {
+                "mode": "scalar",
+                "quantity": {"reduce": "final"},
+                "tolerance_mode": mode,
+                "min_value": bounds.get("lo"),
+                "max_value": bounds.get("hi"),
+            },
             t,
             np.full_like(t, ref),
             t,
             np.full_like(t, ref),
-            reduction="final",
             tolerance=tol,
-            tolerance_mode=mode,
-            min_value=bounds.get("lo"),
-            max_value=bounds.get("hi"),
         )
         return {p.id: (p.value, p.kind) for p in vc.geometry if isinstance(p, HLine)}
 
@@ -483,7 +522,13 @@ class TestEventTimingGeometry:
     def test_auto_detected_events_become_lines_and_matched_windows(self):
         ref_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])  # one event at t=1.0
         act_t = np.array([0.0, 0.5, 1.0005, 1.0005, 1.5, 2.0])  # reproduced 0.5 ms late
-        vc = _compare_event_timing(ref_t, act_t, time_tolerance=1e-3)
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": 1e-3},
+            ref_t,
+            np.zeros_like(ref_t),
+            act_t,
+            np.zeros_like(act_t),
+        )
         ids = {p.id: p for p in vc.geometry}
         assert set(ids) == {
             "events/ref/0",
@@ -514,8 +559,12 @@ class TestEventTimingGeometry:
         # and must not be drawn as a failure.
         ref_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 1.5, 2.0])
         act_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
-        vc = _compare_event_timing(
-            ref_t, act_t, time_tolerance=1e-3, count_must_match=False
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": 1e-3, "count_must_match": False},
+            ref_t,
+            np.zeros_like(ref_t),
+            act_t,
+            np.zeros_like(act_t),
         )
         assert vc.passed
         windows = {p.id: p for p in vc.geometry if isinstance(p, Box)}
@@ -525,11 +574,16 @@ class TestEventTimingGeometry:
     def test_declared_events_mark_the_unmatched_window_as_failed(self):
         ref_t = np.linspace(0.0, 2.0, 5)
         act_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
-        vc = _compare_event_timing(
+        vc = score(
+            {
+                "mode": "event-timing",
+                "time_tolerance": 1e-3,
+                "events": [{"time": 1.0}, {"time": 1.8, "tolerance": 0.05}],
+            },
             ref_t,
+            np.zeros_like(ref_t),
             act_t,
-            time_tolerance=1e-3,
-            declared_events=[{"time": 1.0}, {"time": 1.8, "tolerance": 0.05}],
+            np.zeros_like(act_t),
         )
         windows = {p.id: p for p in vc.geometry if isinstance(p, Box)}
         assert windows["events/window/0"].passed is True
@@ -555,12 +609,18 @@ class TestDominantFrequencyGeometry:
     def test_spectra_and_peaks_land_on_the_spectrum_panel(self):
         t, ref = self._signal(2.0)
         _, act = self._signal(2.0)
-        vc = _compare_dominant_frequency(
+        vc = score(
+            {
+                "mode": "dominant-frequency",
+                "peaks": [
+                    {"freq": 2.0, "tolerance": 0.05},
+                    {"freq": 5.0, "tolerance": 0.02},
+                ],
+            },
             t,
             ref,
             t,
             act,
-            peaks=[{"freq": 2.0, "tolerance": 0.05}, {"freq": 5.0, "tolerance": 0.02}],
         )
         prims = {p.id: p for p in vc.geometry}
         assert all(p.panel == "spectrum" for p in vc.geometry)
@@ -606,8 +666,12 @@ class TestDominantFrequencyGeometry:
         # above a curve with no peak in it.
         t = np.linspace(0.0, 10.0, 8001)
         sig = np.sin(2 * np.pi * 1.3 * t)
-        vc = _compare_dominant_frequency(
-            t, sig, t, sig, peaks=[{"freq": 1.3, "tolerance": 0.05}]
+        vc = score(
+            {"mode": "dominant-frequency", "peaks": [{"freq": 1.3, "tolerance": 0.05}]},
+            t,
+            sig,
+            t,
+            sig,
         )
         prims = {p.id: p for p in vc.geometry}
         act = prims["spectrum/act"]
@@ -620,7 +684,7 @@ class TestDominantFrequencyGeometry:
 
     def test_no_declared_peaks_still_draws_the_spectra(self):
         t, ref = self._signal(2.0)
-        vc = _compare_dominant_frequency(t, ref, t, ref, peaks=None)
+        vc = score({"mode": "dominant-frequency"}, t, ref, t, ref)
         ids = [p.id for p in vc.geometry]
         assert "spectrum/ref" in ids and "spectrum/act" in ids
         assert not any(i.startswith("peaks/declared/") for i in ids)
@@ -653,7 +717,7 @@ class TestGrips:
                 "time_tolerance": {"lower": 0.1, "upper": 0.3},
             },
         ]
-        vc = _compare_points(self.T, ref, self.T, ref, points=pts)
+        vc = score({"mode": "points", "points": pts}, self.T, ref, self.T, ref)
         grips = _grips(vc)
         y2 = float(np.interp(2.0, self.T, ref))
         # No `time_tolerance` on row 0: no before / after — two more rings
@@ -687,33 +751,39 @@ class TestGrips:
 
     def test_a_rel_points_grips_are_at_the_scaled_edges(self):
         pts = [{"time": 5.0, "value": -4.0, "tolerance": 0.1, "tolerance_mode": "rel"}]
-        grips = _grips(_compare_points(self.T, self.T, self.T, self.T, points=pts))
+        grips = _grips(
+            score({"mode": "points", "points": pts}, self.T, self.T, self.T, self.T)
+        )
         assert grips["points/upper/0"][1] == (5.0, pytest.approx(-3.6))
         assert grips["points/lower/0"][1] == (5.0, pytest.approx(-4.4))
 
     def test_a_null_time_tolerance_is_an_absent_one(self):
         pts = [{"time": 5.0, "tolerance": 0.1, "time_tolerance": None}]
-        grips = _grips(_compare_points(self.T, self.T, self.T, self.T, points=pts))
+        grips = _grips(
+            score({"mode": "points", "points": pts}, self.T, self.T, self.T, self.T)
+        )
         assert set(grips) == {"points/upper/0", "points/lower/0"}
 
     def test_a_zero_time_tolerance_still_has_its_grips(self):
         """The row HOLDS the key: its two time grips are how it is widened
         on the plot. They sit just outside the target's ring, on its time."""
         pts = [{"time": 5.0, "tolerance": 0.1, "time_tolerance": 0}]
-        grips = _grips(_compare_points(self.T, self.T, self.T, self.T, points=pts))
+        grips = _grips(
+            score({"mode": "points", "points": pts}, self.T, self.T, self.T, self.T)
+        )
         assert grips["points/before/0"][1] == (5.0, 5.0)
         assert grips["points/after/0"][1] == (5.0, 5.0)
 
     def test_the_final_check_has_an_upper_and_a_lower_grip(self):
         t = np.array([0.0, 1.0])
-        vc = _compare_points(
-            t, t, t, t, points=None, tolerance={"lower": 0.25, "upper": 0.5}
+        vc = score(
+            {"mode": "points"}, t, t, t, t, tolerance={"lower": 0.25, "upper": 0.5}
         )
         assert _grips(vc) == {
             "points/upper/final": (Marker, (1.0, 1.5)),
             "points/lower/final": (Marker, (1.0, 0.75)),
         }
-        number = _grips(_compare_points(t, t, t, t, points=None, tolerance=0.25))
+        number = _grips(score({"mode": "points"}, t, t, t, t, tolerance=0.25))
         assert number["points/upper/final"][1] == (1.0, 1.25)
         assert number["points/lower/final"][1] == (1.0, 0.75)
 
@@ -721,7 +791,7 @@ class TestGrips:
         ref = np.sin(self.T) + 2.0
         act_t = np.linspace(0.0, 10.0, 41)
         cfg = {"tube_width_mode": "band", "tube_abs": {"lower": 0.1, "upper": 0.4}}
-        vc = _compare_tube(self.T, ref, act_t, np.sin(act_t) + 2.0, cfg)
+        vc = score({"mode": "tube", **cfg}, self.T, ref, act_t, np.sin(act_t) + 2.0)
         band = next(p for p in vc.geometry if isinstance(p, Band))
         mid = len(band.time) // 2
         assert _grips(vc) == {
@@ -734,8 +804,12 @@ class TestGrips:
 
     def test_a_rel_constant_tube_has_them_too(self):
         ref = np.sin(self.T) + 2.0
-        vc = _compare_tube(
-            self.T, ref, self.T, ref, {"tube_width_mode": "rel", "tube_rel": 0.1}
+        vc = score(
+            {"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.1},
+            self.T,
+            ref,
+            self.T,
+            ref,
         )
         band = next(p for p in vc.geometry if isinstance(p, Band))
         mid = len(band.time) // 2
@@ -749,21 +823,26 @@ class TestGrips:
             "tube_width_mode": "band",
             "tube_points": [{"time": 1.0, "upper": 0.2, "lower": 0.2}],
         }
-        vc = _compare_tube(t, t, t, t, cfg)
+        vc = score({"mode": "tube", **cfg}, t, t, t, t)
         assert _grips(vc) == {}
         assert {p.kind for p in vc.geometry if isinstance(p, Marker)} == {"handle"}
 
     def test_an_events_window_has_an_early_and_a_late_grip(self):
         ref_t = np.linspace(0.0, 2.0, 5)
         act_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
-        vc = _compare_event_timing(
+        vc = score(
+            {
+                "mode": "event-timing",
+                "time_tolerance": 1e-3,
+                "events": [
+                    {"time": 1.0},
+                    {"time": 1.8, "tolerance": {"lower": 0.05, "upper": 0.2}},
+                ],
+            },
             ref_t,
+            np.zeros_like(ref_t),
             act_t,
-            time_tolerance=1e-3,
-            declared_events=[
-                {"time": 1.0},
-                {"time": 1.8, "tolerance": {"lower": 0.05, "upper": 0.2}},
-            ],
+            np.zeros_like(act_t),
         )
         assert _grips(vc) == {
             "events/early/0": (VLine, pytest.approx(0.999)),
@@ -777,8 +856,12 @@ class TestGrips:
 
     def test_auto_detected_events_have_them_at_the_criterions_tolerance(self):
         ref_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
-        vc = _compare_event_timing(
-            ref_t, ref_t, time_tolerance={"lower": 0.1, "upper": 0.25}
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": {"lower": 0.1, "upper": 0.25}},
+            ref_t,
+            np.zeros_like(ref_t),
+            ref_t,
+            np.zeros_like(ref_t),
         )
         assert _grips(vc) == {
             "events/early/0": (VLine, pytest.approx(0.9)),
@@ -788,15 +871,18 @@ class TestGrips:
     def test_a_peaks_window_has_a_lower_and_an_upper_grip_on_the_spectrum(self):
         t = np.linspace(0.0, 10.0, 1001)
         sig = np.sin(2 * np.pi * 2.0 * t)
-        vc = _compare_dominant_frequency(
+        vc = score(
+            {
+                "mode": "dominant-frequency",
+                "peaks": [
+                    {"freq": 2.0, "tolerance": {"lower": 0.05, "upper": 0.2}},
+                    {"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"},
+                ],
+            },
             t,
             sig,
             t,
             sig,
-            peaks=[
-                {"freq": 2.0, "tolerance": {"lower": 0.05, "upper": 0.2}},
-                {"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"},
-            ],
         )
         assert _grips(vc) == {
             "peaks/lower/0": (VLine, pytest.approx(1.9)),
@@ -809,22 +895,28 @@ class TestGrips:
     def test_nrmse_range_and_scalar_emit_no_grip(self):
         """nrmse is one ceiling; a range's and a scalar's sides are LINES,
         `kind="handle"`: the report draws them too."""
-        from dstf.comparison.algorithms import _compare_trajectories
 
         t = self.T
         for vc in (
-            _compare_trajectories(t, t, t, t, 1e-4),
-            _compare_range(t, t, min_value=-1.0, max_value=20.0),
-            _compare_scalar(
+            score({"mode": "nrmse"}, t, t, t, t, tolerance=1e-4),
+            score(
+                {"mode": "range", "min_value": -1.0, "max_value": 20.0},
+                t,
+                np.zeros_like(t),
+                t,
+                t,
+            ),
+            score(
+                {
+                    "mode": "scalar",
+                    "quantity": {"reduce": "max"},
+                    "tolerance_mode": "abs",
+                },
                 t,
                 t,
                 t,
                 t,
-                reduction="max",
                 tolerance={"lower": 0.1, "upper": 0.2},
-                tolerance_mode="abs",
-                min_value=None,
-                max_value=None,
             ),
         ):
             assert _grips(vc) == {}, vc.mode

@@ -27,6 +27,7 @@ from dstf.comparison.tree_spec import (
 from dstf.discovery.test_registry import TestModel
 from dstf.storage.baseline import StoredVariable
 from dstf.storage.baseline_codec import decode_reference
+from scoring import score
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -972,13 +973,15 @@ class TestLeafPathStamping:
         assert "/metrics" in leaf_comparisons_by_path(tree)
 
     def test_implicit_tree_paths_agree_with_the_synthesized_spec(self):
-        from dstf.comparison.algorithms import _compare_tube
-
         t, ref_vals = _linear()
         vcs = []
         for i, name in enumerate(["a", "b"]):
-            vc = _compare_tube(
-                t, ref_vals, t, ref_vals, {"tube_width_mode": "band", "tube_abs": 0.1}
+            vc = score(
+                {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.1},
+                t,
+                ref_vals,
+                t,
+                ref_vals,
             )
             vc.index, vc.name = i + 1, name
             vcs.append(vc)
@@ -989,12 +992,15 @@ class TestLeafPathStamping:
         assert vcs[1].geometry[0].id == "/metrics/children/1/tube/band"
 
     def test_stamping_is_idempotent(self):
-        from dstf.comparison.algorithms import _compare_tube
         from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
 
         t, ref_vals = _linear()
-        vc = _compare_tube(
-            t, ref_vals, t, ref_vals, {"tube_width_mode": "band", "tube_abs": 0.1}
+        vc = score(
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.1},
+            t,
+            ref_vals,
+            t,
+            ref_vals,
         )
         leaf = leaf_from_variable(vc)
         stamp_leaf_path(leaf, "/metrics")

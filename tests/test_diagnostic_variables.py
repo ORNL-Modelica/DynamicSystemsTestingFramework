@@ -640,7 +640,7 @@ def test_the_event_count_warning_compares_the_two_summaries():
 
 
 def test_the_cpu_time_is_the_runs_cpu_time_final():
-    from dstf.comparison.comparator import TestComparison
+    from dstf.comparison.types import TestComparison
     from dstf.reporting.rows import cpu_time, summary_fields
 
     t = np.linspace(0, 1, 3)

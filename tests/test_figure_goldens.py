@@ -20,19 +20,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import (
-    _compare_dominant_frequency,
-    _compare_event_timing,
-    _compare_points,
-    _compare_range,
-    _compare_scalar,
-    _compare_trajectories,
-    _compare_tube,
-)
 from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
 from dstf.comparison.registry import metrics
 from dstf.figures.plotly import variable_figure
 from dstf.figures.view import build_view
+from scoring import score
 
 #: Every fixture below samples at this rate, so decimation to
 #: ``MAX_SAMPLES`` actually happens and the recorded lengths are stable.
@@ -57,7 +49,7 @@ def _signals(scale: float):
 
 def _view_nrmse(scale: float = 1.0):
     t, ref, act = _signals(scale)
-    vc = _compare_trajectories(t, ref, t, act, tolerance=1e-2)
+    vc = score({"mode": "nrmse"}, t, ref, t, act, tolerance=1e-2)
     return build_view(
         "x",
         act_time=t,
@@ -70,18 +62,19 @@ def _view_nrmse(scale: float = 1.0):
 
 def _view_tube(scale: float = 1.0):
     t, ref, act = _signals(scale)
-    vc = _compare_tube(
-        t,
-        ref,
-        t,
-        act,
+    vc = score(
         {
+            "mode": "tube",
             "tube_width_mode": "band",
             "tube_points": [
                 {"time": 2.0, "upper": 0.1, "lower": 0.1},
                 {"time": 8.0, "upper": 0.2, "lower": 0.2},
             ],
         },
+        t,
+        ref,
+        t,
+        act,
     )
     return build_view(
         "x",
@@ -96,12 +89,18 @@ def _view_tube(scale: float = 1.0):
 def _view_points(scale: float = 1.0):
     t, ref, act = _signals(scale)
     # One checkpoint the actual misses, one it meets.
-    vc = _compare_points(
+    vc = score(
+        {
+            "mode": "points",
+            "points": [
+                {"time": 2.0, "tolerance": 0.005},
+                {"time": 8.0, "tolerance": 0.5},
+            ],
+        },
         t,
         ref,
         t,
         act,
-        points=[{"time": 2.0, "tolerance": 0.005}, {"time": 8.0, "tolerance": 0.5}],
     )
     return build_view(
         "x",
@@ -117,22 +116,25 @@ def _view_range(scale: float = 1.0):
     # Baseline-free: the bounds come from the spec, so the view has no
     # reference and therefore no error series.
     t, _, act = _signals(scale)
-    vc = _compare_range(t, act, min_value=-2.0, max_value=1.5)
+    vc = score(
+        {"mode": "range", "min_value": -2.0, "max_value": 1.5},
+        t,
+        np.zeros_like(t),
+        t,
+        act,
+    )
     return build_view("x", act_time=t, act_values=act, leaves=[_stamped(vc)])
 
 
 def _view_scalar(scale: float = 1.0):
     t, ref, act = _signals(scale)
-    vc = _compare_scalar(
+    vc = score(
+        {"mode": "scalar", "quantity": {"reduce": "max"}, "tolerance_mode": "rel"},
         t,
         ref,
         t,
         act,
-        reduction="max",
         tolerance=0.05,
-        tolerance_mode="rel",
-        min_value=None,
-        max_value=None,
     )
     return build_view(
         "x",
@@ -153,7 +155,13 @@ def _view_event_timing(scale: float = 1.0):
     ref_values = np.where(ref_time >= t[500], 1.0, 0.0)
     ref_values[500] = 0.0
     act_values = np.where(act_time >= t[500] + 5e-4, 1.0, 0.0) * scale
-    vc = _compare_event_timing(ref_time, act_time, time_tolerance=1e-3)
+    vc = score(
+        {"mode": "event-timing", "time_tolerance": 1e-3},
+        ref_time,
+        np.zeros_like(ref_time),
+        act_time,
+        np.zeros_like(act_time),
+    )
     return build_view(
         "x",
         act_time=act_time,
@@ -169,12 +177,18 @@ def _view_dominant_frequency(scale: float = 1.0):
     ref = np.sin(2 * np.pi * 2.0 * t)
     act = ref * scale
     # 2 Hz is in the signal, 5 Hz is not: one matched peak, one missed.
-    vc = _compare_dominant_frequency(
+    vc = score(
+        {
+            "mode": "dominant-frequency",
+            "peaks": [
+                {"freq": 2.0, "tolerance": 0.05},
+                {"freq": 5.0, "tolerance": 0.02},
+            ],
+        },
         t,
         ref,
         t,
         act,
-        peaks=[{"freq": 2.0, "tolerance": 0.05}, {"freq": 5.0, "tolerance": 0.02}],
     )
     return build_view(
         "x",

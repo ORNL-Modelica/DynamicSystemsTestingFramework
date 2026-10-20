@@ -12,6 +12,7 @@ import numpy as np
 
 from dstf.discovery.plots import ResolvedPlot
 from dstf.reporting.report_suite import plot_page_keys
+from scoring import score
 
 
 def _fixture_context(label: str | None = None) -> dict:
@@ -133,7 +134,6 @@ def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
 
 
 def _context_with_figure(label: str | None = None):
-    from dstf.comparison.algorithms import _compare_tube
     from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
     from dstf.figures.plotly import variable_figure
     from dstf.figures.view import build_view
@@ -145,8 +145,12 @@ def _context_with_figure(label: str | None = None):
     ref = np.asarray(traj["ref_values"], dtype=float)
     act_t = np.asarray(traj["act_time"], dtype=float)
     act = np.asarray(traj["act_values"], dtype=float)
-    vc = _compare_tube(
-        t, ref, act_t, act, {"tube_width_mode": "band", "tube_abs": 0.05}
+    vc = score(
+        {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.05},
+        t,
+        ref,
+        act_t,
+        act,
     )
     vc.name = var
     stamp_leaf_path(leaf_from_variable(vc), "/metrics/children/0")

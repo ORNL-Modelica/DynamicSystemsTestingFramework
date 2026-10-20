@@ -17,8 +17,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from ..comparison.comparator import VariableComparison
-from ..comparison.types import TestComparison
+from ..comparison.types import TestComparison, VariableComparison
 from ..config_shape import default
 from ..discovery.test_registry import diagnostic_names
 from ..storage.baseline import ReferenceFile

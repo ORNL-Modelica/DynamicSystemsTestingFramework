@@ -32,8 +32,8 @@ from ..backends.types import (
     TestResult,
     VariableText,
 )
-from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
-from ..comparison.types import TestComparison
+from ..comparison.comparator import compare_one
+from ..comparison.types import DEFAULT_TOLERANCE, TestComparison
 from ..config import Config, ConfigError
 from ..discovery.library_state import (
     LibraryState,

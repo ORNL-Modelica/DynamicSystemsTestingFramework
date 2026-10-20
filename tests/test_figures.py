@@ -8,17 +8,31 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import (
-    _compare_dominant_frequency,
-    _compare_range,
-    _compare_trajectories,
-    _compare_tube,
-)
 from dstf.comparison.geometry import Band, Box, HLine, Marker, Series, Window
 from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
+from dstf.comparison.types import VariableComparison
 from dstf.figures.decimate import decimate_band
 from dstf.figures.plotly import PLOT_CONFIG, RING_PATH, variable_figure
 from dstf.figures.view import OverlayView, build_view, decimate_view
+from scoring import score
+
+
+def _unscored_leaf():
+    """A range leaf's comparison that nothing scored: a test gives it the
+    geometry it draws."""
+    return VariableComparison(
+        index=0,
+        name="",
+        passed=True,
+        nrmse=0.0,
+        rmse=0.0,
+        signal_range=0.0,
+        max_abs_error=0.0,
+        max_abs_error_time=0.0,
+        reference_final=0.0,
+        actual_final=0.0,
+        mode="range",
+    )
 
 
 def _stamped(vc, path="/metrics/children/0"):
@@ -30,8 +44,12 @@ def _tube_view(n=11, **cfg):
     t = np.linspace(0.0, 1.0, n)
     ref = np.sin(t)
     act = ref + 0.01
-    vc = _compare_tube(
-        t, ref, t, act, {"tube_width_mode": "band", "tube_abs": 0.05, **cfg}
+    vc = score(
+        {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.05, **cfg},
+        t,
+        ref,
+        t,
+        act,
     )
     vc.name = "x"
     return build_view(
@@ -120,14 +138,12 @@ class TestErrorSeriesFollowTheComparator:
             np.testing.assert_array_equal(s.y, 0.0)
 
     def test_constant_reference_normalises_by_magnitude(self):
-        from dstf.comparison.algorithms import _compare_trajectories
-
         t = np.linspace(0.0, 1.0, 11)
         ref = np.full_like(t, 37e9)
         act = ref + 100.0
         view = build_view("x", act_time=t, act_values=act, ref_time=t, ref_values=ref)
         per_point = next(s for s in view.errors if s.id == "error/nrmse")
-        vc = _compare_trajectories(t, ref, t, act, tolerance=1.0)
+        vc = score({"mode": "nrmse"}, t, ref, t, act, tolerance=1.0)
         # Every per-point value equals the scored NRMSE for a constant offset.
         np.testing.assert_allclose(per_point.y, vc.nrmse)
 
@@ -183,16 +199,20 @@ class TestFigure:
         assert upper["meta"]["kind"] == "handle" and upper["mode"] == "markers"
 
     def test_each_marker_carries_its_own_verdict_colour(self):
-        from dstf.comparison.algorithms import _compare_points
-
         t = np.linspace(0.0, 10.0, 101)
         act = t + 0.05 * (t > 5.0)
-        vc = _compare_points(
+        vc = score(
+            {
+                "mode": "points",
+                "points": [
+                    {"time": 2.0, "tolerance": 0.01},
+                    {"time": 8.0, "tolerance": 0.01},
+                ],
+            },
             t,
             t,
             t,
             act,
-            points=[{"time": 2.0, "tolerance": 0.01}, {"time": 8.0, "tolerance": 0.01}],
         )
         vc.name = "x"
         fig = variable_figure(
@@ -221,7 +241,7 @@ class TestFigure:
 
     def test_window_and_range_bounds_become_shapes_clipped_to_the_window(self):
         t = np.linspace(0.0, 1.0, 11)
-        vc = _compare_range(t, t, min_value=None, max_value=0.5)
+        vc = score({"mode": "range", "max_value": 0.5}, t, np.zeros_like(t), t, t)
         vc.name = "x"
         vc.geometry = vc.geometry + (Window(id="window", start=0.25, end=None),)
         view = build_view("x", act_time=t, act_values=t, leaves=[_stamped(vc)])
@@ -252,7 +272,7 @@ class TestFigure:
         it, which `edit_on_plot` then refused (measured in Chromium on
         plotly.js 3.1.1, 2026-09-26)."""
         t = np.linspace(0.0, 10.0, 101)
-        vc = _compare_range(t, t, min_value=None, max_value=0.9)
+        vc = score({"mode": "range", "max_value": 0.9}, t, np.zeros_like(t), t, t)
         vc.name = "x"
         vc.geometry = vc.geometry + (Window(id="window", start=2.0, end=8.0),)
         view = build_view("x", act_time=t, act_values=t, leaves=[_stamped(vc)])
@@ -364,19 +384,18 @@ class TestFigure:
         assert errors and all(tr["meta"]["samples"] == len(tr["x"]) for tr in errors)
 
     def test_a_view_with_no_trajectory_still_renders_its_lines(self):
-        from dstf.comparison.algorithms import _compare_scalar
-
         one = np.array([0.0])
-        vc = _compare_scalar(
+        vc = score(
+            {
+                "mode": "scalar",
+                "quantity": {"reduce": "final"},
+                "tolerance_mode": "abs",
+            },
             one,
             np.array([3.0]),
             one,
             np.array([3.1]),
-            reduction="final",
             tolerance=0.5,
-            tolerance_mode="abs",
-            min_value=None,
-            max_value=None,
         )
         vc.name = "translation.continuous_time_states"
         fig = variable_figure(
@@ -398,7 +417,7 @@ def _handle_view():
     emits, and one left at the DEFAULT kind — what a third-party metric's
     Marker gets), an HLine handle and a Box handle."""
     t = np.linspace(0.0, 1.0, 11)
-    vc = _compare_range(t, t, min_value=None, max_value=None)
+    vc = _unscored_leaf()
     vc.name = "x"
     vc.geometry = (
         Marker(id="tube/upper/0", kind="handle", x=0.5, y=0.6),
@@ -508,10 +527,10 @@ class TestEditableFigure:
         leaf's line must not be drawn above an earlier leaf's ring, or it
         takes the drag."""
         t = np.linspace(0.0, 1.0, 11)
-        first = _compare_range(t, t, min_value=None, max_value=None)
+        first = _unscored_leaf()
         first.name = "x"
         first.geometry = (Marker(id="tube/lower/0", kind="handle", x=0.0, y=-0.5),)
-        second = _compare_range(t, t, min_value=-0.5, max_value=None)
+        second = score({"mode": "range", "min_value": -0.5}, t, np.zeros_like(t), t, t)
         second.name = "x"
         view = build_view(
             "x",
@@ -547,7 +566,7 @@ def _two_ring_view(name="x", paths=("/metrics/children/0", "/metrics/children/1"
     t = np.linspace(0.0, 1.0, 11)
     leaves = []
     for k, path in enumerate(paths):
-        vc = _compare_range(t, t, min_value=None, max_value=None)
+        vc = _unscored_leaf()
         vc.name = name
         vc.geometry = (
             Marker(id=f"tube/upper/{k}", kind="handle", x=0.2 + 0.3 * k, y=0.6),
@@ -637,7 +656,8 @@ def test_leaves_by_variable_groups_stamped_leaves():
 
     t = np.linspace(0.0, 1.0, 11)
     vcs = [
-        _compare_trajectories(t, np.sin(t), t, np.sin(t) + 0.01, 0.1) for _ in range(3)
+        score({"mode": "nrmse"}, t, np.sin(t), t, np.sin(t) + 0.01, tolerance=0.1)
+        for _ in range(3)
     ]
     vcs[0].name, vcs[1].name, vcs[2].name = "x", "y", "x"
     tree = implicit_and_tree(vcs)  # stamps /metrics/children/{i}
@@ -661,8 +681,12 @@ def _spectrum_view():
     second panel (``xaxis2`` / ``yaxis2``)."""
     t = np.linspace(0.0, 10.0, 1001)
     sig = np.sin(2 * np.pi * 2.0 * t)
-    vc = _compare_dominant_frequency(
-        t, sig, t, sig, peaks=[{"freq": 2.0, "tolerance": 0.05}]
+    vc = score(
+        {"mode": "dominant-frequency", "peaks": [{"freq": 2.0, "tolerance": 0.05}]},
+        t,
+        sig,
+        t,
+        sig,
     )
     vc.name = "x"
     return build_view(
@@ -679,7 +703,7 @@ def _dominant_view(sig, peaks):
     """A dominant-frequency leaf declaring ``peaks`` over ``sig`` on
     `_spectrum_view`'s grid (t 0..10 s, 1001 samples: Nyquist near 50 Hz)."""
     t = np.linspace(0.0, 10.0, 1001)
-    vc = _compare_dominant_frequency(t, sig, t, sig, peaks=peaks)
+    vc = score({"mode": "dominant-frequency", "peaks": peaks}, t, sig, t, sig)
     vc.name = "x"
     return build_view(
         "x",
@@ -781,19 +805,26 @@ def _tube_and_range_view():
     t = np.linspace(0.0, 1.0, 11)
     ref = np.sin(t)
     act = ref + 0.01
-    tube = _compare_tube(
-        t,
-        ref,
-        t,
-        act,
+    tube = score(
         {
+            "mode": "tube",
             "tube_width_mode": "band",
             "tube_abs": 0.05,
             "tube_points": [{"time": 0.2, "upper": 0.1, "lower": 0.1}],
         },
+        t,
+        ref,
+        t,
+        act,
     )
     tube.name = "x"
-    rng = _compare_range(t, act, min_value=-1.0, max_value=2.0)
+    rng = score(
+        {"mode": "range", "min_value": -1.0, "max_value": 2.0},
+        t,
+        np.zeros_like(t),
+        t,
+        act,
+    )
     rng.name = "x"
     return build_view(
         "x",
@@ -1108,21 +1139,17 @@ def test_a_context_series_draws_no_criteria_of_its_own():
 def test_a_scalars_allowed_lines_are_drawn_on_the_report():
     """The one tolerance the report never drew: a scalar scored against its
     baseline shows `baseline + upper` and `baseline − lower`."""
-    from dstf.comparison.algorithms import _compare_scalar
     from dstf.comparison.sides import Sides
 
     t = np.linspace(0.0, 10.0, 11)
     flat = np.full_like(t, 4.0)
-    vc = _compare_scalar(
+    vc = score(
+        {"mode": "scalar", "quantity": {"reduce": "final"}, "tolerance_mode": "abs"},
         t,
         flat,
         t,
         flat,
-        reduction="final",
         tolerance=Sides(0.25, 0.5),
-        tolerance_mode="abs",
-        min_value=None,
-        max_value=None,
     )
     vc.name = "x"
     view = build_view(
@@ -1159,8 +1186,6 @@ def _grip_view(vc, t, ref, act=None, path=P0):
 
 
 def _points_grip_view(path=P0):
-    from dstf.comparison.algorithms import _compare_points
-
     t = np.linspace(0.0, 10.0, 101)
     ref = np.sin(t)
     points = [
@@ -1172,43 +1197,61 @@ def _points_grip_view(path=P0):
             "time_tolerance": {"lower": 0.1, "upper": 0.3},
         },
     ]
-    return _grip_view(_compare_points(t, ref, t, ref, points=points), t, ref, path=path)
+    return _grip_view(
+        score({"mode": "points", "points": points}, t, ref, t, ref), t, ref, path=path
+    )
 
 
 def _final_grip_view():
-    from dstf.comparison.algorithms import _compare_points
-
     t = np.linspace(0.0, 10.0, 101)
-    return _grip_view(_compare_points(t, t, t, t, points=None, tolerance=0.5), t, t)
+    return _grip_view(score({"mode": "points"}, t, t, t, t, tolerance=0.5), t, t)
 
 
 def _tube_grip_view():
     t = np.linspace(0.0, 10.0, 101)
     ref = np.sin(t) + 2.0
     cfg = {"tube_width_mode": "band", "tube_abs": {"lower": 0.1, "upper": 0.4}}
-    return _grip_view(_compare_tube(t, ref, t, ref, cfg), t, ref)
+    return _grip_view(score({"mode": "tube", **cfg}, t, ref, t, ref), t, ref)
 
 
 def _events_grip_view():
-    from dstf.comparison.algorithms import _compare_event_timing
-
     t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
     events = [{"time": 1.0, "tolerance": {"lower": 0.05, "upper": 0.2}}]
-    return _grip_view(_compare_event_timing(t, t, declared_events=events), t, t)
+    return _grip_view(
+        score(
+            {"mode": "event-timing", "events": events},
+            t,
+            np.zeros_like(t),
+            t,
+            np.zeros_like(t),
+        ),
+        t,
+        t,
+    )
 
 
 def _auto_events_grip_view():
-    from dstf.comparison.algorithms import _compare_event_timing
-
     t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
-    return _grip_view(_compare_event_timing(t, t, time_tolerance=0.1), t, t)
+    return _grip_view(
+        score(
+            {"mode": "event-timing", "time_tolerance": 0.1},
+            t,
+            np.zeros_like(t),
+            t,
+            np.zeros_like(t),
+        ),
+        t,
+        t,
+    )
 
 
 def _peaks_grip_view():
     t = np.linspace(0.0, 10.0, 1001)
     sig = np.sin(2 * np.pi * 2.0 * t)
     peaks = [{"freq": 2.0, "tolerance": {"lower": 0.05, "upper": 0.2}}]
-    return _grip_view(_compare_dominant_frequency(t, sig, t, sig, peaks=peaks), t, sig)
+    return _grip_view(
+        score({"mode": "dominant-frequency", "peaks": peaks}, t, sig, t, sig), t, sig
+    )
 
 
 #: Every way a mode emits grips, by what the figure is asked to draw.
@@ -1487,7 +1530,13 @@ GRIP_LABELS = {
 
 def _range_view(path, window=None):
     t = np.linspace(0.0, 10.0, 101)
-    vc = _compare_range(t, np.sin(t), min_value=-2.0, max_value=2.0)
+    vc = score(
+        {"mode": "range", "min_value": -2.0, "max_value": 2.0},
+        t,
+        np.zeros_like(t),
+        t,
+        np.sin(t),
+    )
     vc.name = "x"
     view = build_view(
         "x", act_time=t, act_values=np.sin(t), leaves=[_stamped(vc, path)]
@@ -1565,7 +1614,7 @@ def _low_peak_figure(lower_edge: float) -> dict:
             "tolerance_mode": "abs",
         }
     ]
-    vc = _compare_dominant_frequency(t, sig, t, sig, peaks=peaks)
+    vc = score({"mode": "dominant-frequency", "peaks": peaks}, t, sig, t, sig)
     fig = variable_figure(_grip_view(vc, t, sig), editable=True)
     assert fig["layout"]["xaxis2"]["range"] == pytest.approx([0.0, 2.85])
     return fig
@@ -1643,7 +1692,7 @@ def test_an_upper_arrow_at_the_end_of_a_set_range_is_drawn_inward():
     t = np.linspace(0.0, 10.0, 101)  # Nyquist 5 Hz
     sig = np.sin(2 * np.pi * 2.0 * t)
     peaks = [{"freq": 6.0, "tolerance": 1.0, "tolerance_mode": "abs"}]
-    vc = _compare_dominant_frequency(t, sig, t, sig, peaks=peaks)
+    vc = score({"mode": "dominant-frequency", "peaks": peaks}, t, sig, t, sig)
     fig = variable_figure(_grip_view(vc, t, sig), editable=True)
     assert fig["layout"]["xaxis2"]["range"] == pytest.approx([0.0, 7.0])
     shape, _said = _drawn(fig, "peaks/upper/0")
@@ -1658,14 +1707,15 @@ def test_a_set_spectrum_range_mirrors_no_arrow_of_the_time_panel():
     it and for no other: a checkpoint at t = 0.2 — a number that would be
     next to the start of [0, 7.2] Hz — keeps its four arrows outward on a
     plot that has a spectrum under it."""
-    from dstf.comparison.algorithms import _compare_points
     from dstf.comparison.geometry import _GRIP_OUTWARD
     from dstf.comparison.sides import Sides
 
     t = np.linspace(0.0, 10.0, 1001)
     sig = np.sin(2 * np.pi * 2.0 * t)
     points = [{"time": 0.2, "value": 0.5, "time_tolerance": 0.1}]
-    vc = _compare_points(t, sig, t, sig, points, Sides(0.1, 0.1))
+    vc = score(
+        {"mode": "points", "points": points}, t, sig, t, sig, tolerance=Sides(0.1, 0.1)
+    )
     checkpoint = _grip_view(vc, t, sig, path="/metrics/children/1")
     peaks = _peaks_grip_view()
     fig = variable_figure(
@@ -1773,21 +1823,17 @@ def test_only_the_open_leafs_rings_grips_and_bound_lines_are_draggable():
 
 
 def test_a_scalars_result_lines_are_not_draggable_and_its_sides_are():
-    from dstf.comparison.algorithms import _compare_scalar
     from dstf.comparison.sides import Sides
 
     t = np.linspace(0.0, 10.0, 11)
     flat = np.full_like(t, 4.0)
-    vc = _compare_scalar(
+    vc = score(
+        {"mode": "scalar", "quantity": {"reduce": "final"}, "tolerance_mode": "abs"},
         t,
         flat,
         t,
         flat,
-        reduction="final",
         tolerance=Sides(0.25, 0.5),
-        tolerance_mode="abs",
-        min_value=None,
-        max_value=None,
     )
     vc.name = "x"
     view = build_view(
@@ -1809,21 +1855,22 @@ def test_a_scalars_result_lines_are_not_draggable_and_its_sides_are():
 def _scalar_view(**bounds):
     """A scalar leaf: scored against its baseline (two tolerance lines), or
     — with ``min_value`` / ``max_value`` — by its bounds."""
-    from dstf.comparison.algorithms import _compare_scalar
     from dstf.comparison.sides import Sides
 
     t = np.linspace(0.0, 10.0, 11)
     flat = np.full_like(t, 4.0)
-    kwargs = {"min_value": None, "max_value": None, **bounds}
-    vc = _compare_scalar(
+    vc = score(
+        {
+            "mode": "scalar",
+            "quantity": {"reduce": "final"},
+            "tolerance_mode": "abs",
+            **bounds,
+        },
         t,
         flat,
         t,
         flat,
-        reduction="final",
         tolerance=Sides(0.25, 0.5),
-        tolerance_mode="abs",
-        **kwargs,
     )
     vc.name = "x"
     return build_view(
@@ -1834,7 +1881,7 @@ def _scalar_view(**bounds):
 
 def _nrmse_view(window=None):
     t = np.linspace(0.0, 10.0, 101)
-    vc = _compare_trajectories(t, np.sin(t), t, np.sin(t) + 0.01, 0.05)
+    vc = score({"mode": "nrmse"}, t, np.sin(t), t, np.sin(t) + 0.01, tolerance=0.05)
     vc.name = "x"
     view = build_view(
         "x", act_time=t, act_values=np.sin(t) + 0.01, ref_time=t,
@@ -1849,7 +1896,7 @@ def _nrmse_view(window=None):
 def _geometry_view(*geometry):
     """A leaf whose geometry is exactly ``geometry``."""
     t = np.linspace(0.0, 1.0, 11)
-    vc = _compare_range(t, t, min_value=None, max_value=None)
+    vc = _unscored_leaf()
     vc.name = "x"
     vc.geometry = geometry
     return build_view(

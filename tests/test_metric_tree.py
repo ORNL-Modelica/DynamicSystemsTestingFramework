@@ -2,7 +2,6 @@
 
 import pytest
 
-from dstf.comparison.comparator import VariableComparison
 from dstf.comparison.metric_tree import (
     AndCombinator,
     KOfNCombinator,
@@ -12,6 +11,7 @@ from dstf.comparison.metric_tree import (
     implicit_and_tree,
     leaf_from_variable,
 )
+from dstf.comparison.types import VariableComparison
 
 
 def _vc(name="x", passed=True, nrmse=0.001, mode="nrmse", tube_inside=None):

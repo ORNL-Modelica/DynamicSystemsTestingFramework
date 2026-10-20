@@ -13,8 +13,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from dstf.backends import _REGISTRY, Backend, register
+from dstf.backends.locate import EXECUTABLE, SEARCH, Found, Located, Rule
 from dstf.backends.types import (
-    DatasetType,
     TestResult,
     VariableResult,
 )
@@ -731,59 +732,87 @@ def _mk_result(
     )
 
 
-class _FakeBackend:
-    """Stands in for a Backend in cmd_run — no simulator involved."""
+#: The backend `run_env` registers: what a test runs with when no
+#: simulator is involved.
+FAKE = "FakeRun"
 
-    artifact_files: tuple = ()
-    # Class-level declarations every Backend carries; cmd_run reads
-    # produced_datasets to pick the dataset kind it threads into comparison.
-    produced_datasets = frozenset({DatasetType.TIME_SERIES})
+
+class _Behaviour:
+    """What the registered backend does, held by the test: the results each
+    test reads back, the prior results a rerun or compare scores, and the
+    manifest a run returns. A test replaces ``run_tests`` to make the run
+    itself do something else."""
 
     def __init__(self, work_dir, results, prior_results=None, manifest_map=None):
         self.work_dir = Path(work_dir)
         self.results = results
         self.prior_results = prior_results or {}
         self.manifest_map = manifest_map
-        self.ref_id_map: dict = {}
-        self.ran_tests: list | None = None
+        self.run_tests = self._run_tests
 
-    def run_tests(self, tests):
-        self.ran_tests = list(tests)
+    def _run_tests(self, tests):
         mm = self.manifest_map or {
             f"test_{i:04d}": {"model_id": t.model_id, "ref_id": None}
             for i, t in enumerate(tests, 1)
         }
         return [BatchManifest(work_dir=self.work_dir, manifest=mm)]
 
-    def read_results(self, manifests, scope_tests, on_result=None):
-        return {
-            t.model_id: self.results[t.model_id]
-            for t in scope_tests
-            if t.model_id in self.results
-        }
-
-    def read_last_results(self, tests):
-        return dict(self.prior_results)
-
 
 @pytest.fixture
-def run_env(tmp_config_dir, tmp_path, monkeypatch):
-    """Wire cmd_run to fakes: no simulator, no browser, tmp work dir."""
+def run_env(tmp_path):
+    """A project whose testing.json names a registered fake backend and
+    whose tests come from its own test_spec.json: no simulator, no browser,
+    a tmp work dir. ``make`` writes the spec and returns the behaviour the
+    backend reads."""
+    config_dir = tmp_path / "config"
+    ref_root = config_dir / "Resources" / "ReferenceResults"
+    ref_root.mkdir(parents=True)
+    (config_dir / "testing.json").write_text(
+        json.dumps({"source_type": "python", "backend": FAKE}), encoding="utf-8"
+    )
     work_dir = tmp_path / "work"
     work_dir.mkdir()
+    env = SimpleNamespace(config_dir=config_dir, work_dir=work_dir, ref_root=ref_root)
 
-    def make(tests, results, prior_results=None, manifest_map=None):
-        backend = _FakeBackend(work_dir, results, prior_results, manifest_map)
-        monkeypatch.setattr(
-            "dstf.cli.run_cmds.discover_tests", lambda config: list(tests)
-        )
-        monkeypatch.setattr(
-            "dstf.cli.run_cmds._get_backend",
-            lambda config, persistent=False, to_run=False: backend,
-        )
-        return backend
+    @register(FAKE)
+    class FakeRun(Backend):
+        @classmethod
+        def locate(cls, settings):
+            return Located(
+                (Found(EXECUTABLE, sys.executable, Rule(SEARCH, "the test")),)
+            )
 
-    return SimpleNamespace(config_dir=tmp_config_dir, work_dir=work_dir, make=make)
+        def read_result(self, test, test_key, run_result):
+            raise AssertionError("read_results is the behaviour's")
+
+        def run_tests(self, tests):
+            return env.behaviour.run_tests(tests)
+
+        def read_results(self, manifests, scope_tests, on_result=None):
+            return {
+                t.model_id: env.behaviour.results[t.model_id]
+                for t in scope_tests
+                if t.model_id in env.behaviour.results
+            }
+
+        def read_last_results(self, tests):
+            return dict(env.behaviour.prior_results)
+
+    def make(entries, results, prior_results=None, manifest_map=None):
+        """``entries``: model ids, each tracking ``x``, or spec entries."""
+        spec = [
+            e if isinstance(e, dict) else {"model": e, "variables": ["x"]}
+            for e in entries
+        ]
+        (ref_root / "test_spec.json").write_text(
+            json.dumps({"tests": spec}), encoding="utf-8"
+        )
+        env.behaviour = _Behaviour(work_dir, results, prior_results, manifest_map)
+        return env.behaviour
+
+    env.make = make
+    yield env
+    del _REGISTRY[FAKE]
 
 
 def _run_args(env, *extra) -> argparse.Namespace:
@@ -795,7 +824,7 @@ def _run_args(env, *extra) -> argparse.Namespace:
 
 
 def _stored_model_ids(env) -> set[str]:
-    ref_dir = env.config_dir / "Resources" / "ReferenceResults" / "Dymola" / detect_os()
+    ref_dir = env.ref_root / FAKE / detect_os()
     if not ref_dir.exists():
         return set()
     return {
@@ -856,7 +885,7 @@ def test_accept_and_interactive_are_mutually_exclusive(capsys, monkeypatch, tmp_
 
 class TestRerunEmptySetIsSuccess:
     def test_nothing_to_rerun_exits_zero(self, run_env, capsys):
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
         rc = cmd_run(_run_args(run_env, "--rerun", "failed"))
         out = capsys.readouterr().out
@@ -873,7 +902,7 @@ class TestRerunEmptySetIsSuccess:
             called["comparisons"] = list(comparisons)
 
         monkeypatch.setattr("dstf.cli.run_cmds._generate_report_suite", fake_suite)
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
         rc = cmd_run(_run_args(run_env, "--rerun", "failed", "--report"))
         assert rc == 0
@@ -881,7 +910,7 @@ class TestRerunEmptySetIsSuccess:
         assert (run_env.work_dir / "dashboard.html").exists()
 
     def test_plain_empty_filter_still_exits_one(self, run_env, capsys):
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         run_env.make([t1], results={})
         rc = cmd_run(_run_args(run_env, "--filter", "Nope.*"))
         assert rc == 1
@@ -926,7 +955,7 @@ class TestTheDashboardGetsTheComparisons:
         self, run_env, monkeypatch, tmp_path, command
     ):
         seen = self._record(monkeypatch)
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         run_env.make(
             [t1],
             results={"Lib.T1": _mk_result("Lib.T1")},
@@ -950,7 +979,7 @@ class TestTheDashboardGetsTheComparisons:
         """`--rerun` with nothing to rerun still refreshes the page, with
         the comparisons it scored the prior results by."""
         seen = self._record(monkeypatch)
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
         assert cmd_run(_run_args(run_env, "--rerun", "failed")) == 0
         assert seen == {"final": ["Lib.T1"], "final_results": ["Lib.T1"]}
@@ -962,7 +991,7 @@ class TestTheDashboardGetsTheComparisons:
         SIM_FAIL the console printed."""
         from dstf.backends.progress import ProgressReporter
 
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         backend = run_env.make(
             [t1], results={"Lib.T1": _mk_result("Lib.T1", success=False)}
         )
@@ -1027,7 +1056,7 @@ class TestEveryRunEndsOnAStaticPage:
         assert 'data-status="pending"' in html
 
     def test_an_aborted_run_leaves_a_static_page(self, run_env, capsys):
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         backend = run_env.make([t1], results={})
 
         def run_tests(tests):
@@ -1051,7 +1080,7 @@ class TestEveryRunEndsOnAStaticPage:
     def test_an_exception_in_the_compare_phase_leaves_a_static_page(
         self, run_env, monkeypatch, exc
     ):
-        run_env.make([_mk_test("Lib.T1")], results={"Lib.T1": _mk_result("Lib.T1")})
+        run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
 
         def compare_all(*a, **k):
             assert _REFRESH in self._page(run_env)  # live until the compare
@@ -1067,7 +1096,7 @@ class TestEveryRunEndsOnAStaticPage:
     ):
         """Ctrl+C in the compare phase, then the final render fails too: the
         Ctrl+C is what propagates, and the render's failure is a warning."""
-        run_env.make([_mk_test("Lib.T1")], results={"Lib.T1": _mk_result("Lib.T1")})
+        run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
 
         def compare_all(*a, **k):
             raise KeyboardInterrupt
@@ -1091,7 +1120,7 @@ class TestEveryRunEndsOnAStaticPage:
         backend's page is live when it raises."""
         from dstf.reporting.dashboard_render import render_live
 
-        backend = run_env.make([_mk_test("Lib.T1")], results={})
+        backend = run_env.make(["Lib.T1"], results={})
 
         def run_tests(tests):
             render_live(run_env.work_dir)
@@ -1103,7 +1132,7 @@ class TestEveryRunEndsOnAStaticPage:
         assert _REFRESH not in self._page(run_env)
 
     def test_an_accept_that_raises_leaves_a_static_page(self, run_env, monkeypatch):
-        run_env.make([_mk_test("Lib.T1")], results={"Lib.T1": _mk_result("Lib.T1")})
+        run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
 
         def accept_run_results(*a, **k):
             raise OSError("reference dir read-only")
@@ -1178,7 +1207,7 @@ class TestAFinalPageListsEveryScoredTest:
 
 class TestAcceptExitCodeAndScope:
     def test_partial_accept_exits_nonzero_and_names_skips(self, run_env, capsys):
-        t1, t2 = _mk_test("Lib.T1"), _mk_test("Lib.T2")
+        t1, t2 = "Lib.T1", "Lib.T2"
         run_env.make(
             [t1, t2],
             results={
@@ -1195,7 +1224,7 @@ class TestAcceptExitCodeAndScope:
         assert _stored_model_ids(run_env) == {"Lib.T1"}
 
     def test_full_accept_exits_zero(self, run_env, capsys):
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         run_env.make([t1], results={"Lib.T1": _mk_result("Lib.T1")})
         rc = cmd_run(_run_args(run_env, "--accept"))
         assert rc == 0
@@ -1209,9 +1238,8 @@ class TestAcceptExitCodeAndScope:
         test: what `dstf spec add <model>` then `run --accept` printed, and
         `compare --accept` after it. Not a warning and not a skip — the
         exit code is what it was."""
-        tank = _mk_test("Lib.Tank")
-        tank.variable_patterns = []  # the entry `dstf spec add` writes
-        assert tank.is_simulate_only and not tank.simulate_only
+        # The entry `dstf spec add` writes.
+        tank = {"model": "Lib.Tank", "variables": []}
         results = {"Lib.Tank": _mk_result("Lib.Tank")}
         run_env.make([tank], results=results, prior_results=results)
         args = build_arg_parser().parse_args(
@@ -1233,10 +1261,11 @@ class TestAcceptExitCodeAndScope:
     def test_an_accept_of_a_mixed_run_names_them_beside_what_it_stored(
         self, run_env, capsys
     ):
-        tests = [_mk_test("Lib.T1")] + [
-            _mk_test(f"Lib.S{i}", simulate_only=True) for i in range(1, 9)
-        ]
-        run_env.make(tests, results={t.model_id: _mk_result(t.model_id) for t in tests})
+        simulate_only = [f"Lib.S{i}" for i in range(1, 9)]
+        run_env.make(
+            ["Lib.T1"] + [{"model": m, "variables": []} for m in simulate_only],
+            results={m: _mk_result(m) for m in ["Lib.T1", *simulate_only]},
+        )
         rc = cmd_run(_run_args(run_env, "--accept"))
         out = capsys.readouterr().out
         assert rc == 0
@@ -1255,7 +1284,7 @@ class TestAcceptExitCodeAndScope:
         (`enrich_ref_ids` saves it), so the fake's manifest_map is what the
         guard reads — and the run path refuses with the message the compare
         path prints."""
-        t1 = _mk_test("Lib.T1")
+        t1 = "Lib.T1"
         run_env.make(
             [t1],
             results={"Lib.T1": _mk_result("Lib.T1")},
@@ -1278,7 +1307,7 @@ class TestAcceptExitCodeAndScope:
         out-of-scope tests must never become baselines. `--merge` beside
         `--accept` is the parser's error; `--rerun` implies a merge, so the
         accept is held to its own tests all the same."""
-        t1, t2 = _mk_test("Lib.T1"), _mk_test("Lib.T2")
+        t1, t2 = "Lib.T1", "Lib.T2"
         run_env.make(
             [t1, t2],
             results={
@@ -1298,7 +1327,7 @@ class TestAcceptExitCodeAndScope:
 
     def test_accept_skips_poisoned_baseline_and_continues(self, run_env, capsys):
         bad_values = [0.0, 1.0, float("nan")] + [2.0] * 8
-        t1, t3 = _mk_test("Lib.T1"), _mk_test("Lib.T3")
+        t1, t3 = "Lib.T1", "Lib.T3"
         run_env.make(
             [t1, t3],
             results={
@@ -1358,7 +1387,7 @@ class TestTheExitCodeOnEveryRoute:
     def routed(self, run_env, monkeypatch, tmp_path):
         """Store T1's baseline, then return a runner of one command over one
         situation: T2 is NOT RUN in every one."""
-        run_env.make([_mk_test(_T1)], results={_T1: _mk_result(_T1)})
+        run_env.make([_T1], results={_T1: _mk_result(_T1)})
         assert cmd_run(_run_args(run_env, "--accept")) == 0
         # The review skips whatever it is offered: skipping a FAIL leaves it
         # failing, skipping a PASS leaves nothing failing.
@@ -1368,7 +1397,7 @@ class TestTheExitCodeOnEveryRoute:
             values, _ = _SITUATIONS[situation]
             results = {m: _mk_result(m, values=v) for m, v in values.items()}
             run_env.make(
-                [_mk_test(_T1), _mk_test(_T2)],
+                [_T1, _T2],
                 results=results,
                 prior_results=results,
             )
@@ -1858,7 +1887,7 @@ class TestConfigErrorCleanExit:
     ("source_type", "backend"), [("fmu", "FMPy"), ("python", "Python")]
 )
 def test_batch_on_a_backend_with_no_workers_is_a_config_error(
-    tmp_path, capsys, monkeypatch, source_type, backend
+    tmp_path, capsys, source_type, backend
 ):
     """`--batch` turns the workers that stay alive off. FMPy and Python have
     none, and the flag was silently dropped there. Said before the library
@@ -1868,15 +1897,16 @@ def test_batch_on_a_backend_with_no_workers_is_a_config_error(
         json.dumps({"source_type": source_type, "backend": backend}), encoding="utf-8"
     )
 
-    def scanned(config):
-        raise AssertionError("the refusal comes before discovery")
-
-    monkeypatch.setattr("dstf.cli.run_cmds.discover_tests", scanned)
+    # Read, this spec is an error of its own: the refusal must come first.
+    spec = tmp_path / "Resources" / "ReferenceResults" / "test_spec.json"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("{ not json", encoding="utf-8")
     work = tmp_path / "work"
     rc = main(["run", "--config", str(cfg), "--batch", "--work-dir", str(work)])
     assert rc == 2
     err = capsys.readouterr().err
     assert err.startswith(f"Config error: --batch does not apply to the {backend} ")
+    assert len(err.strip().splitlines()) == 1
     assert not work.exists()
 
 
@@ -2445,7 +2475,7 @@ class TestNoBrowser:
 def scored(run_env):
     """Two tests with a baseline; T1 will pass and T2 fail. Returns a runner
     of one command with the given flags."""
-    tests = [_mk_test(_T1), _mk_test(_T2)]
+    tests = [_T1, _T2]
     run_env.make(tests, results={m: _mk_result(m) for m in (_T1, _T2)})
     assert cmd_run(_run_args(run_env, "--accept")) == 0
     results = {
@@ -2637,22 +2667,40 @@ class TestRunSaysWhenAStopTimeIsTheDefault:
         return [ln for ln in out.splitlines() if "runs to the default" in ln]
 
     def _made(self, run_env):
-        found = Path("Lib") / "T.mo"  # a model the scan or the lookup found
-        tests = [
-            _mk_test(_T1, stop_time=1.0, field_sources={"stop_time": "default"}),
-            # 1.0 here too, but the model said so
-            _mk_test(_T2, stop_time=1.0, field_sources={"stop_time": "annotation"}),
-            _mk_test("Lib.T3", stop_time=1.0, field_sources={"stop_time": "test_spec"}),
-        ]
-        for t in tests:
-            t.source_file = found
-        # declared in the spec only, and not a class of this library: no file
-        tests.append(
-            _mk_test(
-                self.DEPENDENCY, stop_time=1.0, field_sources={"stop_time": "default"}
+        """A Modelica library of three models: T1 gives no stop time, T2's
+        annotation gives 1 s, T3's spec entry gives 1 s — and a spec entry
+        for a class that is not in the library."""
+        lib = run_env.config_dir / "Lib"
+        lib.mkdir()
+        (lib / "package.mo").write_text("package Lib\nend Lib;\n", encoding="utf-8")
+        annotations = {
+            "T1": "",
+            "T2": "  annotation(experiment(StopTime=1.0));\n",
+            "T3": "",
+        }
+        for name, annotation in annotations.items():
+            (lib / f"{name}.mo").write_text(
+                f"within Lib;\nmodel {name}\n  Real x = time;\n{annotation}end {name};\n",
+                encoding="utf-8",
             )
+        (run_env.config_dir / "testing.json").write_text(
+            json.dumps({"source_path": "Lib", "backend": FAKE}), encoding="utf-8"
         )
-        run_env.make(tests, results={t.model_id: _mk_result(t.model_id) for t in tests})
+        models = [_T1, _T2, "Lib.T3", self.DEPENDENCY]
+        run_env.make(
+            [
+                _T1,
+                _T2,
+                {
+                    "model": "Lib.T3",
+                    "variables": ["x"],
+                    "simulation": {"stop_time": 1.0},
+                },
+                # declared in the spec only, and not a class of this library
+                self.DEPENDENCY,
+            ],
+            results={m: _mk_result(m) for m in models},
+        )
 
     def test_one_line_names_the_model_and_the_default(self, run_env, capsys):
         self._made(run_env)

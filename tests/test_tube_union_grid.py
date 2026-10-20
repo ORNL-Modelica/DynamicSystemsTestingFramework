@@ -8,8 +8,9 @@ followed from evaluating it on ``ref_time`` alone.
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import _compare_tube, _tube_bounds, _tube_eval_grid
+from dstf.comparison.algorithms import _tube_bounds, _tube_eval_grid
 from dstf.comparison.sides import Sides
+from scoring import score
 
 BAND_HALF_WIDTH = {"tube_width_mode": "band", "tube_abs": 0.5}
 
@@ -43,7 +44,7 @@ class TestEvalGrid:
     def test_duplicate_timestamps_collapse_to_one_grid_point(self):
         # A discontinuity is stored as two samples at one time. This grid
         # carries the instant once, which loses the pre-event band centre --
-        # which is why _compare_tube keeps the reference-grid check too. See
+        # which is why the tube mode keeps the reference-grid check too. See
         # TestDuplicateReferenceTimestamps.
         grid = _tube_eval_grid(
             np.array([0.0, 1.0, 1.0, 2.0]),
@@ -63,8 +64,12 @@ class TestExcursionBetweenReferenceSamples:
         act_values = np.zeros_like(act_time)
         act_values[(act_time > 1.2) & (act_time < 1.8)] = 2.0
 
-        result = _compare_tube(
-            ref_time, ref_values, act_time, act_values, dict(BAND_HALF_WIDTH)
+        result = score(
+            {"mode": "tube", **BAND_HALF_WIDTH},
+            ref_time,
+            ref_values,
+            act_time,
+            act_values,
         )
 
         assert result.passed is False
@@ -76,8 +81,12 @@ class TestExcursionBetweenReferenceSamples:
         act_time = np.arange(0.0, 3.0001, 0.1)
         act_values = np.full_like(act_time, 0.25)
 
-        result = _compare_tube(
-            ref_time, ref_values, act_time, act_values, dict(BAND_HALF_WIDTH)
+        result = score(
+            {"mode": "tube", **BAND_HALF_WIDTH},
+            ref_time,
+            ref_values,
+            act_time,
+            act_values,
         )
 
         assert result.passed is True
@@ -100,12 +109,12 @@ class TestControlPointsOffTheReferenceGrid:
             ],
         }
 
-        result = _compare_tube(
+        result = score(
+            {"mode": "tube", **config},
             np.array([0.0, 1.0, 2.0, 3.0]),
             np.zeros(4),
             np.array([0.0, 1.0, 1.5, 2.0, 3.0]),
             np.array([0.0, 0.35, 0.12, 0.1, 0.1]),
-            config,
         )
 
         assert result.passed is False
@@ -122,12 +131,12 @@ class TestReportedErrorIsUnchanged:
         act_time = np.linspace(0.0, 10.0, 5001)
         act_values = np.sin(act_time) + 0.01
 
-        result = _compare_tube(
+        result = score(
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.5},
             ref_time,
             ref_values,
             act_time,
             act_values,
-            {"tube_width_mode": "band", "tube_abs": 0.5},
         )
 
         expected = np.interp(ref_time, act_time, act_values) - ref_values
@@ -149,8 +158,12 @@ class TestDiscontinuitiesInTheBaseline:
         ref_time = np.array([0.0, 1.0, 1.0, 2.0])
         ref_values = np.array([0.0, 0.0, 1.0, 1.0])
 
-        result = _compare_tube(
-            ref_time, ref_values, ref_time.copy(), ref_values.copy(), self.CONFIG
+        result = score(
+            {"mode": "tube", **self.CONFIG},
+            ref_time,
+            ref_values,
+            ref_time.copy(),
+            ref_values.copy(),
         )
 
         assert result.passed is True
@@ -162,8 +175,12 @@ class TestDiscontinuitiesInTheBaseline:
         ref_values = np.array([0.0, 0.0, 0.0, 1.0, 1.0])
         act_values = np.array([0.0, 0.75, 0.0, 1.0, 1.0])
 
-        result = _compare_tube(
-            ref_time, ref_values, ref_time.copy(), act_values, self.CONFIG
+        result = score(
+            {"mode": "tube", **self.CONFIG},
+            ref_time,
+            ref_values,
+            ref_time.copy(),
+            act_values,
         )
 
         assert result.passed is False
@@ -185,12 +202,12 @@ class TestKnownGapAtDiscontinuities:
         ref_values = np.array([0.0, 0.0, 1.0, 1.0])
         act_values = np.array([0.0, 0.75, 1.0, 1.0])  # 3x the band, pre-event only
 
-        result = _compare_tube(
+        result = score(
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.25},
             ref_time,
             ref_values,
             ref_time.copy(),
             act_values,
-            {"tube_width_mode": "band", "tube_abs": 0.25},
         )
 
         assert result.passed is True, "gap closed -- rewrite this test to assert FAIL"
@@ -255,12 +272,12 @@ class TestDegenerateInput:
         # The span clip compares against ref_time[0] / ref_time[-1]; a NaN there
         # makes every comparison False and empties the grid. That must not
         # reach np.argmax.
-        result = _compare_tube(
+        result = score(
+            {"mode": "tube", **BAND_HALF_WIDTH},
             np.array([0.0, 1.0, np.nan]),
             np.array([0.0, 0.0, 0.0]),
             np.array([0.0, 0.5, 1.0]),
             np.array([0.0, 0.0, 0.0]),
-            dict(BAND_HALF_WIDTH),
         )
         assert result.passed is False
 
@@ -274,7 +291,7 @@ class TestAConstantBandsTwoSides:
 
     def _tube(self, offset, cfg):
         ref = np.full_like(self.T, 10.0)
-        return _compare_tube(self.T, ref, self.T, ref + offset, cfg)
+        return score({"mode": "tube", **cfg}, self.T, ref, self.T, ref + offset)
 
     @pytest.mark.parametrize(
         "cfg,off",
@@ -311,8 +328,8 @@ class TestAConstantBandsTwoSides:
         def act(offset):
             return np.where(act_t == at, 10.0 + offset, 10.0)
 
-        above = _compare_tube(ref_t, ref, act_t, act(0.375), cfg)
-        below = _compare_tube(ref_t, ref, act_t, act(-0.375), cfg)
+        above = score({"mode": "tube", **cfg}, ref_t, ref, act_t, act(0.375))
+        below = score({"mode": "tube", **cfg}, ref_t, ref, act_t, act(-0.375))
         assert above.passed and not below.passed
         assert below.tube_worst_violation == 0.25
         assert below.tube_worst_violation_time == at

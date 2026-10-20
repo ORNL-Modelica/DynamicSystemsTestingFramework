@@ -22,12 +22,6 @@ import numpy as np
 
 from .algorithms import (
     SCALAR_REDUCTIONS,
-    _event_tolerances,
-    _peak_tolerance,
-    _point_tolerances,
-)
-from .comparator import (
-    VariableComparison,
     _compare_dominant_frequency,
     _compare_event_timing,
     _compare_points,
@@ -35,11 +29,15 @@ from .comparator import (
     _compare_scalar,
     _compare_trajectories,
     _compare_tube,
+    _event_tolerances,
+    _peak_tolerance,
+    _point_tolerances,
 )
 from .registry import DEFAULT_METRIC, DEFAULT_POINTS_METRIC
 from .registry import metric as registry_metric
 from .registry import metrics as registered_metrics
 from .sides import Sides, parse_sides
+from .types import VariableComparison
 
 # ---------------------------------------------------------------------------
 # Abstract base
