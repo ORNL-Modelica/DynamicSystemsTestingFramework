@@ -82,6 +82,11 @@ ROUTES = {
         ("x",),
         "(unitTests.x[1], unitTests.x[2])",
     ),
+    "as many tracked as are named": (
+        dict(variable_patterns=["a", "b", "c", "d"]),
+        ("x",),
+        "(a, b, c, d)",
+    ),
     "more tracked than are named": (
         dict(variable_patterns=["a", "b", "c", "d", "e", "f"]),
         ("x",),

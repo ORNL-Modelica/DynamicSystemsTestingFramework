@@ -53,6 +53,7 @@ class TestSimulateOnly:
         assert comp.variables == []
         assert comp.metric_tree is not None
         assert comp.metric_tree.label == "simulate-only"
+        assert comp.metric_tree.passed is True
 
     def test_fails_when_sim_fails(self):
         # Same path as any failed sim — error_message propagates, passed=False.

@@ -1107,15 +1107,19 @@ class TestSentinelLeavesKeepTheirName:
         assert "ghost" in error
         assert "not found in the result" in error
 
-    def test_variable_missing_from_the_baseline_sentinel(self):
+    @pytest.mark.parametrize("expression", ["", "a.b"])
+    def test_variable_missing_from_the_baseline_sentinel(self, expression):
         """Same sentinel, other call site: the result has the variable and
-        the baseline does not, so the reason must say so."""
+        the baseline does not, so the reason must say so — and no more,
+        with no entry stored under the expression either."""
         spec = parse_metric_tree({"metric": "nrmse", "variable": "x"})
         t, vals = _linear()
         tree = evaluate_spec(
             spec,
             var_results_by_name={
-                "x": VariableResult(index=1, name="x", time=t, values=vals)
+                "x": VariableResult(
+                    index=1, name="x", time=t, values=vals, expression=expression
+                )
             },
             baselines=_primary({}),
             base_tolerance=1e-4,
@@ -1123,9 +1127,7 @@ class TestSentinelLeavesKeepTheirName:
         assert not tree.passed
         vc = tree.diagnostics["variable"]
         assert vc.name == "x"
-        error = vc.diagnostics["error"]
-        assert "x" in error
-        assert "not found in the baseline" in error
+        assert vc.diagnostics["error"] == "variable 'x' not found in the baseline"
 
     def test_missing_quantity_sentinel(self):
         from dstf.comparison.tree_eval import ScalarSources

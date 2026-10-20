@@ -1278,6 +1278,30 @@ class TestBaselineFreeNoRef:
         assert comps[0].passed is False
         assert comps[0].has_reference is False
 
+    def test_an_override_without_a_mode_is_nrmse_and_needs_a_baseline(self):
+        """A ``points`` table on an override with no ``mode`` scores nrmse
+        (it is not a points criterion), so with no baseline the test is
+        NO_REF, not scored."""
+        from dstf.comparison.comparator import compare_all
+        from dstf.reporting.status import NO_REF, classify
+
+        test = _make_test(
+            variable_overrides={"x": {"points": [{"time": 1.0, "value": 2.0}]}}
+        )
+        result = _result_only(np.array([0.0, 1.0, 2.0]))
+        (c,) = compare_all([test], {test.model_id: result}, _NoBaselineStore())
+        assert classify(c) == NO_REF
+        assert c.error_message == "No reference baseline stored"
+
+    def test_compare_all_says_what_it_compares_on_stderr(self, capsys):
+        from dstf.comparison.comparator import compare_all
+
+        test = _make_test()
+        compare_all(
+            [test], {test.model_id: _result_only(np.zeros(3))}, _NoBaselineStore()
+        )
+        assert capsys.readouterr().err == "Comparing 1 tests against references...\n"
+
     def test_mixed_tree_still_short_circuits_to_no_ref(self):
         """Range + NRMSE leaves → NO_REF (no partial-run support in this fix).
 
@@ -2040,6 +2064,26 @@ class TestEmptyDataFails:
         )
         assert not vc.passed
         assert "error" in vc.diagnostics
+
+    def test_a_variable_with_no_samples_the_baseline_lacks_fails_its_criterion(self):
+        test = _mk_test(variable_patterns=["x", "y"])
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[
+                VariableResult(index=1, time=EMPTY, values=EMPTY, name="x"),
+                VariableResult(
+                    index=2, time=np.array([0.0, 1.0]), values=np.ones(2), name="y"
+                ),
+            ],
+        )
+        reference = {
+            "time": [0.0, 1.0],
+            "variables": [{"index": 1, "name": "y", "values": [1.0, 1.0]}],
+        }
+        comp = compare_test(test, result, decode_reference(reference))
+        assert {vc.name: vc.passed for vc in comp.variables} == {"x": False, "y": True}
+        assert not comp.passed
 
     def test_windowed_leaf_excluding_everything_fails(self):
         """A window that slices away every sample must fail the leaf."""
