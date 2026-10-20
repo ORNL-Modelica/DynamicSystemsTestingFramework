@@ -7,10 +7,6 @@ import json
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import (
-    _compare_dominant_frequency,
-    _compare_event_timing,
-)
 from dstf.comparison.geometry import Box
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
@@ -21,6 +17,7 @@ from dstf.comparison.modes import (
 )
 from dstf.comparison.sides import Sides
 from dstf.storage.baseline_codec import decode_reference
+from scoring import score
 
 EMPTY = np.array([])
 
@@ -378,7 +375,7 @@ class TestDominantFrequencyClaiming:
             {"freq": 0.9, "tolerance": 0.2, "tolerance_mode": "abs"},
             {"freq": 1.1, "tolerance": 0.2, "tolerance_mode": "abs"},
         ]
-        vc = _compare_dominant_frequency(EMPTY, EMPTY, t, v, peaks=peaks)
+        vc = score({"mode": "dominant-frequency", "peaks": peaks}, EMPTY, EMPTY, t, v)
         assert not vc.passed
 
     def test_two_distinct_peaks_both_match(self):
@@ -388,7 +385,7 @@ class TestDominantFrequencyClaiming:
             {"freq": 0.9, "tolerance": 0.05, "tolerance_mode": "abs"},
             {"freq": 1.1, "tolerance": 0.05, "tolerance_mode": "abs"},
         ]
-        vc = _compare_dominant_frequency(EMPTY, EMPTY, t, v, peaks=peaks)
+        vc = score({"mode": "dominant-frequency", "peaks": peaks}, EMPTY, EMPTY, t, v)
         assert vc.passed
 
 
@@ -406,7 +403,13 @@ class TestEventAssignment:
             {"time": 1.0, "tolerance": 0.05},
             {"time": 1.02, "tolerance": 0.05},
         ]
-        vc = _compare_event_timing(EMPTY, act_t, declared_events=declared)
+        vc = score(
+            {"mode": "event-timing", "events": declared},
+            EMPTY,
+            np.zeros_like(EMPTY),
+            act_t,
+            np.zeros_like(act_t),
+        )
         assert vc.passed
 
     def test_truly_unmatchable_still_fails(self):
@@ -415,7 +418,13 @@ class TestEventAssignment:
             {"time": 1.0, "tolerance": 0.05},
             {"time": 1.02, "tolerance": 0.05},
         ]
-        vc = _compare_event_timing(EMPTY, act_t, declared_events=declared)
+        vc = score(
+            {"mode": "event-timing", "events": declared},
+            EMPTY,
+            np.zeros_like(EMPTY),
+            act_t,
+            np.zeros_like(act_t),
+        )
         assert not vc.passed
 
 
@@ -442,32 +451,54 @@ class TestEventSidesAutoDetected:
 
     def test_two_ms_late_passes_with_room_late_and_fails_swapped(self):
         ref, act = _event_times(5.0), _event_times(5.002)
-        assert _compare_event_timing(ref, act, time_tolerance=Sides(0.0, 0.005)).passed
-        assert not _compare_event_timing(
-            ref, act, time_tolerance=Sides(0.005, 0.0)
+        assert score(
+            {"mode": "event-timing", "time_tolerance": Sides(0.0, 0.005)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
+        ).passed
+        assert not score(
+            {"mode": "event-timing", "time_tolerance": Sides(0.005, 0.0)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
         ).passed
 
     def test_early_is_the_mirror(self):
         ref, act = _event_times(5.0), _event_times(4.998)
-        assert _compare_event_timing(ref, act, time_tolerance=Sides(0.005, 0.0)).passed
-        assert not _compare_event_timing(
-            ref, act, time_tolerance=Sides(0.0, 0.005)
+        assert score(
+            {"mode": "event-timing", "time_tolerance": Sides(0.005, 0.0)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
+        ).passed
+        assert not score(
+            {"mode": "event-timing", "time_tolerance": Sides(0.0, 0.005)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
         ).passed
 
     def test_it_is_inclusive_on_each_side(self):
-        tol = Sides(0.25, 0.5)
-        assert _compare_event_timing(_event_times(5.0), _event_times(5.5), tol).passed
-        assert _compare_event_timing(_event_times(5.0), _event_times(4.75), tol).passed
-        assert not _compare_event_timing(
-            _event_times(5.0), _event_times(4.5), tol
-        ).passed
-        assert not _compare_event_timing(
-            _event_times(5.0), _event_times(5.75), tol
-        ).passed
+        criterion = {"mode": "event-timing", "time_tolerance": Sides(0.25, 0.5)}
+        ref = _event_times(5.0)
+        for at, passes in ((5.5, True), (4.75, True), (4.5, False), (5.75, False)):
+            act = _event_times(at)
+            vc = score(criterion, ref, np.zeros_like(ref), act, np.zeros_like(act))
+            assert vc.passed is passes, at
 
     def test_the_window_the_score_and_what_leaves_as_data(self):
-        vc = _compare_event_timing(
-            _event_times(5.0), _event_times(5.25), time_tolerance=Sides(0.25, 0.5)
+        ref, act = _event_times(5.0), _event_times(5.25)
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": Sides(0.25, 0.5)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
         )
         box = _window(vc, 0)
         assert (box.t0, box.t1, box.passed) == (4.75, 5.5, True)
@@ -475,15 +506,25 @@ class TestEventSidesAutoDetected:
         assert vc.diagnostics["max_time_delta"] == 0.25
         assert vc.diagnostics["time_tolerance"] == {"lower": 0.25, "upper": 0.5}
         json.dumps(vc.diagnostics)
-        equal = _compare_event_timing(
-            _event_times(5.0), _event_times(5.25), time_tolerance=Sides(0.5, 0.5)
+        equal = score(
+            {"mode": "event-timing", "time_tolerance": Sides(0.5, 0.5)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
         )
         assert equal.diagnostics["time_tolerance"] == 0.5
 
     def test_one_pair_out_among_pairs_in_fails_and_is_drawn_so(self):
         ref = _event_times(2.0, 5.0, 8.0)
         act = _event_times(2.001, 4.998, 8.001)
-        vc = _compare_event_timing(ref, act, time_tolerance=Sides(0.0, 0.005))
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": Sides(0.0, 0.005)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
+        )
         assert not vc.passed
         assert [_window(vc, i).passed for i in range(3)] == [True, False, True]
 
@@ -501,9 +542,22 @@ class TestEventSidesAutoDetected:
             if rng.random() < 0.1:
                 a = a[:-1]
             ref, act = _event_times(*r), _event_times(*a)
-            new = _compare_event_timing(ref, act, time_tolerance=tol)
-            pair = _compare_event_timing(
-                ref, act, time_tolerance={"lower": tol, "upper": tol}
+            new = score(
+                {"mode": "event-timing", "time_tolerance": tol},
+                ref,
+                np.zeros_like(ref),
+                act,
+                np.zeros_like(act),
+            )
+            pair = score(
+                {
+                    "mode": "event-timing",
+                    "time_tolerance": {"lower": tol, "upper": tol},
+                },
+                ref,
+                np.zeros_like(ref),
+                act,
+                np.zeros_like(act),
             )
             # The arithmetic of the commit before a pair existed.
             n = min(len(r), len(a))
@@ -526,10 +580,20 @@ class TestEventSidesAutoDetected:
         # tolerance never passed, an empty signal included. An inverted
         # window holds nothing.
         no_events = np.array([0.0, 1.0, 2.0])
-        assert _compare_event_timing(no_events, no_events, time_tolerance=0.0).passed
+        assert score(
+            {"mode": "event-timing", "time_tolerance": 0.0},
+            no_events,
+            np.zeros_like(no_events),
+            no_events,
+            np.zeros_like(no_events),
+        ).passed
         for tol in (-1.0, Sides(-1.0, -1.0), Sides(-0.5, 0.25)):
-            assert not _compare_event_timing(
-                no_events, no_events, time_tolerance=tol
+            assert not score(
+                {"mode": "event-timing", "time_tolerance": tol},
+                no_events,
+                np.zeros_like(no_events),
+                no_events,
+                np.zeros_like(no_events),
             ).passed, tol
 
 
@@ -538,16 +602,34 @@ class TestEventSidesDeclared:
         act = _event_times(5.002)
         late = [{"time": 5.0, "tolerance": {"lower": 0, "upper": 0.005}}]
         early = [{"time": 5.0, "tolerance": {"lower": 0.005, "upper": 0}}]
-        assert _compare_event_timing(EMPTY, act, declared_events=late).passed
-        assert not _compare_event_timing(EMPTY, act, declared_events=early).passed
+        assert score(
+            {"mode": "event-timing", "events": late},
+            EMPTY,
+            np.zeros_like(EMPTY),
+            act,
+            np.zeros_like(act),
+        ).passed
+        assert not score(
+            {"mode": "event-timing", "events": early},
+            EMPTY,
+            np.zeros_like(EMPTY),
+            act,
+            np.zeros_like(act),
+        ).passed
 
     def test_a_row_without_one_takes_the_leafs_pair(self):
-        vc = _compare_event_timing(
+        act = _event_times(5.25)
+        vc = score(
+            {
+                "mode": "event-timing",
+                "time_tolerance": Sides(0.125, 0.5),
+                "count_must_match": False,
+                "events": [{"time": 5.0}, {"time": 50.0, "tolerance": None}],
+            },
             EMPTY,
-            _event_times(5.25),
-            time_tolerance=Sides(0.125, 0.5),
-            declared_events=[{"time": 5.0}, {"time": 50.0, "tolerance": None}],
-            count_must_match=False,
+            np.zeros_like(EMPTY),
+            act,
+            np.zeros_like(act),
         )
         assert (_window(vc, 0).t0, _window(vc, 0).t1) == (4.875, 5.5)
         assert (_window(vc, 1).t0, _window(vc, 1).t1) == (49.875, 50.5)
@@ -558,13 +640,19 @@ class TestEventSidesDeclared:
         # A: [4.0, 6.5] (declared 6.0, 2.0 early, 0.5 late); B: [4.5, 5.5].
         # Actual events 5.0 and 6.2. B's window ends first and takes 5.0; A
         # takes 6.2. In declared order A would take 5.0 and B would starve.
-        vc = _compare_event_timing(
+        act = _event_times(5.0, 6.2)
+        vc = score(
+            {
+                "mode": "event-timing",
+                "events": [
+                    {"time": 6.0, "tolerance": {"lower": 2.0, "upper": 0.5}},
+                    {"time": 5.0, "tolerance": 0.5},
+                ],
+            },
             EMPTY,
-            _event_times(5.0, 6.2),
-            declared_events=[
-                {"time": 6.0, "tolerance": {"lower": 2.0, "upper": 0.5}},
-                {"time": 5.0, "tolerance": 0.5},
-            ],
+            np.zeros_like(EMPTY),
+            act,
+            np.zeros_like(act),
         )
         assert vc.passed
 
@@ -588,11 +676,13 @@ class TestEventSidesDeclared:
             acts = sorted(
                 {round(rng.uniform(0, 10), 1) for _ in range(rng.randint(1, 5))}
             )
-            vc = _compare_event_timing(
+            act = _event_times(*acts)
+            vc = score(
+                {"mode": "event-timing", "count_must_match": False, "events": declared},
                 EMPTY,
-                _event_times(*acts),
-                declared_events=declared,
-                count_must_match=False,
+                np.zeros_like(EMPTY),
+                act,
+                np.zeros_like(act),
             )
             windows = [
                 (
@@ -620,9 +710,23 @@ class TestEventSidesDeclared:
                 {"time": 8.0, "tolerance": v(0.01)},
             ]
 
-        a = _compare_event_timing(EMPTY, act, 0.003, declared_events=events(False))
-        b = _compare_event_timing(
-            EMPTY, act, {"lower": 0.003, "upper": 0.003}, declared_events=events(True)
+        a = score(
+            {"mode": "event-timing", "time_tolerance": 0.003, "events": events(False)},
+            EMPTY,
+            np.zeros_like(EMPTY),
+            act,
+            np.zeros_like(act),
+        )
+        b = score(
+            {
+                "mode": "event-timing",
+                "time_tolerance": {"lower": 0.003, "upper": 0.003},
+                "events": events(True),
+            },
+            EMPTY,
+            np.zeros_like(EMPTY),
+            act,
+            np.zeros_like(act),
         )
         assert (a.passed, a.nrmse, a.diagnostics) == (b.passed, b.nrmse, b.diagnostics)
         assert [repr(p) for p in a.geometry] == [repr(p) for p in b.geometry]
@@ -640,8 +744,12 @@ class TestPeakSides:
 
     def _vc(self, tolerance, mode):
         peak = {"freq": 1.0, "tolerance": tolerance, "tolerance_mode": mode}
-        return _compare_dominant_frequency(
-            _PEAK_T, _PEAK_SIG, _PEAK_T, _PEAK_SIG, peaks=[peak]
+        return score(
+            {"mode": "dominant-frequency", "peaks": [peak]},
+            _PEAK_T,
+            _PEAK_SIG,
+            _PEAK_T,
+            _PEAK_SIG,
         )
 
     @pytest.mark.parametrize("mode", ["rel", "abs"])
@@ -663,8 +771,12 @@ class TestPeakSides:
             }
             lo, hi, sides, got_mode = _peak_window(peak, 0)
             assert (lo, hi, sides, got_mode) == (*want, Sides(0.25, 0.5), mode)
-            vc = _compare_dominant_frequency(
-                _PEAK_T, _PEAK_SIG, _PEAK_T, _PEAK_SIG, peaks=[peak]
+            vc = score(
+                {"mode": "dominant-frequency", "peaks": [peak]},
+                _PEAK_T,
+                _PEAK_SIG,
+                _PEAK_T,
+                _PEAK_SIG,
             )
             box = next(p for p in vc.geometry if p.id == "peaks/window/0")
             assert (box.t0, box.t1) == want
@@ -764,19 +876,4 @@ class TestAMalformedRowIsTheLeafsConfigError:
         assert vc.diagnostics["error"].endswith(
             f'peaks[1].tolerance must be a number or {{"lower": …, "upper": …}}, '
             f"got {json.dumps(bad)}"
-        )
-
-
-def test_the_scorers_called_directly_name_the_row_too():
-    with pytest.raises(ValueError, match=r"^events\[0\]\.tolerance must be"):
-        _compare_event_timing(
-            EMPTY, _event_times(5.0), declared_events=[{"time": 5.0, "tolerance": "x"}]
-        )
-    with pytest.raises(ValueError, match=r"^peaks\[0\]\.tolerance must be"):
-        _compare_dominant_frequency(
-            _PEAK_T,
-            _PEAK_SIG,
-            _PEAK_T,
-            _PEAK_SIG,
-            peaks=[{"freq": 1.0, "tolerance": "x"}],
         )
