@@ -283,6 +283,46 @@ class TestCompareTrajectories:
         vc = score({"mode": "nrmse"}, t, ref_v, t, act_v, tolerance=0.01)
         assert vc.passed is True
 
+    def test_an_nrmse_exactly_at_the_tolerance_fails(self):
+        """A pass is nrmse strictly below the tolerance."""
+        # rmse 0.5 over a range of 1: the nrmse is 0.5 exactly.
+        t = np.array([0.0, 1.0])
+        vc = score(
+            {"mode": "nrmse"}, t, np.array([0.0, 1.0]), t, np.array([0.5, 1.5]), 0.5
+        )
+        assert vc.nrmse == 0.5
+        assert vc.passed is False
+
+    def test_the_last_segment_reads_the_actuals_value_after_an_event_the_reference_lacks(
+        self,
+    ):
+        """The actual jumps 6 -> 9 at t=2, an event the reference does not
+        have: the reference's t=2 sample is scored against 9, not 6."""
+        vc = score(
+            {"mode": "nrmse"},
+            np.array([0.0, 1.0, 1.0, 2.0, 3.0]),
+            np.array([0.0, 1.0, 5.0, 6.0, 7.0]),
+            np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0]),
+            np.array([0.0, 1.0, 5.0, 6.0, 9.0, 7.0]),
+            tolerance=0.01,
+        )
+        # One error of 3 over the five reference samples, over a range of 7.
+        assert vc.nrmse == pytest.approx(np.sqrt(9 / 5) / 7)
+        assert vc.passed is False
+
+    def test_a_one_sample_reference_is_scored_not_refused(self):
+        vc = score(
+            {"mode": "nrmse"},
+            np.array([0.0]),
+            np.array([2.0]),
+            np.array([0.0, 1.0]),
+            np.array([2.0, 2.0]),
+        )
+        assert "error" not in (vc.diagnostics or {})
+        assert vc.passed is True
+        assert vc.nrmse == 0.0
+        assert vc.reference_final == 2.0
+
 
 # ---------------------------------------------------------------------------
 # Final value comparison
