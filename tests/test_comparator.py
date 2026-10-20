@@ -10,6 +10,7 @@ from dstf.comparison.algorithms import (
     _split_segments,
 )
 from dstf.comparison.comparator import _check_structural_changes
+from dstf.comparison.registry import summarize
 from dstf.comparison.sides import Sides
 from dstf.storage.baseline_codec import decode_reference
 from scoring import score
@@ -1455,6 +1456,19 @@ class TestPointsDeclaredPath:
         assert result.passed
         assert result.diagnostics["worst_delta"] == pytest.approx(0.001)
 
+    def test_a_time_less_point_without_a_reference_is_checked_at_the_actuals_end(
+        self,
+    ):
+        vc = score(
+            {"mode": "points", "points": [{"value": 2, "tolerance": 0.1}]},
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array([0.0, 1.0, 2.0]),
+        )
+        assert vc.passed is True
+        assert vc.max_abs_error == 0.0
+
     def test_multiple_points_all_must_match(self):
         """A leaf with 3 points fails if any one fails."""
 
@@ -1620,6 +1634,88 @@ class TestPointsDeclaredPath:
         )
         # Linear interp at t=3 gives act=30, delta=0 → PASS.
         assert result.passed
+
+    @pytest.mark.parametrize(
+        "row,act_t,act_v",
+        [
+            ({"time": 1, "value": 2, "tolerance": 0.1}, [1], [2]),
+            (
+                {"time": 1.5, "value": 1, "tolerance": 0.01, "time_tolerance": 0.5},
+                [0, 10],
+                [0, 10],
+            ),
+            (
+                {"time": 0.5, "value": 1, "tolerance": 0.01, "time_tolerance": 0.5},
+                [0, 10],
+                [0, 10],
+            ),
+            (
+                {"time": 1, "value": 5, "tolerance": 0.1, "time_tolerance": 1},
+                [0, 1, 2],
+                [0, 5, 0],
+            ),
+            (
+                {
+                    "time": 0,
+                    "value": 0,
+                    "tolerance": 0.5,
+                    "time_tolerance": {"lower": 0, "upper": 0.5},
+                },
+                [0, 0, 1],
+                [0, 10, 10],
+            ),
+            (
+                {"time": 0.5, "value": 10, "tolerance": 0.5, "time_tolerance": 0.5},
+                [0, 1, 1, 2],
+                [0, 10, 0, 0],
+            ),
+        ],
+        ids=[
+            "one-sample actual",
+            "box start between samples",
+            "box end between samples",
+            "a sample inside the box",
+            "both samples of an event at the box start",
+            "both samples of an event at the box end",
+        ],
+    )
+    def test_the_box_meets_the_target_at_any_of_its_points(self, row, act_t, act_v):
+        """The interpolated box ends, and every sample between them (both of
+        an event's), are where the curve may meet the target."""
+        vc = score(
+            {"mode": "points", "points": [row]},
+            EMPTY,
+            EMPTY,
+            np.array(act_t, dtype=float),
+            np.array(act_v, dtype=float),
+        )
+        assert vc.passed is True
+        assert vc.max_abs_error == 0.0
+
+    @pytest.mark.parametrize(
+        "row,act_t,act_v",
+        [
+            ({"time": 1, "value": 1}, [0, 2], [0, 2]),
+            ({"time": 1, "value": 1}, [0, 2], [2, 0]),
+            ({"time": 1, "value": 5}, [0, 1, 1, 2], [0, 0, 10, 10]),
+        ],
+        ids=["rising", "falling", "at an event"],
+    )
+    def test_a_curve_that_crosses_the_target_inside_the_box_meets_it(
+        self, row, act_t, act_v
+    ):
+        vc = score(
+            {
+                "mode": "points",
+                "points": [{**row, "tolerance": 0.1, "time_tolerance": 1}],
+            },
+            EMPTY,
+            EMPTY,
+            np.array(act_t, dtype=float),
+            np.array(act_v, dtype=float),
+        )
+        assert vc.passed is True
+        assert vc.max_abs_error == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -1958,6 +2054,81 @@ class TestPointsClipping:
             act_v,
         )
         assert not vc.passed
+
+    @pytest.mark.parametrize(
+        "rows,ref,act,details",
+        [
+            (
+                [{"time": 1, "value": 1}, {"time": 1}, {"time": 2}],
+                ([], []),
+                ([0, 1, 2], [0, 1, 2]),
+                (
+                    ("checkpoints", "2 of 3 failed, 2 not scored"),
+                    ("t=1", "no reference data for ref-relative point"),
+                    ("t=2", "no reference data for ref-relative point"),
+                ),
+            ),
+            (
+                [{"time": 1, "value": 1}, {"time": 2}, {"time": 3}],
+                ([0, 1], [0, 1]),
+                ([0, 1, 2, 3], [0, 1, 2, 3]),
+                (
+                    ("checkpoints", "2 of 3 failed, 2 not scored"),
+                    ("t=2", "checkpoint time outside reference range"),
+                    ("t=3", "checkpoint time outside reference range"),
+                ),
+            ),
+            (
+                [{"time": 1}, {"time": 2}],
+                ([0, 1, 2], [0, 1, 2]),
+                ([], []),
+                (
+                    ("checkpoints", "2 of 2 failed, 2 not scored"),
+                    ("t=1", "no actual samples (empty trajectory)"),
+                    ("t=2", "no actual samples (empty trajectory)"),
+                ),
+            ),
+            (
+                [
+                    {"time": 5, "value": 1},
+                    {"time": 6, "value": 1},
+                    {"time": 0.5, "value": 0.5},
+                ],
+                ([], []),
+                ([0, 1], [0, 1]),
+                (
+                    ("checkpoints", "2 of 3 failed, 2 not scored"),
+                    ("t=5", "checkpoint time outside actual trajectory"),
+                    ("t=6", "checkpoint time outside actual trajectory"),
+                ),
+            ),
+            (
+                [{"value": 2, "tolerance": 0.1}],
+                ([], []),
+                ([], []),
+                (
+                    ("checkpoints", "1 of 1 failed, 1 not scored"),
+                    ("t=0", "no actual samples (empty trajectory)"),
+                ),
+            ),
+        ],
+        ids=[
+            "no reference",
+            "outside the reference",
+            "no actual",
+            "beyond the actual",
+            "nothing at all",
+        ],
+    )
+    def test_each_row_that_could_not_be_scored_fails_and_is_listed(
+        self, rows, ref, act, details
+    ):
+        vc = score(
+            {"mode": "points", "points": rows},
+            *(np.array(x, dtype=float) for x in (*ref, *act)),
+        )
+        assert vc.passed is False
+        assert summarize(vc).details == details
 
 
 # ---------------------------------------------------------------------------
@@ -4211,6 +4382,36 @@ class TestPointsValueSides:
         vc = _pts(act, [{"time": 5.0, "tolerance": self._UNEVEN, **row}])
         assert vc.diagnostics["point_failures"] == [{"time": 5.0, "reason": reason}]
 
+    @pytest.mark.parametrize(
+        "act,criterion",
+        [
+            (
+                [0.0, 0.0, 0.0],
+                "Point at t=1: error −1.000e+00 vs tolerance "
+                "−5.000e-01 / +2.000e+00 → FAIL",
+            ),
+            (
+                [np.nan] * 3,
+                "Point at t=1: error +inf vs tolerance −5.000e-01 / +2.000e+00 → FAIL",
+            ),
+        ],
+        ids=["a miss of exactly one", "no comparable sample"],
+    )
+    def test_the_sentence_signs_the_reported_points_error(self, act, criterion):
+        vc = score(
+            {
+                "mode": "points",
+                "points": [
+                    {"time": 1, "value": 1, "tolerance": {"lower": 0.5, "upper": 2}}
+                ],
+            },
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array(act),
+        )
+        assert summarize(vc).criterion == criterion
+
     @pytest.mark.parametrize("row", [{}, {"time_tolerance": 0.2}], ids=repr)
     def test_a_target_that_is_not_a_number_says_so(self, row):
         point = {"time": 5.0, "value": float("nan"), "tolerance": self._UNEVEN}
@@ -4367,6 +4568,27 @@ class TestPointsFinalCheckSides:
         vc = _pts(_P_FLAT, None, tolerance=Sides(0.25, 0.25))
         assert vc.diagnostics["tolerance"] == 0.25
         assert isinstance(vc.diagnostics["tolerance"], float)
+
+    @pytest.mark.parametrize(
+        "ref,act",
+        [(([1], [2]), ([0, 1], [2, 2])), (([0, 1], [2, 2]), ([1], [2]))],
+        ids=["one-sample reference", "one-sample actual"],
+    )
+    def test_a_one_sample_trajectory_is_checked(self, ref, act):
+        vc = score(
+            {"mode": "points"}, *(np.array(x, dtype=float) for x in (*ref, *act))
+        )
+        assert vc.passed is True
+        assert vc.diagnostics["delta"] == 0.0
+
+    def test_an_empty_reference_is_not_scored(self):
+        vc = score(
+            {"mode": "points"}, EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([2.0, 2.0])
+        )
+        assert vc.passed is False
+        assert (
+            summarize(vc).criterion == "points criterion not scored — empty trajectory"
+        )
 
 
 class TestPointsIdentity:
