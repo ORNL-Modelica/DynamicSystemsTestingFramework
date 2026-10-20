@@ -488,6 +488,10 @@ def test_a_running_file_s_header_is_parsed_once_for_its_rows_and_its_names(
     h.at(A, 0.2)
     polls = len(parsed)
     assert polls >= 1
+    # rows are on disk: the polls read the header no more
+    for _ in range(3):
+        h.poll()
+    assert len(parsed) == polls
     assert s.variable_names(A) == ["x", "y", "z"]
     assert s.variable_names(A) == ["x", "y", "z"]
     assert len(parsed) == polls
