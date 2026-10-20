@@ -28,12 +28,9 @@ def _strict(path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"), parse_constant=refuse)
 
 
-@pytest.fixture(scope="module")
-def ran(tmp_path_factory):
-    """The Python example run once — every test PASS — then SimpleRamp's
-    baseline moved, so a compare FAILS it. Returns ``dstf(*args) -> exit``
-    over that project and its config."""
-    tmp_path = tmp_path_factory.mktemp("verdicts")
+def _ran(tmp_path):
+    """The Python example run once — every test PASS. Returns ``(config,
+    tests, dstf)``, ``dstf(*args) -> exit`` over that project."""
     config, tests = python_example_copy(tmp_path)
 
     def dstf(command: str, *flags: str) -> int:
@@ -43,6 +40,26 @@ def ran(tmp_path_factory):
         )
 
     assert dstf("run") == 0
+    return config, tests, dstf
+
+
+# Each fixture is its own copy, never changed by a test that reads it: a
+# test that changed a shared one (the baseline moved, then accepted) passed
+# only after the test before it on the same process, and pytest-xdist
+# hands a module's tests to different workers.
+
+
+@pytest.fixture(scope="module")
+def ran(tmp_path_factory):
+    """Run, and left as the run left it."""
+    return _ran(tmp_path_factory.mktemp("verdicts"))
+
+
+@pytest.fixture(scope="module")
+def broken(tmp_path_factory):
+    """Run, then SimpleRamp's baseline moved: a compare FAILS it."""
+    config, tests, dstf = _ran(tmp_path_factory.mktemp("verdicts-broken"))
+    _break_ramp(config)
     return config, tests, dstf
 
 
@@ -87,9 +104,8 @@ def test_the_run_leaves_status_json_with_the_verdict_and_a_terminal_phase(ran):
         )
 
 
-def test_a_compare_says_fail_where_status_json_says_the_simulation_passed(ran):
-    config, _tests, dstf = ran
-    _break_ramp(config)
+def test_a_compare_says_fail_where_status_json_says_the_simulation_passed(broken):
+    config, _tests, dstf = broken
     assert dstf("compare") == 1
     doc = _strict(config.work_dir / "verdicts.json")
     assert doc["totals"]["FAIL"] == 1 and doc["exit_code"] == 1
@@ -111,10 +127,10 @@ def test_a_compare_says_fail_where_status_json_says_the_simulation_passed(ran):
     assert (row["status"], row["verdict"]) == ("passed", "FAIL")
 
 
-def test_the_tree_is_the_one_the_report_page_holds(ran):
+def test_the_tree_is_the_one_the_report_page_holds(broken):
     """One builder: with `--report`, a test's tree here is the `tree_view`
     of its `comparison_data.json`."""
-    config, _tests, dstf = ran
+    config, _tests, dstf = broken
     assert dstf("compare", "--report") == 1
     trees = {
         t["model_id"]: t["tree"]
@@ -127,9 +143,9 @@ def test_the_tree_is_the_one_the_report_page_holds(ran):
         assert trees[data["summary"]["model_id"]] == data["tree_view"]
 
 
-def test_an_accept_scores_nothing_and_leaves_no_stale_verdict(ran):
-    """Last in this module: it rewrites the baselines."""
-    config, _tests, dstf = ran
+def test_an_accept_scores_nothing_and_leaves_no_stale_verdict(tmp_path):
+    """It rewrites the baselines: a project of its own."""
+    config, _tests, dstf = _ran(tmp_path)
     assert (config.work_dir / "verdicts.json").exists()
     assert dstf("compare", "--accept") == 0
     assert not (config.work_dir / "verdicts.json").exists()
