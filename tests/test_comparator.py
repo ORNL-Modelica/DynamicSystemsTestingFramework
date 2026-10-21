@@ -2067,6 +2067,27 @@ class TestEmptyDataFails:
         assert {vc.name: vc.passed for vc in comp.variables} == {"x": False, "y": True}
         assert not comp.passed
 
+    @pytest.mark.parametrize(
+        ("n", "reason"),
+        [
+            (
+                0,
+                "no reference samples to take a spectrum of (empty baseline or window)",
+            ),
+            (2, "too few reference samples to take a spectrum of (fewer than 4)"),
+        ],
+    )
+    def test_no_peaks_over_a_baseline_of_too_few_samples(self, n, reason):
+        """No peaks declared: the baseline's spectrum is what the plot marks
+        peaks on, and one needs four samples."""
+        from dstf.reporting.status import not_scored_reason
+
+        t = np.linspace(0.0, 1.0, 64)
+        ref = t[:n]
+        vc = score({"mode": "dominant-frequency"}, ref, np.sin(ref), t, np.sin(t))
+        assert not vc.passed
+        assert not_scored_reason(vc) == reason
+
     def test_windowed_leaf_excluding_everything_fails(self):
         """A window that slices away every sample must fail the leaf."""
         from dstf.comparison.tree_spec import parse_metric_tree

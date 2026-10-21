@@ -9369,12 +9369,14 @@ window) holds no sample is not scored: `no actual samples to check (empty
 trajectory or window)`, the sentence a range uses, with rows declared as
 without. Auto-detected events whose baseline holds no sample in the window
 read `no reference samples to compare (empty baseline or window)`, as does
-a points criterion with no rows (its final value against the baseline's),
-and a
-dominant-frequency criterion with no peaks declared reads `no reference
-samples to take a spectrum of (empty baseline or window)` (with peaks
-declared it needs no baseline). Either way the test FAILS and says why, and `dstf author` follows from
-`reporting.status.not_scored_reason`: the editor says why, offers no drag
-and no Ctrl+click, and keeps the window's ⌖ where the card draws a plot.
+a points criterion with no rows (its final value against the baseline's).
+A dominant-frequency criterion with no peaks declared reads `no reference
+samples to take a spectrum of (empty baseline or window)` over a baseline
+with no samples, and `too few reference samples to take a spectrum of
+(fewer than 4)` over one of one to three (with peaks declared it needs no
+baseline). Either way the test FAILS and says why, and `dstf author`
+follows from `reporting.status.not_scored_reason`: the editor says why,
+offers no drag and no Ctrl+click, and keeps the window's ⌖ where the card
+draws a plot.
 
 TRANSFORM is unaffected: every TRANSFORM criterion is nrmse.

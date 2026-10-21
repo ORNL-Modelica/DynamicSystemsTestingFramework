@@ -1885,12 +1885,15 @@ def _compare_dominant_frequency(
 
     has_ref = len(ref_values) >= 4
     if not has_ref and not peaks:
-        # No peaks declared, and no baseline to take a spectrum of (an empty
-        # one, or a window that holds none of it): nothing to compare — not
-        # scored, as D163 has it, where it failed as "No peaks declared".
+        # No peaks declared, and no baseline to take a spectrum of: an empty
+        # one (or a window that holds none of it), or one of fewer than four
+        # samples. Nothing to compare — not scored, as D163 has it, where it
+        # failed as "No peaks declared".
         return _no_data_failure(
             "dominant-frequency",
-            "no reference samples to take a spectrum of (empty baseline or window)",
+            "no reference samples to take a spectrum of (empty baseline or window)"
+            if len(ref_values) == 0
+            else "too few reference samples to take a spectrum of (fewer than 4)",
         )
 
     if has_ref:

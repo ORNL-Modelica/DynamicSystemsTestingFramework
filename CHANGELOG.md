@@ -25,9 +25,10 @@ this file says when they do.
   are auto-detected events whose baseline holds none there (`no reference
   samples to compare …`): in either case auto-detected events with none on
   the other side used to PASS.
-  A dominant-frequency criterion with no peaks declared over such a
-  baseline is not scored either (`no reference samples to take a spectrum
-  of …`), where it failed as "No peaks declared".
+  A dominant-frequency criterion with no peaks declared is not scored either
+  over a baseline with no samples (`no reference samples to take a spectrum
+  of …`) or fewer than four (`too few reference samples to take a spectrum
+  of (fewer than 4)`), where it failed as "No peaks declared".
 
 ### Fixed
 
