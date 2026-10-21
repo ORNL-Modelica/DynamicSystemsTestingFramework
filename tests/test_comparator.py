@@ -4657,6 +4657,33 @@ class TestPointsValueSides:
             {"time": 1.0, "reason": "delta 1 exceeds limit 0.1"}
         ]
 
+    def test_a_nan_sample_between_two_sides_of_the_band_is_passed_over(self):
+        """0 below the band and 2 above it, a NaN between: the samples
+        either side of the NaN are adjacent, and the curve crossed the band
+        between them. Kept, the NaN split them, and the box missed by 0.8."""
+        vc = score(
+            {
+                "mode": "points",
+                "points": [
+                    {
+                        "time": 1,
+                        "value": 1,
+                        "tolerance": {"lower": 0.1, "upper": 0.2},
+                        "time_tolerance": 1,
+                    }
+                ],
+            },
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array([0.0, np.nan, 2.0]),
+        )
+        assert vc.passed is True
+        assert vc.max_abs_error == 0.0
+        assert summarize(vc).criterion == (
+            "Point at t=1: error +0.000e+00 vs tolerance −1.000e-01 / +2.000e-01 → PASS"
+        )
+
     @pytest.mark.parametrize("row", [{}, {"time_tolerance": 0.2}], ids=repr)
     def test_a_target_that_is_not_a_number_says_so(self, row):
         point = {"time": 5.0, "value": float("nan"), "tolerance": self._UNEVEN}
