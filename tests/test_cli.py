@@ -822,6 +822,22 @@ def _run_args(env, *extra) -> argparse.Namespace:
     )
 
 
+def _with_baseline(env, model_id: str) -> None:
+    """Accept ``model_id``'s result as its primary baseline: a later run of
+    the same result PASSes against it."""
+    env.make([model_id], results={model_id: _mk_result(model_id)})
+    assert cmd_run(_run_args(env, "--accept")) == 0
+
+
+def _with_cpu_time(result: TestResult, seconds: float) -> TestResult:
+    """``result`` holding a ``CPUtime`` that ends at ``seconds``: the Sim (s)
+    a page shows where the run kept no wall time."""
+    t = result.variables[0].time
+    cpu = np.linspace(0.0, seconds, len(t))
+    result.diagnostics = [VariableResult(index=2, time=t, values=cpu, name="CPUtime")]
+    return result
+
+
 def _stored_model_ids(env) -> set[str]:
     ref_dir = env.ref_root / FAKE / detect_os()
     if not ref_dir.exists():
@@ -892,21 +908,19 @@ class TestRerunEmptySetIsSuccess:
         assert "Nothing to rerun" in out
         assert "failed" in out
 
-    def test_empty_rerun_still_produces_merged_report(
-        self, run_env, capsys, monkeypatch
-    ):
-        called = {}
-
-        def fake_suite(comparisons, results, tests, store, config, **_):
-            called["comparisons"] = list(comparisons)
-
-        monkeypatch.setattr("dstf.cli.run_cmds._generate_report_suite", fake_suite)
+    def test_empty_rerun_still_produces_merged_report(self, run_env, capsys):
+        """Nothing failed, so nothing reruns; `--report` still writes the
+        prior run's pages, each with the verdict it was scored with."""
         t1 = "Lib.T1"
-        run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
+        _with_baseline(run_env, t1)
+        run_env.make([t1], results={}, prior_results={t1: _mk_result(t1)})
         rc = cmd_run(_run_args(run_env, "--rerun", "failed", "--report"))
         assert rc == 0
-        assert called, "merged report suite was not generated"
-        assert (run_env.work_dir / "dashboard.html").exists()
+        (sidecar,) = (run_env.work_dir / "reports").glob("*/comparison_data.json")
+        assert (sidecar.parent / "interactive.html").exists()
+        assert json.loads(sidecar.read_text(encoding="utf-8"))["summary"]["status"] == (
+            "PASS"
+        )
 
     def test_plain_empty_filter_still_exits_one(self, run_env, capsys):
         t1 = "Lib.T1"
@@ -923,43 +937,23 @@ class TestRerunEmptySetIsSuccess:
 
 
 class TestTheDashboardGetsTheComparisons:
-    def _record(self, monkeypatch) -> dict:
-        seen: dict = {}
+    """Each page a scoring command writes carries the verdict it scored and
+    the run's CPU time, read off the page: no sidecar holds either."""
 
-        # The results ride along: the page's Sim (s) takes a CPU time
-        # from them where no wall time was kept.
-        def final(
-            work_dir, rerun_flags=None, comparisons=(), results=None, theme="default"
-        ):
-            seen["final"] = [c.model_id for c in comparisons]
-            seen["final_results"] = sorted(results or {})
-
-        def final_to(
-            work_dir,
-            output_path,
-            rerun_flags=None,
-            comparisons=(),
-            results=None,
-            theme="default",
-        ):
-            seen["final_to"] = [c.model_id for c in comparisons]
-            seen["final_to_results"] = sorted(results or {})
-
-        monkeypatch.setattr("dstf.reporting.dashboard_render.render_final", final)
-        monkeypatch.setattr("dstf.reporting.dashboard_render.render_final_to", final_to)
-        return seen
+    @staticmethod
+    def _says(page) -> tuple[bool, bool]:
+        """Whether ``page`` reads PASS and a Sim (s) of 4.25 (the CPU time)."""
+        html = page.read_text(encoding="utf-8")
+        return ('data-status="pass"' in html, 'data-sort-sim="4.25"' in html)
 
     @pytest.mark.parametrize("command", ["run", "compare"])
     def test_the_page_is_rendered_with_the_comparisons(
-        self, run_env, monkeypatch, tmp_path, command
+        self, run_env, tmp_path, command
     ):
-        seen = self._record(monkeypatch)
         t1 = "Lib.T1"
-        run_env.make(
-            [t1],
-            results={"Lib.T1": _mk_result("Lib.T1")},
-            prior_results={"Lib.T1": _mk_result("Lib.T1")},
-        )
+        _with_baseline(run_env, t1)
+        result = _with_cpu_time(_mk_result(t1), 4.25)
+        run_env.make([t1], results={t1: result}, prior_results={t1: result})
         out = tmp_path / "page.html"
         args = build_arg_parser().parse_args(
             ["--config", str(run_env.config_dir), command]
@@ -967,27 +961,23 @@ class TestTheDashboardGetsTheComparisons:
             + ["--report-format", "html", "--output", str(out)]
         )
         (cmd_run if command == "run" else cmd_compare)(args)
-        assert seen == {
-            "final": ["Lib.T1"],
-            "final_results": ["Lib.T1"],
-            "final_to": ["Lib.T1"],
-            "final_to_results": ["Lib.T1"],
-        }
+        assert self._says(run_env.work_dir / "dashboard.html") == (True, True)
+        assert self._says(out) == (True, True)
 
-    def test_an_empty_rerun_renders_the_prior_comparisons(self, run_env, monkeypatch):
+    def test_an_empty_rerun_renders_the_prior_comparisons(self, run_env):
         """`--rerun` with nothing to rerun still refreshes the page, with
         the comparisons it scored the prior results by."""
-        seen = self._record(monkeypatch)
         t1 = "Lib.T1"
-        run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
+        _with_baseline(run_env, t1)
+        prior = _with_cpu_time(_mk_result(t1), 4.25)
+        run_env.make([t1], results={}, prior_results={t1: prior})
         assert cmd_run(_run_args(run_env, "--rerun", "failed")) == 0
-        assert seen == {"final": ["Lib.T1"], "final_results": ["Lib.T1"]}
+        assert self._says(run_env.work_dir / "dashboard.html") == (True, True)
 
-    def test_the_report_suite_renders_with_the_comparisons(self, run_env, monkeypatch):
-        """`run --report` writes the sidecars, then the page — with the
-        comparisons: a test whose run timed out has no sidecar verdict to
-        read, and without its comparison it would read TIMED OUT, not the
-        SIM_FAIL the console printed."""
+    def test_the_report_suite_renders_with_the_comparisons(self, run_env):
+        """`run --report` writes the sidecars, then the page: a test whose
+        run timed out reads the SIM_FAIL the console printed, not the TIMED
+        OUT its progress recorded."""
         from dstf.backends.progress import ProgressReporter
 
         t1 = "Lib.T1"
@@ -1003,9 +993,6 @@ class TestTheDashboardGetsTheComparisons:
             return _run(tests)
 
         backend.run_tests = run_tests
-        monkeypatch.setattr(
-            "dstf.reporting.report_suite.generate_report_suite", lambda *a, **k: None
-        )
         cmd_run(_run_args(run_env, "--report"))
         html = (run_env.work_dir / "dashboard.html").read_text(encoding="utf-8")
         assert 'data-status="sim-fail"' in html
@@ -1085,6 +1072,7 @@ class TestEveryRunEndsOnAStaticPage:
             assert _REFRESH in self._page(run_env)  # live until the compare
             raise exc
 
+        # A patch of DSTF's own step, by exception: its raising is the point.
         monkeypatch.setattr("dstf.comparison.comparator.compare_all", compare_all)
         with pytest.raises(type(exc)):
             cmd_run(_run_args(run_env))
@@ -1103,6 +1091,7 @@ class TestEveryRunEndsOnAStaticPage:
         def render_final(*a, **k):
             raise OSError("disk full")
 
+        # Patches of DSTF's own steps, by exception: their raising is the point.
         monkeypatch.setattr("dstf.comparison.comparator.compare_all", compare_all)
         monkeypatch.setattr(
             "dstf.reporting.dashboard_render.render_final", render_final
@@ -1136,6 +1125,7 @@ class TestEveryRunEndsOnAStaticPage:
         def accept_run_results(*a, **k):
             raise OSError("reference dir read-only")
 
+        # A patch of DSTF's own step, by exception: its raising is the point.
         monkeypatch.setattr(
             "dstf.storage.accept.accept_run_results", accept_run_results
         )
