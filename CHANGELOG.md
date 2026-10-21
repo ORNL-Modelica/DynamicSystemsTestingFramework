@@ -28,6 +28,9 @@ this file says when they do.
   was read as a folder named `~` beside the file.
 - A points criterion whose curve jumps to an infinite value inside its time
   box no longer passes as if it had crossed the band there.
+- `dstf author` no longer offers on-plot editing for a criterion that was not
+  scored: its editor says why (`Not scored: variable 'v' not found in the
+  baseline. …`), and its fields still edit it.
 
 ### Removed
 

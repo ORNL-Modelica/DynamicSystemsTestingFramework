@@ -33,6 +33,7 @@ from ...discovery.plots import ResolvedPlot
 from ...figures.assemble import leaves_by_variable
 from ...figures.families import family_label, group_families
 from ...figures.plotly import _LABELS, Drags, Visibility, drags_of
+from ...reporting.status import not_scored_reason
 from ...reporting.tree_rows import criteria_rows, leaves_of, names_a_series
 from ..capabilities import Placement
 from ..family_rows import is_fold, leaf_of
@@ -990,14 +991,16 @@ class PlotCard:
         """The criterion at ``path`` (the open one, unless said) as it was
         scored — its comparison, whose geometry the plot draws — or None
         where it was not: a test that is running, or whose last run did
-        not finish (D151)."""
+        not finish (D151), and a criterion its comparison could not score
+        (`not_scored_reason`), which draws nothing and whose Edit on plot
+        place says why."""
         path = self.open_path if path is None else path
         comp = self.page.shell.session.comparisons.get(self.page.model_id)
         tree = comp.metric_tree if comp is not None else None
         for pairs in leaves_by_variable(tree, ()).values():
             for at, vc in pairs:
                 if at == path:
-                    return vc
+                    return None if not_scored_reason(vc) is not None else vc
         return None
 
     def _drags(self) -> Drags:

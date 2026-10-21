@@ -46,6 +46,7 @@ from ...comparison.registry import DEFAULT_METRIC, MetricDescriptor, metric
 from ...comparison.sides import parse_sides
 from ...comparison.snap import snapped
 from ...figures.assemble import leaves_by_variable
+from ...reporting.status import not_scored_reason
 from ..capabilities import Panel, Patch, Placement
 from ..session import no_tree_error
 from ..spec_document import PatchOp
@@ -53,6 +54,7 @@ from ..tree_pointer import node_at
 from ..unscorable import Refused, refuse_bounds, refuse_negative
 
 if TYPE_CHECKING:
+    from ...comparison.types import VariableComparison
     from ...figures.view import LeafView, VariableView
     from ..session import SessionView
 
@@ -86,6 +88,17 @@ _BOUNDS = {"min_value": "max_value", "max_value": "min_value"}
 #: criterion's geometry, and the table is edited beside its handles.
 UNSCORED = "{} — its table and its handles on the plot are edited once it is scored"
 
+#: Why the place is a sentence for ONE criterion its comparison could not
+#: score (`reporting.status.not_scored_reason`: a variable or a baseline one
+#: side lacks, a config that did not build), ``{}`` being that reason. It
+#: carries its own metric and nothing drawn: no handle to drag, no row a
+#: click settles on the data. The form's fields, above this place, still
+#: stage edits of it.
+UNSCORED_LEAF = (
+    "Not scored: {}. Its table and its handles on the plot are edited once "
+    "it is scored; the fields above still edit it."
+)
+
 
 def _selected(s: SessionView) -> tuple[str, str, str] | None:
     """``(model_id, variable, leaf_path)`` for exactly one test, a variable
@@ -97,15 +110,16 @@ def _selected(s: SessionView) -> tuple[str, str, str] | None:
     return model_id, sel.variable, sel.leaf_path
 
 
-def _leaf_paths(s: SessionView, model_id: str, variable: str) -> list[tuple[str, str]]:
-    """``(leaf_path, metric)`` for every scored leaf on ``variable``, in tree
-    order. Cheap: no figure, no view."""
+def _leaf_paths(
+    s: SessionView, model_id: str, variable: str
+) -> list[tuple[str, VariableComparison]]:
+    """``(leaf_path, comparison)`` for every leaf of the comparison on
+    ``variable``, in tree order — one its comparison could not score among
+    them. Cheap: no figure, no view."""
     comp = s.comparisons.get(model_id)
     tree = comp.metric_tree if comp is not None else None
     card = s.card_paths(model_id)
-    return [
-        (path, vc.mode) for path, vc in leaves_by_variable(tree, card).get(variable, [])
-    ]
+    return list(leaves_by_variable(tree, card).get(variable, []))
 
 
 def _list_fields(name: str) -> list[tuple[str, Columns]]:
@@ -759,8 +773,8 @@ class EditOnPlot:
         if tree is None:
             assert why is not None  # `tree` is None
             return why
-        metric_name = dict(_leaf_paths(s, model_id, variable)).get(leaf_path)
-        if metric_name is None:
+        vc = dict(_leaf_paths(s, model_id, variable)).get(leaf_path)
+        if vc is None:
             # Nothing of the test is scored while it runs, or after a run
             # that did not finish (D151): the criterion is there, and the
             # page's word for it is the reason.
@@ -768,8 +782,11 @@ class EditOnPlot:
             if word:
                 return UNSCORED.format(word)
             return f"{leaf_path} is not a criterion on {variable}"
-        if not _has_handles(metric_name):
-            return f"{metric_name} has no on-plot handles"
+        reason = not_scored_reason(vc)
+        if reason is not None:
+            return UNSCORED_LEAF.format(reason.rstrip("."))
+        if not _has_handles(vc.mode):
+            return f"{vc.mode} has no on-plot handles"
         return True
 
     def panel(self, s: SessionView, ui_panel: Panel) -> None:
@@ -862,7 +879,7 @@ class EditOnPlot:
                 return None
             return float(view.ref_time[0]), float(view.ref_time[-1])
 
-        for path, _mode in _leaf_paths(s, model_id, variable):
+        for path, _vc in _leaf_paths(s, model_id, variable):
             if path != leaf_path:  # the editor is the open criterion's
                 continue
             raw = node_at(tree, path)

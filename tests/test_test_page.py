@@ -10822,10 +10822,10 @@ def test_edit_on_plot_says_the_sessions_reason_for_no_tree(tmp_path):
     spec.write_text(json.dumps(doc), encoding="utf-8")
     session = _opened(cfg, work).session
     assert session.tree_or_reason(A) == (None, NO_TREE)
-    ((path, mode),) = _leaf_paths(
+    ((path, vc),) = _leaf_paths(
         SessionView(session, Selection(tests=frozenset({A}))), A, "x"
     )
-    assert mode == "points"
+    assert vc.mode == "points"
     sel = Selection(tests=frozenset({A}), variable="x", leaf_path=path)
     view = SessionView(session, sel)
     assert EditOnPlot().available(view) == NO_TREE
