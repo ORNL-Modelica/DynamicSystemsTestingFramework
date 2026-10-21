@@ -15,12 +15,18 @@ this file says when they do.
   (`inf`, `0.0`, `inf`, `0.0`, `nan`, `nan`: not measured), and a mode sets
   only those its summary reports. A tube's `nrmse` is its worst violation, as
   a range's is (it was an NRMSE nothing scored by). Its `diagnostics` no
-  longer carry what nothing showed (the embedded spectra, `max_time_delta`,
-  `reference_scalar`, a points final check's `tolerance` and `delta`).
-- A points or event-timing criterion whose window holds none of the run's
-  samples is not scored, and FAILS saying so (`no actual samples to check
-  (empty trajectory or window)`); auto-detected events there passed on no
-  events at all.
+  longer carry what nothing showed: the embedded spectra,
+  `detected_reference_peaks_hz`, `peaks_declared`, `max_rel_error`,
+  `reason`, `max_time_delta`, `reference_scalar`, `actual_scalar`, and a
+  points final check's `tolerance` and `delta`.
+- A window that holds no samples scores nothing. A points or event-timing
+  criterion whose window holds none of the run's is not scored and FAILS
+  saying so (`no actual samples to check (empty trajectory or window)`), as
+  are auto-detected events whose baseline holds none there (`no reference
+  samples to compare …`): both cases of auto-detected events used to PASS.
+  A dominant-frequency criterion with no peaks declared over such a
+  baseline is not scored either (`no reference samples to take a spectrum
+  of …`), where it failed as "No peaks declared".
 
 ### Fixed
 
