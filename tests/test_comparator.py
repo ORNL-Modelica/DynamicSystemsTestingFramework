@@ -2128,18 +2128,31 @@ class TestEmptyDataFails:
             f"{criterion['metric']} criterion not scored — {reason}"
         )
 
-    def test_events_against_a_baseline_with_no_samples_in_the_window(self):
+    @pytest.mark.parametrize(
+        ("metric", "reason"),
+        [
+            (
+                "event-timing",
+                "no reference samples to compare (empty baseline or window)",
+            ),
+            (
+                "dominant-frequency",
+                "no reference samples to take a spectrum of (empty baseline or window)",
+            ),
+        ],
+        ids=["events", "no-peaks"],
+    )
+    def test_a_baseline_with_no_samples_in_the_window_scores_nothing(
+        self, metric, reason
+    ):
         """The run reaches the window and the baseline does not: auto-detected
-        events have nothing to be compared with."""
+        events have nothing to be compared with, and a dominant-frequency
+        criterion with no peaks declared no spectrum to mark peaks on."""
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.reporting.status import not_scored_reason
 
         spec = parse_metric_tree(
-            {
-                "metric": "event-timing",
-                "variable": "x",
-                "window": {"start": 7.0, "end": 10.0},
-            }
+            {"metric": metric, "variable": "x", "window": {"start": 7.0, "end": 10.0}}
         )
         test = _mk_test(metric_tree_spec=spec)
         reference = {
@@ -2149,9 +2162,7 @@ class TestEmptyDataFails:
         comp = compare_test(test, _mk_result(), decode_reference(reference))
         (vc,) = comp.variables
         assert not comp.passed
-        assert not_scored_reason(vc) == (
-            "no reference samples to compare (empty baseline or window)"
-        )
+        assert not_scored_reason(vc) == reason
 
 
 # ---------------------------------------------------------------------------
