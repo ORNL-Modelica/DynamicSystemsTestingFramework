@@ -9356,9 +9356,10 @@ than four samples) but not for its baseline. Three modes did not:
 - **event-timing, auto-detected**, in a window holding none of the run's
   samples found no events on either side, paired none, and PASSED.
 - **points** and **event-timing with declared events** failed there, but
-  as a row or an event not found (`no actual samples (empty trajectory)`),
-  so the tool drew the criterion as scored and offered its drags and a
-  Ctrl+click on a plot that showed nothing of it.
+  as a row not scored (`no actual samples (empty trajectory)`, points) or
+  as declared events not found (event-timing), so the tool drew the
+  criterion as scored and offered its drags and a Ctrl+click on a plot
+  that showed nothing of it.
 - **dominant-frequency with no peaks declared**, over a baseline with
   fewer than four samples in its window, failed as "No peaks declared" and
   pointed at Reference peaks the plot could not mark.

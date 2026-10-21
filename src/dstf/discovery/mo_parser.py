@@ -202,15 +202,6 @@ def _take_argument(text: str, start: int) -> str:
     return text[start:]
 
 
-def _parse_float_list(raw: str) -> list[float] | None:
-    """Parse a simple {val1, val2, ...} list of floats."""
-    try:
-        parts = raw.strip().split(",")
-        return [float(p.strip()) for p in parts if p.strip()]
-    except ValueError:
-        return None
-
-
 def _strip_modelica_literals(text: str) -> str:
     """Blank comments + string literals from Modelica source (1:1, newlines
     kept, so offsets into the result index the original — findings 48/50 slice

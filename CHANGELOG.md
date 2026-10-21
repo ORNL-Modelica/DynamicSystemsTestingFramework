@@ -63,7 +63,10 @@ this file says when they do.
   `x_reference` are gone, and the bundled recognizer no longer reads
   `errorExpected` or `x_reference`: nothing read them. A `testing.json`
   recognizer whose `fields` names `x_raw`, `error_expected` or `x_reference`
-  now fails to load (`targets unknown field`); drop that field.
+  now fails to load (`targets unknown field`); drop that field. A field's
+  `shape` is `scalar` or `array`: `array_floats`, which only `x_reference`
+  could use, is gone, and any other shape, read as `scalar` until now, fails
+  to load.
 - A criterion's `MetricResult.diagnostics`, what a plug-in `Combinator.combine`
   receives, no longer carries `mode`, `tolerance` or `max_abs_error`; they are
   its `diagnostics["variable"]` (a `VariableComparison`): `mode`,

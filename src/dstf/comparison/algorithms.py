@@ -538,14 +538,9 @@ def _compare_points(
             ),
         )
 
-    # Declared-points path.
-    trace_end = (
-        float(ref_time[-1])
-        if len(ref_time)
-        else float(act_time[-1])
-        if len(act_time)
-        else 0.0
-    )
+    # Declared-points path. The run has samples (refused above where it
+    # has none): a row with no time is at the trace's end.
+    trace_end = float(ref_time[-1]) if len(ref_time) else float(act_time[-1])
     scored = 0
     failed = 0
     worst_delta = 0.0
@@ -1900,8 +1895,8 @@ def _compare_dominant_frequency(
 
     if has_ref:
         ref_freqs, ref_spectrum = _compute_fft_spectrum(ref_time, ref_values)
-        # Reference peak detection — embedded so the reporter's "Detect"
-        # button can seed a fresh declared-peaks table without recomputing.
+        # Reference peak detection — drawn on the spectrum plot as
+        # Reference peaks, for an author to declare the peaks list from.
         # N=10 gives room for up to 10 tracked modes without bloat.
         detected_ref_peaks = _find_top_n_peaks(ref_freqs, ref_spectrum, 10)
     else:
