@@ -796,7 +796,8 @@ def run_env(tmp_path):
             }
 
         def read_last_results(self, tests):
-            return dict(env.behaviour.prior_results)
+            prior = env.behaviour.prior_results
+            return {t.model_id: prior[t.model_id] for t in tests if t.model_id in prior}
 
     def make(entries, results, prior_results=None, manifest_map=None):
         """``entries``: model ids, each tracking ``x``, or spec entries."""
@@ -2776,3 +2777,268 @@ def test_compare_reads_backend_path_for_a_backend_built_from_its_executable(
         + ["--backend-path", python]
     )
     assert rc == 0
+
+
+# =========================================================================
+# run and compare over the registered backend: what they say and write
+# =========================================================================
+
+_ORPHAN_NOTE = (
+    "Note: 1 orphan manifest entries (models no longer in discovery). "
+    "Run 'manifest cleanup --orphans' to list/prune."
+)
+
+
+def _with_an_orphan(env):
+    BatchManifest(
+        work_dir=env.work_dir,
+        manifest={"test_0009": {"model_id": "Lib.Gone", "ref_id": None}},
+    ).save()
+
+
+@pytest.mark.parametrize("command", ["run", "compare"])
+def test_a_manifest_entry_no_longer_discovered_is_noted(run_env, capsys, command):
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    _with_an_orphan(run_env)
+    main(
+        ["--config", str(run_env.config_dir), command]
+        + ["--work-dir", str(run_env.work_dir), "--no-browser"]
+    )
+    assert _ORPHAN_NOTE in capsys.readouterr().out.splitlines()
+
+
+def test_a_run_with_no_orphan_says_nothing_of_orphans(run_env, capsys):
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    cmd_run(_run_args(run_env, "--no-browser"))
+    assert "orphan manifest entries" not in capsys.readouterr().out
+
+
+def test_an_aborted_run_says_why(run_env, capsys):
+    behaviour = run_env.make(["Lib.T1"], results={})
+
+    def boom(tests):
+        raise RuntimeError("all workers failed to start")
+
+    behaviour.run_tests = boom
+    assert cmd_run(_run_args(run_env, "--no-browser")) == 1
+    assert "Run aborted: all workers failed to start" in capsys.readouterr().err
+
+
+def test_a_rerun_keeps_a_still_failing_test_in_its_verdict_and_exits_one(
+    run_env, capsys
+):
+    """`--rerun` reads back the tests it did not re-run: the one still
+    failing keeps the run red."""
+    t1, t2 = "Lib.T1", "Lib.T2"
+    behaviour = run_env.make([t1, t2], results={t1: _mk_result(t1), t2: _mk_result(t2)})
+    assert cmd_run(_run_args(run_env, "--accept", "--no-browser")) == 0
+    behaviour.prior_results = {
+        t1: _mk_result(t1, success=False),
+        t2: _mk_result(t2, values=[1.0] * 11),
+    }
+    behaviour.results = {t1: _mk_result(t1), t2: _mk_result(t2, values=[1.0] * 11)}
+    behaviour.manifest_map = {
+        "test_0001": {"model_id": t1, "ref_id": None},
+        "test_0002": {"model_id": t2, "ref_id": None},
+    }
+    rc = cmd_run(_run_args(run_env, "--rerun", "sim-failed", "--no-browser"))
+    verdicts = json.loads((run_env.work_dir / "verdicts.json").read_text())
+    assert [(t["model_id"], t["status"]) for t in verdicts["tests"]] == [
+        (t1, "PASS"),
+        (t2, "FAIL"),
+    ]
+    assert rc == 1
+    assert "Results: 1/2 passed" in capsys.readouterr().out
+
+
+def test_a_filtered_rerun_with_nothing_to_rerun_reports_every_tests_last_verdict(
+    run_env, capsys
+):
+    """The filter picks what may be re-run; the verdicts are every test's."""
+    t1, t2 = "Lib.T1", "Lib.T2"
+    behaviour = run_env.make([t1, t2], results={t1: _mk_result(t1), t2: _mk_result(t2)})
+    assert cmd_run(_run_args(run_env, "--accept", "--no-browser")) == 0
+    behaviour.prior_results = {
+        t1: _mk_result(t1),
+        t2: _mk_result(t2, values=[1.0] * 11),
+    }
+    rc = cmd_run(
+        _run_args(run_env, "--rerun", "failed", "--filter", t1, "--no-browser")
+    )
+    verdicts = json.loads((run_env.work_dir / "verdicts.json").read_text())
+    assert rc == 0
+    assert "Nothing to rerun" in capsys.readouterr().out
+    assert [(t["model_id"], t["status"]) for t in verdicts["tests"]] == [
+        (t1, "PASS"),
+        (t2, "FAIL"),
+    ]
+
+
+@pytest.mark.parametrize("command", ["run --rerun", "compare"])
+def test_the_id_mapping_is_written_by_a_command_that_runs_nothing(run_env, command):
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    assert cmd_run(_run_args(run_env, "--accept", "--no-browser")) == 0
+    mapping = run_env.work_dir / "reference_manifest.json"
+    mapping.unlink(missing_ok=True)
+    run_env.behaviour.prior_results = {"Lib.T1": _mk_result("Lib.T1")}
+    argv = ["run", "--rerun", "failed"] if command == "run --rerun" else ["compare"]
+    main(
+        ["--config", str(run_env.config_dir), *argv]
+        + ["--work-dir", str(run_env.work_dir), "--no-browser"]
+    )
+    assert json.loads(mapping.read_text(encoding="utf-8")) == {"ref_0001": "Lib.T1"}
+
+
+def test_the_live_page_is_there_when_the_tab_opens_on_it(run_env, monkeypatch):
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    there: list[bool] = []
+    monkeypatch.setattr(
+        "dstf.reporting.report_suite._launch_opener",
+        lambda path: there.append(Path(path).exists()),
+    )
+    cmd_run(_run_args(run_env))
+    assert there == [True]
+
+
+@pytest.mark.parametrize("inside", [True, False], ids=["inside", "outside"])
+def test_a_page_written_outside_the_work_dir_says_its_links_will_not_resolve(
+    run_env, capsys, inside
+):
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    out = (run_env.work_dir if inside else run_env.config_dir) / "page.html"
+    cmd_run(
+        _run_args(
+            run_env, "--report-format", "html", "--output", str(out), "--no-browser"
+        )
+    )
+    note = (
+        "note: per-test report links (and the Plotly they load from reports/) "
+        f"resolve only inside {run_env.work_dir}"
+    )
+    assert (note in capsys.readouterr().err.splitlines()) is not inside
+
+
+def test_the_page_names_the_project_it_reruns_with(run_env):
+    """A backend that writes no status.json of its own: the page's commands
+    still name this project's testing.json and work dir."""
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    out = run_env.work_dir / "page.html"
+    cmd_run(
+        _run_args(
+            run_env, "--report-format", "html", "--output", str(out), "--no-browser"
+        )
+    )
+    page = out.read_text(encoding="utf-8")
+    assert str(run_env.config_dir / "testing.json") in page
+    assert f"--work-dir {run_env.work_dir}" in page
+
+
+@pytest.mark.parametrize("rerun", [False, True], ids=["run", "nothing to rerun"])
+def test_a_project_with_no_testing_json_gets_the_default_one(
+    run_env, tmp_path, monkeypatch, rerun
+):
+    root = tmp_path / "project"
+    lib = root / "Lib"
+    (lib / "Resources" / "ReferenceResults").mkdir(parents=True)
+    (lib / "package.mo").write_text(
+        "package Lib\n  model T1\n    Real x;\n  equation\n    x = time;\n"
+        "  end T1;\nend Lib;\n"
+    )
+    for spec_dir in (lib, root):
+        (spec_dir / "Resources" / "ReferenceResults").mkdir(parents=True, exist_ok=True)
+        (spec_dir / "Resources" / "ReferenceResults" / "test_spec.json").write_text(
+            json.dumps({"tests": [{"model": "Lib.T1", "variables": ["x"]}]})
+        )
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    run_env.behaviour.prior_results = {"Lib.T1": _mk_result("Lib.T1")}
+    monkeypatch.chdir(lib)
+    argv = ["run", "--backend", FAKE, "--work-dir", str(root / "work")]
+    main(argv + ["--no-browser"] + (["--rerun", "failed"] if rerun else []))
+    assert sorted(p.relative_to(root) for p in root.rglob("testing.json")) == [
+        Path("testing.json")
+    ]
+
+
+# ---------------------------------------------------------------------------
+# run_pipeline, the library callable, over the registered backend
+# ---------------------------------------------------------------------------
+
+
+def _pipeline(env, work_dir=None):
+    from dstf.backends import select_backend
+    from dstf.discovery.test_registry import discover_tests
+
+    config = Config(
+        config_file=env.config_dir / "testing.json",
+        work_dir=work_dir or env.work_dir,
+    )
+    return (
+        config,
+        discover_tests(config),
+        select_backend(config, persistent=False, to_run=True),
+        ReferenceStore(config),
+    )
+
+
+def test_a_library_run_without_merge_scopes_the_tests_it_was_given(run_env):
+    from dstf.pipeline import run_pipeline
+
+    t1, t2 = "Lib.T1", "Lib.T2"
+    behaviour = run_env.make([t1, t2], results={t1: _mk_result(t1), t2: _mk_result(t2)})
+    behaviour.manifest_map = {
+        "test_0001": {"model_id": t1, "ref_id": None},
+        "test_0002": {"model_id": t2, "ref_id": None},
+    }
+    config, tests, backend, store = _pipeline(run_env)
+    out = run_pipeline(
+        config, tests[:1], backend=backend, store=store, candidates=tests
+    )
+    assert [t.model_id for t in out.scope_tests] == [t1]
+
+
+def test_a_library_run_makes_its_work_dir(run_env, tmp_path):
+    from dstf.pipeline import run_pipeline
+
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    config, tests, backend, store = _pipeline(run_env, tmp_path / "x" / "y" / "work")
+    out = run_pipeline(config, tests, backend=backend, store=store)
+    assert list(out.results) == ["Lib.T1"]
+
+
+def test_a_library_run_clears_the_tests_last_run_and_paints_the_page_first(run_env):
+    from dstf.pipeline import run_pipeline
+
+    behaviour = run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    BatchManifest(
+        work_dir=run_env.work_dir,
+        manifest={"test_0001": {"model_id": "Lib.T1", "ref_id": None}},
+    ).save()
+    stale = run_env.work_dir / "test_0001" / "stale.mat"
+    stale.parent.mkdir()
+    stale.write_text("old")
+    seen = {}
+    run = behaviour.run_tests
+
+    def looking(tests):
+        seen["stale"] = stale.exists()
+        seen["page"] = (run_env.work_dir / "dashboard.html").exists()
+        return run(tests)
+
+    behaviour.run_tests = looking
+    config, tests, backend, store = _pipeline(run_env)
+    run_pipeline(config, tests, backend=backend, store=store)
+    assert seen == {"stale": False, "page": True}
+
+
+def test_a_requested_chain_the_backend_cannot_run_is_said(run_env):
+    from dstf.pipeline import run_pipeline
+
+    run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
+    config, tests, backend, store = _pipeline(run_env)
+    tests[0].requested_baselines = ["dymola-via-fmpy"]
+    out = run_pipeline(config, tests, backend=backend, store=store)
+    assert out.notices[1:] == [
+        "Running cross-backend chains for 1 test(s)...",
+        "  Lib.T1: chain skipped (see logs)",
+        "Cross-backend chains: 0/1 succeeded",
+    ]
