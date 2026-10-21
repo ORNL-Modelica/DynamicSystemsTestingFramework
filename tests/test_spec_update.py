@@ -331,6 +331,113 @@ class TestAPatchIsAppliedOnceToTheFileThatIsWritten:
         assert applied[0]["value"]["children"] == [leaf]
 
 
+def test_a_spec_update_creates_the_specs_missing_folders(tmp_path):
+    spec = tmp_path / "a" / "b" / "test_spec.json"
+    apply_validated_patches(
+        spec,
+        [("M", [{"op": "add", "path": "/comparison", "value": {"tolerance": 0.1}}])],
+        _config(tmp_path),
+    )
+    assert json.loads(spec.read_text(encoding="utf-8"))["tests"] == [
+        {"model": "M", "comparison": {"tolerance": 0.1}}
+    ]
+
+
+def test_an_unscorable_criterion_the_patch_only_re_keys_is_written(tmp_path):
+    """Already unscorable before, the same after (its keys in another
+    order): the patch made nothing newly unscorable."""
+    bare = {"metric": "range", "variable": "x", "min_value": None, "max_value": None}
+    spec = _spec(
+        tmp_path,
+        {
+            "model": "M",
+            "variables": ["x"],
+            "metrics": {
+                "combinator": "and",
+                "children": [{"metric": "nrmse", "variable": "x"}, bare],
+            },
+        },
+    )
+    apply_validated_patches(
+        spec,
+        [
+            (
+                "M",
+                [
+                    {"op": "remove", "path": "/metrics/children/1/min_value"},
+                    {
+                        "op": "add",
+                        "path": "/metrics/children/1/min_value",
+                        "value": None,
+                    },
+                ],
+            )
+        ],
+        _config(tmp_path),
+    )
+    written = spec_entry(json.loads(spec.read_text(encoding="utf-8")), "M")
+    assert written["metrics"]["children"][1] == {
+        "metric": "range",
+        "variable": "x",
+        "max_value": None,
+        "min_value": None,
+    }
+
+
+def test_an_override_naming_no_registered_mode_is_left_to_the_comparison(tmp_path):
+    spec = _spec(tmp_path, {"model": "M", "variables": ["x"]})
+    override = {"variable_overrides": {"x": {"mode": "bogus"}}}
+    apply_validated_patches(
+        spec,
+        [("M", [{"op": "add", "path": "/comparison", "value": override}])],
+        _config(tmp_path),
+    )
+    written = spec_entry(json.loads(spec.read_text(encoding="utf-8")), "M")
+    assert written["comparison"] == override
+
+
+def test_a_criterion_left_unscorable_is_named_beside_a_malformed_group(tmp_path):
+    """A group whose children are no list holds no criterion: the refusal
+    names the unscorable leaf, it does not crash on the group."""
+    from dstf.discovery.spec_update import UnscorableCriterion
+
+    spec = _spec(
+        tmp_path,
+        {
+            "model": "M",
+            "variables": ["x"],
+            "metrics": {
+                "combinator": "and",
+                "children": [
+                    {"metric": "range", "variable": "x"},
+                    {"combinator": "and", "children": None},
+                ],
+            },
+        },
+    )
+    with pytest.raises(UnscorableCriterion) as box:
+        apply_validated_patches(
+            spec,
+            [
+                (
+                    "M",
+                    [
+                        {
+                            "op": "replace",
+                            "path": "/metrics/children/1",
+                            "value": {"metric": "nrmse", "variable": "x"},
+                        }
+                    ],
+                )
+            ],
+            _config(tmp_path),
+        )
+    assert str(box.value) == (
+        "patched entry is invalid: tests[M].metrics.children[0]: range · x: "
+        "needs at least one of min_value / max_value"
+    )
+
+
 def test_a_patch_that_leaves_plots_invalid_writes_nothing(tmp_path):
     config = _config(tmp_path)
     spec_path = _spec(tmp_path, {"model": "M", "variables": ["x"]})

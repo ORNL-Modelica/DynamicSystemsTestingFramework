@@ -327,13 +327,17 @@ class TestSpecParser:
         result = add_to_test_spec(spec_path, "MyLib.Test1", ["var2"])
         assert result is False
 
-    def test_add_duplicate_with_overwrite(self, tmp_path):
-        """Adding with overwrite=True replaces the entry."""
+    def test_add_duplicate_with_overwrite(self, tmp_path, caplog):
+        """Adding with overwrite=True replaces the entry — one entry, so
+        there is no duplicate to warn of."""
         spec_path = tmp_path / "test_spec.json"
         add_to_test_spec(spec_path, "MyLib.Test1", ["var1"])
-        add_to_test_spec(spec_path, "MyLib.Test1", ["new_var"], overwrite=True)
+        with caplog.at_level(logging.WARNING, logger="dstf"):
+            add_to_test_spec(spec_path, "MyLib.Test1", ["new_var"], overwrite=True)
+            update_test_variables(spec_path, "MyLib.Test1", ["var2"])
         data = json.loads(spec_path.read_text())
-        assert data["tests"][0]["variables"] == ["new_var"]
+        assert data["tests"][0]["variables"] == ["new_var", "var2"]
+        assert caplog.records == []
 
     def test_update_variables(self, tmp_path):
         """update_test_variables adds patterns to an existing entry."""
@@ -747,6 +751,65 @@ class TestFinding57Provenance:
         assert t.field_sources["method"] == "default"
         assert t.field_sources["number_of_intervals"] == "default"
         assert t.field_sources["output_interval"] == "default"
+
+
+def test_a_scanned_test_takes_its_intervals_and_overrides_from_where_they_are(
+    tmp_path,
+):
+    """A: its annotation's. C: its spec entry's, over a scan that has none,
+    and the entry's overrides kept. B: neither, so the defaults."""
+    lib = tmp_path / "MyLib"
+    lib.mkdir()
+    (lib / "package.mo").write_text("within ;\npackage MyLib\nend MyLib;\n")
+    (lib / "package.order").write_text("A\nB\nC\n")
+    experiments = {
+        "A": "StopTime=10, __Dymola_NumberOfIntervals=500, Interval=0.25",
+        "B": "StopTime=10",
+        "C": "StopTime=10",
+    }
+    for name, experiment in experiments.items():
+        (lib / f"{name}.mo").write_text(
+            f"within MyLib;\nmodel {name}\n  Real x(start=0, fixed=true);\n"
+            "  Components.UnitTests unitTests(n=2, x={x, 2*x});\n"
+            f"equation\n  der(x) = 1;\n  annotation (experiment({experiment}));\n"
+            f"end {name};\n"
+        )
+    spec = lib / "test_spec.json"
+    overrides = {"unitTests.x[1]": {"tolerance": 0.5}}
+    spec.write_text(
+        json.dumps(
+            {
+                "tests": [
+                    {
+                        "model": "MyLib.C",
+                        "simulation": {
+                            "number_of_intervals": 77,
+                            "output_interval": 0.125,
+                        },
+                        "comparison": {"variable_overrides": overrides},
+                    },
+                    {"model": "MyLib.B"},
+                ]
+            }
+        )
+    )
+    tests = {
+        t.model_id: t
+        for t in discover_tests(Config(source_path=lib, test_spec_file=spec))
+    }
+
+    def said(t):
+        return (
+            t.number_of_intervals,
+            t.output_interval,
+            t.field_sources["number_of_intervals"],
+            t.field_sources["output_interval"],
+            t.variable_overrides,
+        )
+
+    assert said(tests["MyLib.A"]) == (500, 0.25, "annotation", "annotation", {})
+    assert said(tests["MyLib.B"]) == (None, None, "default", "default", {})
+    assert said(tests["MyLib.C"]) == (77, 0.125, "test_spec", "test_spec", overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -1241,6 +1304,16 @@ class TestSpecFromDocument:
                 a.source_file,
             ) == (b.variable_patterns, b.stop_time, b.variable_overrides, b.source_file)
         assert from_doc[1].source_file == (tmp_path / "Examples" / "B.py").resolve()
+
+    def test_an_entry_whose_source_file_is_missing_is_warned_of(self, tmp_path, caplog):
+        from dstf.discovery.spec_parser import spec_models_from_document
+
+        doc = {"tests": [{"model": "P.M", "variables": ["x"], "source": "nope.py"}]}
+        with caplog.at_level(logging.WARNING, logger="dstf"):
+            spec_models_from_document(doc, base_dir=tmp_path, label="x")
+        assert [r.getMessage() for r in caplog.records] == [
+            f"Test 'P.M' references missing source file: {tmp_path.resolve()}/nope.py"
+        ]
 
     def test_a_root_that_can_hold_no_tests_is_a_config_error(self):
         """It was a spec of no tests, with an error in the log."""

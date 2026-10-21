@@ -6,13 +6,14 @@ Critical invariant from D66: unknown keys and hand-authored notes
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
 import pytest
 
 from dstf.config import ConfigError
-from dstf.discovery.patch_apply import PatchError, apply_patch
+from dstf.discovery.patch_apply import PatchError, apply_patch, apply_patch_to_document
 
 
 def _write_spec(path: Path, data: dict) -> None:
@@ -635,6 +636,70 @@ class TestRejectionEdges:
             )
 
 
+def _one_leaf_document() -> dict:
+    return {
+        "tests": [
+            {
+                "model": "M",
+                "comparison": {},
+                "metrics": {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "x"}],
+                },
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    "op,reason",
+    [
+        (
+            {"op": "replace", "path": "/metrics/children/1", "value": {}},
+            "list index 1 out of range (len 1)",
+        ),
+        ({"op": "remove", "path": "/metrics/children/1"}, "list index 1 out of range"),
+        (
+            {"op": "replace", "path": "/metrics/children/1/tolerance", "value": 1},
+            "list index 1 out of range",
+        ),
+        (
+            {"op": "remove", "path": "/metrics/children/-"},
+            "'-' (append) not allowed on non-add op",
+        ),
+        (
+            {"op": "replace", "path": "/metrics/children/-/tolerance", "value": 1},
+            "'-' (append) not allowed on non-add op",
+        ),
+        (
+            {"op": "remove", "path": "/comparison/missing/x"},
+            "key 'missing' not present (use 'add' for new keys)",
+        ),
+        (
+            {"op": "add", "path": "/comparison/x/5/y", "value": 1},
+            "key 'x' not present and the next token '5' is an array index — "
+            "refusing to auto-create a dict in place of an array (the test "
+            "entry likely has no explicit 'metrics' tree yet)",
+        ),
+    ],
+    ids=[
+        "replace one past the end",
+        "remove one past the end",
+        "descend one past the end",
+        "remove the append token",
+        "descend through the append token",
+        "remove under a missing key",
+        "an index under a key that is not there",
+    ],
+)
+def test_a_refused_op_is_a_patch_error_and_changes_nothing(op, reason):
+    document = _one_leaf_document()
+    with pytest.raises(PatchError) as box:
+        apply_patch_to_document(document, "M", [op])
+    assert box.value.reason == reason
+    assert document == _one_leaf_document()
+
+
 # =========================================================================
 # Folded in from tests/test_review_fixes_discovery.py — regression tests for
 # the 2026-07-06 review, Themes 2 & 6.
@@ -823,7 +888,6 @@ class TestADocumentSharesNothingWithThePatchThatWroteIt:
         ]
 
     def test_applying_a_patch_leaves_its_ops_as_they_were(self):
-        import copy
 
         from dstf.discovery.patch_apply import apply_patch_to_document
 

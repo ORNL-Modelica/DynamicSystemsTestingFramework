@@ -47,7 +47,17 @@ def _companion(tmp_path: Path, *, frozen: bool) -> Path:
     return store.ref_dir / "companions" / "ref_0001" / "rig.json"
 
 
+def _test_spec(tmp_path: Path) -> Path:
+    from dstf.discovery.spec_parser import add_to_test_spec, update_test_variables
+
+    spec = tmp_path / "test_spec.json"
+    add_to_test_spec(spec, "Lib.A", ["x"])
+    update_test_variables(spec, "Lib.A", ["y"])
+    return spec
+
+
 WRITERS = {
+    "a test_spec.json an edit writes": _test_spec,
     "the id high-water mark": _high_water_mark,
     "a companion's registration": lambda p: _companion(p, frozen=False),
     "a frozen companion's registration": lambda p: _companion(p, frozen=True),
