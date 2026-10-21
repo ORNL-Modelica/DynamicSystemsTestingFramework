@@ -17,6 +17,7 @@ from ..comparison.types import VariableComparison
 from ..storage.baseline import ReferenceFile, StoredVariable
 from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 from .stats_rows import SECTION_TITLES, report_text, statistics_rows
+from .status import not_scored_reason
 
 logger = logging.getLogger(__name__)
 
@@ -60,23 +61,26 @@ def worst_nrmse(comparisons: list) -> tuple[float | None, int]:
     header and the tool's Suite page show.
 
     ``VariableComparison.nrmse`` is overloaded: it carries the mode's own
-    number (a range's worst violation, an event's Δt), and for a tube the
-    NRMSE against the reference — which the tube does not score by. A max
-    over every leaf showed ``2.8213e-01`` for a test whose tube passed at
-    100 % inside while the criterion that failed, an nrmse, was at
-    ``4.264e-02``. Only a criterion whose mode is ``nrmse`` has an NRMSE
-    that decided anything; a test with none has no worst one (``None``:
-    the column reads "—").
+    number (a range's or a tube's worst violation, an event's Δt). A max
+    over every leaf once showed a tube's ``2.8213e-01`` for a test whose
+    tube passed at 100 % inside while the criterion that failed, an nrmse,
+    was at ``4.264e-02``. Only a criterion whose mode is ``nrmse`` has an
+    NRMSE that decided anything; a test with none has no worst one
+    (``None``: the column reads "—"). A score that is not a number (an
+    nrmse over a NaN sample) is no worst either.
 
-    A sentinel leaf of any mode (a metric config that would not build, no
-    data to compare) carries ``inf``/``nan``: it is left out and counted,
-    so one of them cannot swallow the real numbers, and the surface can
-    say that criteria went unscored.
+    A criterion that was not scored (`reporting.status.not_scored_reason`:
+    a metric config that would not build, no data to compare) carries
+    ``inf``/``nan``: it is left out and counted, so one of them cannot
+    swallow the real numbers, and the surface can say that criteria went
+    unscored. That rule, and not the number, decides what is counted: a
+    tube scored over a NaN sample, or a dominant-frequency criterion with a
+    peak not found, carries a non-finite number and WAS scored.
     """
     scored = [
         vc.nrmse for vc in comparisons if vc.mode == "nrmse" and math.isfinite(vc.nrmse)
     ]
-    n_unscored = sum(1 for vc in comparisons if not math.isfinite(vc.nrmse))
+    n_unscored = sum(1 for vc in comparisons if not_scored_reason(vc) is not None)
     return (max(scored) if scored else None, n_unscored)
 
 

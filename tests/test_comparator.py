@@ -585,6 +585,16 @@ class TestTubeInterpolation:
 
 
 class TestTubeComparison:
+    def test_a_tubes_nrmse_field_is_its_worst_violation(self):
+        """As a range's: 0.75 above a band of ±0.5 is 0.25 outside it. Its
+        score (what a weighted group sums) stays the fraction inside."""
+        t = np.array([0.0, 1.0, 2.0])
+        cfg = {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.5}
+        vc = score(cfg, t, np.zeros(3), t, np.array([0.0, 0.75, 0.0]))
+        assert (vc.nrmse, vc.tube_worst_violation) == (0.25, 0.25)
+        inside = score(cfg, t, np.zeros(3), t, np.array([0.0, 0.25, 0.0]))
+        assert (inside.nrmse, inside.tube_points_inside) == (0.0, 1.0)
+
     def test_constant_tube_passes(self):
         """Signal inside constant tube passes."""
         ref_time = np.array([0.0, 0.5, 1.0])

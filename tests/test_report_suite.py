@@ -11,11 +11,14 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from dstf.comparison.registry import summarize
 from dstf.comparison.types import VariableComparison
 from dstf.reporting.report_suite import _json_sanitize, generate_comparison_plots
 from dstf.storage.baseline_codec import decode_reference
+from scoring import score
 
 
 def _stamped_root_leaf(vc):
@@ -62,6 +65,7 @@ def _nonfinite_comparison(name: str = "h") -> VariableComparison:
         reference_final=float("nan"),
         actual_final=float("nan"),
         tolerance_used=1e-4,
+        diagnostics={"error": "no actual samples to compare"},
     )
 
 
@@ -424,10 +428,16 @@ class TestWorstNrmse:
 
     @staticmethod
     def _scored(nrmse: float, name: str = "h", mode: str = "nrmse"):
-        vc = _nonfinite_comparison(name)
-        vc.nrmse = nrmse
-        vc.mode = mode
-        return vc
+        """A criterion that was scored, at ``nrmse``."""
+        return VariableComparison(
+            index=0,
+            name=name,
+            passed=False,
+            nrmse=nrmse,
+            reference_final=1.0,
+            actual_final=1.0,
+            mode=mode,
+        )
 
     def test_sentinel_does_not_swallow_the_finite_leaves(self):
         from dstf.reporting.context_builder import worst_nrmse
@@ -447,12 +457,33 @@ class TestWorstNrmse:
         assert worst is None
         assert n_unscored == 2
 
-    def test_nan_counts_as_unscored(self):
+    def test_a_scored_nan_is_no_worst_and_not_unscored(self):
+        """An nrmse over a NaN sample was scored (its sentence prints the
+        NaN): it is no worst NRMSE, and no criterion that went unscored."""
         from dstf.reporting.context_builder import worst_nrmse
 
         worst, n_unscored = worst_nrmse([self._scored(float("nan")), self._scored(2.0)])
         assert worst == 2.0
-        assert n_unscored == 1
+        assert n_unscored == 0
+
+    def test_a_tube_scored_over_a_nan_sample_is_not_unscored(self):
+        """Its worst violation is NaN — the run has a NaN sample inside the
+        band's span — and it was scored: it fails, at 99.5 % inside."""
+        from dstf.reporting.context_builder import worst_nrmse
+
+        ref_t = np.linspace(0.0, 10.0, 11)
+        act_t = np.round(np.linspace(0.0, 10.0, 201), 10)
+        act_v = np.sin(act_t)
+        act_v[111] = np.nan  # t = 5.55, between two baseline samples
+        vc = score(
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.5},
+            ref_t,
+            np.sin(ref_t),
+            act_t,
+            act_v,
+        )
+        assert summarize(vc).criterion == "99.5% inside tube → FAIL (requires 100%)"
+        assert worst_nrmse([vc]) == (None, 0)
 
     def test_a_passing_tubes_nrmse_is_not_the_tests_worst(self):
         """The evidence: a tube at 100 % inside whose `nrmse` field is

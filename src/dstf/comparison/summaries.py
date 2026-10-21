@@ -79,8 +79,8 @@ def summarize_tube(vc: VariableComparison) -> ScoreSummary:
                 _at(vc.tube_worst_violation, vc.tube_worst_violation_time or 0.0),
             )
         )
-    # The tube's own measures only. Its comparator also computes an NRMSE
-    # against the reference, which nothing scores: printed here, beside
+    # The tube's own measures only. Its comparator once computed an NRMSE
+    # against the reference, which nothing scored: printed here, beside
     # PASS, it read as the criterion's number (`2.82e-01` on a tube 100 %
     # inside) — and the largest deviation says what it could.
     details.append(("max |err|", _at(vc.max_abs_error, vc.max_abs_error_time)))
