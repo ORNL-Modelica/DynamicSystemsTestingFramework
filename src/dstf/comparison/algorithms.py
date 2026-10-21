@@ -293,8 +293,8 @@ def _violation_in_box(
     that comes closest to it.
 
     The violation is ``0.0`` when a candidate (:func:`_box_candidates`) lies
-    in the band, or two adjacent candidates lie on opposite sides of it —
-    the curve crossed it between them; else the smallest distance to the
+    in the band, or two adjacent finite candidates lie on opposite sides of
+    it — the curve crossed it between them; else the smallest distance to the
     band; ``inf`` for a box with no candidate.
 
     Judged on ``d = v - target``, never on the edges ``target ± limit``: the
@@ -317,6 +317,9 @@ def _violation_in_box(
             best, closest = gap, v
     if -lower <= upper:
         for (_, v1), (_, v2) in zip(candidates, candidates[1:]):
+            # A jump to an infinite value is no curve through the band.
+            if not (math.isfinite(v1) and math.isfinite(v2)):
+                continue
             d1, d2 = v1 - target, v2 - target
             if (d1 < -lower and d2 > upper) or (d1 > upper and d2 < -lower):
                 return 0.0, target
@@ -386,6 +389,8 @@ def _min_delta_in_box(
         d2 = v2 - target
         if d1 == 0 or d2 == 0:
             continue  # Already captured by endpoint scan.
+        if not (math.isfinite(v1) and math.isfinite(v2)):
+            continue  # A jump to an infinite value crosses nothing.
         if (d1 > 0) != (d2 > 0):
             # Linear interp solve: t* = t1 + d1 / (d1 - d2) * (t2 - t1).
             denom = d1 - d2

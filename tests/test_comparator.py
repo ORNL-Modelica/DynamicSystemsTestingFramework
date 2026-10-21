@@ -4629,6 +4629,31 @@ class TestPointsValueSides:
             {"time": 1.0, "reason": f"closest value {act[-1]:g} is outside [0.9, 1.2]"}
         ]
 
+    @pytest.mark.parametrize(
+        "act", [[0.0, np.inf, np.inf], [2.0, -np.inf, -np.inf]], ids=["+inf", "-inf"]
+    )
+    def test_a_jump_to_an_infinite_value_is_no_crossing(self, act):
+        """From 1 below the target to +inf (or 1 above it to -inf) is not a
+        curve that passed through the band: the box's closest approach is
+        the finite sample, and it misses."""
+        vc = score(
+            {
+                "mode": "points",
+                "points": [
+                    {"time": 1, "value": 1, "tolerance": 0.1, "time_tolerance": 1}
+                ],
+            },
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array(act),
+        )
+        assert vc.passed is False
+        assert vc.max_abs_error == 1.0
+        assert vc.diagnostics["point_failures"] == [
+            {"time": 1.0, "reason": "delta 1 exceeds limit 0.1"}
+        ]
+
     @pytest.mark.parametrize("row", [{}, {"time_tolerance": 0.2}], ids=repr)
     def test_a_target_that_is_not_a_number_says_so(self, row):
         point = {"time": 5.0, "value": float("nan"), "tolerance": self._UNEVEN}

@@ -27,6 +27,8 @@ this file says when they do.
   soft-check or companion folder it could not delete.
 - A `testing.json` dependency written `~/…` is under the home directory; it
   was read as a folder named `~` beside the file.
+- A points criterion whose curve jumps to an infinite value inside its time
+  box no longer passes as if it had crossed the band there.
 
 ## [1.2.0] - 2026-10-19
 
