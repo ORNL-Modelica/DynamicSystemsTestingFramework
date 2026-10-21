@@ -24,6 +24,12 @@ from scoring import score
 EMPTY = np.array([])
 
 
+def _reference_peaks(vc) -> list[float]:
+    """The reference's peaks a dominant-frequency criterion marks on its
+    spectrum plot, by frequency."""
+    return [p.x for p in vc.geometry if p.kind == "detected"]
+
+
 class TestEventTimingMode:
     def test_passes_when_events_align(self):
         # Both signals: events at t=1.0 and t=2.0 (duplicate-time markers)
@@ -123,14 +129,45 @@ class TestDominantFrequencyMode:
         )
 
     def test_empty_peaks_list_fails_with_hint(self):
-        """No declared peaks → hard fail with a pointer at the Detect
-        button. Explicit contract per D75."""
+        """No declared peaks → hard fail, pointing at the peaks list and at
+        the reference's peaks the plot marks. Explicit contract per D75."""
         ref_t, ref_v = self._sine(3.0)
         mode = DominantFrequencyMode(DominantFrequencyConfig(peaks=None))
         result = mode.compare(ref_t, ref_v, ref_t, ref_v)
         assert not result.passed
-        assert summarize(result).criterion.startswith("No peaks declared — declare")
-        assert len(result.diagnostics["detected_reference_peaks_hz"]) >= 1
+        assert summarize(result).criterion == (
+            "No peaks declared — declare them in the criterion's `peaks` list; "
+            "the baseline's strongest peaks are marked on its spectrum plot as "
+            "Reference peaks"
+        )
+        assert len(_reference_peaks(result)) >= 1
+
+    def test_the_markers_the_sentence_names_are_on_the_plot(self):
+        """What the no-peaks sentence calls Reference peaks is what the
+        figure draws under that name, at the reference's resonance."""
+        from dstf.comparison.metric_tree import stamp_leaf_path
+        from dstf.figures.plotly import variable_figure
+        from dstf.figures.view import build_view
+
+        ref_t, ref_v = self._sine(3.0)
+        vc = score({"mode": "dominant-frequency"}, ref_t, ref_v, ref_t, ref_v)
+        assert summarize(vc).criterion.endswith("as Reference peaks")
+        vc.name = "x"
+        stamp_leaf_path(leaf_from_variable(vc), "/metrics")
+        view = build_view(
+            "x",
+            act_time=ref_t,
+            act_values=ref_v,
+            ref_time=ref_t,
+            ref_values=ref_v,
+            leaves=[("/metrics", vc)],
+        )
+        (marked,) = [
+            t
+            for t in variable_figure(view)["data"]
+            if t.get("name") == "Reference peaks"
+        ]
+        assert any(abs(f - 3.0) < 0.1 for f in marked["x"])
 
     def test_resolves_via_factory(self):
         mode = resolve_mode(
@@ -208,10 +245,9 @@ class TestDominantFrequencyMode:
         assert not r_tight.passed
 
     def test_detected_reference_peaks_always_reported(self):
-        """``detected_reference_peaks_hz`` is reported regardless of
-        whether the user declared peaks — it always reflects the
-        reference spectrum's top peaks, so a spec author can declare the
-        ``peaks`` list from it."""
+        """The reference's peaks are marked whether or not the user declared
+        peaks — they always reflect the reference spectrum's top peaks, so a
+        spec author can declare the ``peaks`` list from them."""
         ref_t, ref_v = self._multi_sine([2.0, 4.0, 6.0])
         mode = DominantFrequencyMode(
             DominantFrequencyConfig(
@@ -219,7 +255,7 @@ class TestDominantFrequencyMode:
             )
         )
         result = mode.compare(ref_t, ref_v, ref_t, ref_v)
-        detected = result.diagnostics["detected_reference_peaks_hz"]
+        detected = _reference_peaks(result)
         assert len(detected) >= 3
         # Detected should include the 3 we authored.
         assert any(abs(f - 2.0) < 1.0 for f in detected)
@@ -274,7 +310,7 @@ class TestDominantFrequencySpectrumAndWindows:
             COS8,
         )
         # Its fundamental, the first bin of a 3 s span on 64 points.
-        assert vc.diagnostics["detected_reference_peaks_hz"][0] == 0.328125
+        assert _reference_peaks(vc)[0] == 0.328125
 
     def test_a_run_with_no_time_span_has_no_spectrum(self):
         vc = score(
@@ -297,14 +333,14 @@ class TestDominantFrequencySpectrumAndWindows:
             COS8,
         )
         assert vc.passed is True
-        assert vc.diagnostics["detected_reference_peaks_hz"] == []
+        assert _reference_peaks(vc) == []
 
     def test_a_tones_leakage_slope_is_not_a_peak(self):
         # 8.3 cycles over the span: the spectrum rises to bin 8 and falls
         # after it; only bin 8 is a local maximum.
         ref = np.cos(2 * np.pi * 8.3 * T64 / 64)
         vc = score(_peaks({"freq": 0.125}), T64, ref, T64, COS8)
-        assert vc.diagnostics["detected_reference_peaks_hz"] == [0.125]
+        assert _reference_peaks(vc) == [0.125]
 
     def test_a_flat_topped_resonance_is_one_peak(self):
         """A resonance between bins 8 and 9 lands on both with bit-equal
@@ -323,7 +359,7 @@ class TestDominantFrequencySpectrumAndWindows:
         )
         assert vc.passed is True
         assert summarize(vc).details == (("peak 0.1328125 Hz", "matched at 0.125 Hz"),)
-        detected = vc.diagnostics["detected_reference_peaks_hz"]
+        detected = _reference_peaks(vc)
         assert 0.125 in detected and 0.140625 not in detected
 
     def test_the_mean_is_no_peak(self):

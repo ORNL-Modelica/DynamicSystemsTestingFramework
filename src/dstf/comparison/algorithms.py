@@ -1663,10 +1663,10 @@ def _find_top_n_peaks(
     runs second so pairing between reference and actual is predictable for
     tests with known frequencies (e.g., PRBS).
 
-    Reported as the ``detected_reference_peaks_hz`` diagnostic so a spec
-    author can read the reference's own peaks off a failing run and
-    declare them; not consulted during pass/fail evaluation (that path
-    uses declared peaks).
+    Drawn on the spectrum plot ("Reference peaks") so a spec author can
+    read the reference's own peaks off a failing run and declare them;
+    not consulted during pass/fail evaluation (that path uses declared
+    peaks).
     """
     if len(freqs) < 3 or n_peaks < 1:
         return []
@@ -1871,20 +1871,20 @@ def _compare_dominant_frequency(
     Unmatched declared peaks fail with ``matched_hz=None`` and a reason
     of "no peak in tolerance window".
 
-    When ``peaks`` is empty (or omitted), the leaf fails with a reason
-    pointing the author at the leaf's ``peaks`` list and at the
-    ``detected_reference_peaks_hz`` diagnostic — the declared-peaks
-    contract is explicit by design.
+    When ``peaks`` is empty (or omitted), the leaf fails, and its summary
+    points the author at the leaf's ``peaks`` list and at the reference's
+    peaks marked on the spectrum plot — the declared-peaks contract is
+    explicit by design.
 
     The top-N-by-amplitude algorithm of the pre-D75 implementation is
-    retained as ``_find_top_n_peaks`` — it fills that diagnostic, so an
+    retained as ``_find_top_n_peaks`` — it finds those marked peaks, so an
     author who doesn't yet know their peak frequencies can take them
     from the reference spectrum. Pass/fail logic no longer calls it.
     """
     # The actual-side FFT is always required — without it we can't match
     # any peaks. The reference-side FFT is only required when no peaks
-    # are declared (the failure then reports the ref spectrum's top-N as
-    # a diagnostic). With declared peaks, an empty reference is OK
+    # are declared (the failure then marks the ref spectrum's top-N on
+    # its plot). With declared peaks, an empty reference is OK
     # (baseline-free path, idea #59 / D83).
     if len(act_values) < 4:
         # Nothing to take a spectrum of: not scored, with the reason where
@@ -1925,10 +1925,7 @@ def _compare_dominant_frequency(
             passed=False,
             nrmse=float("inf"),
             mode="dominant-frequency",
-            diagnostics={
-                "paired_peaks": [],
-                "detected_reference_peaks_hz": [f for f, _ in detected_ref_peaks],
-            },
+            diagnostics={"paired_peaks": []},
             geometry=_frequency_geometry(
                 ref_freqs,
                 ref_spectrum,
@@ -2008,7 +2005,6 @@ def _compare_dominant_frequency(
         mode="dominant-frequency",
         diagnostics={
             "paired_peaks": paired,
-            "detected_reference_peaks_hz": [f for f, _ in detected_ref_peaks],
         },
         geometry=_frequency_geometry(
             ref_freqs,

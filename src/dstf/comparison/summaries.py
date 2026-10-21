@@ -327,8 +327,8 @@ def summarize_dominant_frequency(vc: VariableComparison) -> ScoreSummary:
             display="no peaks declared",
             criterion=(
                 "No peaks declared — declare them in the criterion's `peaks` "
-                "list; the reference's detected peaks are in the "
-                "diagnostics as `detected_reference_peaks_hz`"
+                "list; the baseline's strongest peaks are marked on its "
+                "spectrum plot as Reference peaks"
             ),
         )
     details = tuple(
