@@ -929,7 +929,9 @@ class Config:
                 if not _dependency_looks_like_path(dep, base_dir):
                     resolved_deps.append(dep)  # bare library name
                     continue
-                dep_path = Path(dep)
+                # `~` is the home directory, as in a shell; read as a
+                # relative path it was a folder named `~` beside this file.
+                dep_path = Path(dep).expanduser()
                 if not dep_path.is_absolute():
                     dep_path = _resolved(base_dir / dep_path)
                 resolved_deps.append(str(dep_path))

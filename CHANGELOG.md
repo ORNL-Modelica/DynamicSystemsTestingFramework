@@ -25,6 +25,8 @@ this file says when they do.
   "not scored — signal too short for FFT", not "No peaks declared".
 - `manifest cleanup` no longer logs "Removed orphaned role dir" for a
   soft-check or companion folder it could not delete.
+- A `testing.json` dependency written `~/…` is under the home directory; it
+  was read as a folder named `~` beside the file.
 
 ## [1.2.0] - 2026-10-19
 

@@ -231,8 +231,9 @@ TESTING_JSON: dict[str, Setting] = {
         _STRINGS,
         [],
         "Libraries loaded before the library under test: a library's name "
-        '("Modelica") or a path relative to this file — a library\'s '
-        "directory, its package.mo, or a one-file library Name.mo.",
+        '("Modelica") or a path relative to this file (~ is the home '
+        "directory) — a library's directory, its package.mo, or a one-file "
+        "library Name.mo.",
     ),
     "reference_root": Setting(
         {"type": "string"},

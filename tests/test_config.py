@@ -1326,6 +1326,11 @@ class TestFinding17BareDependencyNames:
             str((tmp_path / "sub" / "package.mo").resolve()),
         ]
 
+    def test_a_leading_tilde_is_the_home_directory(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        config = self._config_with_deps(tmp_path, ["~/libs/Dep"])
+        assert config.dependencies == [str(tmp_path / "home" / "libs" / "Dep")]
+
     def test_a_mo_file_or_a_dot_name_is_a_path_on_its_own(self, tmp_path):
         """Neither need exist: `.mo` alone, or a leading dot alone, says it
         is a file to load, not a library to load by name."""
