@@ -302,6 +302,17 @@ class TestDominantFrequencySpectrumAndWindows:
         assert len(_geometry(vc, Series, "spectrum/act").x) == 0
         assert _geometry(vc, Marker, "peaks/declared/0").y == 0.0
 
+    def test_a_reference_with_no_time_span_has_no_peaks_to_detect(self):
+        vc = score(
+            _peaks({"freq": 0.125}),
+            np.ones(8),
+            np.array([0.0, 1.0] * 4),
+            T64,
+            COS8,
+        )
+        assert vc.passed is True
+        assert vc.diagnostics["detected_reference_peaks_hz"] == []
+
     def test_a_tones_leakage_slope_is_not_a_peak(self):
         # 8.3 cycles over the span: the spectrum rises to bin 8 and falls
         # after it; only bin 8 is a local maximum.

@@ -338,6 +338,22 @@ def test_a_lost_variable_keeps_its_overrides_metric_and_tolerance(override, agai
 
 
 @pytest.mark.parametrize(
+    "override,metric",
+    [({"mode": "tube", "tolerance": "wide"}, "tube"), ({"mode": "Tube"}, "")],
+    ids=["a malformed tolerance", "a mode no metric is registered under"],
+)
+def test_a_lost_variable_whose_override_is_an_error_names_only_a_real_metric(
+    override, metric
+):
+    test = make_test_model(
+        variable_patterns=["x", "y"], variable_overrides={"y": override}
+    )
+    comp = compare_one(test, _result("x"), _Store(BOTH))
+    (y,) = [v for v in comp.variables if v.name == "y"]
+    assert (y.mode, y.passed, y.diagnostics["error"]) == (metric, False, _lost("y"))
+
+
+@pytest.mark.parametrize(
     "fields",
     [
         # A glob that matches nothing anywhere stays a log line.
