@@ -23,6 +23,8 @@ this file says when they do.
   baseline stored under the expression.
 - A dominant-frequency criterion on a run of fewer than four samples reads
   "not scored — signal too short for FFT", not "No peaks declared".
+- `manifest cleanup` no longer logs "Removed orphaned role dir" for a
+  soft-check or companion folder it could not delete.
 
 ## [1.2.0] - 2026-10-19
 

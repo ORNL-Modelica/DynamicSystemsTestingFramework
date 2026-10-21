@@ -505,8 +505,9 @@ class TestReferenceStore:
         ]
 
     def test_cleanup_tolerates_a_role_folder_it_cannot_delete(
-        self, sample_models_dir, tmp_path
+        self, sample_models_dir, tmp_path, caplog
     ):
+        """...and does not say it removed it."""
         import os
 
         store = ReferenceStore(
@@ -520,10 +521,13 @@ class TestReferenceStore:
         (locked / "k.json").write_text("{}", encoding="utf-8")
         os.chmod(locked, 0o555)
         try:
-            assert store.cleanup_obsolete() == 1
+            with caplog.at_level(logging.INFO, logger="dstf"):
+                assert store.cleanup_obsolete() == 1
         finally:
             os.chmod(locked, 0o755)
         assert not (store.ref_dir / "ref_0001.json").exists()
+        assert locked.is_dir()
+        assert not any("role dir" in r.getMessage() for r in caplog.records)
 
     def test_cleanup_obsolete(self, sample_models_dir, tmp_path):
         """cleanup_obsolete removes files with obsolete status."""
@@ -1120,7 +1124,7 @@ class TestIdAllocation:
         assert index.register("Lib.New") != "0001"
 
     def test_cleanup_obsolete_removes_orphaned_role_dirs(
-        self, store_with_primary, tmp_path
+        self, store_with_primary, tmp_path, caplog
     ):
         """Deleting an obsolete ref must also delete its soft_checks/ and
         companions/ dirs so a reused ID cannot inherit them."""
@@ -1143,9 +1147,16 @@ class TestIdAllocation:
         assert sc_dir.is_dir() and co_dir.is_dir()
 
         _set_status(store, test.model_id, "obsolete")
-        assert store.cleanup_obsolete() == 1
+        with caplog.at_level(logging.INFO, logger="dstf"):
+            assert store.cleanup_obsolete() == 1
         assert not sc_dir.exists()
         assert not co_dir.exists()
+        assert [
+            r.getMessage() for r in caplog.records if "role dir" in r.getMessage()
+        ] == [
+            f"Removed orphaned role dir: {sc_dir}",
+            f"Removed orphaned role dir: {co_dir}",
+        ]
 
 
 class TestIdHighWaterMark:
