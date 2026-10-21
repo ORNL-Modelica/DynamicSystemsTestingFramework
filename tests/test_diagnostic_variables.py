@@ -15,6 +15,7 @@ import pytest
 
 from conftest import make_test_model
 from dstf.backends.types import VariableResult
+from dstf.comparison.registry import summarize
 from dstf.config import Config
 from dstf.discovery.spec_parser import spec_models_from_document
 from dstf.discovery.test_registry import diagnostic_names, merge_tests
@@ -320,11 +321,18 @@ def test_declared_bounds_on_a_summary_need_no_baseline():
 def test_a_run_without_the_name_reads_as_today():
     _, vc = _eval(_final(), ref_diags=[DiagnosticSummary("CPUtime", final=1.0)])
     assert vc.diagnostics["error"] == "variable 'CPUtime' not found in the result"
+    # Named by the leaf's own mode, as every unscored criterion is.
+    assert summarize(vc).criterion == (
+        "scalar criterion not scored — variable 'CPUtime' not found in the result"
+    )
 
 
 def test_a_baseline_without_the_name_reads_as_today():
     _, vc = _eval(_final(), run_diags=[_vr("CPUtime", RUN_CPU)])
     assert vc.diagnostics["error"] == "variable 'CPUtime' not found in the baseline"
+    assert summarize(vc).criterion == (
+        "scalar criterion not scored — variable 'CPUtime' not found in the baseline"
+    )
     assert (vc.actual_final, vc.index) == (2.0, 0)
 
 

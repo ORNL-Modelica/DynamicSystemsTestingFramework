@@ -3471,6 +3471,7 @@ class TestACriterionOnAMissingVariableNamesItsMetric:
         test = _mk_test(
             variable_patterns=["x", "y"],
             variable_overrides={"x": override} if override else {},
+            comparison_tolerance=0.02,
         )
         result = TestResult(
             model_id="MyLib.Test",
@@ -3483,9 +3484,15 @@ class TestACriterionOnAMissingVariableNamesItsMetric:
         reference = decode_reference(
             {"time": t, "variables": [{"index": 1, "name": "y", "values": [0, 1, 2]}]}
         )
-        (failed,) = failed_criteria(compare_test(test, result, reference))
+        comp = compare_test(test, result, reference)
+        (failed,) = failed_criteria(comp)
         assert failed.head == f"x: {override.get('mode', 'nrmse')} · against primary"
         assert failed.reason == "variable 'x' not found in the baseline"
+        # The tolerance it would have applied — its own, else the test's —
+        # as a scored criterion carries it.
+        applied = override.get("tolerance", 0.02)
+        x = next(vc for vc in comp.variables if vc.name == "x")
+        assert x.tolerance_used == Sides(applied, applied)
 
 
 class TestTheMigrationHintIsSharedByBothPaths:
@@ -3498,8 +3505,13 @@ class TestTheMigrationHintIsSharedByBothPaths:
             decode_reference(_vi_reference(name="pipe.T[1]", with_expression=False)),
         )
 
-    def test_the_tree_path_says_the_name_to_store(self, caplog):
-        spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+    @pytest.mark.parametrize("tree", [True, False], ids=["tree", "flat"])
+    def test_each_path_says_the_name_to_store(self, tree, caplog):
+        spec = (
+            parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+            if tree
+            else None
+        )
         with caplog.at_level(logging.WARNING):
             comp = self._un_migrated(metric_tree_spec=spec)
         assert not comp.passed
