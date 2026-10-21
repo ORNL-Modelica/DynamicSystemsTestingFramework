@@ -33,14 +33,18 @@ this file says when they do.
 
 ### Fixed
 
-- A test whose nrmse criterion scored NaN (a NaN in its run) reads `nan` as
-  its Worst NRMSE, on the dashboard, its report page and the tool's Suite
-  page, and sorts above every number; it read its other criteria's worst, or
-  `n/a (1 unscored)`.
+- A test whose nrmse criterion scored a number that is not finite (NaN or
+  inf, from a NaN in its run) reads `nan` as its Worst NRMSE, on the
+  dashboard, its report page and the tool's Suite page, and sorts above every
+  number; it read its other criteria's worst, or `n/a (1 unscored)`. In
+  `comparison_data.json`, `summary.worst_nrmse` is then null, even beside
+  criteria that scored numbers, and the new `summary.n_nan` counts those
+  criteria.
 - The Worst NRMSE column's "unscored" count is the criteria that were not
   scored. It counted every criterion whose number was not finite, so a tube
   or an nrmse over a NaN sample, and a dominant-frequency criterion with a
-  peak not found or none declared, read as unscored though each was scored.
+  peak not found or none declared (over a baseline of 4 or more samples),
+  read as unscored though each was scored.
 - A points criterion with a lower/upper tolerance pair, whose curve is
   infinite throughout its time box, names that value as the closest one
   (`closest value inf is outside [0.9, 1.2]`) instead of saying no sample
