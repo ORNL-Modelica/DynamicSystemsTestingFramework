@@ -974,10 +974,11 @@ class TestTheDashboardGetsTheComparisons:
         assert cmd_run(_run_args(run_env, "--rerun", "failed")) == 0
         assert self._says(run_env.work_dir / "dashboard.html") == (True, True)
 
-    def test_the_report_suite_renders_with_the_comparisons(self, run_env):
-        """`run --report` writes the sidecars, then the page: a test whose
-        run timed out reads the SIM_FAIL the console printed, not the TIMED
-        OUT its progress recorded."""
+    def test_a_timed_out_run_reads_the_sim_fail_its_comparison_says(self, run_env):
+        """Without --report there is no sidecar: the page's verdict is the
+        comparison the command hands it. A test whose run timed out reads
+        the SIM_FAIL the console printed, not the TIMED OUT its progress
+        recorded."""
         from dstf.backends.progress import ProgressReporter
 
         t1 = "Lib.T1"
@@ -993,10 +994,23 @@ class TestTheDashboardGetsTheComparisons:
             return _run(tests)
 
         backend.run_tests = run_tests
-        cmd_run(_run_args(run_env, "--report"))
+        cmd_run(_run_args(run_env))
         html = (run_env.work_dir / "dashboard.html").read_text(encoding="utf-8")
-        assert 'data-status="sim-fail"' in html
+        assert html.count('data-status="sim-fail"') == 1
         assert 'data-status="timed-out"' not in html
+
+    def test_the_report_page_lists_each_test_with_its_verdict_and_cpu(self, run_env):
+        """`run --report` writes the per-test pages, then the dashboard: with
+        no status.json (this backend keeps none), the comparisons and
+        results the command hands it are what put the test on the page —
+        its PASS, and its CPU time as Sim (s)."""
+        t1 = "Lib.T1"
+        _with_baseline(run_env, t1)
+        (run_env.work_dir / "status.json").unlink(missing_ok=True)
+        result = _with_cpu_time(_mk_result(t1), 4.25)
+        run_env.make([t1], results={t1: result})
+        cmd_run(_run_args(run_env, "--report"))
+        assert self._says(run_env.work_dir / "dashboard.html") == (True, True)
 
 
 # ---------------------------------------------------------------------------
