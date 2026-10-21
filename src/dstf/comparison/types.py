@@ -33,6 +33,11 @@ class VariableComparison:
     """A criterion's verdict on one variable, as a mode's
     :meth:`~dstf.comparison.modes.ComparisonMode.compare` returns it.
 
+    ``rmse`` through ``actual_final`` are set by a mode whose summary reports
+    them; a mode that has none of them, and a criterion that could not be
+    scored, leaves them at their defaults (``inf`` / ``nan``: not measured,
+    and ``0.0`` for a range or a time).
+
     Attributes:
         index: Set by the framework; 0 from a mode.
         name: Set by the framework; ``""`` from a mode.
@@ -44,11 +49,6 @@ class VariableComparison:
         max_abs_error_time: Where it is, in seconds.
         reference_final: The baseline's final value.
         actual_final: The run's final value.
-
-    The six after ``nrmse`` are set by a mode whose summary reports them; a
-    mode that has none of them, and a criterion that could not be scored,
-    leaves them at their defaults (``inf`` / ``nan``: not measured, and
-    ``0.0`` for a range or a time).
         mode: The mode's name.
         diagnostics: What else the report shows; ``"error"`` holds why the
             criterion could not be scored.
