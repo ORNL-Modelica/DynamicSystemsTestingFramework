@@ -931,7 +931,10 @@ class Config:
                     continue
                 # `~` is the home directory, as in a shell; read as a
                 # relative path it was a folder named `~` beside this file.
-                dep_path = Path(dep).expanduser()
+                # os.path, not Path.expanduser: that raises on a `~user`
+                # it cannot find and, having dropped a leading `./`,
+                # expands `./~/x` too — this leaves both as written.
+                dep_path = Path(os.path.expanduser(dep))
                 if not dep_path.is_absolute():
                     dep_path = _resolved(base_dir / dep_path)
                 resolved_deps.append(str(dep_path))

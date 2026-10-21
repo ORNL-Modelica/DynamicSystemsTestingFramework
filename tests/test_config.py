@@ -1327,9 +1327,24 @@ class TestFinding17BareDependencyNames:
         ]
 
     def test_a_leading_tilde_is_the_home_directory(self, tmp_path, monkeypatch):
+        # HOME on POSIX, USERPROFILE on Windows: `~` is whichever names home.
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
         config = self._config_with_deps(tmp_path, ["~/libs/Dep"])
         assert config.dependencies == [str(tmp_path / "home" / "libs" / "Dep")]
+
+    def test_a_tilde_naming_no_user_is_a_folder_beside_the_file(self, tmp_path):
+        """`~user` for a user there is not cannot be expanded, as in a shell:
+        it stays a relative path, not an error."""
+        config = self._config_with_deps(tmp_path, ["~nosuchuserxyz/Lib"])
+        assert config.dependencies == [
+            str((tmp_path / "~nosuchuserxyz" / "Lib").resolve())
+        ]
+
+    def test_a_tilde_after_a_dot_is_a_folder_named_tilde(self, tmp_path):
+        """Only a LEADING `~` is home: `./~/x` is the folder `~` beside the file."""
+        config = self._config_with_deps(tmp_path, ["./~/x"])
+        assert config.dependencies == [str((tmp_path / "~" / "x").resolve())]
 
     def test_a_mo_file_or_a_dot_name_is_a_path_on_its_own(self, tmp_path):
         """Neither need exist: `.mo` alone, or a leading dot alone, says it
