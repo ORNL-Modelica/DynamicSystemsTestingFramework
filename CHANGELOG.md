@@ -16,6 +16,10 @@ this file says when they do.
   only those its summary reports; its `diagnostics` no longer carry what
   nothing showed (the embedded spectra, `max_time_delta`, `reference_scalar`,
   a points final check's `tolerance` and `delta`).
+- A points or event-timing criterion whose window holds none of the run's
+  samples is not scored, and FAILS saying so (`no actual samples to check
+  (empty trajectory or window)`); auto-detected events there passed on no
+  events at all.
 
 ### Fixed
 

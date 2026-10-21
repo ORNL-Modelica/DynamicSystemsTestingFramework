@@ -9344,3 +9344,28 @@ every name is under Other variables, every metric offered) and 9 (K1's
 
 *Correcting the record:* `"CPUtime.final"` read the summary raw; only the
 card's bare `"CPUtime"` read the rounded copy.
+
+## D163 — A window with no samples scores nothing (2026-10-21)
+
+**Context.** `_no_data_failure` already held that a comparison with nothing
+to compare — an empty baseline slice, an empty run, a window that excludes
+every sample — FAILS as not scored, never passes vacuously. nrmse, tube,
+range, scalar and dominant-frequency kept it. Two modes did not:
+
+- **event-timing, auto-detected**, in a window holding none of the run's
+  samples found no events on either side, paired none, and PASSED.
+- **points** and **event-timing with declared events** failed there, but
+  as a row or an event not found (`no actual samples (empty trajectory)`),
+  so the tool drew the criterion as scored and offered its drags and a
+  Ctrl+click on a plot that showed nothing of it.
+
+**Decision.** A points or event-timing criterion whose run (after its
+window) holds no sample is not scored: `no actual samples to check (empty
+trajectory or window)`, the sentence a range uses, with rows declared as
+without. Auto-detected events whose baseline holds no sample in the window
+read `no reference samples to compare (empty baseline or window)`. Either
+way the test FAILS and says why, and `dstf author` follows from
+`reporting.status.not_scored_reason`: the editor says why, offers no drag
+and no Ctrl+click, and keeps the window's ⌖ where the card draws a plot.
+
+TRANSFORM is unaffected: every TRANSFORM criterion is nrmse.

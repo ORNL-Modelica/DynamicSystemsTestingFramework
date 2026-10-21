@@ -478,9 +478,16 @@ def _compare_points(
     final-value check passes iff ``−lower < d < upper`` (strict).
     """
     tolerance = parse_sides(tolerance, "tolerance")
+    if len(act_values) == 0:
+        # An empty trajectory, or a window that holds none of its samples:
+        # nothing to check, with rows declared as without — not scored, as
+        # a range is (`_no_data_failure`), never a row that failed.
+        return _no_data_failure(
+            "points", "no actual samples to check (empty trajectory or window)"
+        )
     if not points:
         # Implicit final-only — legacy behavior.
-        if len(ref_values) == 0 or len(act_values) == 0:
+        if len(ref_values) == 0:
             return VariableComparison(
                 index=0,
                 name="",
@@ -605,13 +612,6 @@ def _compare_points(
         # ``rel``: each side is that fraction of |target|.
         lower_limit = per_tol.lower * abs(target) if mode == "rel" else per_tol.lower
         upper_limit = per_tol.upper * abs(target) if mode == "rel" else per_tol.upper
-        if len(act_time) == 0:
-            failed += 1
-            unscored.append(
-                {"time": t, "reason": "no actual samples (empty trajectory)"}
-            )
-            point_failures.append(unscored[-1])
-            continue
         t_lo = max(t - x_tol.lower, float(act_time[0]))
         t_hi = min(t + x_tol.upper, float(act_time[-1]))
         if t_hi < t_lo:
@@ -1445,6 +1445,19 @@ def _compare_event_timing(
     the max event-time delta across matched pairs.
     """
     time_tolerance = parse_sides(time_tolerance, "time_tolerance")
+    # An empty trajectory, or a window that holds none of its samples, has
+    # no events to find and none to miss: not scored (`_no_data_failure`).
+    # Auto-detected, the reference's events were paired with none and the
+    # leaf passed on nothing; declared, each read as an event not found.
+    if len(act_time) == 0:
+        return _no_data_failure(
+            "event-timing", "no actual samples to check (empty trajectory or window)"
+        )
+    if declared_events is None and len(ref_time) == 0:
+        return _no_data_failure(
+            "event-timing",
+            "no reference samples to compare (empty baseline or window)",
+        )
     act_boundaries = _find_event_boundaries(act_time)
     act_events = [float(act_time[b[0]]) for b in act_boundaries]
 

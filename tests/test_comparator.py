@@ -2090,6 +2090,66 @@ class TestEmptyDataFails:
         comp = compare_test(test, result, decode_reference(reference))
         assert not comp.passed
 
+    @pytest.mark.parametrize(
+        "criterion",
+        [
+            {"metric": "points", "points": [{"time": 55.0, "value": 1.0}]},
+            {"metric": "points"},
+            {"metric": "event-timing", "time_tolerance": 0.1},
+            {"metric": "event-timing", "events": [{"time": 55.0}]},
+        ],
+        ids=["points-rows", "points-final", "events-auto", "events-declared"],
+    )
+    def test_a_window_with_no_samples_scores_nothing(self, criterion):
+        """A window that holds none of the run's samples leaves a points or
+        event-timing criterion nothing to check: it is not scored and the
+        test FAILS, saying why — as a range is. Auto-detected events passed
+        here, on no events at all."""
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.reporting.status import not_scored_reason
+
+        spec = parse_metric_tree(
+            {**criterion, "variable": "x", "window": {"start": 50.0, "end": 60.0}}
+        )
+        test = _mk_test(metric_tree_spec=spec)
+        reference = {
+            "time": [0.0, 5.0, 5.0, 10.0],
+            "variables": [{"index": 1, "name": "x", "values": [1.0, 1.0, 2.0, 2.0]}],
+        }
+        comp = compare_test(test, _mk_result(), decode_reference(reference))
+        (vc,) = comp.variables
+        reason = "no actual samples to check (empty trajectory or window)"
+        assert not comp.passed
+        assert not_scored_reason(vc) == reason
+        assert summarize(vc).criterion == (
+            f"{criterion['metric']} criterion not scored — {reason}"
+        )
+
+    def test_events_against_a_baseline_with_no_samples_in_the_window(self):
+        """The run reaches the window and the baseline does not: auto-detected
+        events have nothing to be compared with."""
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.reporting.status import not_scored_reason
+
+        spec = parse_metric_tree(
+            {
+                "metric": "event-timing",
+                "variable": "x",
+                "window": {"start": 7.0, "end": 10.0},
+            }
+        )
+        test = _mk_test(metric_tree_spec=spec)
+        reference = {
+            "time": [0.0, 2.0, 2.0, 5.0],
+            "variables": [{"index": 1, "name": "x", "values": [1.0, 1.0, 2.0, 2.0]}],
+        }
+        comp = compare_test(test, _mk_result(), decode_reference(reference))
+        (vc,) = comp.variables
+        assert not comp.passed
+        assert not_scored_reason(vc) == (
+            "no reference samples to compare (empty baseline or window)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Points mode: clipped checkpoints fail
@@ -2169,16 +2229,6 @@ class TestPointsClipping:
                 ),
             ),
             (
-                [{"time": 1}, {"time": 2}],
-                ([0, 1, 2], [0, 1, 2]),
-                ([], []),
-                (
-                    ("checkpoints", "2 of 2 failed, 2 not scored"),
-                    ("t=1", "no actual samples (empty trajectory)"),
-                    ("t=2", "no actual samples (empty trajectory)"),
-                ),
-            ),
-            (
                 [
                     {"time": 5, "value": 1},
                     {"time": 6, "value": 1},
@@ -2192,23 +2242,8 @@ class TestPointsClipping:
                     ("t=6", "checkpoint time outside actual trajectory"),
                 ),
             ),
-            (
-                [{"value": 2, "tolerance": 0.1}],
-                ([], []),
-                ([], []),
-                (
-                    ("checkpoints", "1 of 1 failed, 1 not scored"),
-                    ("t=0", "no actual samples (empty trajectory)"),
-                ),
-            ),
         ],
-        ids=[
-            "no reference",
-            "outside the reference",
-            "no actual",
-            "beyond the actual",
-            "nothing at all",
-        ],
+        ids=["no reference", "outside the reference", "beyond the actual"],
     )
     def test_each_row_that_could_not_be_scored_fails_and_is_listed(
         self, rows, ref, act, details

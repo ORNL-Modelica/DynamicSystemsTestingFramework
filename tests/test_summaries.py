@@ -1147,28 +1147,20 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
             )
             assert vc.diagnostics["unscored_point"] == {"time": 5.0, "reason": reason}
 
-    @pytest.mark.parametrize(
-        ("ref_time", "act_time", "reason"),
-        [
-            ("T", "empty", "no actual samples (empty trajectory)"),
-            ("empty", "T", "no reference data for ref-relative point"),
-        ],
-    )
-    def test_a_checkpoint_with_nothing_to_score_is_recorded_unscored(
-        self, ref_time, act_time, reason
-    ):
-        """An empty run, or a ref-relative checkpoint with no reference: the
-        row fails without a delta, so it is the `unscored_point` the
-        sentence reports — not a row among the scored ones."""
+    def test_a_checkpoint_with_nothing_to_score_is_recorded_unscored(self):
+        """A ref-relative checkpoint with no reference: the row fails without
+        a delta, so it is the `unscored_point` the sentence reports — not a
+        row among the scored ones."""
         from dstf.comparison.sides import Sides
 
-        times = {"T": self.T, "empty": np.array([])}
+        reason = "no reference data for ref-relative point"
+        empty = np.array([])
         vc = score(
             {"mode": "points", "points": [{"time": 0.5}]},
-            times[ref_time],
-            times[ref_time],
-            times[act_time],
-            times[act_time],
+            empty,
+            empty,
+            self.T,
+            self.T,
             tolerance=Sides(0.03, 0.03),
         )
         vc.tolerance_used = Sides(0.03, 0.03)
