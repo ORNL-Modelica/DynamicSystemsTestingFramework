@@ -628,6 +628,42 @@ def test_a_refused_op_is_a_patch_error_and_changes_nothing(op, reason):
     assert document == _one_leaf_document()
 
 
+@pytest.mark.parametrize(
+    ("document", "model_id", "ops"),
+    [
+        # The descent creates `metrics` before it meets the array index.
+        (
+            {"tests": [{"model": "M", "comparison": {}}]},
+            "M",
+            [{"op": "add", "path": "/metrics/children/0/tolerance", "value": 1}],
+        ),
+        # A model the document has no entry for.
+        (
+            _one_leaf_document(),
+            "New",
+            [{"op": "replace", "path": "/comparison/tolerance", "value": 1}],
+        ),
+        # The first op applies; the second is refused.
+        (
+            _one_leaf_document(),
+            "M",
+            [
+                {"op": "add", "path": "/comparison/tolerance", "value": 0.5},
+                {"op": "replace", "path": "/comparison/missing", "value": 1},
+            ],
+        ),
+    ],
+    ids=["a key made on the way", "an absent model", "an op before the refused one"],
+)
+def test_a_refused_patch_leaves_the_document_as_it_was(document, model_id, ops):
+    """All or nothing: what a refused patch did before it was refused is
+    not left in the document."""
+    before = copy.deepcopy(document)
+    with pytest.raises(PatchError):
+        apply_patch_to_document(document, model_id, ops)
+    assert document == before
+
+
 # =========================================================================
 # Folded in from tests/test_review_fixes_discovery.py — regression tests for
 # the 2026-07-06 review, Themes 2 & 6.
@@ -734,9 +770,8 @@ class TestFinding49ArrayAdd:
                     }
                 ],
             )
-        # No dict stands where the array would be. (The document is the
-        # caller's to drop: the one writer, spec update, writes nothing.)
-        assert "children" not in doc["tests"][0]["metrics"]
+        # That nothing is left in the document — not even the `metrics` the
+        # descent made — is test_a_refused_patch_leaves_the_document_as_it_was.
 
 
 def test_plots_is_a_whitelisted_subtree():

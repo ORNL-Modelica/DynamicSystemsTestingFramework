@@ -63,8 +63,18 @@ def apply_patch_to_document(
     matches ``model_id`` (created if absent), in place. Returns ``data``.
     Raises :class:`PatchError` naming the failing op. The authoring
     Session's in-memory document goes through here; so does the disk path,
-    ``spec_update.apply_validated_patches``."""
-    entry = _find_or_create_entry(data, model_id)
+    ``spec_update.apply_validated_patches``.
+
+    All or nothing: the ops are applied to a copy of the entry, which
+    replaces it (or, for a new model, is appended) only once every op has
+    applied. A refused patch leaves ``data`` as it was — not the earlier
+    ops of the patch, not a ``"metrics": {}`` an op's descent made before
+    the op was refused, not a ``{"model": ...}`` for a model it named. The
+    entry is a new object afterwards: read it back from ``data``."""
+    index = _entry_index(data, model_id)
+    entry = (
+        {"model": model_id} if index is None else copy.deepcopy(data["tests"][index])
+    )
     for i, op in enumerate(patch_ops):
         try:
             _apply_one_op(entry, op, whitelist)
@@ -74,6 +84,10 @@ def apply_patch_to_document(
                 path=e.path,
                 reason=e.reason,
             ) from None
+    if index is None:
+        data["tests"].append(entry)
+    else:
+        data["tests"][index] = entry
     return data
 
 
@@ -93,10 +107,11 @@ def load_spec_document(spec_path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _find_or_create_entry(data: dict, model_id: str) -> dict:
+def _entry_index(data: dict, model_id: str) -> int | None:
+    """Where ``model_id``'s entry is in ``data["tests"]``; None for none."""
     matches = [
-        entry
-        for entry in data["tests"]
+        i
+        for i, entry in enumerate(data["tests"])
         if isinstance(entry, dict) and entry.get("model") == model_id
     ]
     if len(matches) > 1:
@@ -109,11 +124,7 @@ def _find_or_create_entry(data: dict, model_id: str) -> dict:
             len(matches),
             model_id,
         )
-    if matches:
-        return matches[0]
-    entry = {"model": model_id}
-    data["tests"].append(entry)
-    return entry
+    return matches[0] if matches else None
 
 
 def _apply_one_op(entry: dict, op: dict, whitelist: tuple[str, ...]) -> None:
