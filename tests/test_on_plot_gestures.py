@@ -712,9 +712,11 @@ def test_a_window_and_a_blank_bound_are_set_from_the_click(session):
 
 
 def test_a_window_that_misses_the_run_is_moved_back_by_a_click(tmp_path):
-    """A criterion whose window misses every sample is not scored: nothing
-    of it is drawn to drag, but its window's ⌖ stays — click it, then the
-    plot, and the window starts there. The one edit is that start."""
+    """A range whose window misses every sample is not scored (as is any
+    criterion so windowed but points and event-timing, which score it a
+    FAIL): nothing of it is drawn to drag, but its window's ⌖ stays — click
+    it, then the plot, and the window starts there. The one edit is that
+    start."""
     tree = copy.deepcopy(TREE)
     index = int(RANGE.rsplit("/", 1)[1])
     missed = {**tree["children"][index], "window": {"start": 5.0, "end": 6.0}}

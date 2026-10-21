@@ -84,21 +84,27 @@ _BOUNDS = {"min_value": "max_value", "max_value": "min_value"}
 
 #: Why the place is a sentence on a test with nothing scored BECAUSE OF A
 #: RUN (D151), ``{}`` being the word its criteria say in place of a verdict
-#: (`live_rows.WAITING`, `NOT_SCORED`): a handle is drawn from a scored
-#: criterion's geometry, and the table is edited beside its handles.
-UNSCORED = "{} — its table and its handles on the plot are edited once it is scored"
+#: (`live_rows.WAITING`, `NOT_SCORED`): whatever a criterion draws to drag
+#: — a handle, a table's rows — is drawn from its scored geometry, and a
+#: metric may draw none (nrmse) or have no table (a range, a scalar).
+UNSCORED = (
+    "{} — nothing of it is drawn on the plot to drag; the fields above still edit it"
+)
 
 #: Why the place is a sentence for ONE criterion its comparison could not
 #: score (`reporting.status.not_scored_reason`: a variable or a baseline one
 #: side lacks, a config that did not build, a window that misses every
-#: sample), ``{}`` being that reason. It carries its own metric and nothing
-#: drawn: no handle to drag, no row a Ctrl+click settles on the data. The
-#: form's fields, above this place, still stage edits of it, and so does a
-#: ⌖ that stays beside one (`placeable`): a window's ends are the click's x,
-#: the way to move a window that misses every sample back onto the run.
+#: sample — for every metric but points and event-timing, which score such
+#: a window a FAIL), ``{}`` being that reason. It carries its own metric
+#: and nothing drawn: no handle to drag, no row a Ctrl+click settles on the
+#: data. The form's fields, above this place, still stage edits of it, and
+#: so does a ⌖ that stays beside one (`placeable`) where its card draws a
+#: plot: a window's ends are the click's x, the way to move a window that
+#: misses every sample back onto the run. The sentence names no ⌖: a card
+#: whose subject the run lacks draws no plot, and offers none.
 UNSCORED_LEAF = (
-    "Not scored: {}. Until it is, the plot draws nothing of it to drag; "
-    "the fields above, and their ⌖, still edit it."
+    "Not scored: {}. Nothing of it is drawn on the plot to drag; "
+    "the fields above still edit it."
 )
 
 

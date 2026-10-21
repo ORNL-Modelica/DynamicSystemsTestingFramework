@@ -31,8 +31,10 @@ this file says when they do.
 - In `dstf author`, the editor of a criterion that was not scored says why
   (`Not scored: variable 'v' not found in the baseline. …`) where it said
   `nrmse has no on-plot handles` or offered handles it did not draw, and its
-  hint no longer offers a Ctrl+click that did nothing; its fields, and its
-  window's ⌖ on the plot, still edit it.
+  hint no longer offers a Ctrl+click that did nothing; its fields still edit
+  it, and its window's ⌖ still sets them from the plot where one is drawn. On
+  a card that draws no plot ("Not in this result"), the editor no longer
+  offers a ⌖ that waited for a click on nothing.
 
 ### Removed
 
@@ -42,7 +44,9 @@ this file says when they do.
 - A criterion's `MetricResult.diagnostics`, what a plug-in `Combinator.combine`
   receives, no longer carries `mode`, `tolerance` or `max_abs_error`; they are
   its `diagnostics["variable"]` (a `VariableComparison`): `mode`,
-  `tolerance_used` and `max_abs_error`.
+  `tolerance_used` and `max_abs_error`. The removed `tolerance` held the
+  tolerance as written, a number or a `lower`/`upper` dict; `tolerance_used`
+  is a `Sides`, whose `lower` and `upper` are the two sides.
 
 ## [1.2.0] - 2026-10-19
 

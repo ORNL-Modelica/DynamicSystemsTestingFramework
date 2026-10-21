@@ -18,7 +18,6 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.builtin.edit_on_plot import UNSCORED  # noqa: E402
 from dstf.authoring.live_rows import NOT_SCORED, WAITING  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
@@ -658,7 +657,10 @@ async def test_an_unscored_tests_editor_offers_no_click_that_nothing_takes(live,
         )
         assert _hint(user, POINTS) == "Edit the fields." + STAGED
         (why,) = user.find(marker="why:edit-on-plot").elements
-        assert why.text == UNSCORED.format(word)
+        assert why.text == (
+            f"{word} — nothing of it is drawn on the plot to drag; "
+            "the fields above still edit it"
+        )
         with page.client:
             page.on_plot("clicked", _click(card, 0.9, 0.0, ctrl=True))
         assert shell.session.spec.pending == []
