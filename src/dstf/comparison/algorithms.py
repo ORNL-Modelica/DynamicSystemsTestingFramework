@@ -95,12 +95,6 @@ def _no_data_failure(mode: str, reason: str) -> VariableComparison:
         name="",
         passed=False,
         nrmse=float("inf"),
-        rmse=float("inf"),
-        signal_range=0.0,
-        max_abs_error=float("inf"),
-        max_abs_error_time=0.0,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
         mode=mode,
         diagnostics={"error": reason},
     )
@@ -492,12 +486,6 @@ def _compare_points(
                 name="",
                 passed=False,
                 nrmse=float("inf"),
-                rmse=float("inf"),
-                signal_range=0.0,
-                max_abs_error=float("inf"),
-                max_abs_error_time=0.0,
-                reference_final=float("nan"),
-                actual_final=float("nan"),
                 mode="points",
                 diagnostics={"error": "empty trajectory"},
             )
@@ -512,14 +500,10 @@ def _compare_points(
             name="",
             passed=passed,
             nrmse=delta,
-            rmse=delta,
-            signal_range=0.0,
             max_abs_error=delta,
-            max_abs_error_time=t_final,
             reference_final=ref_final,
             actual_final=act_final,
             mode="points",
-            diagnostics={"tolerance": as_written(tolerance), "delta": delta},
             geometry=(
                 Marker(
                     id="points/target/final",
@@ -736,12 +720,7 @@ def _compare_points(
         name="",
         passed=passed,
         nrmse=worst_delta,
-        rmse=worst_delta,
-        signal_range=0.0,
         max_abs_error=worst_delta,
-        max_abs_error_time=worst_t,
-        reference_final=float(ref_values[-1]) if len(ref_values) else float("nan"),
-        actual_final=float(act_values[-1]) if len(act_values) else float("nan"),
         mode="points",
         diagnostics={
             "scored_points": scored,
@@ -1046,43 +1025,25 @@ def _compare_tube(
 
     passed = n_inside == n_total
 
-    # The NRMSE a tube leaf carries stays on the REFERENCE grid. The verdict
-    # moved to the union grid above; this figure decides nothing — no surface
-    # shows it as the tube's number, and "Worst NRMSE" reads nrmse-scored
-    # criteria only — but it is what `_compare_trajectories`, the authority on
-    # trajectory error, would say of the same pair, and a mean taken over a
-    # denser grid is a different number.
+    # The largest deviation and the finals the summary reports stay on the
+    # REFERENCE grid, as `_compare_trajectories` reads the same pair: the
+    # verdict moved to the union grid above, and decides by the band alone.
     act_interp = np.interp(ref_time, act_time, act_values)
-    diff = act_interp - ref_values
-    abs_error = np.abs(diff)
-    rmse = float(np.sqrt(np.mean(abs_error**2)))
-    signal_range = float(np.max(ref_values) - np.min(ref_values))
-    is_constant = signal_range < _EPS
-    if is_constant:
-        ref_magnitude = float(np.max(np.abs(ref_values)))
-        nrmse = rmse / ref_magnitude if ref_magnitude > _EPS else rmse
-    else:
-        nrmse = rmse / signal_range
-
+    abs_error = np.abs(act_interp - ref_values)
     max_abs_idx = int(np.argmax(abs_error))
-    max_abs_error = float(abs_error[max_abs_idx])
-    max_abs_error_time = float(ref_time[max_abs_idx])
-
-    ref_final = float(ref_values[-1]) if len(ref_values) > 0 else 0.0
-    act_final = float(act_interp[-1]) if len(act_interp) > 0 else 0.0
 
     return VariableComparison(
         index=0,
         name="",
         passed=passed,
-        nrmse=nrmse,
-        rmse=rmse,
-        signal_range=signal_range,
-        max_abs_error=max_abs_error,
-        max_abs_error_time=max_abs_error_time,
-        reference_final=ref_final,
-        actual_final=act_final,
-        is_constant=bool(is_constant),
+        # A tube is scored by the fraction inside (`tube_points_inside`, what
+        # a weighted group reads); its `nrmse` is its worst violation, as a
+        # range's is, and no surface shows it as the tube's number.
+        nrmse=worst_violation,
+        max_abs_error=float(abs_error[max_abs_idx]),
+        max_abs_error_time=float(ref_time[max_abs_idx]),
+        reference_final=float(ref_values[-1]),
+        actual_final=float(act_interp[-1]),
         mode="tube",
         tube_points_inside=fraction_inside,
         tube_worst_violation=worst_violation,
@@ -1128,24 +1089,14 @@ def _compare_range(
     worst_time = float(act_time[worst_idx]) if n_total > 0 else 0.0
 
     passed = max_violation <= 0.0
-    act_range = float(np.max(act_values) - np.min(act_values)) if n_total > 0 else 0.0
-    act_final = float(act_values[-1]) if n_total > 0 else 0.0
 
     return VariableComparison(
         index=0,
         name="",
         passed=passed,
         # Signal-free metric: use max_violation as the score ("0 = all in bounds,
-        # larger = farther out of bounds"). nrmse/rmse are overloaded here for
-        # reporting uniformity.
+        # larger = farther out of bounds").
         nrmse=max_violation,
-        rmse=float(np.sqrt(np.mean(violations**2))) if n_total > 0 else 0.0,
-        signal_range=act_range,
-        max_abs_error=max_violation,
-        max_abs_error_time=worst_time,
-        reference_final=float("nan"),
-        actual_final=act_final,
-        is_constant=bool(act_range < _EPS),
         mode="range",
         # Repurpose the tube fields for consistent reporting — "inside" reads
         # as "inside bounds" here.
@@ -1311,14 +1262,9 @@ def _compare_scalar(
             index=0,
             name="",
             passed=violation <= 0.0,
-            # Signal-free metric: nrmse/rmse carry the score ("0 = in bounds,
+            # Signal-free metric: nrmse carries the score ("0 = in bounds,
             # larger = farther out"), as in _compare_range.
             nrmse=violation,
-            rmse=violation,
-            signal_range=0.0,
-            max_abs_error=violation,
-            max_abs_error_time=0.0,
-            reference_final=float("nan"),
             actual_final=act_scalar,
             mode="scalar",
             tube_worst_violation=violation,
@@ -1344,7 +1290,6 @@ def _compare_scalar(
         )
     tolerance = parse_sides(tolerance, "tolerance")
     d = act_scalar - ref_scalar
-    err = abs(d)
     # A zero-magnitude reference makes the relative criterion degenerate —
     # fall back to the absolute test and record that it fired, so the report
     # can say which criterion actually decided the verdict.
@@ -1357,7 +1302,6 @@ def _compare_scalar(
     # each side's.
     score = abs(signed)
     passed = bool(-tolerance.lower <= signed <= tolerance.upper)
-    diagnostics["reference_scalar"] = ref_scalar
     diagnostics["abs_fallback"] = abs_fallback
 
     return VariableComparison(
@@ -1365,10 +1309,6 @@ def _compare_scalar(
         name="",
         passed=passed,
         nrmse=score,
-        rmse=err,
-        signal_range=abs(ref_scalar),
-        max_abs_error=err,
-        max_abs_error_time=0.0,
         reference_final=ref_scalar,
         actual_final=act_scalar,
         # NOT is_constant: that flag means "the reference SIGNAL has zero
@@ -1555,17 +1495,11 @@ def _compare_event_timing(
             name="",
             passed=passed,
             nrmse=max_delta,
-            rmse=max_delta,
-            signal_range=0.0,
-            max_abs_error=max_delta,
             max_abs_error_time=delta_at,
-            reference_final=float("nan"),
-            actual_final=float("nan"),
             mode="event-timing",
             diagnostics={
                 "ref_event_count": len(ref_events),
                 "act_event_count": len(act_events),
-                "max_time_delta": max_delta,
                 "time_tolerance": as_written(time_tolerance),
                 "counts_match": counts_match,
                 **_signed_time_delta(
@@ -1638,17 +1572,11 @@ def _compare_event_timing(
         name="",
         passed=passed,
         nrmse=max_delta,
-        rmse=max_delta,
-        signal_range=0.0,
-        max_abs_error=max_delta,
         max_abs_error_time=delta_at,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
         mode="event-timing",
         diagnostics={
             "ref_event_count": declared_count,
             "act_event_count": actual_count,
-            "max_time_delta": max_delta,
             "time_tolerance": as_written(time_tolerance),
             "counts_match": counts_match,
             **_reported_event(time_tolerance, largest),
@@ -1778,10 +1706,6 @@ def _find_strongest_peak_in_window(
     return (float(freqs[best]), float(spectrum[best]))
 
 
-# Cap spectrum samples embedded into the HTML report — fine enough to see
-# peaks, small enough to not bloat the payload.
-_SPECTRUM_EMBED_CAP = 512
-
 # A local maximum below this fraction of the spectrum's global max is
 # treated as noise, not a matchable mode. Declared peaks describe
 # significant resonances; letting near-zero FFT sidelobes satisfy a
@@ -1803,10 +1727,10 @@ def _frequency_geometry(
     the spectrum panel.
 
     The spectra are the FULL-resolution arrays the peaks were found in, not
-    the index-strided ``_embed`` lists the diagnostics carry: a stride skips
-    the peak bin for any signal over a few hundred samples, and a marker
-    placed at full-resolution amplitude then floats above a curve with no
-    peak in it. The figure layer decimates with LTTB, which keeps peaks."""
+    an index-strided subset: a stride skips the peak bin for any signal over
+    a few hundred samples, and a marker placed at full-resolution amplitude
+    then floats above a curve with no peak in it. The figure layer
+    decimates with LTTB, which keeps peaks."""
     out: list[Primitive] = []
     if len(ref_freqs):
         out.append(
@@ -1964,14 +1888,7 @@ def _compare_dominant_frequency(
             name="",
             passed=False,
             nrmse=float("inf"),
-            rmse=0.0,
-            signal_range=0.0,
-            max_abs_error=0.0,
-            max_abs_error_time=0.0,
-            reference_final=float("nan"),
-            actual_final=float("nan"),
             mode="dominant-frequency",
-            diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
         )
 
     if has_ref:
@@ -1987,18 +1904,6 @@ def _compare_dominant_frequency(
 
     act_freqs, act_spectrum = _compute_fft_spectrum(act_time, act_values)
 
-    # Downsample spectra for embedding. 512 bins is ample for visual
-    # inspection; full-resolution would inflate every dominant-frequency
-    # leaf's payload.
-    def _embed(freqs: np.ndarray, mag: np.ndarray) -> tuple[list[float], list[float]]:
-        if len(freqs) <= _SPECTRUM_EMBED_CAP:
-            return freqs.tolist(), mag.tolist()
-        idx = np.linspace(0, len(freqs) - 1, _SPECTRUM_EMBED_CAP).astype(int)
-        return freqs[idx].tolist(), mag[idx].tolist()
-
-    ref_f_embed, ref_m_embed = _embed(ref_freqs, ref_spectrum)
-    act_f_embed, act_m_embed = _embed(act_freqs, act_spectrum)
-
     peaks = peaks or []
     if not peaks:
         return VariableComparison(
@@ -2006,26 +1911,10 @@ def _compare_dominant_frequency(
             name="",
             passed=False,
             nrmse=float("inf"),
-            rmse=0.0,
-            signal_range=0.0,
-            max_abs_error=0.0,
-            max_abs_error_time=0.0,
-            reference_final=float("nan"),
-            actual_final=float("nan"),
             mode="dominant-frequency",
             diagnostics={
-                "reason": (
-                    "no peaks declared — declare them in the criterion's "
-                    "`peaks` list; the reference's detected peaks are in "
-                    "the diagnostics as `detected_reference_peaks_hz`."
-                ),
-                "peaks_declared": [],
                 "paired_peaks": [],
                 "detected_reference_peaks_hz": [f for f, _ in detected_ref_peaks],
-                "ref_spectrum_freq": ref_f_embed,
-                "ref_spectrum_mag": ref_m_embed,
-                "act_spectrum_freq": act_f_embed,
-                "act_spectrum_mag": act_m_embed,
             },
             geometry=_frequency_geometry(
                 ref_freqs,
@@ -2041,7 +1930,6 @@ def _compare_dominant_frequency(
     paired: list[dict] = []
     all_passed = True
     max_rel_err = 0.0
-    max_delta = 0.0
     # Each declared peak must claim a DISTINCT actual peak (review
     # 2026-07-06: without claiming, a two-resonance system regressing to
     # one resonance passed both declared peaks against the single
@@ -2088,8 +1976,6 @@ def _compare_dominant_frequency(
             rel_err = delta / f_decl if f_decl > 0 else delta
             if rel_err > max_rel_err:
                 max_rel_err = rel_err
-            if delta > max_delta:
-                max_delta = delta
             paired.append(
                 {
                     "declared_hz": f_decl,
@@ -2101,29 +1987,15 @@ def _compare_dominant_frequency(
                 }
             )
 
-    act_range = float(np.max(act_values) - np.min(act_values))
     return VariableComparison(
         index=0,
         name="",
         passed=all_passed,
         nrmse=max_rel_err,  # repurposed as "max relative error across declared peaks"
-        rmse=max_rel_err,
-        signal_range=act_range,
-        max_abs_error=max_delta,
-        max_abs_error_time=0.0,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
         mode="dominant-frequency",
         diagnostics={
-            "peaks_declared": list(peaks),
             "paired_peaks": paired,
             "detected_reference_peaks_hz": [f for f, _ in detected_ref_peaks],
-            "max_rel_error": max_rel_err,
-            # Spectrum arrays for the reporter's subplot.
-            "ref_spectrum_freq": ref_f_embed,
-            "ref_spectrum_mag": ref_m_embed,
-            "act_spectrum_freq": act_f_embed,
-            "act_spectrum_mag": act_m_embed,
         },
         geometry=_frequency_geometry(
             ref_freqs,

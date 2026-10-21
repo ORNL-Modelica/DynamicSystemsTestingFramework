@@ -254,7 +254,7 @@ class TestScalarComparison:
         assert _mode(tolerance=0.1).compare(ref_t, ref_v, act_t, act_v).passed
         vc = _mode(tolerance=0.01).compare(ref_t, ref_v, act_t, act_v)
         assert not vc.passed
-        assert vc.max_abs_error == pytest.approx(0.05)
+        assert (vc.reference_final, vc.actual_final) == (10.0, 10.05)
         assert vc.nrmse == pytest.approx(0.05)
 
     def test_rel_tolerance_normalizes_by_reference(self):
@@ -264,7 +264,7 @@ class TestScalarComparison:
         vc = mode.compare(ref_t, ref_v, act_t, act_v)
         assert vc.passed
         assert vc.nrmse == pytest.approx(0.01)
-        assert vc.max_abs_error == pytest.approx(1.0)
+        assert (vc.reference_final, vc.actual_final) == (100.0, 101.0)
         tight = _mode(tolerance=0.005, tolerance_mode="rel")
         assert not tight.compare(ref_t, ref_v, act_t, act_v).passed
 
@@ -316,7 +316,7 @@ class TestScalarComparison:
         vc = _mode(min_value=0.0, max_value=1.0).compare(empty, empty, act_t, act_v)
         assert not vc.passed
         assert vc.nrmse == pytest.approx(0.25)
-        assert vc.max_abs_error == pytest.approx(0.25)
+        assert vc.actual_final == 1.25
 
     def test_one_sided_lower_bound(self):
         empty = np.array([])
@@ -1115,8 +1115,7 @@ class TestScalarSides:
     def test_the_score_stays_a_magnitude(self):
         # What a `weighted` combinator reads does not change meaning.
         vc = _scalar_sides(100.0, 96.0, Sides(0.05, 0.01), "rel")
-        assert (vc.nrmse, vc.rmse, vc.max_abs_error) == (0.04, 4.0, 4.0)
-        assert vc.diagnostics["reference_scalar"] == 100.0
+        assert (vc.nrmse, vc.reference_final, vc.actual_final) == (0.04, 100.0, 96.0)
 
     @pytest.mark.parametrize("mode", ["abs", "rel"])
     def test_a_number_scores_as_it_did(self, mode):
@@ -1144,8 +1143,11 @@ class TestScalarSides:
             err = abs(act - ref)
             score = err / abs(ref) if mode == "rel" and abs(ref) != 0.0 else err
             assert new.passed == bool(score <= tol), (ref, act, tol)
-            assert (new.nrmse, new.rmse) == (score, err)
-            assert (pair.passed, pair.nrmse, pair.rmse) == (new.passed, score, err)
+            assert (new.nrmse, abs(new.actual_final - new.reference_final)) == (
+                score,
+                err,
+            )
+            assert (pair.passed, pair.nrmse) == (new.passed, score)
             on_edge += score == tol
         assert on_edge > 300  # the sweep reaches the edge itself
 

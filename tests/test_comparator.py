@@ -783,22 +783,6 @@ class TestTubeComparison:
         assert vc.tube_worst_violation == pytest.approx(1.0)
         assert vc.tube_worst_violation_time == 0.0
 
-    def test_nrmse_still_computed_in_tube_mode(self):
-        """NRMSE is computed even in tube mode for reporting."""
-        ref_time = np.array([0.0, 1.0])
-        ref_values = np.array([0.0, 10.0])
-        act_values = np.array([1.0, 11.0])
-
-        vc = score(
-            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 5.0},
-            ref_time,
-            ref_values,
-            ref_time,
-            act_values,
-        )
-        assert vc.nrmse > 0
-        assert vc.rmse > 0
-
     def test_tube_via_compare_test(self):
         """Tube mode dispatched correctly via compare_test."""
         test = _make_test(
@@ -1420,7 +1404,8 @@ class TestPointsDeclaredPath:
         result = score({"mode": "points"}, ref_t, ref_v, act_t, act_v, tolerance=0.01)
         # act[-1] = 5.001, ref[-1] = 5.0, delta = 0.001 < 0.01 → PASS.
         assert result.passed
-        assert result.diagnostics["delta"] == pytest.approx(0.001)
+        assert result.max_abs_error == pytest.approx(0.001)
+        assert summarize(result).criterion.startswith("Final value error 1.000e-03")
 
     def test_single_ref_relative_point_passes(self):
         ref_t, ref_v, act_t, act_v = self._make_traj()
@@ -4241,9 +4226,6 @@ class TestEveryFieldThatTakesAPairScoresOne:
         a = _sides_compare(number, flat=flat, kind=kind).variables[0]
         b = _sides_compare(pair, flat=flat, kind=kind).variables[0]
         assert "error" not in a.diagnostics, a.diagnostics
-        # The declared peaks are echoed as authored: the one field that differs.
-        for vc in (a, b):
-            vc.diagnostics.pop("peaks_declared", None)
         assert _sides_fields(a) == _sides_fields(b)
         assert _sides_coords(a) == _sides_coords(b)
 
@@ -4831,15 +4813,7 @@ class TestPointsFinalCheckSides:
     def test_it_is_strict_on_each_side(self, offset, tol, ok):
         vc = _pts(_P_FLAT + offset, None, tolerance=tol)
         assert vc.passed is ok
-        assert vc.nrmse == abs(offset) and vc.diagnostics["delta"] == abs(offset)
-        # Leaves Python as data: the pair, serialisable.
-        assert vc.diagnostics["tolerance"] == {"lower": tol.lower, "upper": tol.upper}
-        json.dumps(vc.diagnostics)
-
-    def test_equal_sides_are_written_as_the_number(self):
-        vc = _pts(_P_FLAT, None, tolerance=Sides(0.25, 0.25))
-        assert vc.diagnostics["tolerance"] == 0.25
-        assert isinstance(vc.diagnostics["tolerance"], float)
+        assert vc.nrmse == abs(offset) and vc.max_abs_error == abs(offset)
 
     @pytest.mark.parametrize(
         "ref,act",
@@ -4851,7 +4825,7 @@ class TestPointsFinalCheckSides:
             {"mode": "points"}, *(np.array(x, dtype=float) for x in (*ref, *act))
         )
         assert vc.passed is True
-        assert vc.diagnostics["delta"] == 0.0
+        assert vc.max_abs_error == 0.0
 
     def test_an_empty_reference_is_not_scored(self):
         vc = score(

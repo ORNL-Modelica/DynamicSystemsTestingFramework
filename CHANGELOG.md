@@ -8,6 +8,15 @@ this file says when they do.
 
 ## [Unreleased]
 
+### Changed
+
+- `VariableComparison`'s `rmse`, `signal_range`, `max_abs_error`,
+  `max_abs_error_time`, `reference_final` and `actual_final` have defaults
+  (`inf`, `0.0`, `inf`, `0.0`, `nan`, `nan`: not measured), and a mode sets
+  only those its summary reports; its `diagnostics` no longer carry what
+  nothing showed (the embedded spectra, `max_time_delta`, `reference_scalar`,
+  a points final check's `tolerance` and `delta`).
+
 ### Fixed
 
 - A points criterion with a lower/upper tolerance pair, whose curve is

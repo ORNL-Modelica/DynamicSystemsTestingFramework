@@ -122,10 +122,10 @@ class TestControlPointsOffTheReferenceGrid:
 
 
 class TestReportedErrorIsUnchanged:
-    def test_nrmse_stays_on_the_reference_grid(self):
-        # The verdict moved to the union grid; the reported NRMSE did not,
-        # because it feeds the dashboard's "Worst NRMSE" column and a mean over
-        # a denser grid is a different number.
+    def test_the_largest_error_stays_on_the_reference_grid(self):
+        # The verdict moved to the union grid; the largest error the summary
+        # reports (`max |err|`) did not: it is read where the baseline has a
+        # sample, as an nrmse criterion reads the same pair.
         ref_time = np.linspace(0.0, 10.0, 101)
         ref_values = np.sin(ref_time)
         act_time = np.linspace(0.0, 10.0, 5001)
@@ -139,10 +139,10 @@ class TestReportedErrorIsUnchanged:
             act_values,
         )
 
-        expected = np.interp(ref_time, act_time, act_values) - ref_values
-        expected_rmse = float(np.sqrt(np.mean(np.abs(expected) ** 2)))
+        expected = np.abs(np.interp(ref_time, act_time, act_values) - ref_values)
         assert result.passed is True
-        assert result.rmse == pytest.approx(expected_rmse)
+        assert result.max_abs_error == float(expected.max())
+        assert result.max_abs_error_time == ref_time[int(np.argmax(expected))]
 
 
 class TestDiscontinuitiesInTheBaseline:

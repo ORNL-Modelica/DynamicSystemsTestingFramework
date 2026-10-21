@@ -35,7 +35,7 @@ class TestEventTimingMode:
         result = mode.compare(ref_t, ref_v, act_t, act_v)
         assert result.passed
         assert result.diagnostics["counts_match"] is True
-        assert result.diagnostics["max_time_delta"] < 1e-2
+        assert result.nrmse < 1e-2
 
     def test_fails_when_event_count_differs(self):
         ref_t = np.array([0.0, 1.0, 1.0, 2.0])  # 1 event
@@ -56,7 +56,7 @@ class TestEventTimingMode:
         mode = EventTimingMode(EventTimingConfig(time_tolerance=1e-2))
         result = mode.compare(ref_t, ref_v, act_t, act_v)
         assert not result.passed
-        assert result.diagnostics["max_time_delta"] == pytest.approx(0.5)
+        assert result.nrmse == pytest.approx(0.5)
 
     def test_resolves_via_factory(self):
         mode = resolve_mode(
@@ -129,8 +129,7 @@ class TestDominantFrequencyMode:
         mode = DominantFrequencyMode(DominantFrequencyConfig(peaks=None))
         result = mode.compare(ref_t, ref_v, ref_t, ref_v)
         assert not result.passed
-        assert "no peaks declared" in result.diagnostics.get("reason", "")
-        # The reporter seeds its table from detected_reference_peaks_hz.
+        assert summarize(result).criterion.startswith("No peaks declared — declare")
         assert len(result.diagnostics["detected_reference_peaks_hz"]) >= 1
 
     def test_resolves_via_factory(self):
@@ -226,19 +225,6 @@ class TestDominantFrequencyMode:
         assert any(abs(f - 2.0) < 1.0 for f in detected)
         assert any(abs(f - 4.0) < 1.0 for f in detected)
         assert any(abs(f - 6.0) < 1.0 for f in detected)
-
-    def test_spectrum_embedded_in_diagnostics(self):
-        ref_t, ref_v = self._multi_sine([4.0])
-        mode = DominantFrequencyMode(
-            DominantFrequencyConfig(
-                peaks=[{"freq": 4.0, "tolerance": 0.05, "tolerance_mode": "rel"}],
-            )
-        )
-        result = mode.compare(ref_t, ref_v, ref_t, ref_v)
-        diag = result.diagnostics
-        assert len(diag["ref_spectrum_freq"]) > 0
-        assert len(diag["ref_spectrum_mag"]) == len(diag["ref_spectrum_freq"])
-        assert len(diag["act_spectrum_freq"]) > 0
 
 
 T64 = np.arange(64.0)
@@ -474,7 +460,7 @@ class TestEventTimingDeclaredEvents:
         assert result.passed
         assert result.diagnostics["ref_event_count"] == 2  # from declared
         assert result.diagnostics["act_event_count"] == 2
-        assert result.diagnostics["max_time_delta"] < 0.01
+        assert result.nrmse < 0.01
 
     def test_declared_events_fail_when_actual_missing(self):
         # Two declared events; actual has only one matching event.
@@ -512,7 +498,7 @@ class TestEventTimingDeclaredEvents:
         )
         result = mode.compare(ref_t, ref_v, act_t, act_v)
         assert result.passed
-        assert result.diagnostics["max_time_delta"] == pytest.approx(0.3, abs=1e-9)
+        assert result.nrmse == pytest.approx(0.3, abs=1e-9)
 
     def test_declared_events_empty_list_passes_with_empty_actual(self):
         # Degenerate: declared = [] (user says "no events expected"),
@@ -692,7 +678,6 @@ class TestEventSidesAutoDetected:
         box = _window(vc, 0)
         assert (box.t0, box.t1, box.passed) == (4.75, 5.5, True)
         assert vc.nrmse == 0.25  # the score stays the largest |d|
-        assert vc.diagnostics["max_time_delta"] == 0.25
         assert vc.diagnostics["time_tolerance"] == {"lower": 0.25, "upper": 0.5}
         json.dumps(vc.diagnostics)
         equal = score(

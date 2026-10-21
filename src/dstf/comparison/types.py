@@ -44,6 +44,11 @@ class VariableComparison:
         max_abs_error_time: Where it is, in seconds.
         reference_final: The baseline's final value.
         actual_final: The run's final value.
+
+    The six after ``nrmse`` are set by a mode whose summary reports them; a
+    mode that has none of them, and a criterion that could not be scored,
+    leaves them at their defaults (``inf`` / ``nan``: not measured, and
+    ``0.0`` for a range or a time).
         mode: The mode's name.
         diagnostics: What else the report shows; ``"error"`` holds why the
             criterion could not be scored.
@@ -53,12 +58,12 @@ class VariableComparison:
     name: str
     passed: bool
     nrmse: float  # Normalized RMSE (pass/fail metric)
-    rmse: float  # Raw RMSE
-    signal_range: float  # max(ref) - min(ref), for context
-    max_abs_error: float  # Largest absolute deviation
-    max_abs_error_time: float  # Time at which it occurs
-    reference_final: float
-    actual_final: float
+    rmse: float = float("inf")  # Raw RMSE
+    signal_range: float = 0.0  # max(ref) - min(ref), for context
+    max_abs_error: float = float("inf")  # Largest absolute deviation
+    max_abs_error_time: float = 0.0  # Time at which it occurs
+    reference_final: float = float("nan")
+    actual_final: float = float("nan")
     is_constant: bool = False  # True if reference signal has zero range
     # The tolerance applied for this variable, per side (a number is both).
     tolerance_used: Sides = Sides(0.0, 0.0)

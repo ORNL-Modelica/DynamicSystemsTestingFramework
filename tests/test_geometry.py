@@ -693,9 +693,9 @@ class TestDominantFrequencyGeometry:
         assert {p.x for p in vc.geometry if p.kind == "matched"} == paired
         assert not vc.passed
 
-    def test_markers_sit_on_the_drawn_spectrum_above_the_embed_cap(self):
-        # 8001 samples: the diagnostics embed strides the FFT bins and skips
-        # the peak; the drawn Series must not, or the matched marker floats
+    def test_markers_sit_on_the_drawn_full_resolution_spectrum(self):
+        # 8001 samples: a strided subset of the FFT bins skips the peak; the
+        # drawn Series must hold every bin, or the matched marker floats
         # above a curve with no peak in it.
         t = np.linspace(0.0, 10.0, 8001)
         sig = np.sin(2 * np.pi * 1.3 * t)
@@ -710,7 +710,7 @@ class TestDominantFrequencyGeometry:
         act = prims["spectrum/act"]
         matched = prims["peaks/matched/0"]
         assert isinstance(act, Series) and isinstance(matched, Marker)
-        assert len(act.x) > len(vc.diagnostics["act_spectrum_freq"])
+        assert len(act.x) == 8192 // 2 + 1  # every bin of the 8192-point FFT
         drawn_at_marker = float(np.interp(matched.x, act.x, act.y))
         assert matched.y == pytest.approx(drawn_at_marker)
         assert matched.y == pytest.approx(float(act.y.max()))
