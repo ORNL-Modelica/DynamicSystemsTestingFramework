@@ -314,7 +314,9 @@ def test_a_criterion_not_scored_says_why_and_takes_no_click(
     """A points criterion the baseline cannot score draws nothing: its
     editor says why in the criterion's own words and offers no table and no
     Ctrl+click — a Ctrl+click on its plot stages nothing — while its fields
-    above still stage an edit. A tube says the same. And a criterion on a
+    above still stage an edit, and its window's two ⌖ set them from the
+    plot: press one, click, and the window starts at the snapped click. A
+    tube says the same. And a criterion on a
     variable the run lacks sits on a card that draws no plot: its editor
     has no ⌖, whose click would land nowhere."""
     with _served(
@@ -339,13 +341,29 @@ def test_a_criterion_not_scored_says_why_and_takes_no_click(
         _click_at(page, _at(page, 0.25, middle, card=1), "Control")
         _nothing_staged(page, 0)
         _shot(page, tmp_path, "onplot-not-scored")
+        assert editor.locator(".dstf-arm").count() == 2
+        _arm(page, editor.get_by_label("window start", exact=True))
+        expect(_hint(page)).to_have_text(ARMED_HINT.format("window start"))
+        page.locator(".js-plotly-plot").nth(1).evaluate(
+            "e => e.scrollIntoView({block: 'center'})"
+        )
+        page.wait_for_timeout(300)
+        at = _at(page, 0.3333, middle, card=1)
+        _click_at(page, at)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        step = _step(at["xspan"])
+        start = _staged_tree(page)["children"][1]["window"]["start"]
+        assert abs(start - 0.3333) <= step / 2 + 1 / at["ppx"], (start, at)
+        assert _on_grid(start, step), (start, step)
 
         _open_for_grips(page, 1, "tube · v")
         expect(why).to_have_text(said, timeout=EXPECT_TIMEOUT)
         _retype(page, editor.get_by_label("Min width", exact=True), "0.05")
         page.keyboard.press("Tab")
         expect(page.locator(".dstf-header-row")).to_contain_text(
-            "1 pending edit", timeout=EXPECT_TIMEOUT
+            "2 pending edits", timeout=EXPECT_TIMEOUT
         )
         assert _staged_tree(page)["children"][2]["tube_min_width"] == 0.05
 
