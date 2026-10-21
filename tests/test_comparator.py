@@ -1914,6 +1914,72 @@ EMPTY = np.array([])
 # ---------------------------------------------------------------------------
 
 
+class TestWhatAModeDoesNotMeasure:
+    """`rmse`, `signal_range`, `max_abs_error`, `max_abs_error_time` and the
+    two finals are set by a mode whose summary reports them; one that has
+    none of them, and a criterion that was not scored, leaves them at
+    ``inf`` (the errors), ``0.0`` (the range and the time) and ``nan`` (the
+    finals): not measured, which a plug-in reading them can tell."""
+
+    UNSET = {
+        "rmse": "inf",
+        "signal_range": "0.0",
+        "max_abs_error": "inf",
+        "max_abs_error_time": "0.0",
+        "reference_final": "nan",
+        "actual_final": "nan",
+    }
+
+    @staticmethod
+    def _read(vc, fields) -> dict:
+        return {f: repr(getattr(vc, f)) for f in fields}
+
+    def test_a_range_measures_none_of_them(self):
+        t = np.linspace(0.0, 1.0, 5)
+        vc = score(
+            {"mode": "range", "min_value": 0.0, "max_value": 2.0}, EMPTY, EMPTY, t, t
+        )
+        assert vc.passed
+        assert self._read(vc, self.UNSET) == self.UNSET
+
+    def test_event_timing_measures_where_its_largest_delta_is(self):
+        ref = np.array([0.0, 1.0, 1.0, 2.0])
+        act = np.array([0.0, 1.05, 1.05, 2.0])
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": 0.1},
+            ref,
+            np.zeros(4),
+            act,
+            np.zeros(4),
+        )
+        assert vc.passed
+        assert vc.max_abs_error_time == 1.0  # the reference event's time
+        unset = {f: v for f, v in self.UNSET.items() if f != "max_abs_error_time"}
+        assert self._read(vc, unset) == unset
+
+    def test_a_criterion_not_scored_measures_none_of_them(self):
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        spec = parse_metric_tree(
+            {
+                "metric": "range",
+                "variable": "x",
+                "min_value": 0.0,
+                "window": {"start": 50.0, "end": 60.0},
+            }
+        )
+        reference = {
+            "time": [0.0, 10.0],
+            "variables": [{"index": 1, "name": "x", "values": [1.0, 1.0]}],
+        }
+        comp = compare_test(
+            _mk_test(metric_tree_spec=spec), _mk_result(), decode_reference(reference)
+        )
+        (vc,) = comp.variables
+        assert "error" in vc.diagnostics
+        assert self._read(vc, self.UNSET) == self.UNSET
+
+
 class TestEmptyDataFails:
     def test_nrmse_empty_reference_fails(self):
         vc = score(
