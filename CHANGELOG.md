@@ -23,8 +23,9 @@ this file says when they do.
   criterion whose window holds none of the run's is not scored and FAILS
   saying so (`no actual samples to check (empty trajectory or window)`), as
   are auto-detected events whose baseline holds none there (`no reference
-  samples to compare …`): in either case auto-detected events with none on
-  the other side used to PASS.
+  samples to compare …`). In either case auto-detected events used to PASS
+  when the other side had no events either, and with `count_must_match:
+  false` whatever events the other side had.
   A dominant-frequency criterion with no peaks declared is not scored either
   over a baseline with no samples (`no reference samples to take a spectrum
   of …`) or fewer than four (`too few reference samples to take a spectrum
