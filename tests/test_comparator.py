@@ -2076,7 +2076,9 @@ class TestEmptyDataFails:
                 0,
                 "no reference samples to take a spectrum of (empty baseline or window)",
             ),
+            (1, "too few reference samples to take a spectrum of (fewer than 4)"),
             (2, "too few reference samples to take a spectrum of (fewer than 4)"),
+            (3, "too few reference samples to take a spectrum of (fewer than 4)"),
         ],
     )
     def test_no_peaks_over_a_baseline_of_too_few_samples(self, n, reason):
