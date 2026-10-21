@@ -1262,14 +1262,18 @@ class TestSentinelLeavesKeepTheirName:
 
 
 class TestALeafsToleranceIsSides:
-    def _evaluate(self, tolerance, base=1e-4):
-        t, ref = _linear()
+    @staticmethod
+    def _raw(tolerance):
         children = [
             {"metric": "points", "variable": "x", "tolerance": tolerance},
             {"metric": "nrmse", "variable": "y", "tolerance": 0.5},
         ]
+        return {"combinator": "and", "children": children}
+
+    def _evaluate(self, tolerance, base=1e-4):
+        t, ref = _linear()
         return evaluate_spec(
-            parse_metric_tree({"combinator": "and", "children": children}),
+            parse_metric_tree(self._raw(tolerance)),
             var_results_by_name={
                 n: VariableResult(index=i + 1, name=n, time=t, values=ref)
                 for i, n in enumerate(("x", "y"))
@@ -1282,6 +1286,21 @@ class TestALeafsToleranceIsSides:
             ),
             base_tolerance=base,
         )
+
+    def _view_tolerance_of_x(self, tolerance, base=1e-4):
+        """The `tolerance` of x's leaf in the tree verdicts.json and the
+        report carry (`build_tree_view`) — what a script reads."""
+        from dstf.reporting.context_builder import build_tree_view
+        from dstf.reporting.tree_rows import leaves_of
+
+        tree = self._evaluate(tolerance, base)
+        view = build_tree_view(
+            [c.diagnostics["variable"] for c in tree.children],
+            _test_model(self._raw(tolerance)),
+            tree,
+        )
+        (x,) = [n for n in leaves_of(view) if n["variable"] == "x"]
+        return x["tolerance"]
 
     def test_a_pair_with_a_third_key_is_the_parsers_to_refuse(self):
         """A key nothing reads, inside the pair: said where the spec is
@@ -1296,8 +1315,9 @@ class TestALeafsToleranceIsSides:
         assert tree.passed
         x = tree.children[0]
         assert x.diagnostics["variable"].tolerance_used == Sides(0.05, 0.05)
-        assert x.diagnostics["tolerance"] == 0.05
-        assert isinstance(x.diagnostics["tolerance"], float)
+        written = self._view_tolerance_of_x({"lower": 0.05, "upper": 0.05})
+        assert written == 0.05
+        assert isinstance(written, float)
 
     @pytest.mark.parametrize(
         "bad",
@@ -1315,4 +1335,4 @@ class TestALeafsToleranceIsSides:
         )
         # The base is the one it reports as applied, as both sides.
         assert x.tolerance_used == Sides(0.25, 0.25)
-        assert tree.children[0].diagnostics["tolerance"] == 0.25
+        assert self._view_tolerance_of_x(bad, base=0.25) == 0.25

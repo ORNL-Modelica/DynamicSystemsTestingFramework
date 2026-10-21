@@ -3722,12 +3722,20 @@ def _sides_compare(
     }
     if ref_comparison is not None:
         reference["comparison"] = ref_comparison
-    if test is not None:
-        return compare_test(
-            test, result, decode_reference(reference), default_tolerance=1e-4
+    if test is None:
+        test = _sides_test(
+            leaf, flat=flat, extra=extra, comparison_tolerance=comparison_tolerance
         )
+    return compare_test(
+        test, result, decode_reference(reference), default_tolerance=1e-4
+    )
+
+
+def _sides_test(leaf, *, flat, extra=None, comparison_tolerance=None):
+    """The test :func:`_sides_compare` scores ``leaf`` (and ``extra``) by:
+    a ``metrics`` tree, or with ``flat`` the same keys as overrides."""
     test = _make_test(comparison_tolerance=comparison_tolerance)
-    test.variable_patterns = names
+    test.variable_patterns = ["x"] + (["y"] if extra is not None else [])
 
     def override(raw):
         ov = {k: v for k, v in raw.items() if k != "metric"}
@@ -3742,9 +3750,7 @@ def _sides_compare(
         if extra is not None:
             tree = {"combinator": "and", "children": [tree, {**extra, "variable": "y"}]}
         test.metric_tree_spec = parse_metric_tree(tree)
-    return compare_test(
-        test, result, decode_reference(reference), default_tolerance=1e-4
-    )
+    return test
 
 
 def _leaves(result):
@@ -3818,15 +3824,22 @@ class TestATolerancesNumberAndEqualPairAreOne:
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_a_leafs_unequal_pair_leaves_as_the_pair(self, flat):
-        """The leaf's diagnostics carry the tolerance applied as written: an
-        unequal pair is the pair, never one side."""
-        comp = _sides_compare({"metric": "points", "tolerance": _S_UNEVEN}, flat=flat)
-        (leaf,) = _leaves(comp.metric_tree)
-        assert leaf.diagnostics["tolerance"] == _S_UNEVEN
-        # Equal sides are the number.
-        comp = _sides_compare({"metric": "points", "tolerance": _S_EVEN}, flat=flat)
-        (leaf,) = _leaves(comp.metric_tree)
-        assert leaf.diagnostics["tolerance"] == 0.05
+        """The leaf's `tolerance` in verdicts.json and the report
+        (`build_tree_view`) is the tolerance applied as written: an unequal
+        pair is the pair, never one side."""
+        from dstf.reporting.context_builder import build_tree_view
+        from dstf.reporting.tree_rows import leaves_of
+
+        def written(tolerance):
+            test = _sides_test({"metric": "points", "tolerance": tolerance}, flat=flat)
+            comp = _sides_compare(None, flat=flat, test=test)
+            (leaf,) = leaves_of(
+                build_tree_view(list(comp.variables), test, comp.metric_tree)
+            )
+            return leaf["tolerance"]
+
+        assert written(_S_UNEVEN) == _S_UNEVEN
+        assert written(_S_EVEN) == 0.05  # equal sides are the number
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_nrmse_takes_an_equal_pair(self, flat):
