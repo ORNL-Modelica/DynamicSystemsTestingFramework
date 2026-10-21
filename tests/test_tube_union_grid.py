@@ -130,24 +130,18 @@ class TestReportedErrorIsUnchanged:
     def test_the_largest_error_stays_on_the_reference_grid(self):
         # The verdict moved to the union grid; the largest error the summary
         # reports (`max |err|`) did not: it is read where the baseline has a
-        # sample, as an nrmse criterion reads the same pair.
-        ref_time = np.linspace(0.0, 10.0, 101)
-        ref_values = np.sin(ref_time)
-        act_time = np.linspace(0.0, 10.0, 5001)
-        act_values = np.sin(act_time) + 0.01
-
+        # sample, as an nrmse criterion reads the same pair. The run spikes
+        # to 1.0 at t=0.5, between two baseline samples; at the baseline's
+        # samples it is 0, 0.2 and 0.
         result = score(
-            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.5},
-            ref_time,
-            ref_values,
-            act_time,
-            act_values,
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 2.0},
+            np.array([0.0, 1.0, 2.0]),
+            np.zeros(3),
+            np.array([0.0, 0.5, 1.0, 1.5, 2.0]),
+            np.array([0.0, 1.0, 0.2, 0.0, 0.0]),
         )
-
-        expected = np.abs(np.interp(ref_time, act_time, act_values) - ref_values)
         assert result.passed is True
-        assert result.max_abs_error == float(expected.max())
-        assert result.max_abs_error_time == ref_time[int(np.argmax(expected))]
+        assert (result.max_abs_error, result.max_abs_error_time) == (0.2, 1.0)
 
 
 class TestDiscontinuitiesInTheBaseline:
