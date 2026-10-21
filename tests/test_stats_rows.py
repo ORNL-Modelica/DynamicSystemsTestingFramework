@@ -105,6 +105,13 @@ def test_a_time_under_one_percent_off_reads_one_decimal():
     assert rows["timing.other_wall"].delta == ""
 
 
+def test_numbers_alike_to_fifteen_figures_show_no_delta():
+    """A double is shown to 15 significant figures: two that differ past
+    them would print the same number on both sides of an arrow."""
+    (row,) = statistics_rows({"t": 1 / 3}, {"t": 0.33333333333333337}, listing=())
+    assert row.delta == ""
+
+
 def test_a_time_over_a_zero_baseline_reads_in_seconds():
     rows = _by_path(
         statistics_rows(

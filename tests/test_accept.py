@@ -24,14 +24,19 @@ def _result(model_id):
     )
 
 
-def _env(tmp_path, manifest):
+def _env(tmp_path, manifest, **config_fields):
     lib = tmp_path / "FakeLib"
     lib.mkdir()
     (lib / "package.mo").write_text("package FakeLib\nend FakeLib;\n")
     work = tmp_path / "work"
     work.mkdir()
     (work / "batch_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    config = Config(source_path=lib, reference_root=tmp_path / "refs", work_dir=work)
+    config = Config(
+        source_path=lib,
+        reference_root=tmp_path / "refs",
+        work_dir=work,
+        **config_fields,
+    )
     return config, ReferenceStore(config)
 
 
@@ -341,7 +346,7 @@ RUN_META = {
 }
 
 
-def _accept_one(tmp_path, metadata):
+def _accept_one(tmp_path, metadata, **config_fields):
     """Accept FakeLib.A, whose run recorded *metadata* beside its result
     (`record_result`); the written FILE's provenance."""
     from dstf.backends.types import TestRunResult
@@ -356,6 +361,7 @@ def _accept_one(tmp_path, metadata):
                 "last_run_status": "pending",
             }
         },
+        **config_fields,
     )
     manifest = BatchManifest.load(config.work_dir / "batch_manifest.json")
     manifest.record_result(
@@ -399,6 +405,16 @@ def test_accept_without_run_metadata_writes_nulls(tmp_path):
         "os": config.os_name,
         "run_started": None,
     }
+
+
+def test_accept_without_run_metadata_writes_the_configs_backend_entry(tmp_path):
+    """The name the config runs under (`--backend "Dymola 2025"`), not its
+    family's."""
+    _, provenance = _accept_one(tmp_path, None, backend_name="Dymola 2025")
+    assert (provenance["backend"], provenance["backend_name"]) == (
+        "Dymola",
+        "Dymola 2025",
+    )
 
 
 def _record(manifest, model_id, test_key, metadata):

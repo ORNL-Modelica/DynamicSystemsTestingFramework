@@ -217,6 +217,49 @@ class TestSoftCheckStorage:
         # Removing again returns False
         assert store.remove_soft_check(test.model_id, "foo") is False
 
+    def test_a_model_with_no_baseline_has_no_soft_check_to_remove(
+        self, store_with_primary
+    ):
+        store, _ = store_with_primary
+        assert store.remove_soft_check("Lib.Nope", "foo") is False
+
+    def test_removing_the_last_soft_check_removes_its_folder(self, store_with_primary):
+        store, test = store_with_primary
+        for name in ("a", "b"):
+            store.add_soft_check(
+                test.model_id,
+                series(
+                    name,
+                    time=[0.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                ),
+            )
+        store.remove_soft_check(test.model_id, "a")
+        assert (store.ref_dir / "soft_checks" / "ref_0001").is_dir()
+        store.remove_soft_check(test.model_id, "b")
+        assert list((store.ref_dir / "soft_checks").iterdir()) == []
+
+    def test_a_soft_check_is_overwritten_unless_told_not_to(self, store_with_primary):
+        """What `dstf soft-check add` relies on: adding a name again
+        replaces it; a new name is added beside it, whatever the flag."""
+        store, test = store_with_primary
+
+        def check(name, value):
+            return series(
+                name,
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [value]}],
+            )
+
+        assert store.add_soft_check(test.model_id, check("a", 0.0)) is True
+        assert store.add_soft_check(test.model_id, check("a", 7.0)) is True
+        assert store.add_soft_check(test.model_id, check("b", 1.0), overwrite=False)
+        checks = store.get_soft_checks(test.model_id)
+        assert {n: c.variables[0].values for n, c in checks.items()} == {
+            "a": [7.0],
+            "b": [1.0],
+        }
+
     def test_overwrite_false_refuses_existing(self, store_with_primary):
         store, test = store_with_primary
         store.add_soft_check(
@@ -514,8 +557,36 @@ class TestCompanionStorage:
         src.write_text("x\n1\n")
         store.add_companion(test.model_id, "ghost", path=src)
         src.unlink()
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(FileNotFoundError) as box:
             store.freeze_companion(test.model_id, "ghost")
+        assert str(box.value) == (
+            f"Cannot freeze companion 'ghost': source path {str(src)!r} does not exist"
+        )
+
+    def test_a_freeze_that_fails_leaves_no_partial_file(
+        self, store_with_primary, tmp_path
+    ):
+        store, test = store_with_primary
+        src = tmp_path / "blk.csv"
+        src.write_text("t\n0\n")
+        store.add_companion(test.model_id, "blk", path=src)
+        co_dir = store.ref_dir / "companions" / "ref_0001"
+        (co_dir / "blk.csv").mkdir()  # the copy cannot land
+        with pytest.raises(IsADirectoryError):
+            store.freeze_companion(test.model_id, "blk")
+        assert list(co_dir.glob("*.tmp")) == []
+
+    def test_freeze_carries_the_provenance_through(self, store_with_primary, tmp_path):
+        store, test = store_with_primary
+        src = tmp_path / "rig.csv"
+        src.write_text("time,y\n0,1\n")
+        store.add_companion(test.model_id, "rig", src, provenance={"who": "me"})
+        store.freeze_companion(test.model_id, "rig")
+        meta = json.loads(
+            (store.ref_dir / "companions" / "ref_0001" / "rig.json").read_text()
+        )
+        assert meta["kind"] == "frozen"
+        assert meta["provenance"] == {"who": "me"}
 
     def test_remove_frozen_deletes_data_file(self, store_with_primary, tmp_path):
         store, test = store_with_primary
@@ -528,6 +599,47 @@ class TestCompanionStorage:
         co_dir = store.ref_dir / "companions" / "ref_0001"
         # Parent dir cleaned up after last entry removed
         assert not co_dir.exists()
+
+    def test_removing_an_external_companion_keeps_its_source(
+        self, store_with_primary, tmp_path
+    ):
+        store, test = store_with_primary
+        src = tmp_path / "rig.csv"
+        src.write_text("time,y\n0,1\n1,2\n")
+        store.add_companion(test.model_id, "rig", src, variables={"x": "y"})
+        assert store.remove_companion(test.model_id, "rig") is True
+        assert store.get_companions(test.model_id) == {}
+        assert src.exists()
+
+    def test_only_a_frozen_companions_data_file_is_removed_with_it(
+        self, store_with_primary, tmp_path
+    ):
+        """A hand-edited external registration naming a data_file: the file
+        is not the registration's to delete."""
+        store, test = store_with_primary
+        src = tmp_path / "rig.csv"
+        src.write_text("t\n0\n")
+        store.add_companion(test.model_id, "keep", src)  # makes the folder
+        co_dir = store.ref_dir / "companions" / "ref_0001"
+        (co_dir / "hand.json").write_text(
+            json.dumps(
+                {
+                    "kind": "external",
+                    "format": "csv",
+                    "path": str(src),
+                    "data_file": "keepme.csv",
+                }
+            )
+        )
+        (co_dir / "keepme.csv").write_text("t\n")
+        assert store.remove_companion(test.model_id, "hand") is True
+        assert (co_dir / "keepme.csv").exists()
+
+    def test_a_model_with_no_baseline_has_no_companion_to_remove(
+        self, store_with_primary
+    ):
+        store, _ = store_with_primary
+        assert store.remove_companion("Lib.Nope", "a") is False
 
     def test_format_inference_json(self, store_with_primary, tmp_path):
         store, test = store_with_primary

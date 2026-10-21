@@ -4,6 +4,7 @@ byte-identical, and a single-precision file reads back through float32."""
 import json
 
 import numpy as np
+import pytest
 
 from dstf.storage import baseline_codec as codec
 from dstf.storage.baseline import (
@@ -128,11 +129,16 @@ def test_double_file_round_trips_identically():
     assert codec.encode_reference(codec.decode_reference(json.loads(text))) == text
 
 
-def test_old_diagnostic_values_are_summarized_on_read():
+@pytest.mark.parametrize(
+    "values,summary",
+    [([2.0, 9.0, 5.0], (5.0, 2.0, 9.0)), ([5.0], (5.0, 5.0, 5.0)), ([], (None,) * 3)],
+    ids=["three", "one", "none"],
+)
+def test_old_diagnostic_values_are_summarized_on_read(values, summary):
     data = json.loads(PRIMARY_SINGLE)
-    data["diagnostics"] = [{"name": "EventCounter", "values": [2.0, 9.0, 5.0]}]
+    data["diagnostics"] = [{"name": "EventCounter", "values": values}]
     d = codec.decode_reference(data).baseline.diagnostics[0]
-    assert (d.final, d.min, d.max) == (5.0, 2.0, 9.0)
+    assert (d.final, d.min, d.max) == summary
 
 
 def test_absent_optional_fields_stay_absent():
