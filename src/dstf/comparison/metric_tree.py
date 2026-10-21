@@ -22,7 +22,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from .sides import as_written
 from .types import VariableComparison
 
 # ---------------------------------------------------------------------------
@@ -286,12 +285,7 @@ def leaf_from_variable(vc: VariableComparison) -> MetricResult:
         score = vc.tube_points_inside
     else:
         score = vc.nrmse
-    diagnostics = {
-        "mode": vc.mode,
-        "tolerance": as_written(vc.tolerance_used),
-        "max_abs_error": vc.max_abs_error,
-        "variable": vc,
-    }
+    diagnostics: dict[str, Any] = {"variable": vc}
     if vc.against is not None:
         # The baseline the criterion read; none where it reads none.
         diagnostics["against"] = vc.against

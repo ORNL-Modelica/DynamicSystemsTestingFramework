@@ -689,8 +689,6 @@ class TestFlattenEvaluation:
         assert "/metrics" in eval_by_path
         assert "/metrics/children/0" in eval_by_path
         assert "/metrics/children/1" in eval_by_path
-        # Diagnostics (mode, against) bubble up
-        assert eval_by_path["/metrics/children/0"].get("mode") == "nrmse"
 
     def test_variable_stashed_comparison_not_in_entry(self):
         """`diagnostics['variable']` carries a non-JSON-safe VariableComparison;

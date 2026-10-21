@@ -45,7 +45,6 @@ class TestLeafFromVariable:
         assert leaf.passed
         assert leaf.score == pytest.approx(0.002)
         assert leaf.label == "pipe.T"
-        assert leaf.diagnostics["mode"] == "nrmse"
         assert leaf.diagnostics["variable"] is vc
         assert leaf.children == []
 
@@ -53,7 +52,6 @@ class TestLeafFromVariable:
         vc = _vc(name="tank.h", passed=True, mode="tube", tube_inside=0.98)
         leaf = leaf_from_variable(vc)
         assert leaf.score == pytest.approx(0.98)
-        assert leaf.diagnostics["mode"] == "tube"
 
     def test_tube_leaf_without_inside_falls_back_to_nrmse(self):
         vc = _vc(mode="tube", tube_inside=None, nrmse=0.5)

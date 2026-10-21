@@ -278,8 +278,8 @@ def flatten_evaluation(
     view by path lookup.
 
     Each entry carries ``passed``, ``score``, ``label``, plus any diagnostics
-    the evaluator stashed on that node (``mode``, ``tolerance``,
-    ``max_abs_error``, ``against``, ``window``, ``n_passed``, ``warned``, ...).
+    the evaluator stashed on that node (``against``, ``window``,
+    ``n_passed``, ``warned``, ...).
     """
     out: dict[str, dict] = {}
     _flatten_evaluation(tree, root, out)

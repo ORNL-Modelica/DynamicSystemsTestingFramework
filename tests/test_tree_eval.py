@@ -134,7 +134,6 @@ class TestLeafEval:
         )
         assert tree.passed
         assert tree.children == []
-        assert tree.diagnostics["tolerance"] == 0.1
 
     def test_nrmse_leaf_fails_outside_tolerance(self):
         spec = parse_metric_tree(
@@ -189,7 +188,6 @@ class TestLeafEval:
             base_tolerance=0.1,  # Generous; should pass
         )
         assert tree.passed
-        assert tree.diagnostics["tolerance"] == 0.1
 
     def test_leaf_against_named_baseline(self):
         """A leaf with ``against: 'experiment'`` scores against that baseline."""
@@ -308,7 +306,6 @@ class TestLeafEval:
             base_tolerance=1e-4,
         )
         assert tree.passed
-        assert tree.diagnostics["mode"] == "tube"
 
     def test_range_leaf_passes_when_signal_within_bounds(self):
         spec = parse_metric_tree(
@@ -340,7 +337,6 @@ class TestLeafEval:
             base_tolerance=1e-4,
         )
         assert tree.passed
-        assert tree.diagnostics["mode"] == "range"
 
     def test_range_leaf_fails_when_signal_exceeds_max(self):
         spec = parse_metric_tree(
