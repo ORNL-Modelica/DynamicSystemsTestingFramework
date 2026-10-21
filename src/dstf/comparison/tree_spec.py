@@ -543,8 +543,10 @@ def synthesize_implicit_tree(
         ov = dict(overrides.get(var, {}))
         # The override-dict ``mode`` value and the spec ``metric``
         # discriminator are the same identifier — no translation table, just
-        # a registry membership check. Absent or unrecognized falls back to
-        # the default metric, matching the flat-override scoring path.
+        # a registry membership check. Absent falls back to the default
+        # metric. So does an unrecognized mode, but only for drawing: the
+        # flat path fails that variable ("unknown comparison mode"), and the
+        # one writer of this tree (spec_update.implicit_tree_op) refuses it.
         mode_key = ov.pop("mode", None)
         metric_name = mode_key if mode_key and metric(mode_key) else DEFAULT_METRIC
         if base_tolerance is not None and "tolerance" not in ov:
