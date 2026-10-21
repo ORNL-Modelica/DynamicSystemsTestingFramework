@@ -965,8 +965,6 @@ class TestPeakSides:
         assert not self._vc({"lower": 0.05, "upper": 0.01}, mode).passed
 
     def test_the_window_is_computed_once_for_the_score_and_the_drawing(self):
-        from dstf.comparison.algorithms import _peak_window
-
         for mode, want in (
             ("rel", (2.0 * (1.0 - 0.25), 2.0 * (1.0 + 0.5))),
             ("abs", (1.75, 2.5)),
@@ -976,8 +974,6 @@ class TestPeakSides:
                 "tolerance": {"lower": 0.25, "upper": 0.5},
                 "tolerance_mode": mode,
             }
-            lo, hi, sides, got_mode = _peak_window(peak, 0)
-            assert (lo, hi, sides, got_mode) == (*want, Sides(0.25, 0.5), mode)
             vc = score(
                 {"mode": "dominant-frequency", "peaks": [peak]},
                 _PEAK_T,
@@ -991,12 +987,21 @@ class TestPeakSides:
             assert not vc.passed and box.passed is False
             paired = vc.diagnostics["paired_peaks"][0]
             assert paired["tolerance"] == {"lower": 0.25, "upper": 0.5}
+            assert paired["tolerance_mode"] == mode
 
-    def test_a_peak_without_a_tolerance_is_one_percent_each_side(self):
-        from dstf.comparison.algorithms import _peak_window
-
-        assert _peak_window({"freq": 2.0}, 0) == (1.98, 2.02, Sides(0.01, 0.01), "rel")
-        assert _peak_window({"freq": 2.0, "tolerance": None}, 0)[2] == Sides(0.01, 0.01)
+    @pytest.mark.parametrize("peak", [{"freq": 2.0}, {"freq": 2.0, "tolerance": None}])
+    def test_a_peak_without_a_tolerance_is_one_percent_each_side(self, peak):
+        vc = score(
+            {"mode": "dominant-frequency", "peaks": [peak]},
+            _PEAK_T,
+            _PEAK_SIG,
+            _PEAK_T,
+            _PEAK_SIG,
+        )
+        box = next(p for p in vc.geometry if p.id == "peaks/window/0")
+        assert (box.t0, box.t1) == (1.98, 2.02)
+        paired = vc.diagnostics["paired_peaks"][0]
+        assert (paired["tolerance"], paired["tolerance_mode"]) == (0.01, "rel")
 
     @pytest.mark.parametrize("mode", ["rel", "abs"])
     def test_a_number_and_its_equal_pair_are_one(self, mode):

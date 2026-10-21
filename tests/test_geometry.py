@@ -7,7 +7,6 @@ import random
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import _find_event_boundaries, _tube_bounds
 from dstf.comparison.geometry import Band, Box, HLine, Marker, Series, VLine, Window
 from dstf.comparison.types import ScoreSummary, VariableComparison
 from scoring import score
@@ -143,10 +142,6 @@ class TestTubeGeometry:
             vc = score({"mode": "tube", **cfg}, ref_t, ref_v, act_t, act_v)
             band = next(p for p in vc.geometry if isinstance(p, Band))
             assert band.id == "tube/band" and band.kind == "result"
-            # The band IS _tube_bounds on the band's own grid — nothing re-derived.
-            up, lo = _tube_bounds(band.time, np.interp(band.time, ref_t, ref_v), cfg)
-            np.testing.assert_allclose(band.upper, up)
-            np.testing.assert_allclose(band.lower, lo)
             act_on_grid = np.interp(band.time, act_t, act_v)
             inside = (act_on_grid >= band.lower - 1e-12) & (
                 act_on_grid <= band.upper + 1e-12
@@ -581,10 +576,6 @@ class TestEventTimingGeometry:
             pytest.approx(1.001),
         ) and w.passed is True
         assert vc.passed
-        # Every VLine coincides with a detected boundary.
-        assert [ids["events/act/0"].time] == [
-            float(act_t[b[0]]) for b in _find_event_boundaries(act_t)
-        ]
 
     def test_an_unpaired_auto_window_is_unscored_not_failed(self):
         # Two reference events, one actual. With count_must_match off the

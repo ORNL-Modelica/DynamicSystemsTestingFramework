@@ -8,11 +8,18 @@ followed from evaluating it on ``ref_time`` alone.
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import _tube_bounds, _tube_eval_grid
+from dstf.comparison.geometry import Band
 from dstf.comparison.sides import Sides
 from scoring import score
 
 BAND_HALF_WIDTH = {"tube_width_mode": "band", "tube_abs": 0.5}
+
+
+def _band(cfg, ref_time, ref_values, act_time, act_values) -> Band:
+    """The band a tube draws: the envelope it scored, on the grid it
+    scored it on."""
+    vc = score({"mode": "tube", **cfg}, ref_time, ref_values, act_time, act_values)
+    return next(p for p in vc.geometry if isinstance(p, Band))
 
 
 def _flat_reference(n_points=4, stop=3.0):
@@ -22,36 +29,34 @@ def _flat_reference(n_points=4, stop=3.0):
 
 class TestEvalGrid:
     def test_grid_is_the_union_of_all_breakpoints(self):
-        grid = _tube_eval_grid(
-            np.array([0.0, 1.0, 2.0, 3.0]),
-            np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]),
-            np.array([1.25]),
-        )
-        assert grid.tolist() == [0.0, 0.5, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
+        ref_time = np.array([0.0, 1.0, 2.0, 3.0])
+        act_time = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
+        cfg = {
+            "tube_width_mode": "band",
+            "tube_points": [{"time": 1.25, "upper": 0.5, "lower": 0.5}],
+        }
+        band = _band(cfg, ref_time, np.zeros(4), act_time, np.zeros(7))
+        assert band.time.tolist() == [0.0, 0.5, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
 
     def test_grid_is_clipped_to_the_reference_span(self):
         # The band is only declared where the reference exists, so an actual
         # sample past the end of the baseline has no envelope to be judged
         # against. This also keeps the evaluated span identical to what
         # evaluating on ref_time gave.
-        grid = _tube_eval_grid(
-            np.array([0.0, 1.0]),
-            np.array([0.0, 0.5, 1.0, 1.5, 2.0]),
-            None,
+        act_time = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
+        band = _band(
+            BAND_HALF_WIDTH, np.array([0.0, 1.0]), np.zeros(2), act_time, np.zeros(5)
         )
-        assert grid.tolist() == [0.0, 0.5, 1.0]
+        assert band.time.tolist() == [0.0, 0.5, 1.0]
 
     def test_duplicate_timestamps_collapse_to_one_grid_point(self):
         # A discontinuity is stored as two samples at one time. This grid
         # carries the instant once, which loses the pre-event band centre --
         # which is why the tube mode keeps the reference-grid check too. See
         # TestDuplicateReferenceTimestamps.
-        grid = _tube_eval_grid(
-            np.array([0.0, 1.0, 1.0, 2.0]),
-            np.array([0.0, 1.0, 1.0, 2.0]),
-            None,
-        )
-        assert grid.tolist() == [0.0, 1.0, 2.0]
+        time = np.array([0.0, 1.0, 1.0, 2.0])
+        band = _band(BAND_HALF_WIDTH, time, np.zeros(4), time.copy(), np.zeros(4))
+        assert band.time.tolist() == [0.0, 1.0, 2.0]
 
 
 class TestExcursionBetweenReferenceSamples:
@@ -217,17 +222,20 @@ class TestScopedExactnessProperty:
     """The guarantee the docstring claims, as a runnable check.
 
     For ``band`` and ``abs`` widths with linear interpolation and no
-    ``tube_min_width``, evaluating on the union grid must find every violation a
-    dense scan of the same continuous envelope finds. This is the fence for the
-    claim; the three documented exceptions (``rel``, ``tube_min_width``,
-    ``constant`` interpolation) are deliberately excluded.
+    ``tube_min_width``, the worst violation the tube reports must be every
+    violation a dense scan of the same continuous envelope finds. This is the
+    fence for the claim; the three documented exceptions (``rel``,
+    ``tube_min_width``, ``constant`` interpolation) are deliberately excluded.
     """
 
     @staticmethod
-    def _worst(grid, ref_time, ref_values, act_time, act_values, config):
-        upper, lower = _tube_bounds(grid, np.interp(grid, ref_time, ref_values), config)
-        act = np.interp(grid, act_time, act_values)
-        return float(np.max(np.maximum(act - upper, lower - act)))
+    def _dense_worst(ref_time, ref_values, act_time, act_values, width):
+        """The worst violation of ``ref ± width`` on 20,000 points of the
+        reference's span, both curves read as the scorer reads them."""
+        dense = np.linspace(ref_time[0], ref_time[-1], 20000)
+        ref = np.interp(dense, ref_time, ref_values)
+        act = np.interp(dense, act_time, act_values)
+        return float(np.max(np.maximum(act - (ref + width), (ref - width) - act)))
 
     def test_union_grid_matches_a_dense_scan(self):
         rng = np.random.default_rng(4242)
@@ -242,27 +250,18 @@ class TestScopedExactnessProperty:
                 continue
             ref_values = rng.uniform(-2.0, 2.0, len(ref_time))
             act_values = rng.uniform(-3.0, 3.0, len(act_time))
-            config = {
-                "tube_width_mode": "band",
-                "tube_abs": float(rng.uniform(0.05, 2.0)),
-            }
-
-            union = _tube_eval_grid(ref_time, act_time, None)
-            dense = np.linspace(ref_time[0], ref_time[-1], 20000)
-            dense = dense[(dense >= act_time[0]) & (dense <= act_time[-1])]
-            if len(dense) == 0 or len(union) == 0:
-                continue
-            union = union[(union >= act_time[0]) & (union <= act_time[-1])]
-            if len(union) == 0:
-                continue
-
-            on_union = self._worst(
-                union, ref_time, ref_values, act_time, act_values, config
+            width = float(rng.uniform(0.05, 2.0))
+            scored = score(
+                {"mode": "tube", "tube_width_mode": "band", "tube_abs": width},
+                ref_time,
+                ref_values,
+                act_time,
+                act_values,
             )
-            on_dense = self._worst(
-                dense, ref_time, ref_values, act_time, act_values, config
+            on_dense = self._dense_worst(
+                ref_time, ref_values, act_time, act_values, width
             )
-            worst_miss = max(worst_miss, on_dense - on_union)
+            worst_miss = max(worst_miss, on_dense - scored.tube_worst_violation)
 
         assert worst_miss < 1e-9, f"dense scan beat the union grid by {worst_miss:g}"
 
@@ -352,17 +351,23 @@ class TestAConstantBandsTwoSides:
             "tube_abs": Sides(0.0, 0.5),
             "tube_min_width": 0.25,
         }
-        upper, lower = _tube_bounds(self.T, np.full_like(self.T, 10.0), cfg)
-        assert (upper[0], lower[0]) == (10.5, 9.75)
+        ref = np.full_like(self.T, 10.0)
+        band = _band(cfg, self.T, ref, self.T, ref)
+        assert (band.upper[0], band.lower[0]) == (10.5, 9.75)
 
     def test_a_number_and_its_equal_pair_build_the_same_band(self):
         ref = np.linspace(-1.0, 3.0, 11)
         for key, mode in (("tube_abs", "band"), ("tube_rel", "rel")):
-            a = _tube_bounds(self.T, ref, {"tube_width_mode": mode, key: 0.3})
-            b = _tube_bounds(
-                self.T, ref, {"tube_width_mode": mode, key: Sides(0.3, 0.3)}
+            a = _band({"tube_width_mode": mode, key: 0.3}, self.T, ref, self.T, ref)
+            b = _band(
+                {"tube_width_mode": mode, key: Sides(0.3, 0.3)},
+                self.T,
+                ref,
+                self.T,
+                ref,
             )
-            assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])
+            assert np.array_equal(a.upper, b.upper)
+            assert np.array_equal(a.lower, b.lower)
 
 
 class TestTubeConfigKeepsAOneSidedWidth:

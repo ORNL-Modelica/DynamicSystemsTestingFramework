@@ -4,11 +4,6 @@ import numpy as np
 import pytest
 
 from dstf.backends.types import TestResult
-from dstf.comparison.algorithms import (
-    _dedup_time_series,
-    _find_event_boundaries,
-    _split_segments,
-)
 from dstf.comparison.comparator import _check_structural_changes
 from dstf.comparison.registry import summarize
 from dstf.comparison.sides import Sides
@@ -16,116 +11,30 @@ from dstf.storage.baseline_codec import decode_reference
 from scoring import score
 
 # ---------------------------------------------------------------------------
-# Event boundary detection
+# Event detection: an event is two or more samples at one time
 # ---------------------------------------------------------------------------
 
 
-class TestFindEventBoundaries:
-    def test_no_events(self):
-        t = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
-        assert _find_event_boundaries(t) == []
-
-    def test_single_event_double(self):
-        t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
-        assert _find_event_boundaries(t) == [(3, 3)]
-
-    def test_single_event_triple(self):
-        """Dymola sometimes produces 3 duplicate time points per event."""
-        t = np.array([0.0, 0.5, 1.0, 1.0, 1.0, 1.5, 2.0])
-        assert _find_event_boundaries(t) == [(3, 4)]
-
-    def test_multiple_events(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0])
-        assert _find_event_boundaries(t) == [(2, 2), (4, 4)]
-
-    def test_event_at_start(self):
-        t = np.array([0.0, 0.0, 1.0, 2.0])
-        assert _find_event_boundaries(t) == [(1, 1)]
-
-    def test_event_at_end(self):
-        t = np.array([0.0, 1.0, 2.0, 2.0])
-        assert _find_event_boundaries(t) == [(3, 3)]
-
-    def test_empty(self):
-        t = np.array([1.0])
-        assert _find_event_boundaries(t) == []
-
-
-# ---------------------------------------------------------------------------
-# Segment splitting
-# ---------------------------------------------------------------------------
-
-
-class TestSplitSegments:
-    def test_no_boundaries(self):
-        t = np.array([0.0, 1.0, 2.0])
-        v = np.array([0.0, 1.0, 2.0])
-        segs = _split_segments(t, v, [])
-        assert len(segs) == 1
-        np.testing.assert_array_equal(segs[0][0], t)
-        np.testing.assert_array_equal(segs[0][1], v)
-
-    def test_single_boundary_double(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0])
-        v = np.array([0.0, 0.9, 1.1, 2.0])
-        segs = _split_segments(t, v, [(2, 2)])
-        assert len(segs) == 2
-        np.testing.assert_array_equal(segs[0][0], [0.0, 1.0])
-        np.testing.assert_array_equal(segs[0][1], [0.0, 0.9])
-        np.testing.assert_array_equal(segs[1][0], [1.0, 2.0])
-        np.testing.assert_array_equal(segs[1][1], [1.1, 2.0])
-
-    def test_single_boundary_triple(self):
-        """Triple time points: middle value is skipped."""
-        t = np.array([0.0, 1.0, 1.0, 1.0, 2.0])
-        v = np.array([0.0, 0.9, 0.95, 1.1, 2.0])
-        segs = _split_segments(t, v, [(2, 3)])
-        assert len(segs) == 2
-        np.testing.assert_array_equal(segs[0][0], [0.0, 1.0])
-        np.testing.assert_array_equal(segs[0][1], [0.0, 0.9])
-        np.testing.assert_array_equal(segs[1][0], [1.0, 2.0])
-        np.testing.assert_array_equal(segs[1][1], [1.1, 2.0])
-
-    def test_two_boundaries(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0])
-        v = np.array([0.0, 0.9, 1.1, 1.9, 2.1, 3.0])
-        segs = _split_segments(t, v, [(2, 2), (4, 4)])
-        assert len(segs) == 3
-
-
-# ---------------------------------------------------------------------------
-# Deduplication
-# ---------------------------------------------------------------------------
-
-
-class TestDedupTimeSeries:
-    def test_keep_first(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0])
-        v = np.array([0.0, 0.9, 1.1, 2.0])
-        t_out, v_out = _dedup_time_series(t, v, keep="first")
-        np.testing.assert_array_equal(t_out, [0.0, 1.0, 2.0])
-        np.testing.assert_array_equal(v_out, [0.0, 0.9, 2.0])
-
-    def test_keep_last(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0])
-        v = np.array([0.0, 0.9, 1.1, 2.0])
-        t_out, v_out = _dedup_time_series(t, v, keep="last")
-        np.testing.assert_array_equal(t_out, [0.0, 1.0, 2.0])
-        np.testing.assert_array_equal(v_out, [0.0, 1.1, 2.0])
-
-    def test_no_duplicates(self):
-        t = np.array([0.0, 1.0, 2.0])
-        v = np.array([0.0, 1.0, 2.0])
-        t_out, v_out = _dedup_time_series(t, v, keep="first")
-        np.testing.assert_array_equal(t_out, t)
-        np.testing.assert_array_equal(v_out, v)
-
-    def test_multiple_duplicates(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0])
-        v = np.array([0.0, 0.9, 1.1, 1.9, 2.1, 3.0])
-        t_out, v_out = _dedup_time_series(t, v, keep="last")
-        np.testing.assert_array_equal(t_out, [0.0, 1.0, 2.0, 3.0])
-        np.testing.assert_array_equal(v_out, [0.0, 1.1, 2.1, 3.0])
+@pytest.mark.parametrize(
+    ("time", "events"),
+    [
+        ([0.0, 0.5, 1.0, 1.5, 2.0], []),
+        ([0.0, 0.5, 1.0, 1.0, 1.5, 2.0], [1.0]),
+        # Dymola sometimes writes three samples at an event: still one.
+        ([0.0, 0.5, 1.0, 1.0, 1.0, 1.5, 2.0], [1.0]),
+        ([0.0, 1.0, 1.0, 2.0, 2.0, 3.0], [1.0, 2.0]),
+        ([0.0, 0.0, 1.0, 2.0], [0.0]),
+        ([0.0, 1.0, 2.0, 2.0], [2.0]),
+        ([1.0], []),
+    ],
+    ids=["none", "double", "triple", "two", "at-start", "at-end", "one-sample"],
+)
+def test_the_events_a_run_holds_are_its_repeated_times(time, events):
+    t = np.array(time)
+    vc = score({"mode": "event-timing"}, t, np.zeros_like(t), t, np.zeros_like(t))
+    drawn = [p.time for p in vc.geometry if p.id.startswith("events/act/")]
+    assert drawn == events
+    assert vc.diagnostics["act_event_count"] == len(events)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +74,17 @@ class TestCompareTrajectories:
         """Identical signals with three events (double time points) => NRMSE = 0."""
         t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0])
         v = np.array([0.0, 0.9, 1.1, 1.9, 2.1, 2.9, 3.1, 4.0])
+        vc = score({"mode": "nrmse"}, t, v, t, v, tolerance=1e-4)
+        assert vc.passed is True
+        assert vc.nrmse == 0.0
+
+    def test_an_events_middle_sample_is_scored_against_nothing(self):
+        """Three samples at an event: the first ends the segment before it,
+        the last starts the one after, and the middle one is neither — it
+        differs from both here, and the score of a run against itself is
+        still 0."""
+        t = np.array([0.0, 1.0, 1.0, 1.0, 2.0])
+        v = np.array([0.0, 0.9, 0.95, 1.1, 2.0])
         vc = score({"mode": "nrmse"}, t, v, t, v, tolerance=1e-4)
         assert vc.passed is True
         assert vc.nrmse == 0.0
@@ -478,7 +398,6 @@ class TestStructuralChanges:
 from pathlib import Path
 
 from dstf.backends.types import VariableResult
-from dstf.comparison.algorithms import _interpolate_tube_widths
 from dstf.comparison.comparator import compare_test
 from dstf.discovery.test_registry import TestModel
 
@@ -589,65 +508,73 @@ class TestToleranceResolution:
 # ---------------------------------------------------------------------------
 
 
+def _widths(times, points, interpolation="linear"):
+    """A tube's widths at ``times``, read off the band it draws over a zero
+    reference: its upper edge is the upper width, its lower edge minus the
+    lower width."""
+    times = np.asarray(times, dtype=float)
+    zero = np.zeros_like(times)
+    vc = score(
+        {
+            "mode": "tube",
+            "tube_width_mode": "band",
+            "tube_points": points,
+            "tube_interpolation": interpolation,
+        },
+        times,
+        zero,
+        times,
+        zero,
+    )
+    (band,) = [p for p in vc.geometry if p.id == "tube/band"]
+    assert band.time.tolist() == times.tolist()
+    return band.upper.tolist(), (-band.lower).tolist()
+
+
 class TestTubeInterpolation:
     def test_single_point_constant(self):
         """Single control point applies everywhere."""
-        times = np.array([0.0, 50.0, 100.0])
         points = [{"time": 0.0, "upper": 10.0, "lower": 10.0}]
-        upper, lower = _interpolate_tube_widths(times, points)
-        np.testing.assert_array_equal(upper, [10.0, 10.0, 10.0])
-        np.testing.assert_array_equal(lower, [10.0, 10.0, 10.0])
-
-    def test_points_without_upper_or_lower_are_rejected(self):
-        """`abs` / `rel` control points are not a control-point format."""
-        times = np.array([0.0, 50.0, 100.0])
-        points = [{"time": 0.0, "abs": 10.0, "rel": 0.05}]
-        with pytest.raises(ValueError, match="'upper' and/or 'lower'"):
-            _interpolate_tube_widths(times, points)
+        upper, lower = _widths([0.0, 50.0, 100.0], points)
+        assert upper == [10.0, 10.0, 10.0]
+        assert lower == [10.0, 10.0, 10.0]
 
     def test_linear_interpolation(self):
         """Linear interpolation between two points."""
-        times = np.array([0.0, 50.0, 100.0])
         points = [
             {"time": 0.0, "upper": 10.0, "lower": 10.0},
             {"time": 100.0, "upper": 20.0, "lower": 20.0},
         ]
-        upper, lower = _interpolate_tube_widths(times, points, "linear")
+        upper, lower = _widths([0.0, 50.0, 100.0], points)
         np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
         np.testing.assert_allclose(lower, [10.0, 15.0, 20.0])
 
     def test_hold_at_boundaries(self):
         """Values before first and after last point are held."""
-        times = np.array([0.0, 50.0, 100.0, 200.0])
         points = [
             {"time": 50.0, "upper": 10.0, "lower": 10.0},
             {"time": 100.0, "upper": 20.0, "lower": 20.0},
         ]
-        upper, _ = _interpolate_tube_widths(times, points, "linear")
+        upper, _ = _widths([0.0, 50.0, 100.0, 200.0], points)
         assert upper[0] == 10.0  # Before first point: hold
         assert upper[3] == 20.0  # After last point: hold
 
     def test_constant_interpolation_stepwise(self):
         """Constant mode uses stepwise (hold previous)."""
-        times = np.array([0.0, 25.0, 75.0, 100.0])
         points = [
             {"time": 0.0, "upper": 10.0, "lower": 10.0},
             {"time": 50.0, "upper": 20.0, "lower": 20.0},
         ]
-        upper, _ = _interpolate_tube_widths(times, points, "constant")
-        assert upper[0] == 10.0
-        assert upper[1] == 10.0
-        assert upper[2] == 20.0
-        assert upper[3] == 20.0
+        upper, _ = _widths([0.0, 25.0, 50.0, 75.0, 100.0], points, "constant")
+        assert upper == [10.0, 10.0, 20.0, 20.0, 20.0]
 
     def test_asymmetric_upper_lower(self):
         """Asymmetric format with independent upper/lower."""
-        times = np.array([0.0, 50.0, 100.0])
         points = [
             {"time": 0.0, "upper": 10.0, "lower": 5.0},
             {"time": 100.0, "upper": 20.0, "lower": 10.0},
         ]
-        upper, lower = _interpolate_tube_widths(times, points, "linear")
+        upper, lower = _widths([0.0, 50.0, 100.0], points)
         np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
         np.testing.assert_allclose(lower, [5.0, 7.5, 10.0])
 
@@ -4052,12 +3979,13 @@ class TestAMalformedToleranceIsAConfigError:
         ("mode", "key"), [("band", "tube_abs"), ("rel", "tube_rel")]
     )
     def test_the_tube_scorer_names_the_width_it_read(self, mode, key):
-        """The scorer reads a raw config too (`TubeMode` hands it Sides):
-        each width is refused under its own name."""
-        from dstf.comparison.algorithms import _tube_bounds
+        """A mode built from its config dataclass, not by `resolve_mode`,
+        reads the width raw: each is refused under its own name."""
+        from dstf.comparison.modes import TubeConfig, TubeMode
 
+        raw = TubeConfig(tube_width_mode=mode, **{key: {"lower": 1}})
         with pytest.raises(ValueError, match=f"^{key} must be a number or "):
-            _tube_bounds(_S_T, _S_REF, {"tube_width_mode": mode, key: {"lower": 1}})
+            TubeMode(raw).compare(_S_T, _S_REF, _S_T, _S_REF)
 
     @pytest.mark.parametrize(
         "bad",
@@ -4127,15 +4055,16 @@ class TestAMalformedToleranceIsAConfigError:
         assert unset.config.tube_min_width == 0.0
 
     def test_the_tube_scorer_refuses_a_min_width_it_reads_raw(self):
-        """The scorer reads a raw config too, and refuses it in the same
-        words: no caller of it meets a ``TypeError``."""
-        from dstf.comparison.algorithms import _tube_bounds
+        """A mode built from its config dataclass reaches the scorer with
+        the floor raw, and is refused in the same words: no caller meets a
+        ``TypeError``."""
+        from dstf.comparison.modes import TubeConfig, TubeMode
 
-        raw = {"tube_width_mode": "band", "tube_abs": 0.5, "tube_min_width": "0.1"}
+        raw = TubeConfig(tube_width_mode="band", tube_abs=0.5, tube_min_width="0.1")
         with pytest.raises(
             ValueError, match='^tube_min_width must be one number, got "0.1"$'
         ):
-            _tube_bounds(_S_T, _S_REF, raw)
+            TubeMode(raw).compare(_S_T, _S_REF, _S_T, _S_REF)
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_event_timing_does_not_read_the_leafs_tolerance(self, flat):
@@ -4547,11 +4476,6 @@ class TestABaseToleranceIsANumber:
 
 import random  # noqa: E402
 
-from dstf.comparison.algorithms import (  # noqa: E402
-    _min_delta_in_box,
-    _violation_in_box,
-)
-
 _P_T = np.linspace(0.0, 10.0, 101)
 _P_FLAT = np.full_like(_P_T, 2.0)
 
@@ -4909,12 +4833,13 @@ class TestPointsIdentity:
                 )
                 t = float(at[i])
                 on_edge += 1
-            t_lo, t_hi = max(t - xt, float(at[0])), min(t + xt, float(at[-1]))
-            if t_hi < t_lo:
-                continue
-            delta, _ = _min_delta_in_box(at, av, t_lo, t_hi, target)
-            violation, _ = _violation_in_box(at, av, t_lo, t_hi, target, lim, lim)
-            assert (violation == 0.0) == (delta <= lim), (k, target, lim, delta)
+            row = {"time": t, "value": target, "tolerance": lim, "time_tolerance": xt}
+            vc = score({"mode": "points", "points": [row]}, EMPTY, EMPTY, at, av)
+            if "unscored_point" in vc.diagnostics:
+                continue  # its time box misses the run
+            # The band's verdict, and today's rule on the closest approach.
+            delta = vc.max_abs_error
+            assert vc.passed == (delta <= lim), (k, target, lim, delta)
             checked += 1
             # The sweep must reach the cases where judging the sample against
             # the band's edges (``target ± limit``) would have flipped today's
