@@ -304,6 +304,26 @@ class TestDominantFrequencySpectrumAndWindows:
         vc = score(_peaks({"freq": 0.125}), T64, ref, T64, COS8)
         assert vc.diagnostics["detected_reference_peaks_hz"] == [0.125]
 
+    def test_a_flat_topped_resonance_is_one_peak(self):
+        """A resonance between bins 8 and 9 lands on both with bit-equal
+        magnitudes: it is one peak, reported at the lower bin, and matched."""
+        tie = np.cos(2 * np.pi * 8 * T64 / 64) + float.fromhex(
+            "0x1.ffffffffffff8p-1"
+        ) * np.cos(2 * np.pi * 9 * T64 / 64)
+        magnitude = np.abs(np.fft.rfft(tie - tie.mean()))
+        assert magnitude[8] == magnitude[9] > max(magnitude[7], magnitude[10])
+        vc = score(
+            _peaks({"freq": 0.1328125, "tolerance": 0.015625, "tolerance_mode": "abs"}),
+            T64,
+            tie,
+            T64,
+            tie,
+        )
+        assert vc.passed is True
+        assert summarize(vc).details == (("peak 0.1328125 Hz", "matched at 0.125 Hz"),)
+        detected = vc.diagnostics["detected_reference_peaks_hz"]
+        assert 0.125 in detected and 0.140625 not in detected
+
     def test_the_mean_is_no_peak(self):
         # A large offset leaves its residue on the 0 Hz bin; that bin is
         # never a peak, even in a window around 0 Hz.

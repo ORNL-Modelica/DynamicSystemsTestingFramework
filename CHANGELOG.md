@@ -13,6 +13,9 @@ this file says when they do.
 - A points criterion whose curve is infinite throughout its time box names
   that value as the closest one (`closest value inf is outside [0.9, 1.2]`)
   instead of saying no sample compares.
+- A dominant-frequency peak whose two neighbouring bins have exactly equal
+  magnitudes is found as one peak; it was no peak at all, and a declared
+  peak at that resonance failed.
 
 ## [1.2.0] - 2026-10-19
 

@@ -1683,6 +1683,24 @@ def _compute_fft_spectrum(
     return freqs, spectrum
 
 
+def _local_maxima(spectrum: np.ndarray) -> np.ndarray:
+    """The indices of ``spectrum``'s local maxima (a flat top counts once).
+
+    A run of equal values whose outer neighbours are both strictly lower,
+    touching neither end of the array, is one maximum, reported at the
+    run's middle index rounded down — ``scipy.signal.find_peaks``' rule. A
+    resonance between two bins can land on both with the same magnitude:
+    strictly greater than both neighbours then found nothing there. Its
+    callers hold at least three values.
+    """
+    starts = np.concatenate(([0], np.flatnonzero(np.diff(spectrum) != 0) + 1))
+    ends = np.concatenate((starts[1:], [len(spectrum)])) - 1
+    values = spectrum[starts]
+    inner = np.arange(1, len(starts) - 1)
+    peak = (values[inner - 1] < values[inner]) & (values[inner + 1] < values[inner])
+    return (starts[inner[peak]] + ends[inner[peak]]) // 2
+
+
 def _find_top_n_peaks(
     freqs: np.ndarray,
     spectrum: np.ndarray,
@@ -1692,8 +1710,8 @@ def _find_top_n_peaks(
     """Return the ``n_peaks`` largest local maxima as ``[(freq, amplitude), ...]``
     sorted by **frequency** (ascending).
 
-    Local maxima are indices strictly greater than both immediate neighbors
-    above ``min_frequency``. The amplitude filter (pick top-N by magnitude)
+    Local maxima (a flat top counts once: :func:`_local_maxima`) above
+    ``min_frequency``. The amplitude filter (pick top-N by magnitude)
     runs first so spectral noise doesn't get counted; the frequency-sort
     runs second so pairing between reference and actual is predictable for
     tests with known frequencies (e.g., PRBS).
@@ -1705,11 +1723,7 @@ def _find_top_n_peaks(
     """
     if len(freqs) < 3 or n_peaks < 1:
         return []
-    interior = np.arange(1, len(spectrum) - 1)
-    is_peak = (spectrum[interior] > spectrum[interior - 1]) & (
-        spectrum[interior] > spectrum[interior + 1]
-    )
-    peak_idx = interior[is_peak]
+    peak_idx = _local_maxima(spectrum)
     floor = max(min_frequency, 0.0)
     peak_idx = peak_idx[freqs[peak_idx] > floor]
     if len(peak_idx) == 0:
@@ -1733,8 +1747,9 @@ def _find_strongest_peak_in_window(
     ``[lo, hi]``, or ``None`` if no local maximum exists in that window.
 
     Used by the declared-peaks pass/fail path. A peak qualifies if it's a
-    local max (greater than both neighbors) AND its frequency sits in
-    ``[lo, hi]``. Returning ``None`` means the leaf fails that peak.
+    local maximum (a flat top counts once: :func:`_local_maxima`) AND its
+    frequency sits in ``[lo, hi]``. Returning ``None`` means the leaf fails
+    that peak.
 
     ``exclude`` holds bin frequencies already claimed by other declared
     peaks; ``min_amplitude`` filters spectral noise (review 2026-07-06:
@@ -1743,12 +1758,8 @@ def _find_strongest_peak_in_window(
     """
     if len(freqs) < 3:
         return None
-    interior = np.arange(1, len(spectrum) - 1)
-    in_window = (freqs[interior] >= lo) & (freqs[interior] <= hi)
-    is_local_max = (spectrum[interior] > spectrum[interior - 1]) & (
-        spectrum[interior] > spectrum[interior + 1]
-    )
-    candidate_idx = interior[in_window & is_local_max]
+    maxima = _local_maxima(spectrum)
+    candidate_idx = maxima[(freqs[maxima] >= lo) & (freqs[maxima] <= hi)]
     if min_amplitude > 0.0:
         candidate_idx = candidate_idx[spectrum[candidate_idx] >= min_amplitude]
     if exclude:
