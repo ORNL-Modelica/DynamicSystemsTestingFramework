@@ -60,7 +60,8 @@ def apply_patch_to_document(
     whitelist: tuple[str, ...] = DEFAULT_WHITELIST,
 ) -> dict:
     """Apply ``patch_ops`` to the entry in the parsed document ``data`` that
-    matches ``model_id`` (created if absent), in place. Returns ``data``.
+    matches ``model_id`` — to ``{"model": model_id}`` where there is none —
+    and put the patched entry in ``data``'s tests. Returns ``data``.
     Raises :class:`PatchError` naming the failing op. The authoring
     Session's in-memory document goes through here; so does the disk path,
     ``spec_update.apply_validated_patches``.

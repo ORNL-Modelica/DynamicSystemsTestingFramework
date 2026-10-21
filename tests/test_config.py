@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -1333,6 +1334,10 @@ class TestFinding17BareDependencyNames:
         config = self._config_with_deps(tmp_path, ["~/libs/Dep"])
         assert config.dependencies == [str(tmp_path / "home" / "libs" / "Dep")]
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows expands an unknown ~user to a folder beside the user's home",
+    )
     def test_a_tilde_naming_no_user_is_a_folder_beside_the_file(self, tmp_path):
         """`~user` for a user there is not cannot be expanded, as in a shell:
         it stays a relative path, not an error."""

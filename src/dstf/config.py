@@ -933,7 +933,10 @@ class Config:
                 # relative path it was a folder named `~` beside this file.
                 # os.path, not Path.expanduser: that raises on a `~user`
                 # it cannot find and, having dropped a leading `./`,
-                # expands `./~/x` too — this leaves both as written.
+                # expands `./~/x` too. os.path leaves `./~/x` as written; an
+                # unknown `~user` it leaves as written on POSIX, and on
+                # Windows it guesses a folder of that name beside the
+                # user's own home.
                 dep_path = Path(os.path.expanduser(dep))
                 if not dep_path.is_absolute():
                     dep_path = _resolved(base_dir / dep_path)
