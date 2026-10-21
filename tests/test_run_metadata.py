@@ -118,8 +118,6 @@ class TestBatchDymolaStampsProvenance:
         test = TestModel(
             model_id="Lib.A",
             source_file=None,
-            source_package="Lib",
-            short_name="A",
             n_vars=0,
             variable_patterns=["x"],
             stop_time=1.0,

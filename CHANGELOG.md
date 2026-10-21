@@ -30,6 +30,12 @@ this file says when they do.
 - A points criterion whose curve jumps to an infinite value inside its time
   box no longer passes as if it had crossed the band there.
 
+### Removed
+
+- `TestModel` no longer has `source_package`, `short_name`, `result_file`,
+  `x_raw` or `error_expected`: nothing read them. A plug-in that builds a
+  `TestModel` drops those arguments.
+
 ## [1.2.0] - 2026-10-19
 
 ### Added

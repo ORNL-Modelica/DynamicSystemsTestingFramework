@@ -175,8 +175,6 @@ def _scored(tree: dict) -> TestComparison:
     test = TestModel(
         model_id="Lib.Examples.T",
         source_file=None,
-        source_package="Lib.Examples",
-        short_name="T",
         n_vars=0,
         source="spec",
         variable_patterns=["x"],
@@ -211,8 +209,6 @@ def _flat(overrides: dict, *, default_points: bool = False, reference: dict = No
     test = TestModel(
         model_id="Lib.Examples.T",
         source_file=None,
-        source_package="Lib.Examples",
-        short_name="T",
         n_vars=0,
         source="spec",
         variable_patterns=["x"],
@@ -1069,8 +1065,6 @@ class TestConsoleReport:
         test = TestModel(
             model_id="Lib.Examples.T",
             source_file=None,
-            source_package="Lib.Examples",
-            short_name="T",
             n_vars=0,
             source="spec",
             variable_patterns=["x", "y"],
@@ -1339,8 +1333,6 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     test = TestModel(
         model_id="Test.Model",
         source_file=None,
-        source_package="Test",
-        short_name="Model",
         n_vars=1,
         variable_patterns=["x"],
         variable_overrides={"x": {"mode": "tubee"}},

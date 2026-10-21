@@ -304,8 +304,6 @@ def test_compare_accept_still_refuses_a_test_whose_last_run_failed(tmp_path):
     test = TestModel(
         model_id="FakeLib.A",
         source_file=lib / "A.mo",
-        source_package="FakeLib",
-        short_name="A",
         n_vars=1,
         variable_patterns=["x"],
         stop_time=1.0,
@@ -522,8 +520,6 @@ def _accept_fixture(tmp_path, manifest_entries, status_rows=None):
         TestModel(
             model_id=entry["model_id"],
             source_file=lib / "X.mo",
-            source_package="FakeLib",
-            short_name=entry["model_id"].rsplit(".", 1)[-1],
             n_vars=1,
             variable_patterns=["x"],
             stop_time=1.0,

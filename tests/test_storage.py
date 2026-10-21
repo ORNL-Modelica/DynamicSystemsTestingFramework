@@ -260,8 +260,6 @@ class TestReferenceStore:
         return TestModel(
             model_id=model_id,
             source_file=None,
-            source_package="ModelicaTestingLib.Examples",
-            short_name=model_id.rsplit(".", 1)[-1],
             n_vars=2,
             variable_patterns=[],
             source="unit_tests",
@@ -864,8 +862,6 @@ def _mk_model(model_id="Lib.Test1") -> TestModel:
     return TestModel(
         model_id=model_id,
         source_file=None,
-        source_package="Lib",
-        short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,
         variable_patterns=[],
         source="unit_tests",
@@ -1473,8 +1469,6 @@ def _mk_test(model_id: str, **kw) -> TestModel:
     return TestModel(
         model_id=model_id,
         source_file=None,
-        source_package=model_id.split(".")[0],
-        short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,
         variable_patterns=["x"],
         source="test_spec",

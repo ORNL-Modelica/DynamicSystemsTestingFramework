@@ -702,8 +702,6 @@ class TestScalarLeafEvaluation:
         test = TestModel(
             model_id="Test.Model",
             source_file=None,
-            source_package="Test",
-            short_name="Model",
             n_vars=0,
             metric_tree_spec=parse_metric_tree(
                 {
@@ -849,8 +847,6 @@ class TestQuantityGate:
         test = TestModel(
             model_id="Test.Model",
             source_file=None,
-            source_package="Test",
-            short_name="Model",
             n_vars=1,
             variable_patterns=["x"],
             variable_overrides={

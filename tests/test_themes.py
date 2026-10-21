@@ -823,8 +823,6 @@ class TestGeneratedPages:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=1,
             variable_patterns=["x"],
         )

@@ -336,14 +336,10 @@ def spec_models_from_document(
 
         variables = entry.get("variables", [])  # a list of strings: ditto
 
-        parts = model_id.rsplit(".", 1)
-        source_package = parts[0] if len(parts) > 1 else ""
-        short_name = parts[-1]
-
         # Optional "source" field: path (relative to spec file) to the
         # simulation source — .jl for Julia, .py for Python, .fmu for FMPy.
         # Modelica tests omit this and source_file stays None (the .mo
-        # lives in the package discovered via source_package).
+        # lives in the library the scan walks).
         source_file: Path | None = None
         source_rel = entry.get("source")
         if source_rel:
@@ -359,8 +355,6 @@ def spec_models_from_document(
         test = TestModel(
             model_id=model_id,
             source_file=source_file,
-            source_package=source_package,
-            short_name=short_name,
             n_vars=0,  # Will be resolved after simulation for pattern-based
             variable_patterns=variables,
             source="spec",

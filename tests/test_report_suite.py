@@ -247,8 +247,6 @@ class TestViewAndLookupDrift:
         base = dict(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=2,
             variable_patterns=["x", "y"],
         )
@@ -323,8 +321,6 @@ def test_template_emits_plot_order(tmp_path):
         test_model=TestModel(
             model_id="Fixture.Order",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="Order",
             n_vars=2,
         ),
         diagnostics=(),
@@ -572,8 +568,6 @@ class TestEmbeddedFigures:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=1,
             variable_patterns=["x"],
             variable_overrides={
@@ -660,8 +654,6 @@ class TestEmbeddedFigures:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=1,
             variable_patterns=["x"],
             variable_overrides={"x": {"mode": "points", "tolerance": 0.01}},
@@ -876,8 +868,6 @@ class TestEmbeddedFigures:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=1,
             metric_tree_spec=spec,
         )
@@ -984,8 +974,6 @@ class TestEmbeddedFigures:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=1,
             metric_tree_spec=spec,
         )
@@ -1171,8 +1159,6 @@ class TestServerRenderedTree:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=2,
             metric_tree_spec=parse_metric_tree(self.SPEC),
         )
@@ -1360,8 +1346,6 @@ class TestRestoredViewingChecks:
         return TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=1,
             variable_patterns=["x"],
             **kw,
@@ -1585,8 +1569,6 @@ class TestPlotSections:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=2,
             variable_patterns=["x", "y"],
             metric_tree_spec=parse_metric_tree(metrics) if metrics else None,
@@ -1643,8 +1625,6 @@ class TestPlotSections:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=2,
             plots=parse_plots(layout) if layout is not None else None,
         )
@@ -1802,8 +1782,6 @@ class TestPlotSections:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=10,
             source="unit_tests",
             x_expressions=expr,
@@ -1870,8 +1848,6 @@ class TestPlotSections:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=3,
             metric_tree_spec=parse_metric_tree(
                 {
@@ -2140,8 +2116,6 @@ class TestPlotSections:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=2,
             metric_tree_spec=parse_metric_tree(self.XY),
             plots=parse_plots([{"var": "x", "context": ["z"]}, {"var": "w"}]),
@@ -2231,8 +2205,6 @@ def test_a_context_series_the_result_carries_is_read_from_memory(tmp_path):
     test = TestModel(
         model_id="M",
         source_file=Path("fixture.mo"),
-        source_package="Fixture",
-        short_name="M",
         n_vars=2,
         metric_tree_spec=parse_metric_tree({"metric": "nrmse", "variable": "x"}),
         plots=parse_plots([{"var": "x", "context": ["y"]}]),
@@ -2274,8 +2246,6 @@ def test_unit_tests_elements_the_result_lacks_never_fold():
     test = TestModel(
         model_id="M",
         source_file=Path("fixture.mo"),
-        source_package="Fixture",
-        short_name="M",
         n_vars=6,
         metric_tree_spec=parse_metric_tree(
             {
@@ -2871,8 +2841,6 @@ class TestAVariableReadsAsItsExpression:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=len(names),
             source="unit_tests",
             x_expressions=[expressions[n] for n in names],
@@ -3023,8 +2991,6 @@ class TestAVariableReadsAsItsExpression:
         test = TestModel(
             model_id="M",
             source_file=Path("fixture.mo"),
-            source_package="Fixture",
-            short_name="M",
             n_vars=len(names),
             source="unit_tests",
             x_expressions=[expressions[n] for n in names],

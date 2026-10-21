@@ -112,7 +112,7 @@ class TestMaterialization:
         with pytest.raises(PatchError, match="no tracked variables"):
             implicit_tree_op({"model": "M", "variables": []})
 
-    def test_missing_entry_is_left_to_apply_patch(self):
+    def test_missing_entry_is_left_to_the_patch(self):
         assert materialize_implicit_metrics(None, [LEAF_OP]) == [LEAF_OP]
 
 

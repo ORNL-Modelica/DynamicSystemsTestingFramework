@@ -317,8 +317,6 @@ class TestFmuExportGate:
         test = TestModel(
             model_id="BouncingBall",
             source_file=None,
-            source_package="",
-            short_name="BouncingBall",
             n_vars=1,
             variable_patterns=["h"],
             stop_time=1.0,

@@ -276,8 +276,6 @@ class TestSimulateOnlyClassification:
             TestModel(
                 model_id="Lib.Ex.SimulateOnly",
                 source_file=None,
-                source_package="Lib.Ex",
-                short_name="SimulateOnly",
                 n_vars=1,
                 simulate_only=True,
             ),

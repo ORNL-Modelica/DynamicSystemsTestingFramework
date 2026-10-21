@@ -19,7 +19,7 @@ from ..discovery.spec_parser import spec_document_from_bytes
 @dataclass(frozen=True)
 class PatchOp:
     """One RFC 6902 op against one model's spec entry. ``path`` is relative
-    to the entry, as ``apply_patch`` reads it."""
+    to the entry, as ``apply_patch_to_document`` reads it."""
 
     model_id: str
     op: str  # "add" | "replace" | "remove"
@@ -58,7 +58,7 @@ class PatchOp:
     gesture: int | None = field(default=None, compare=False)
 
     def raw(self) -> dict:
-        """The op as ``apply_patch`` and the envelope carry it."""
+        """The op as ``apply_patch_to_document`` and the envelope carry it."""
         raw: dict = {"op": self.op, "path": self.path}
         if self.op != "remove":
             raw["value"] = copy.deepcopy(self.value)

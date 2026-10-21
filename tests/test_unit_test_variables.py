@@ -16,8 +16,6 @@ def _test(n_vars, x_expressions, instance="unitTests", source="unit_tests", **kw
     return TestModel(
         model_id="Lib.Examples.M",
         source_file=None,
-        source_package="Lib.Examples",
-        short_name="M",
         n_vars=n_vars,
         x_expressions=list(x_expressions),
         unit_tests_instance=instance,

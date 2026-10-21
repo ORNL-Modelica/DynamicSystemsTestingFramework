@@ -24,12 +24,9 @@ each), so the RFC 6901 unescape rules fit in ~10 lines.
 from __future__ import annotations
 
 import copy
-import json
 import logging
 from pathlib import Path
 from typing import Any
-
-from ..storage.ref_index import _atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +62,8 @@ def apply_patch_to_document(
     """Apply ``patch_ops`` to the entry in the parsed document ``data`` that
     matches ``model_id`` (created if absent), in place. Returns ``data``.
     Raises :class:`PatchError` naming the failing op. The authoring
-    Session's in-memory document goes through here; the disk path is
-    :func:`apply_patch`."""
+    Session's in-memory document goes through here; so does the disk path,
+    ``spec_update.apply_validated_patches``."""
     entry = _find_or_create_entry(data, model_id)
     for i, op in enumerate(patch_ops):
         try:
@@ -77,32 +74,6 @@ def apply_patch_to_document(
                 path=e.path,
                 reason=e.reason,
             ) from None
-    return data
-
-
-def apply_patch(
-    spec_path: Path,
-    model_id: str,
-    patch_ops: list[dict],
-    *,
-    whitelist: tuple[str, ...] = DEFAULT_WHITELIST,
-    write: bool = True,
-) -> dict:
-    """Apply ``patch_ops`` to the entry in ``spec_path`` matching ``model_id``.
-
-    Returns the (mutated) spec dict. When ``write=True`` (default), also
-    persists it back to disk preserving key order. Raise :class:`PatchError`
-    on any issue; the caller (CLI) surfaces the message and aborts without
-    writing if the dry-run path signals invalidity.
-    """
-    data = apply_patch_to_document(
-        load_spec_document(spec_path), model_id, patch_ops, whitelist=whitelist
-    )
-    if write:
-        spec_path.parent.mkdir(parents=True, exist_ok=True)
-        # review 2026-07-06 (finding 31): atomic — an interrupted patch must
-        # not leave the user's spec truncated.
-        _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
     return data
 
 

@@ -46,8 +46,6 @@ class TestModel:
 
     model_id: str
     source_file: Path | None
-    source_package: str
-    short_name: str
     n_vars: int
     # The UnitTests component's instance name: its variables are
     # ``<instance>.x[i]`` in the result file. A test with no such component
@@ -56,9 +54,7 @@ class TestModel:
     # ends up naming anything.
     unit_tests_instance: str = "unitTests"
     x_expressions: list[str] = field(default_factory=list)
-    x_raw: str = ""
     x_reference: list[float] | None = None
-    error_expected: float = 1e-6
     # Simulation fields default to None = "not set by any source" so the
     # spec-over-annotation merge can use `is not None` as the explicitly-set
     # sentinel, exactly like number_of_intervals / output_interval — review
@@ -73,7 +69,6 @@ class TestModel:
     method: str | None = None
     number_of_intervals: int | None = None
     output_interval: float | None = None
-    result_file: str = ""
     timeout: int | None = None  # Per-test timeout override (seconds)
 
     # External spec: variable patterns (may include globs like "medium.T*" or "*")
@@ -222,18 +217,7 @@ def _build_test_model_from_recognizer_results(
     *Icons.Example``) has no ``<instance>.x[i]``, and a default of one made
     every run look for ``unitTests.x[1]`` in its result and warn.
     """
-    parts = model_id.rsplit(".", 1)
-    source_package = parts[0] if len(parts) > 1 else ""
-    short_name = parts[-1]
-
-    model = TestModel(
-        model_id=model_id,
-        source_file=None,
-        source_package=source_package,
-        short_name=short_name,
-        n_vars=0,
-        result_file=short_name,
-    )
+    model = TestModel(model_id=model_id, source_file=None, n_vars=0)
 
     counted = False
     for r in results:
@@ -246,12 +230,8 @@ def _build_test_model_from_recognizer_results(
             model.unit_tests_instance = r.unit_tests_instance
         if r.x_expressions:
             model.x_expressions = list(r.x_expressions)
-        if r.x_raw:
-            model.x_raw = r.x_raw
         if r.x_reference is not None:
             model.x_reference = list(r.x_reference)
-        if r.error_expected is not None:
-            model.error_expected = r.error_expected
         if r.stop_time is not None:
             model.stop_time = r.stop_time
             model.field_sources["stop_time"] = "annotation"

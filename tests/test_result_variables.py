@@ -28,8 +28,6 @@ def _spec_test(patterns, model_id="Lib.Examples.PatternTest"):
     return TestModel(
         model_id=model_id,
         source_file=None,
-        source_package="Lib.Examples",
-        short_name=model_id.rsplit(".", 1)[-1],
         n_vars=0,
         variable_patterns=list(patterns),
         source="spec",
@@ -40,8 +38,6 @@ def _unit_tests_test(n_vars, model_id="Lib.Examples.UnitTest", **overrides):
     defaults = dict(
         model_id=model_id,
         source_file=None,
-        source_package="Lib.Examples",
-        short_name=model_id.rsplit(".", 1)[-1],
         n_vars=n_vars,
         variable_patterns=[],
         source="unit_tests",
@@ -175,8 +171,6 @@ class TestExtractVariables:
         test = TestModel(
             model_id="Lib.Examples.Both",
             source_file=None,
-            source_package="Lib.Examples",
-            short_name="Both",
             n_vars=1,
             variable_patterns=["unitTests.x*"],
             source="both",

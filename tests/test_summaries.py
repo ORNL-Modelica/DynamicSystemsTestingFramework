@@ -881,8 +881,6 @@ class TestADeclaredEventNeverFound:
         test = TestModel(
             model_id="T.M",
             source_file=None,
-            source_package="T",
-            short_name="M",
             n_vars=0,
             source="spec",
             variable_patterns=["e"],

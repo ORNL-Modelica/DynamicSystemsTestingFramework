@@ -15,7 +15,7 @@ from dstf.discovery.mo_parser import (
     normalize_expression,
     parse_mo_file,
 )
-from dstf.discovery.patch_apply import apply_patch
+from dstf.discovery.patch_apply import apply_patch_to_document, load_spec_document
 from dstf.discovery.spec_parser import (
     add_to_test_spec,
     parse_test_spec,
@@ -647,8 +647,6 @@ def _mk_model(**kw) -> TestModel:
     defaults = dict(
         model_id="MyLib.Foo",
         source_file=None,
-        source_package="MyLib",
-        short_name="Foo",
         n_vars=1,
     )
     defaults.update(kw)
@@ -977,7 +975,7 @@ class TestFinding51DuplicateEntries:
         assert dup.variable_patterns == ["x"]
         assert any("MyLib.Dup" in r.message for r in caplog.records)
 
-    def test_apply_patch_warns_on_duplicates_and_edits_first(self, tmp_path, caplog):
+    def test_a_patch_warns_on_duplicates_and_edits_first(self, tmp_path, caplog):
         spec_path = tmp_path / "spec.json"
         spec_path.write_text(
             json.dumps(
@@ -991,12 +989,11 @@ class TestFinding51DuplicateEntries:
             encoding="utf-8",
         )
         with caplog.at_level(logging.WARNING, logger="dstf.discovery.patch_apply"):
-            apply_patch(
-                spec_path,
+            data = apply_patch_to_document(
+                load_spec_document(spec_path),
                 "M",
                 [{"op": "replace", "path": "/comparison/tolerance", "value": 0.5}],
             )
-        data = json.loads(spec_path.read_text(encoding="utf-8"))
         assert data["tests"][0]["comparison"]["tolerance"] == 0.5
         assert data["tests"][1]["comparison"]["tolerance"] == 1e-5
         assert any("duplicate" in r.message.lower() for r in caplog.records)

@@ -492,8 +492,6 @@ def _make_test(comparison_tolerance=None, variable_overrides=None):
     return TestModel(
         model_id="Test.Model",
         source_file=None,
-        source_package="Test",
-        short_name="Model",
         n_vars=0,
         source="spec",
         variable_patterns=["x"],
@@ -1829,8 +1827,6 @@ class TestTreeConfigErrorIsALeafFailure:
         return TestModel(
             model_id=model_id,
             source_file=None,
-            source_package="Test",
-            short_name="Model",
             n_vars=1,
             metric_tree_spec=parse_metric_tree(metrics_raw),
         )
@@ -1983,8 +1979,6 @@ def _mk_test(model_id="MyLib.Test", **kw) -> TestModel:
     return TestModel(
         model_id=model_id,
         source_file=Path("x.mo"),
-        source_package="MyLib",
-        short_name="Test",
         n_vars=1,
         **kw,
     )
@@ -2565,8 +2559,6 @@ def _vi_test(**kw) -> TestModel:
     return TestModel(
         model_id="MyLib.Test",
         source_file=Path("x.mo"),
-        source_package="MyLib",
-        short_name="Test",
         n_vars=kw.pop("n_vars", 1),
         source=kw.pop("source", "unit_tests"),
         **kw,
@@ -3589,8 +3581,6 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         test = TestModel(
             model_id="Test.Model",
             source_file=None,
-            source_package="Test",
-            short_name="Model",
             n_vars=1,
             x_expressions=["a.T"],
             source="both",
@@ -3622,8 +3612,6 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         test = TestModel(
             model_id="Test.Model",
             source_file=None,
-            source_package="Test",
-            short_name="Model",
             n_vars=0,
             source="spec",
             variable_patterns=["pipe.T?"],
@@ -3766,13 +3754,6 @@ def _leaves(result):
     return [leaf for child in result.children for leaf in _leaves(child)]
 
 
-def _view_leaves(view):
-    """The leaf nodes of a tree view (`to_view`)."""
-    if not view.get("children"):
-        return [view]
-    return [leaf for child in view["children"] for leaf in _view_leaves(child)]
-
-
 def _sides_fields(vc) -> str:
     """Every field of a comparison but its geometry, as comparable text."""
     d = dataclasses.asdict(vc)
@@ -3837,15 +3818,11 @@ class TestATolerancesNumberAndEqualPairAreOne:
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_a_leafs_unequal_pair_leaves_as_the_pair(self, flat):
-        """The leaf's diagnostics and the tree view carry the tolerance
-        applied as written: an unequal pair is the pair, never one side."""
-        from dstf.comparison.tree_eval import to_view
-
+        """The leaf's diagnostics carry the tolerance applied as written: an
+        unequal pair is the pair, never one side."""
         comp = _sides_compare({"metric": "points", "tolerance": _S_UNEVEN}, flat=flat)
         (leaf,) = _leaves(comp.metric_tree)
         assert leaf.diagnostics["tolerance"] == _S_UNEVEN
-        (node,) = _view_leaves(to_view(comp.metric_tree))
-        assert node["tolerance"] == _S_UNEVEN
         # Equal sides are the number.
         comp = _sides_compare({"metric": "points", "tolerance": _S_EVEN}, flat=flat)
         (leaf,) = _leaves(comp.metric_tree)

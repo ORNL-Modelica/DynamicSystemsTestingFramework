@@ -88,8 +88,6 @@ def _test_model(metrics_raw: dict) -> TestModel:
     return TestModel(
         model_id="Test.Model",
         source_file=None,
-        source_package="Test",
-        short_name="Model",
         n_vars=0,
         metric_tree_spec=parse_metric_tree(metrics_raw),
     )
@@ -1293,18 +1291,13 @@ class TestALeafsToleranceIsSides:
         with pytest.raises(MetricSpecError, match='tolerance: unknown field "x"'):
             self._evaluate({"lower": 1, "upper": 2, "x": 3})
 
-    def test_the_view_writes_an_equal_pair_as_the_number(self):
-        from dstf.comparison.tree_eval import to_view
-
+    def test_the_leaf_writes_an_equal_pair_as_the_number(self):
         tree = self._evaluate({"lower": 0.05, "upper": 0.05})
         assert tree.passed
         x = tree.children[0]
         assert x.diagnostics["variable"].tolerance_used == Sides(0.05, 0.05)
         assert x.diagnostics["tolerance"] == 0.05
-        leaf = to_view(tree)["children"][0]
-        assert leaf["tolerance"] == 0.05 and isinstance(leaf["tolerance"], float)
-        # The same as the number's.
-        assert leaf == to_view(self._evaluate(0.05))["children"][0]
+        assert isinstance(x.diagnostics["tolerance"], float)
 
     @pytest.mark.parametrize(
         "bad",
@@ -1312,8 +1305,6 @@ class TestALeafsToleranceIsSides:
         ids=repr,
     )
     def test_a_malformed_one_fails_its_leaf_and_the_rest_is_scored(self, bad):
-        from dstf.comparison.tree_eval import to_view
-
         tree = self._evaluate(bad, base=0.25)
         x, y = (c.diagnostics["variable"] for c in tree.children)
         assert not tree.passed and y.passed
@@ -1324,4 +1315,4 @@ class TestALeafsToleranceIsSides:
         )
         # The base is the one it reports as applied, as both sides.
         assert x.tolerance_used == Sides(0.25, 0.25)
-        assert to_view(tree)["children"][0]["tolerance"] == 0.25
+        assert tree.children[0].diagnostics["tolerance"] == 0.25

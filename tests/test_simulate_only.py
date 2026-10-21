@@ -14,8 +14,6 @@ def _make_test(simulate_only: bool) -> TestModel:
     return TestModel(
         model_id="My.Sim.Only",
         source_file=None,
-        source_package="My.Sim",
-        short_name="Only",
         n_vars=1,
         variable_patterns=["x"],
         simulate_only=simulate_only,
@@ -84,8 +82,6 @@ class TestSimulateOnly:
         t = TestModel(
             model_id="X.Y",
             source_file=None,
-            source_package="X",
-            short_name="Y",
             n_vars=1,
         )
         assert t.simulate_only is False

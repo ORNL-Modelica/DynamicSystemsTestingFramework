@@ -1031,8 +1031,6 @@ def _through(leaf, flat, time, values):
     kw = dict(
         model_id="T.M",
         source_file=None,
-        source_package="T",
-        short_name="M",
         n_vars=0,
         source="spec",
         variable_patterns=["x"],

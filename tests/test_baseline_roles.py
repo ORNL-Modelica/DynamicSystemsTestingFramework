@@ -30,8 +30,6 @@ def _make_test_model(model_id="Lib.Test1"):
     return TestModel(
         model_id=model_id,
         source_file=None,
-        source_package="Lib",
-        short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,
         variable_patterns=[],
         source="unit_tests",

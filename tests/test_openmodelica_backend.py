@@ -113,8 +113,6 @@ class TestOpenModelicaBackendUnit:
         test = TestModel(
             model_id="Lib.Examples.MissingVar",
             source_file=None,
-            source_package="Lib.Examples",
-            short_name="MissingVar",
             n_vars=1,
             variable_patterns=[],
             source="unit_tests",
@@ -160,8 +158,6 @@ class TestOpenModelicaBackendUnit:
         test = TestModel(
             model_id="Lib.A",
             source_file=None,
-            source_package="Lib",
-            short_name="A",
             n_vars=0,
             variable_patterns=["x"],
             stop_time=1.0,
@@ -251,8 +247,6 @@ class TestOpenModelicaBackendUnit:
         test = TestModel(
             model_id="Lib.DoesNotExist",
             source_file=None,
-            source_package="Lib",
-            short_name="DoesNotExist",
             n_vars=0,
             variable_patterns=[],
             stop_time=1.0,
@@ -390,8 +384,6 @@ class TestOpenModelicaIntegration:
         test = TestModel(
             model_id="Modelica.Blocks.Examples.PID_Controller",
             source_file=None,
-            source_package="Modelica.Blocks.Examples",
-            short_name="PID_Controller",
             n_vars=0,
             variable_patterns=["inertia1.phi"],
             stop_time=1.0,
@@ -437,8 +429,6 @@ class TestOpenModelicaIntegration:
         test = TestModel(
             model_id="Modelica.Blocks.Examples.PID_Controller",
             source_file=None,
-            source_package="Modelica.Blocks.Examples",
-            short_name="PID_Controller",
             n_vars=0,
             variable_patterns=["inertia1.phi"],
             stop_time=0.5,
@@ -474,8 +464,6 @@ class TestOpenModelicaIntegration:
         test = TestModel(
             model_id="Definitely.Not.Here",
             source_file=None,
-            source_package="Definitely.Not",
-            short_name="Here",
             n_vars=0,
             variable_patterns=[],
             stop_time=1.0,
