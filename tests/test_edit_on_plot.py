@@ -668,8 +668,8 @@ def test_a_criterion_not_scored_is_not_edited_on_the_plot(
         ]
     )
     said = (
-        f"Not scored: {reason}. Until it is, the plot has nothing of it to "
-        "drag or Ctrl+click; the fields above, and their ⌖, still edit it."
+        f"Not scored: {reason}. Until it is, the plot draws nothing of it to "
+        "drag; the fields above, and their ⌖, still edit it."
     )
     for leaf_path in ("/metrics/children/1", "/metrics/children/2"):
         on_v = Selection(tests=frozenset({D}), variable="v", leaf_path=leaf_path)

@@ -314,8 +314,8 @@ def test_a_criterion_not_scored_says_why_and_takes_no_click(
         why = editor.locator(".dstf-why").filter(has_text="Not scored:")
         said = (
             "Not scored: variable 'v' not found in the baseline. Until it is, "
-            "the plot has nothing of it to drag or Ctrl+click; the fields "
-            "above, and their ⌖, still edit it."
+            "the plot draws nothing of it to drag; the fields above, and "
+            "their ⌖, still edit it."
         )
         _open_for_grips(page, 1, "points · v")
         expect(why).to_have_text(said, timeout=EXPECT_TIMEOUT)

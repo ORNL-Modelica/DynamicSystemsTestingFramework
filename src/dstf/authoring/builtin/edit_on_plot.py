@@ -97,8 +97,8 @@ UNSCORED = "{} — its table and its handles on the plot are edited once it is s
 #: ⌖ that stays beside one (`placeable`): a window's ends are the click's x,
 #: the way to move a window that misses every sample back onto the run.
 UNSCORED_LEAF = (
-    "Not scored: {}. Until it is, the plot has nothing of it to drag or "
-    "Ctrl+click; the fields above, and their ⌖, still edit it."
+    "Not scored: {}. Until it is, the plot draws nothing of it to drag; "
+    "the fields above, and their ⌖, still edit it."
 )
 
 
