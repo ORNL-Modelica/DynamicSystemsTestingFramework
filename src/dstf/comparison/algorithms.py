@@ -488,13 +488,8 @@ def _compare_points(
     if not points:
         # Implicit final-only — legacy behavior.
         if len(ref_values) == 0:
-            return VariableComparison(
-                index=0,
-                name="",
-                passed=False,
-                nrmse=float("inf"),
-                mode="points",
-                diagnostics={"error": "empty trajectory"},
+            return _no_data_failure(
+                "points", "no reference samples to compare (empty baseline or window)"
             )
         ref_final = float(ref_values[-1])
         act_final = float(act_values[-1])

@@ -2139,15 +2139,17 @@ class TestEmptyDataFails:
                 "dominant-frequency",
                 "no reference samples to take a spectrum of (empty baseline or window)",
             ),
+            ("points", "no reference samples to compare (empty baseline or window)"),
         ],
-        ids=["events", "no-peaks"],
+        ids=["events", "no-peaks", "points-final"],
     )
     def test_a_baseline_with_no_samples_in_the_window_scores_nothing(
         self, metric, reason
     ):
         """The run reaches the window and the baseline does not: auto-detected
-        events have nothing to be compared with, and a dominant-frequency
-        criterion with no peaks declared no spectrum to mark peaks on."""
+        events have nothing to be compared with, a points criterion with no
+        rows no final value, and a dominant-frequency criterion with no
+        peaks declared no spectrum to mark peaks on."""
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.reporting.status import not_scored_reason
 
@@ -4878,8 +4880,9 @@ class TestPointsFinalCheckSides:
             {"mode": "points"}, EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([2.0, 2.0])
         )
         assert vc.passed is False
-        assert (
-            summarize(vc).criterion == "points criterion not scored — empty trajectory"
+        assert summarize(vc).criterion == (
+            "points criterion not scored — "
+            "no reference samples to compare (empty baseline or window)"
         )
 
 
