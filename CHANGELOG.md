@@ -6,6 +6,14 @@ follow [semantic versioning](https://semver.org/). DSTF is in beta: the command
 line and the `testing.json` keys may still change between minor versions, and
 this file says when they do.
 
+## [Unreleased]
+
+### Fixed
+
+- A points criterion whose curve is infinite throughout its time box names
+  that value as the closest one (`closest value inf is outside [0.9, 1.2]`)
+  instead of saying no sample compares.
+
 ## [1.2.0] - 2026-10-19
 
 ### Added

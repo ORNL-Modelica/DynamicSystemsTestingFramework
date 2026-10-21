@@ -8,6 +8,7 @@ test-suite-level orchestration.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -310,7 +311,9 @@ def _violation_in_box(
         if -lower <= d <= upper:
             return 0.0, v
         gap = d - upper if d > upper else -lower - d
-        if gap < best:
+        # An infinite sample's gap is inf, never below the starting best: it
+        # still names the closest value. A NaN's gap is NaN and never wins.
+        if gap < best or (gap == best and math.isnan(closest)):
             best, closest = gap, v
     if -lower <= upper:
         for (_, v1), (_, v2) in zip(candidates, candidates[1:]):
@@ -1664,8 +1667,6 @@ def _compute_fft_spectrum(
     therefore depend on the sample COUNT: the same signal at a different
     resolution lands its peaks on a different grid.
     """
-    import math
-
     if len(t) == 0:
         return np.array([]), np.array([])
     n0 = max(len(t), 64)

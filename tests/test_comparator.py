@@ -4523,6 +4523,31 @@ class TestPointsValueSides:
         )
         assert summarize(vc).criterion == criterion
 
+    @pytest.mark.parametrize(
+        "act",
+        [[np.inf] * 3, [-np.inf] * 3, [np.nan, np.inf, np.inf]],
+        ids=["+inf", "-inf", "NaN beside +inf"],
+    )
+    def test_a_box_of_infinite_samples_names_its_closest_value(self, act):
+        """Infinite is a value, and the closest one when nothing else is;
+        a NaN never is."""
+        vc = score(
+            {
+                "mode": "points",
+                "points": [
+                    {"time": 1, "value": 1, "tolerance": {"lower": 0.1, "upper": 0.2}}
+                ],
+            },
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array(act),
+        )
+        assert vc.passed is False
+        assert vc.diagnostics["point_failures"] == [
+            {"time": 1.0, "reason": f"closest value {act[-1]:g} is outside [0.9, 1.2]"}
+        ]
+
     @pytest.mark.parametrize("row", [{}, {"time_tolerance": 0.2}], ids=repr)
     def test_a_target_that_is_not_a_number_says_so(self, row):
         point = {"time": 5.0, "value": float("nan"), "tolerance": self._UNEVEN}
