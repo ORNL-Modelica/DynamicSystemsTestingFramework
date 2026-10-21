@@ -17,9 +17,7 @@ class UnitTestInfo:
     #: ``<instance>.x[i]`` in the result file.
     instance: str = "unitTests"
     x_expressions: list[str] = field(default_factory=list)
-    x_raw: str = ""  # Raw text of x={...} for complex cases (cat, etc.)
     x_reference: list[float] | None = None
-    error_expected: float = 1e-6
 
 
 @dataclass
@@ -304,7 +302,7 @@ def _strip_modelica_literals(text: str) -> str:
     return "".join(out)
 
 
-def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
+def _parse_unit_tests(text: str) -> UnitTestInfo | None:
     """Extract UnitTests block parameters from model text."""
     # Match the UnitTests declaration — may span multiple lines
     # Patterns: "UnitTests unitTests(" or "ErrorAnalysis.UnitTests unitTests("
@@ -354,7 +352,6 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
     if m:
         brace_start = m.end() - 1
         raw = _extract_balanced_braces(param_text, brace_start)
-        info.x_raw = raw
         info.x_expressions = _parse_x_expressions(raw)
     elif re.search(r"\bx\s*=\s*(?:cat|fill|zeros|ones|linspace)\s*\(", param_text):
         # x=cat(1, ...) or x=fill(...) etc. without outer braces
@@ -372,7 +369,6 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
                         end2 = i
                         break
             raw = param_text[m2.start() + 2 : end2 + 1]  # include "func(...)"
-            info.x_raw = raw.strip()
             info.x_expressions = [normalize_expression(raw)]
     else:
         # x=varName, x=some.qualified.name, x=a.b[1].c, x=a.b[1, :] — a bare
@@ -383,7 +379,6 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
         if m2:
             raw = _take_argument(param_text, m2.end()).strip()
             if raw:
-                info.x_raw = raw
                 info.x_expressions = [normalize_expression(raw)]
 
     # Extract x_reference={...}
@@ -392,14 +387,6 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
         brace_start = m.end() - 1
         raw = _extract_balanced_braces(param_text, brace_start)
         info.x_reference = _parse_float_list(raw)
-
-    # Extract errorExpected= (finding 56 applies here too: an expression like
-    # ``1e-3*2`` must warn and keep the default, not silently truncate)
-    error_expected = _parse_number(
-        param_text, r"\berrorExpected", source, "errorExpected"
-    )
-    if error_expected is not None:
-        info.error_expected = error_expected
 
     return info
 
@@ -510,7 +497,7 @@ def parse_mo_file(path: Path) -> MoParseResult | None:
     except OSError:
         return None
 
-    unit_test = _parse_unit_tests(text, source=path)
+    unit_test = _parse_unit_tests(text)
     if unit_test is None:
         return None
 
@@ -796,7 +783,7 @@ class BundledModelicaUnitTestsRecognizer(Recognizer):
     """The default Modelica recognizer.
 
     Matches any class that instantiates the ``UnitTests`` component (with
-    parameters ``n``, ``x={...}``, optional ``error_expected``) plus the
+    parameters ``n`` and ``x={...}``) plus the
     standard ``experiment(...)`` annotation. Wraps :func:`parse_mo_file` and
     translates its ``MoParseResult`` into the framework-neutral
     :class:`RecognizerResult` shape.
@@ -817,11 +804,9 @@ class BundledModelicaUnitTestsRecognizer(Recognizer):
             n_vars=ut.n if ut else None,
             unit_tests_instance=ut.instance if ut else None,
             x_expressions=list(ut.x_expressions) if ut else [],
-            x_raw=ut.x_raw if ut else "",
             x_reference=list(ut.x_reference)
             if ut and ut.x_reference is not None
             else None,
-            error_expected=ut.error_expected if ut else None,
             stop_time=exp.stop_time if exp else None,
             tolerance=exp.tolerance if exp else None,
             method=exp.method if exp else None,

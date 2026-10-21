@@ -41,6 +41,10 @@ this file says when they do.
 - `TestModel` no longer has `source_package`, `short_name`, `result_file`,
   `x_raw` or `error_expected`: nothing read them. A plug-in that builds a
   `TestModel` drops those arguments.
+- `TestModel.x_reference` and `RecognizerResult.x_raw` / `error_expected` are
+  gone, and the bundled recognizer no longer reads `errorExpected`: nothing
+  read them. A `testing.json` recognizer whose `fields` names `x_raw` or
+  `error_expected` now fails to load (`targets unknown field`); drop that field.
 - A criterion's `MetricResult.diagnostics`, what a plug-in `Combinator.combine`
   receives, no longer carries `mode`, `tolerance` or `max_abs_error`; they are
   its `diagnostics["variable"]` (a `VariableComparison`): `mode`,

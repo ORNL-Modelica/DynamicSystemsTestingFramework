@@ -114,14 +114,12 @@ class TestMoParser:
         text = "Utilities.ErrorAnalysis.UnitTests unitTests(n=2, x=y)"
         info = _parse_unit_tests(text)
         assert info.x_expressions == ["y"]
-        assert info.x_raw == "y"
 
     def test_bare_qualified_variable(self):
         """x=some.qualified.name — dotted path without braces."""
         text = "UnitTests ut(n=2, x=heatTransfer.alphas)"
         info = _parse_unit_tests(text)
         assert info.x_expressions == ["heatTransfer.alphas"]
-        assert info.x_raw == "heatTransfer.alphas"
 
     def test_bare_deep_qualified_variable(self):
         """x=a.b.c.d — deeply nested dotted path."""
@@ -1148,41 +1146,6 @@ class TestFinding56NumericGarbage:
         info = _parse_experiment("annotation(experiment(StopTime=1.2.3));")
         assert info is not None
         assert info.stop_time is None
-
-    def test_error_expected_expression_warns_and_keeps_default(self, tmp_path, caplog):
-        """errorExpected=1e-3*2 used to silently truncate to 1e-3 — the
-        truncating character class survived here after the rest of the file
-        moved to _parse_number."""
-        mo = tmp_path / "Bar.mo"
-        mo.write_text(
-            "within MyLib;\n"
-            "model Bar\n"
-            "  UnitTests ut(n=1, x={x}, errorExpected=1e-3*2);\n"
-            "  Real x;\n"
-            "  annotation(experiment(StopTime=1));\n"
-            "end Bar;\n",
-            encoding="utf-8",
-        )
-        with caplog.at_level(logging.WARNING, logger="dstf.discovery.mo_parser"):
-            result = parse_mo_file(mo)
-        assert result is not None
-        assert result.unit_test.error_expected == 1e-6  # default, NOT 1e-3
-        assert any("errorExpected" in r.message for r in caplog.records)
-        assert any("Bar.mo" in r.message for r in caplog.records)
-
-    def test_plain_error_expected_still_parsed(self, tmp_path):
-        mo = tmp_path / "Baz.mo"
-        mo.write_text(
-            "within MyLib;\n"
-            "model Baz\n"
-            "  UnitTests ut(n=1, x={x}, errorExpected=1e-3);\n"
-            "  Real x;\n"
-            "end Baz;\n",
-            encoding="utf-8",
-        )
-        result = parse_mo_file(mo)
-        assert result is not None
-        assert result.unit_test.error_expected == 1e-3
 
     def test_json_recognizer_drops_non_numeric_scalar(self, tmp_path, caplog):
         """A JSON recognizer's best-effort scalar coercion returned the raw
