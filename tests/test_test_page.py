@@ -3665,6 +3665,8 @@ MORE_LEAVES = [
         "variable": "x",
         "peaks": [{"freq": 1.0, "tolerance": 0.1}],
     },
+    # Not scored: D's run has no y. Its own plot, and nothing drawn on it.
+    {"metric": "points", "variable": "y", "points": [{"time": 0.5}]},
 ]
 #: What the hint adds where a Ctrl+click adds a row (D149), in the
 #: metric's own word for one.
@@ -3683,6 +3685,9 @@ HINTS = [
     (8, ARROWS_HINT + ADDS.format("an event"), True),
     # peaks: a ring per declared peak, its window's arrows
     (9, BOTH_HINT + ADDS.format("a peak"), True),
+    # a points criterion that was not scored: no ring, no arrow — and no
+    # Ctrl+click, though its metric adds a point where it is scored
+    (10, FIELDS_HINT, False),
 ]
 
 
@@ -3694,21 +3699,24 @@ async def test_the_hint_and_the_tables_line_follow_what_the_criterion_draws(
     metric's name: rings and arrows, arrows alone (a constant tube and an
     event's window were told to "drag a ring" and to "hover a point" they
     do not have), rings alone, lines alone, or nothing. And "drag on the
-    plot, or edit the table" is said where a table is drawn."""
+    plot, or edit the table" is said where a table is drawn — and none of
+    it where the criterion was not scored."""
     tree = copy.deepcopy(TREE)
     tree["children"] += copy.deepcopy(MORE_LEAVES)
     _stage_tree(shell, D, tree)
     path = f"/metrics/children/{child}"
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
+        (card,) = [i for i, c in enumerate(page.cards) if path in c.rows]
         with page.client:
-            page.cards[0].show()
-        user.find(marker=f"criterion:0:{path}").click()
-        await _settled(lambda: page.open == (0, path))
-        assert _one(user, f"editor-hint:0:{path}").text == hint + STAGED_AND_SAVE
+            page.cards[card].show()
+        user.find(marker=f"criterion:{card}:{path}").click()
+        await _settled(lambda: page.open == (card, path))
+        hinted = _one(user, f"editor-hint:{card}:{path}").text
+        assert hinted == hint + STAGED_AND_SAVE
         said = [
             e.text
-            for e in _one(user, f"editor:0:{path}").descendants()
+            for e in _one(user, f"editor:{card}:{path}").descendants()
             if isinstance(e, ui.label)
         ]
         assert ("drag on the plot, or edit the table" in said) is table

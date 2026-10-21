@@ -18,6 +18,7 @@ from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.edit_criteria import EditCriteria  # noqa: E402
 from dstf.authoring.builtin.edit_on_plot import (  # noqa: E402
+    UNSCORED_LEAF,
     EditOnPlot,
     clicked_row,
     dragged,
@@ -708,6 +709,39 @@ def test_a_window_and_a_blank_bound_are_set_from_the_click(session):
     assert new == {**leaf, "max_value": 1.23}
     with pytest.raises(ValueError, match="exceeds max_value"):
         _set(session, RANGE, ("max_value",), _click(0.5, -2.5))
+
+
+def test_a_window_that_misses_the_run_is_moved_back_by_a_click(tmp_path):
+    """A criterion whose window misses every sample is not scored: nothing
+    of it is drawn to drag, but its window's ⌖ stays — click it, then the
+    plot, and the window starts there. The one edit is that start."""
+    tree = copy.deepcopy(TREE)
+    index = int(RANGE.rsplit("/", 1)[1])
+    missed = {**tree["children"][index], "window": {"start": 5.0, "end": 6.0}}
+    tree["children"][index] = missed
+    cfg, work = wave_project(tmp_path, tree=tree)
+    session = Session()
+    session.open(cfg, work_dir=work)
+    view = _view(session, RANGE)
+    reason = "no actual samples to check (empty trajectory or window)"
+    assert EditOnPlot().available(view) == UNSCORED_LEAF.format(reason)
+    can = _can(session, RANGE)
+    assert can(("window", "start")) is True and can(("window", "end")) is True
+    outcome = EditCriteria().act(
+        view,
+        kind="place",
+        model_id=A,
+        variable="x",
+        path=RANGE,
+        pointer=("window", "start"),
+        click=_click(0.21234, 0.7),
+    )
+    assert isinstance(outcome, Patch)
+    (op,) = outcome.ops
+    assert (op.op, op.path) == ("replace", RANGE)
+    assert op.value == {**missed, "window": {"start": 0.212, "end": 6.0}}
+    session.apply(outcome)
+    assert len(session.spec.pending) == 1
 
 
 def _can(session, path, variable="x"):

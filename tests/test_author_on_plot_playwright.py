@@ -321,9 +321,11 @@ def test_a_criterion_not_scored_says_why_and_takes_no_click(
         expect(why).to_have_text(said, timeout=EXPECT_TIMEOUT)
         assert "Ctrl+click" not in editor.inner_text()
         assert editor.locator(".dstf-table-row").count() == 0
-        ends = _at(page, 0.5, 0.0, card=1)
+        ends = _at(page, 0.25, 0.0, card=1)
         middle = sum(ends["yrange"]) / 2
-        _click_at(page, _at(page, 0.5, middle, card=1), "Control")
+        # At a time no row holds: where its one point stands, a Ctrl+click
+        # would stage nothing even where clicks are taken.
+        _click_at(page, _at(page, 0.25, middle, card=1), "Control")
         _nothing_staged(page, 0)
         _shot(page, tmp_path, "onplot-not-scored")
 
