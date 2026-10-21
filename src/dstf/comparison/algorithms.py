@@ -496,7 +496,7 @@ def _compare_points(
         d = act_final - ref_final
         delta = abs(d)
         passed = -tolerance.lower < d < tolerance.upper
-        t_final = float(ref_time[-1]) if len(ref_time) else 0.0
+        t_final = float(ref_time[-1])  # the baseline has samples: refused above
         return VariableComparison(
             index=0,
             name="",
