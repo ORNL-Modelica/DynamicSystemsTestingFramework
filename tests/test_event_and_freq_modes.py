@@ -679,7 +679,6 @@ class TestEventSidesAutoDetected:
         assert (box.t0, box.t1, box.passed) == (4.75, 5.5, True)
         assert vc.nrmse == 0.25  # the score stays the largest |d|
         assert vc.diagnostics["time_tolerance"] == {"lower": 0.25, "upper": 0.5}
-        json.dumps(vc.diagnostics)
         equal = score(
             {"mode": "event-timing", "time_tolerance": Sides(0.5, 0.5)},
             ref,
@@ -992,7 +991,6 @@ class TestPeakSides:
             assert not vc.passed and box.passed is False
             paired = vc.diagnostics["paired_peaks"][0]
             assert paired["tolerance"] == {"lower": 0.25, "upper": 0.5}
-            json.dumps(vc.diagnostics)
 
     def test_a_peak_without_a_tolerance_is_one_percent_each_side(self):
         from dstf.comparison.algorithms import _peak_window
