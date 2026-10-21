@@ -1632,6 +1632,55 @@ def _cpu_time_only(cfg: Path) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _d_has_a_nan(cfg: Path) -> None:
+    """D's run holds a NaN sample: its nrmse scores NaN, and its Worst NRMSE
+    reads nan."""
+    path = cfg.parent.parent.parent / "work" / "test_0004" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["variables"]["x"][3] = float("nan")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_a_worst_nrmse_of_nan_sorts_above_every_number_and_passes_a_filter(
+    tmp_path, playwright_browser
+):
+    """D reads nan beside A's 1.5309e-01 and G's number: descending puts it
+    first, ascending after every number and before the rows with none, and
+    a number filter keeps it — on the first rows and on a rescored one,
+    which reaches the page by a transaction."""
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, hooks=True, setup=_d_has_a_nan
+    )
+    try:
+        cell = page.locator(".ag-row[row-id='FakeLib.D'] .ag-cell[col-id='nrmse']")
+        expect(cell).to_have_text("nan")
+        header = page.locator(".ag-header-cell[col-id='nrmse'] .ag-header-cell-label")
+        header.click()  # ascending
+        _shown(page, "G:FakeLib G A D B C G:FakeLib.Cases X")
+        header.click()  # descending
+        _shown(page, "G:FakeLib D A G B C G:FakeLib.Cases X")
+        _filter(page, "nrmse").fill(">1e-4")
+        _shown(page, "G:FakeLib D A G")
+        # A rescore of D (two pending ops on it) repaints its row by a
+        # transaction: it still reads nan, sorts first and passes.
+        with urllib.request.urlopen(url + "__stage?model=FakeLib.D") as r:
+            assert json.loads(r.read())["pending"] == 2
+        edits = page.locator(".ag-row[row-id='FakeLib.D'] .ag-cell[col-id='edits']")
+        expect(edits).to_have_text("1 unsaved", timeout=EXPECT_TIMEOUT)
+        expect(cell).to_have_text("nan")
+        _shown(page, "G:FakeLib D A G")
+        _filter(page, "nrmse").fill("")
+        header.click()  # off
+        header.click()  # ascending
+        _shown(page, "G:FakeLib G A D B C G:FakeLib.Cases X")
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 def test_a_cpu_time_in_sim_reads_its_tag_and_says_what_it_is(
     tmp_path, playwright_browser
 ):
