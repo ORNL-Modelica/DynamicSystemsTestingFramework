@@ -62,10 +62,15 @@ this file says when they do.
 - A criterion's `MetricResult.diagnostics`, what a plug-in `Combinator.combine`
   receives, no longer carries `mode`, `tolerance` or `max_abs_error`; they are
   its `diagnostics["variable"]` (a `VariableComparison`): `mode`,
-  `tolerance_used` and `max_abs_error`. The removed `tolerance` was the
-  tolerance the criterion was scored with, as one number where its two sides
-  are equal and a `lower`/`upper` dict where they differ; `tolerance_used` is
-  that tolerance as a `Sides`, whose `lower` and `upper` are the two sides.
+  `tolerance_used` and `max_abs_error`. Only nrmse, tube and points measure
+  `max_abs_error`; range, scalar, event-timing and dominant-frequency leave it
+  `inf` (not measured), as does a criterion that was not scored, and their own
+  number is the criterion's `nrmse`: a range's or a bounded scalar's worst
+  violation, a scalar's deviation from its baseline, the largest event Δt, the
+  largest relative peak error. The removed `tolerance` was the tolerance the
+  criterion was scored with, as one number where its two sides are equal and
+  a `lower`/`upper` dict where they differ; `tolerance_used` is that tolerance
+  as a `Sides`, whose `lower` and `upper` are the two sides.
 
 ## [1.2.0] - 2026-10-19
 
