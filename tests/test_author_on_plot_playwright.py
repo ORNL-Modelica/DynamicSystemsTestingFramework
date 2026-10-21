@@ -368,7 +368,7 @@ def test_a_criterion_not_scored_says_why_and_takes_no_click(
 
         card = page.locator(".dstf-plot").nth(2)
         expect(card).to_contain_text("Not in this result: y", timeout=EXPECT_TIMEOUT)
-        assert card.locator(".js-plotly-plot").count() == 0
+        assert card.locator(".dstf-plot-slot").count() == 0
         _open_crit(page, 2, "event-timing · y")
         lacks = said.replace(
             "'v' not found in the baseline", "'y' not found in the result"
