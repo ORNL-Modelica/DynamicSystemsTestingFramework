@@ -3415,6 +3415,87 @@ class TestPairingIsByNameOnly:
         assert [vc.nrmse for vc in comp.variables] == [0.0, 0.0]
 
 
+class TestACriterionOnAMissingVariableNamesItsMetric:
+    """Not scored, by its own metric: a scalar or tube criterion on a
+    variable the run or the baseline lacks read as an nrmse one."""
+
+    _T = np.linspace(0.0, 1.0, 5)
+
+    @pytest.mark.parametrize(
+        "leaf",
+        [
+            {
+                "metric": "scalar",
+                "variable": "y",
+                "quantity": {"reduce": "final"},
+                "tolerance": 0.1,
+            },
+            {"metric": "tube", "variable": "y", "tube_abs": 0.1},
+        ],
+        ids=["scalar", "tube"],
+    )
+    @pytest.mark.parametrize("where", ["result", "baseline"])
+    def test_on_the_tree_path(self, leaf, where):
+        from dstf.comparison.tree_eval import (
+            PRIMARY_BASELINE,
+            BaselineView,
+            collect_leaf_variables,
+            evaluate_spec,
+        )
+        from dstf.storage.baseline import StoredVariable
+
+        t = self._T
+        x = VariableResult(1, t, np.full(5, 3.0), name="x")
+        y = VariableResult(2, t, t * 2.0, name="y")
+        stored = {"x": StoredVariable(1, "x", "", [3.0] * 5)}
+        if where == "result":
+            stored["y"] = StoredVariable(2, "y", "", list(t * 2.0))
+        results = {"x": x} if where == "result" else {"x": x, "y": y}
+        tree = evaluate_spec(
+            parse_metric_tree(leaf),
+            results,
+            {PRIMARY_BASELINE: BaselineView(PRIMARY_BASELINE, stored, t)},
+            1e-3,
+        )
+        (vc,) = collect_leaf_variables(tree)
+        assert summarize(vc).criterion == (
+            f"{leaf['metric']} criterion not scored — variable 'y' not found in "
+            f"the {where}"
+        )
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"mode": "scalar", "quantity": {"reduce": "final"}, "tolerance": 0.1},
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.1},
+            {},
+        ],
+        ids=["scalar", "tube", "no mode"],
+    )
+    def test_on_the_flat_path_with_the_reason(self, override):
+        from dstf.reporting.status import failed_criteria
+
+        t = [0.0, 0.5, 1.0]
+        test = _mk_test(
+            variable_patterns=["x", "y"],
+            variable_overrides={"x": override} if override else {},
+        )
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[
+                VariableResult(1, np.array(t), np.array([1.0, 2.0, 3.0]), name="x"),
+                VariableResult(2, np.array(t), np.array([0.0, 1.0, 2.0]), name="y"),
+            ],
+        )
+        reference = decode_reference(
+            {"time": t, "variables": [{"index": 1, "name": "y", "values": [0, 1, 2]}]}
+        )
+        (failed,) = failed_criteria(compare_test(test, result, reference))
+        assert failed.head == f"x: {override.get('mode', 'nrmse')} · against primary"
+        assert failed.reason == "variable 'x' not found in the baseline"
+
+
 class TestTheMigrationHintIsSharedByBothPaths:
     def _un_migrated(self, **kw):
         """A result whose variable is `unitTests.x[1]` against a baseline

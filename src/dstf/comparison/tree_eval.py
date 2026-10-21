@@ -500,7 +500,9 @@ def _evaluate_leaf(
         if var_result is None:
             # Missing actual result is always a hard fail — no mode can score
             # without the actual trajectory.
-            return _leaf(_missing_variable_comparison(leaf.variable, var_result))
+            return _leaf(
+                _missing_variable_comparison(leaf.variable, var_result, mode=mode.name)
+            )
 
         if ref_var is None:
             if not mode.is_baseline_free():
@@ -528,7 +530,9 @@ def _evaluate_leaf(
                         hint,
                     )
                 return _leaf(
-                    _missing_variable_comparison(leaf.variable, var_result, hint=hint)
+                    _missing_variable_comparison(
+                        leaf.variable, var_result, mode=mode.name, hint=hint
+                    )
                 )
             ref_time = np.array([])
             ref_values = np.array([])
@@ -638,7 +642,7 @@ def _summary_arrays(
                 name=leaf.variable,
             )
     if run is None:
-        return _missing_variable_comparison(leaf.variable, None)
+        return _missing_variable_comparison(leaf.variable, None, mode=mode.name)
 
     if ref_var is not None:
         assert baseline is not None  # a stored variable is in a baseline
@@ -648,7 +652,7 @@ def _summary_arrays(
     elif mode.is_baseline_free():
         ref_time, ref_values = np.array([]), np.array([])
     else:
-        return _missing_variable_comparison(leaf.variable, run)
+        return _missing_variable_comparison(leaf.variable, run, mode=mode.name)
     return ref_time, ref_values, run.time, run.values, run.index
 
 
@@ -958,6 +962,8 @@ def _one_spelling(path: str, names: Collection[str]) -> str:
 def _missing_variable_comparison(
     name: str,
     var_result: VariableResult | None,
+    *,
+    mode: str,
     hint: str = "",
 ) -> VariableComparison:
     actual_final = float("nan")
@@ -976,6 +982,9 @@ def _missing_variable_comparison(
         max_abs_error_time=0.0,
         reference_final=float("nan"),
         actual_final=actual_final,
+        # The criterion's own metric: with none, a scalar or tube criterion
+        # on a missing variable read as an nrmse one.
+        mode=mode,
         # The two call sites are told apart by what they had: no result for
         # the variable at all, or a result the baseline does not carry. The
         # second one carries the migration hint when the baseline holds the

@@ -16,6 +16,11 @@ this file says when they do.
 - A dominant-frequency peak whose two neighbouring bins have exactly equal
   magnitudes is found as one peak; it was no peak at all, and a declared
   peak at that resonance failed.
+- A criterion on a variable the run or the baseline lacks is named by its own
+  metric (`x: scalar · against primary`), not as an nrmse one; with no
+  metrics tree, one whose baseline lacks the variable now says so
+  (`variable 'x' not found in the baseline`), with the hint to rename a
+  baseline stored under the expression.
 
 ## [1.2.0] - 2026-10-19
 
