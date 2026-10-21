@@ -115,7 +115,12 @@ class TestDominantFrequencyMode:
         )
         result = mode.compare(ref_t, ref_v, ref_t, ref_v)
         assert not result.passed
-        assert "too short" in result.diagnostics.get("reason", "")
+        summary = summarize(result)
+        assert summary.display == "not scored"
+        assert summary.criterion == (
+            "dominant-frequency criterion not scored — "
+            "signal too short for FFT (need >=4 samples)"
+        )
 
     def test_empty_peaks_list_fails_with_hint(self):
         """No declared peaks → hard fail with a pointer at the Detect

@@ -1944,19 +1944,11 @@ def _compare_dominant_frequency(
     # a diagnostic). With declared peaks, an empty reference is OK
     # (baseline-free path, idea #59 / D83).
     if len(act_values) < 4:
-        return VariableComparison(
-            index=0,
-            name="",
-            passed=False,
-            nrmse=float("inf"),
-            rmse=0.0,
-            signal_range=0.0,
-            max_abs_error=0.0,
-            max_abs_error_time=0.0,
-            reference_final=float("nan"),
-            actual_final=float("nan"),
-            mode="dominant-frequency",
-            diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
+        # Nothing to take a spectrum of: not scored, with the reason where
+        # every surface reads one (``diagnostics["error"]``, the mode
+        # contract) — under ``reason`` the summary said "No peaks declared".
+        return _no_data_failure(
+            "dominant-frequency", "signal too short for FFT (need >=4 samples)"
         )
 
     has_ref = len(ref_values) >= 4
