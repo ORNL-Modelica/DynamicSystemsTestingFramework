@@ -466,14 +466,16 @@ class TestWorstNrmse:
         and no criterion went unscored."""
         from dstf.reporting.context_builder import worst_nrmse
 
-        worst, n_unscored = worst_nrmse([self._scored(float("nan")), self._scored(2.0)])
-        assert math.isnan(worst)
-        assert n_unscored == 0
+        nan, two = self._scored(float("nan")), self._scored(2.0)
+        for order in ([nan, two], [two, nan]):
+            worst, n_unscored = worst_nrmse(order)
+            assert math.isnan(worst), order
+            assert n_unscored == 0
 
     def test_a_tube_scored_over_a_nan_sample_is_not_unscored(self):
         """Its worst violation is NaN — the run has a NaN sample inside the
         band's span — and it was scored: it fails, at 99.5 % inside."""
-        from dstf.reporting.context_builder import worst_nrmse
+        from dstf.reporting.context_builder import nan_nrmse_count, worst_nrmse
 
         ref_t = np.linspace(0.0, 10.0, 11)
         act_t = np.round(np.linspace(0.0, 10.0, 201), 10)
@@ -489,6 +491,9 @@ class TestWorstNrmse:
         assert math.isnan(vc.nrmse)  # the worst violation, at the NaN
         assert summarize(vc).criterion == "99.5% inside tube → FAIL (requires 100%)"
         assert worst_nrmse([vc]) == (None, 0)
+        # Not a criterion scored by nrmse: no nan worst beside one that is.
+        assert worst_nrmse([vc, self._scored(2.0)]) == (2.0, 0)
+        assert nan_nrmse_count([vc]) == 0
 
     def test_a_tubes_nrmse_is_not_the_tests_worst(self):
         """A tube's `nrmse` field is its worst violation: 2.8213e-01 outside
@@ -513,6 +518,16 @@ class TestWorstNrmse:
         from dstf.reporting.context_builder import worst_nrmse
 
         assert worst_nrmse([self._scored(0.5, mode=mode)]) == (None, 0)
+
+    def test_an_nrmse_criterion_not_scored_is_no_nan(self):
+        """A not-scored nrmse criterion carries inf: it is counted unscored,
+        and is no score that makes the worst nan."""
+        from dstf.reporting.context_builder import nan_nrmse_count, worst_nrmse
+
+        bad = _nonfinite_comparison("bad")
+        assert bad.mode == "nrmse"
+        assert nan_nrmse_count([bad, self._scored(1e-5)]) == 0
+        assert worst_nrmse([bad, self._scored(1e-5)]) == (1e-5, 1)
 
     def test_an_unscored_criterion_of_another_mode_is_still_counted(self):
         from dstf.reporting.context_builder import worst_nrmse

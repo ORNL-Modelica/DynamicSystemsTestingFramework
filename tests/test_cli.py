@@ -1022,11 +1022,15 @@ class TestTheDashboardGetsTheComparisons:
 class TestAWorstNrmseOfNan:
     """A NaN sample in the run makes an nrmse score NaN. The test's Worst
     NRMSE reads ``nan`` — with no metrics tree, with one, and beside another
-    nrmse criterion that scored a number — and sorts as above every number;
-    a test whose nrmse criteria all scored numbers reads its worst."""
+    nrmse criterion that scored a number, listed before it — and sorts as
+    above every number; a test whose nrmse criteria all scored numbers reads
+    its worst, and one whose only criterion was not scored reads the count."""
 
     T = np.linspace(0.0, 1.0, 11)
     NAN_AT_5 = np.where(np.arange(11) == 5, np.nan, np.sin(T))
+    #: sin + 1e-3 against sin over [0, 1]: an RMSE of 1e-3 over a range of
+    #: sin(1).
+    FINE = 1e-3 / np.sin(1.0)
 
     ENTRIES = [
         {"model": "Lib.NanFlat", "variables": ["x"]},
@@ -1046,6 +1050,11 @@ class TestAWorstNrmseOfNan:
                 ],
             },
         },
+        {
+            "model": "Lib.Unscored",
+            "variables": ["x"],
+            "metrics": {"metric": "nrmse", "variable": "z", "tolerance": 0.05},
+        },
         {"model": "Lib.Fine", "variables": ["x"]},
     ]
 
@@ -1061,47 +1070,87 @@ class TestAWorstNrmseOfNan:
         )
 
     def _rows(self, page) -> dict[str, tuple[str, str]]:
-        """Each row's Worst NRMSE text and sort value, by model."""
+        """Each row's Worst NRMSE cell text and sort value, by model."""
         html = page.read_text(encoding="utf-8")
-        return {
-            m.group(1): (m.group(2), m.group(3))
-            for m in re.finditer(
-                r'data-model="([^"]*)"(?:.|\n)*?data-nrmse="([^"]*)"\s*'
-                r'data-sort-nrmse="([^"]*)"',
-                html,
-            )
-        }
+        rows = {}
+        for row in re.findall(r"<tr class=(?:.|\n)*?</tr>", html):
+            model = re.search(r'data-model="([^"]*)"', row)
+            if model is None:
+                continue
+            sort = re.search(r'data-sort-nrmse="([^"]*)"', row).group(1)
+            # The cell: the one after the Elapsed cell's, its span's text
+            # where it has one.
+            cell = re.search(
+                r'class="elapsed-cell">[^<]*</td>\s*<td>(?:<span[^>]*>)?([^<]*)', row
+            ).group(1)
+            rows[model.group(1)] = (cell, sort)
+        return rows
 
-    def _scored(self, run_env, *extra):
+    def _scored(self, run_env, *extra, progress=False):
+        """Accept sin, then run the NaN (and the fine) results. With
+        ``progress`` the run keeps a status.json, as a backend does, naming
+        each test's report directory."""
+        from dstf.backends.progress import ProgressReporter
+
         sin = np.sin(self.T)
         baseline = {
             e["model"]: self._result(e["model"], sin, sin) for e in self.ENTRIES
         }
         run_env.make(self.ENTRIES, results=baseline)
         assert cmd_run(_run_args(run_env, "--accept")) == 0
-        run_env.make(
+        refs = {
+            json.loads(f.read_text(encoding="utf-8"))["model_id"]: f.stem
+            for f in (run_env.ref_root / FAKE / detect_os()).glob("ref_*.json")
+        }
+        backend = run_env.make(
             self.ENTRIES,
             results={
                 "Lib.NanFlat": self._result("Lib.NanFlat", self.NAN_AT_5),
                 "Lib.NanTree": self._result("Lib.NanTree", self.NAN_AT_5),
-                "Lib.NanMixed": self._result("Lib.NanMixed", self.NAN_AT_5, sin + 1e-3),
+                "Lib.NanMixed": self._result("Lib.NanMixed", sin + 1e-3, self.NAN_AT_5),
+                "Lib.Unscored": self._result("Lib.Unscored", sin),
                 "Lib.Fine": self._result("Lib.Fine", sin + 1e-3),
             },
         )
+        if progress:
+
+            def run_tests(tests, _run=backend.run_tests):
+                reporter = ProgressReporter(run_env.work_dir, total=len(tests))
+                for i, t in enumerate(tests, 1):
+                    key = f"test_{i:04d}"
+                    reporter.register(key, t.model_id, report_dir=refs[t.model_id])
+                    reporter.on_finish(key, success=True, elapsed=0.1)
+                reporter.finalize()
+                return _run(tests)
+
+            backend.run_tests = run_tests
         cmd_run(_run_args(run_env, *extra))
         return self._rows(run_env.work_dir / "dashboard.html")
 
-    @pytest.mark.parametrize("extra", [(), ("--report",)], ids=["run", "report"])
-    def test_the_column_reads_nan_and_sorts_above_every_number(self, run_env, extra):
-        rows = self._scored(run_env, *extra)
+    def _says(self, rows) -> None:
         nan = ("nan", "Infinity")
         assert {m: rows[m] for m in ("Lib.NanFlat", "Lib.NanTree", "Lib.NanMixed")} == {
             "Lib.NanFlat": nan,
             "Lib.NanTree": nan,
             "Lib.NanMixed": nan,
         }
+        assert rows["Lib.Unscored"] == ("n/a (1 unscored)", "")
         text, sort = rows["Lib.Fine"]
-        assert text == format(float(sort), ".4e") and float(sort) < float("inf")
+        assert (text, float(sort)) == ("1.1884e-03", pytest.approx(self.FINE))
+
+    @pytest.mark.parametrize("extra", [(), ("--report",)], ids=["run", "report"])
+    def test_the_column_reads_nan_and_sorts_above_every_number(self, run_env, extra):
+        self._says(self._scored(run_env, *extra))
+
+    def test_a_page_built_from_the_sidecars_alone_reads_nan(self, run_env):
+        """The report suite writes each test's sidecar, where a NaN is null;
+        a page rendered from those sidecars and the run's status.json alone,
+        with no comparison in hand, reads nan again by the sidecar's count."""
+        from dstf.reporting.dashboard_render import render_final
+
+        self._scored(run_env, "--report", progress=True)
+        render_final(run_env.work_dir)
+        self._says(self._rows(run_env.work_dir / "dashboard.html"))
 
     def test_the_report_page_reads_nan(self, run_env):
         self._scored(run_env, "--report")
@@ -1110,9 +1159,13 @@ class TestAWorstNrmseOfNan:
             data = json.loads(sidecar.read_text(encoding="utf-8"))
             (worst,) = [k for k in data["key_stats"] if k["label"] == "Worst NRMSE"]
             stats[data["model_id"]] = worst["current"]
-        assert stats["Lib.NanMixed"] == "nan"
-        assert stats["Lib.NanFlat"] == stats["Lib.NanTree"] == "nan"
-        assert stats["Lib.Fine"] != "nan"
+        assert stats == {
+            "Lib.NanFlat": "nan",
+            "Lib.NanTree": "nan",
+            "Lib.NanMixed": "nan",
+            "Lib.Unscored": "n/a (1 unscored criterion)",
+            "Lib.Fine": "1.1884e-03",
+        }
 
 
 # ---------------------------------------------------------------------------
