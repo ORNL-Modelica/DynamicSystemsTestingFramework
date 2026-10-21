@@ -3722,6 +3722,44 @@ async def test_the_hint_and_the_tables_line_follow_what_the_criterion_draws(
         assert ("drag on the plot, or edit the table" in said) is table
 
 
+@pytest.mark.parametrize(
+    ("child", "arms"),
+    [
+        # points on x: its window's ends, and its two checkpoints' rows
+        (2, {"window start", "window end", "row 1", "row 2"}),
+        # points on y, which D's run lacks: "Not in this result: y", no plot
+        (10, set()),
+    ],
+)
+async def test_a_card_that_draws_no_plot_offers_no_click_on_one(shell, child, arms):
+    """A ⌖ is the first half of a click on the plot: on a card that says
+    "Not in this result" and draws none, the editor offers none. Its
+    window's ⌖ were drawn there, pressed, and said "Click the plot to set
+    window start" with nothing to click."""
+    tree = copy.deepcopy(TREE)
+    tree["children"] += copy.deepcopy(MORE_LEAVES)
+    _stage_tree(shell, D, tree)
+    path = f"/metrics/children/{child}"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        (card,) = [i for i, c in enumerate(page.cards) if path in c.rows]
+        if arms:
+            await user.should_not_see(marker=f"plot-missing:{card}")
+        else:
+            missing = _one(user, f"plot-missing:{card}").text
+            assert missing == "Not in this result: y"
+        with page.client:
+            page.cards[card].show()
+        user.find(marker=f"criterion:{card}:{path}").click()
+        await _settled(lambda: page.open == (card, path))
+        labels = {
+            e.props["aria-label"]
+            for e in _one(user, f"editor:{card}:{path}").descendants()
+            if "dstf-arm" in e.classes
+        }
+        assert labels == {f"Set {arm} by a click on the plot" for arm in arms}
+
+
 async def test_the_editors_hint_follows_a_switch_of_mode(shell):
     """The hint is the open criterion's: switched from nrmse to a mode
     with lines to drag in the editor, it says the new mode's."""

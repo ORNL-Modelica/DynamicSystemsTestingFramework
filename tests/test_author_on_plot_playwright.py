@@ -28,6 +28,7 @@ from on_plot_project import PEAKS, times, wave, wave_project  # noqa: E402
 from test_author_suite_playwright import EXPECT_TIMEOUT  # noqa: E402
 from test_author_test_page_playwright import (  # noqa: E402
     _drag_arrow,
+    _open_crit,
     _open_for_grips,
     _pending,
     _retype,
@@ -279,22 +280,30 @@ def test_a_ctrl_click_on_the_spectrum_adds_the_nearest_spectral_peak(
 
 
 #: A points and a tube criterion on `v`, which the run has and the baseline
-#: does not: both carry their own metric and are not scored.
+#: does not, and an event-timing one on `y`, which the baseline has and the
+#: run does not: each carries its own metric and is not scored.
 NOT_SCORED_TREE = {
     "combinator": "and",
     "children": [
         {"metric": "nrmse", "variable": "x"},
         {"metric": "points", "variable": "v", "points": [{"time": 0.5}]},
         {"metric": "tube", "variable": "v", "tube_width_mode": "band", "tube_abs": 0.1},
+        {
+            "metric": "event-timing",
+            "variable": "y",
+            "events": [{"time": 0.4, "tolerance": 0.05}],
+        },
     ],
 }
 
 
 def _v_not_in_baseline(tmp_path: Path) -> tuple[Path, Path]:
+    """The run gains `v` and loses `y`."""
     cfg, work = wave_project(tmp_path, tree=NOT_SCORED_TREE)
     result = work / "test_0001" / "result.json"
     data = json.loads(result.read_text(encoding="utf-8"))
     data["variables"]["v"] = [0.5 * value for value in data["variables"]["x"]]
+    del data["variables"]["y"]
     result.write_text(json.dumps(data), encoding="utf-8")
     return cfg, work
 
@@ -305,7 +314,9 @@ def test_a_criterion_not_scored_says_why_and_takes_no_click(
     """A points criterion the baseline cannot score draws nothing: its
     editor says why in the criterion's own words and offers no table and no
     Ctrl+click — a Ctrl+click on its plot stages nothing — while its fields
-    above still stage an edit. A tube says the same."""
+    above still stage an edit. A tube says the same. And a criterion on a
+    variable the run lacks sits on a card that draws no plot: its editor
+    has no ⌖, whose click would land nowhere."""
     with _served(
         tmp_path, playwright_browser, project=_v_not_in_baseline, hooks=True
     ) as page:
@@ -337,6 +348,17 @@ def test_a_criterion_not_scored_says_why_and_takes_no_click(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
         assert _staged_tree(page)["children"][2]["tube_min_width"] == 0.05
+
+        card = page.locator(".dstf-plot").nth(2)
+        expect(card).to_contain_text("Not in this result: y", timeout=EXPECT_TIMEOUT)
+        assert card.locator(".js-plotly-plot").count() == 0
+        _open_crit(page, 2, "event-timing · y")
+        lacks = said.replace(
+            "'v' not found in the baseline", "'y' not found in the result"
+        )
+        expect(why).to_have_text(lacks, timeout=EXPECT_TIMEOUT)
+        expect(editor.get_by_label("window start", exact=True)).to_have_count(1)
+        assert editor.locator(".dstf-arm").count() == 0
 
 
 def test_clicks_that_are_not_an_edit_change_nothing(tmp_path, playwright_browser):

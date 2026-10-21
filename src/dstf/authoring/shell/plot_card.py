@@ -980,7 +980,10 @@ class PlotCard:
                 # outlives them: a drag rebuilds the whole editor.
                 kept=partial(self.page.kept, path),
                 on_said=self._said,
-                placing=self.placing,
+                # A ⌖ arms the next click on the plot: a card that draws
+                # none (its subject not in the result) lends its editor no
+                # ⌖ — one pressed there said "Click the plot" over nothing.
+                placing=self.placing if self.slot is not None else None,
             )
             self.editor.build()
         view = self._view(view)
