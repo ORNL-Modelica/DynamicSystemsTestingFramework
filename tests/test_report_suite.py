@@ -66,7 +66,9 @@ def _nonfinite_comparison(name: str = "h") -> VariableComparison:
         reference_final=float("nan"),
         actual_final=float("nan"),
         tolerance_used=1e-4,
-        diagnostics={"error": "no actual samples to compare"},
+        diagnostics={
+            "error": "no actual samples to compare (empty trajectory or window)"
+        },
     )
 
 
@@ -484,16 +486,17 @@ class TestWorstNrmse:
             act_t,
             act_v,
         )
+        assert math.isnan(vc.nrmse)  # the worst violation, at the NaN
         assert summarize(vc).criterion == "99.5% inside tube → FAIL (requires 100%)"
         assert worst_nrmse([vc]) == (None, 0)
 
-    def test_a_passing_tubes_nrmse_is_not_the_tests_worst(self):
-        """The evidence: a tube at 100 % inside whose `nrmse` field is
-        2.8213e-01, beside the nrmse criterion that fails at 4.264e-02."""
+    def test_a_tubes_nrmse_is_not_the_tests_worst(self):
+        """A tube's `nrmse` field is its worst violation: 2.8213e-01 outside
+        its band, beside the nrmse criterion that fails at 4.264e-02. Over
+        every leaf, the max read the tube's number as the test's worst."""
         from dstf.reporting.context_builder import worst_nrmse
 
         tube = self._scored(2.8213e-01, "x", mode="tube")
-        tube.passed = True
         failing = self._scored(4.264e-02, "x")
         advisory = self._scored(2.128e-02, "x")
         assert worst_nrmse([tube, failing, advisory]) == (4.264e-02, 0)

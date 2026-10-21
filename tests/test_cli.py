@@ -1006,10 +1006,10 @@ class TestTheDashboardGetsTheComparisons:
         its PASS, and its CPU time as Sim (s)."""
         t1 = "Lib.T1"
         _with_baseline(run_env, t1)
-        (run_env.work_dir / "status.json").unlink(missing_ok=True)
         result = _with_cpu_time(_mk_result(t1), 4.25)
         run_env.make([t1], results={t1: result})
         cmd_run(_run_args(run_env, "--report"))
+        assert not (run_env.work_dir / "status.json").exists()
         assert self._says(run_env.work_dir / "dashboard.html") == (True, True)
 
 

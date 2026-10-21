@@ -1986,7 +1986,9 @@ class TestWhatAModeDoesNotMeasure:
             _mk_test(metric_tree_spec=spec), _mk_result(), decode_reference(reference)
         )
         (vc,) = comp.variables
-        assert "error" in vc.diagnostics
+        assert vc.diagnostics["error"] == (
+            "no actual samples to check (empty trajectory or window)"
+        )
         assert self._read(vc, self.UNSET) == self.UNSET
 
 
