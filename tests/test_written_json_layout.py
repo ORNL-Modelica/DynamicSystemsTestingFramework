@@ -56,7 +56,18 @@ def _test_spec(tmp_path: Path) -> Path:
     return spec
 
 
+def _default_testing_json(tmp_path: Path) -> Path:
+    (tmp_path / "Lib").mkdir()
+    (tmp_path / "Lib" / "package.mo").write_text("package Lib\nend Lib;\n")
+    config = Config(
+        source_path=tmp_path / "Lib", backend_name="Python", write_default=True
+    )
+    config.write_default_file()
+    return tmp_path / "testing.json"
+
+
 WRITERS = {
+    "the default testing.json": _default_testing_json,
     "a test_spec.json an edit writes": _test_spec,
     "the id high-water mark": _high_water_mark,
     "a companion's registration": lambda p: _companion(p, frozen=False),
@@ -65,6 +76,9 @@ WRITERS = {
 
 
 @pytest.mark.parametrize("what", list(WRITERS))
-def test_every_versioned_file_is_written_two_space_indented(tmp_path, what):
+def test_every_versioned_file_is_written_two_space_indented(
+    tmp_path, monkeypatch, what
+):
+    monkeypatch.chdir(tmp_path)  # no testing.json found but the one written
     text = WRITERS[what](tmp_path).read_text(encoding="utf-8")
     assert text == json.dumps(json.loads(text), indent=2) + "\n"

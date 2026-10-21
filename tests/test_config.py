@@ -12,6 +12,7 @@ from dstf.backends.openmodelica.mos_generator import classify_dependency
 from dstf.config import (
     Config,
     ConfigError,
+    NoProject,
     detect_os,
     find_package_dir,
     load_config_file,
@@ -547,6 +548,144 @@ def _make_lib(parent: Path, name: str = "Lib") -> Path:
     return lib
 
 
+class TestWhereTestingJsonIsFound:
+    """Searched for from the library: its parent (the repo root), the
+    package itself, the reference root, then the working directory — the
+    first found is the one read."""
+
+    @pytest.mark.parametrize(
+        "where,found",
+        [
+            (["parent", "pkg"], "parent"),
+            (["parent", "cwd"], "parent"),
+            (["pkg", "cwd"], "pkg"),
+            (["pkg", "ref"], "pkg"),
+            (["ref", "cwd"], "ref"),
+        ],
+    )
+    def test_the_search_order(self, tmp_path, monkeypatch, where, found):
+        repo = tmp_path / "repo"
+        lib = _make_lib(repo)
+        places = {
+            "parent": repo,
+            "pkg": lib,
+            "cwd": tmp_path / "cwd",
+            "ref": tmp_path / "ref",
+        }
+        tolerance = {"parent": 0.11, "pkg": 0.22, "cwd": 0.33, "ref": 0.44}
+        for place in where:
+            places[place].mkdir(exist_ok=True)
+            (places[place] / "testing.json").write_text(
+                json.dumps({"tolerance": tolerance[place]}), encoding="utf-8"
+            )
+        places["cwd"].mkdir(exist_ok=True)
+        monkeypatch.chdir(places["cwd"])
+        config = Config(
+            source_path=lib, backend_name="Python", reference_root=places["ref"]
+        )
+        assert config.tolerance == tolerance[found]
+
+    def test_from_inside_the_library_the_repo_roots_is_read(
+        self, tmp_path, monkeypatch
+    ):
+        repo = tmp_path / "repo"
+        lib = _make_lib(repo)
+        (lib / "Resources").mkdir()
+        (repo / "testing.json").write_text(json.dumps({"tolerance": 0.123}))
+        monkeypatch.chdir(lib / "Resources")
+        config = Config(backend_name="Python")
+        assert config.config_found == (repo / "testing.json").resolve()
+        assert config.tolerance == 0.123
+
+    def test_one_found_on_the_way_is_not_replaced_by_the_repo_roots(
+        self, tmp_path, monkeypatch
+    ):
+        repo = tmp_path / "repo"
+        lib = _make_lib(repo)
+        (lib / "Resources").mkdir()
+        (repo / "testing.json").write_text(json.dumps({"tolerance": 0.123}))
+        (lib / "Resources" / "testing.json").write_text(
+            json.dumps({"tolerance": 0.456})
+        )
+        monkeypatch.chdir(lib / "Resources")
+        assert Config(backend_name="Python").tolerance == 0.456
+
+    def test_a_source_path_naming_the_librarys_parent_finds_the_library(self, tmp_path):
+        lib = _make_lib(tmp_path / "repo")
+        (tmp_path / "cfg").mkdir()
+        (tmp_path / "cfg" / "testing.json").write_text(
+            json.dumps({"source_path": "../repo"})
+        )
+        config = Config(
+            config_file=tmp_path / "cfg" / "testing.json", backend_name="Python"
+        )
+        assert (config.source_path, config.library_name) == (lib.resolve(), "Lib")
+
+    def test_a_found_file_with_no_library_is_a_config_error_not_no_project(
+        self, tmp_path, monkeypatch
+    ):
+        """`dstf check` reads on without a project; a testing.json here says
+        there is one, so its missing library is an error even there."""
+        (tmp_path / "testing.json").write_text("{}")
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(ConfigError) as box:
+            Config(backend_name="Python")
+        assert not isinstance(box.value, NoProject)
+
+    def test_a_relative_work_dir_is_the_files_not_the_libraries(self, tmp_path):
+        _make_lib(tmp_path / "repo")
+        (tmp_path / "cfg").mkdir()
+        (tmp_path / "cfg" / "testing.json").write_text(
+            json.dumps({"source_path": "../repo/Lib", "work_dir": "out"})
+        )
+        config = Config(
+            config_file=tmp_path / "cfg" / "testing.json", backend_name="Python"
+        )
+        assert config.work_dir == (tmp_path / "cfg" / "out").resolve()
+
+
+def test_a_half_second_worker_startup_timeout_is_accepted(tmp_path, monkeypatch):
+    lib = _make_lib(tmp_path)
+    (tmp_path / "testing.json").write_text(json.dumps({"worker_startup_timeout": 0.5}))
+    monkeypatch.chdir(tmp_path)
+    assert Config(source_path=lib, backend_name="Python").worker_startup_timeout == 0.5
+
+
+@pytest.fixture
+def two_searched_backends():
+    """Two registered backends for a source type of their own: the first
+    not found on this machine, the second found."""
+    import sys
+
+    from dstf.backends import _REGISTRY, Backend, register
+    from dstf.backends.locate import EXECUTABLE, SEARCH, Found, Located, Rule
+
+    @register("CfgMissing")
+    class CfgMissing(Backend):
+        source_types = frozenset({"cfgsrc"})
+
+        @classmethod
+        def locate(cls, settings):
+            return Located((Found(EXECUTABLE, None, None, "looked in /nowhere"),))
+
+    @register("CfgFound")
+    class CfgFound(CfgMissing):
+        @classmethod
+        def locate(cls, settings):
+            return Located((Found(EXECUTABLE, sys.executable, Rule(SEARCH, "t")),))
+
+    yield
+    del _REGISTRY["CfgMissing"], _REGISTRY["CfgFound"]
+
+
+def test_a_backend_the_search_alone_did_not_find_is_not_news(
+    tmp_path, monkeypatch, two_searched_backends
+):
+    monkeypatch.chdir(tmp_path)
+    config = Config(source_type="cfgsrc", source_path=tmp_path)
+    assert (config.backend_name, config.passed_over) == ("CfgFound", None)
+
+
 # ---------------------------------------------------------------------------
 # Finding 11 — malformed testing.json must raise, never be overwritten
 # ---------------------------------------------------------------------------
@@ -792,6 +931,51 @@ class TestTheDefaultFileNamesTheProject:
         again = Config(config_file=run.config_found)
         for name in ("source_path", "reference_root", "spec_path", "library_name"):
             assert getattr(again, name) == getattr(run, name), name
+
+    @pytest.mark.parametrize(
+        "given,where,written",
+        [
+            ({}, "w", {"source_type": "python"}),
+            (
+                {"source_path": "src", "reference_root": "ref"},
+                "ref",
+                {
+                    "source_type": "python",
+                    "source_path": "../src",
+                    "library_name": "src",
+                    "reference_root": ".",
+                },
+            ),
+            (
+                {
+                    "source_path": "src",
+                    "test_spec_file": "src/Resources/ReferenceResults/test_spec.json",
+                },
+                "src",
+                {"source_type": "python"},
+            ),
+        ],
+        ids=["nothing given", "a source and a reference root", "the spec's own place"],
+    )
+    def test_a_non_modelica_project_records_what_is_not_its_default(
+        self, tmp_path, monkeypatch, given, where, written
+    ):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "w").mkdir()
+        monkeypatch.chdir(tmp_path / "w")
+        Config(
+            source_type="python",
+            backend_name="Python",
+            write_default=True,
+            **{key: tmp_path / value for key, value in given.items()},
+        ).write_default_file()
+        (found,) = tmp_path.rglob("testing.json")
+        assert found == tmp_path / where / "testing.json"
+        assert json.loads(found.read_text(encoding="utf-8")) == {
+            "backends": {},
+            "dependencies": [],
+            **written,
+        }
 
     def test_it_restates_no_default(self, tmp_path, monkeypatch, capsys):
         """A reference root that is the file's own directory, named
@@ -1140,6 +1324,15 @@ class TestFinding17BareDependencyNames:
         assert config.dependencies == [
             str((tmp_path / "sub").resolve()),
             str((tmp_path / "sub" / "package.mo").resolve()),
+        ]
+
+    def test_a_mo_file_or_a_dot_name_is_a_path_on_its_own(self, tmp_path):
+        """Neither need exist: `.mo` alone, or a leading dot alone, says it
+        is a file to load, not a library to load by name."""
+        config = self._config_with_deps(tmp_path, ["Missing.mo", ".hidden"])
+        assert config.dependencies == [
+            str((tmp_path / "Missing.mo").resolve()),
+            str((tmp_path / ".hidden").resolve()),
         ]
 
 
