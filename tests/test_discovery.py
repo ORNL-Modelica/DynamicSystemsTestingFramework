@@ -128,18 +128,17 @@ class TestMoParser:
         assert info.x_expressions == ["ductOut.port_b.C_outflow"]
 
     def test_bare_variable_with_x_reference(self):
-        """Bare x=y doesn't interfere with x_reference parsing."""
+        """Bare x=y ends at its own argument: the x_reference after it is
+        not part of the expression."""
         text = "UnitTests ut(n=2, x=y, x_reference={1.0, 2.0})"
         info = _parse_unit_tests(text)
         assert info.x_expressions == ["y"]
-        assert info.x_reference == [1.0, 2.0]
 
     def test_no_x_param(self):
         """UnitTests with only x_reference but no x= gives empty expressions."""
         text = "UnitTests ut(n=2, x_reference={1.0, 2.0})"
         info = _parse_unit_tests(text)
         assert info.x_expressions == []
-        assert info.x_reference == [1.0, 2.0]
 
     def test_array_functions(self):
         """x=fill(...), x=zeros(...), etc. are captured like cat(...)."""
@@ -273,7 +272,6 @@ class TestMoParser:
         ]
         info = _parse_unit_tests("UnitTests ut(n=1, x=a.b[1].c, x_reference={1})")
         assert info.x_expressions == ["a.b[1].c"]
-        assert info.x_reference == [1.0]
 
 
 # ---------------------------------------------------------------------------

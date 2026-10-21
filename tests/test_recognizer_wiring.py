@@ -103,10 +103,10 @@ class TestConfigLoadsRecognizers:
             Config(config_file=str(cfg_path))
         assert not issubclass(ConfigError, RecognizerSpecError)
 
-    @pytest.mark.parametrize("removed", ["x_raw", "error_expected"])
+    @pytest.mark.parametrize("removed", ["x_raw", "error_expected", "x_reference"])
     def test_a_recognizer_filling_a_removed_field_is_refused(self, tmp_path, removed):
-        """Nothing read these two fields, so a recognizer that fills one is
-        told so when testing.json loads, not left to fill nothing."""
+        """Nothing read these fields, so a recognizer that fills one is told
+        so when testing.json loads, not left to fill nothing."""
         _make_lib(tmp_path)
         cfg_dir = tmp_path / "refs"
         cfg_dir.mkdir()

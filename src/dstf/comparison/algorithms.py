@@ -1251,7 +1251,6 @@ def _compare_scalar(
         "tolerance_mode": tolerance_mode,
         "min_value": min_value,
         "max_value": max_value,
-        "actual_scalar": act_scalar,
     }
 
     if min_value is not None or max_value is not None:

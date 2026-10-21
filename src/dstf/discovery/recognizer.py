@@ -35,7 +35,6 @@ class RecognizerResult:
         unit_tests_instance: The name of the component whose ``x[i]`` those
             variables are.
         x_expressions: What the model wrote for each of them.
-        x_reference: Reference values written in the model, where there are.
         stop_time: The simulation's stop time, in seconds.
         tolerance: The solver's tolerance.
         method: The solver.
@@ -57,7 +56,6 @@ class RecognizerResult:
     # contributes neither leaves it None and the conventional default stands.
     unit_tests_instance: str | None = None
     x_expressions: list[str] = field(default_factory=list)
-    x_reference: list[float] | None = None
     # Simulation-parameters contribution (was ExperimentInfo)
     stop_time: float | None = None
     tolerance: float | None = None

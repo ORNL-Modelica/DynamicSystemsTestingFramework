@@ -88,7 +88,6 @@ _VALID_FIELDS = frozenset(
     {
         "n_vars",
         "x_expressions",
-        "x_reference",
         "stop_time",
         "tolerance",
         "method",

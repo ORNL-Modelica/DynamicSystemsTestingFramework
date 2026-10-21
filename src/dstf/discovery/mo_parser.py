@@ -17,7 +17,6 @@ class UnitTestInfo:
     #: ``<instance>.x[i]`` in the result file.
     instance: str = "unitTests"
     x_expressions: list[str] = field(default_factory=list)
-    x_reference: list[float] | None = None
 
 
 @dataclass
@@ -380,13 +379,6 @@ def _parse_unit_tests(text: str) -> UnitTestInfo | None:
             raw = _take_argument(param_text, m2.end()).strip()
             if raw:
                 info.x_expressions = [normalize_expression(raw)]
-
-    # Extract x_reference={...}
-    m = re.search(r"\bx_reference\s*=\s*\{", param_text)
-    if m:
-        brace_start = m.end() - 1
-        raw = _extract_balanced_braces(param_text, brace_start)
-        info.x_reference = _parse_float_list(raw)
 
     return info
 
@@ -804,9 +796,6 @@ class BundledModelicaUnitTestsRecognizer(Recognizer):
             n_vars=ut.n if ut else None,
             unit_tests_instance=ut.instance if ut else None,
             x_expressions=list(ut.x_expressions) if ut else [],
-            x_reference=list(ut.x_reference)
-            if ut and ut.x_reference is not None
-            else None,
             stop_time=exp.stop_time if exp else None,
             tolerance=exp.tolerance if exp else None,
             method=exp.method if exp else None,
