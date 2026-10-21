@@ -116,8 +116,6 @@ def _make_test(**overrides) -> TestModel:
     defaults: dict[str, Any] = dict(
         model_id="Demo.Example.A",
         source_file=None,
-        source_package="Demo.Example",
-        short_name="A",
         n_vars=0,
         variable_patterns=["x"],
         stop_time=1.0,
@@ -988,8 +986,6 @@ class TestPersistentIntegration:
             test = TestModel(
                 model_id="Modelica.Blocks.Examples.PID_Controller",
                 source_file=None,
-                source_package="Modelica.Blocks.Examples",
-                short_name="PID_Controller",
                 n_vars=0,
                 variable_patterns=["PI.y"],
                 stop_time=2.0,

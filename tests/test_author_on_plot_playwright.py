@@ -28,8 +28,10 @@ from on_plot_project import PEAKS, times, wave, wave_project  # noqa: E402
 from test_author_suite_playwright import EXPECT_TIMEOUT  # noqa: E402
 from test_author_test_page_playwright import (  # noqa: E402
     _drag_arrow,
+    _open_crit,
     _open_for_grips,
     _pending,
+    _retype,
     _served,
     _shape,
     _shot,
@@ -275,6 +277,105 @@ def test_a_ctrl_click_on_the_spectrum_adds_the_nearest_spectral_peak(
             "a peak is added by a Ctrl+click on the spectrum", timeout=EXPECT_TIMEOUT
         )
         assert _rows(page) == 2
+
+
+#: A points and a tube criterion on `v`, which the run has and the baseline
+#: does not, and an event-timing one on `y`, which the baseline has and the
+#: run does not: each carries its own metric and is not scored.
+NOT_SCORED_TREE = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x"},
+        {"metric": "points", "variable": "v", "points": [{"time": 0.5}]},
+        {"metric": "tube", "variable": "v", "tube_width_mode": "band", "tube_abs": 0.1},
+        {
+            "metric": "event-timing",
+            "variable": "y",
+            "events": [{"time": 0.4, "tolerance": 0.05}],
+        },
+    ],
+}
+
+
+def _v_not_in_baseline(tmp_path: Path) -> tuple[Path, Path]:
+    """The run gains `v` and loses `y`."""
+    cfg, work = wave_project(tmp_path, tree=NOT_SCORED_TREE)
+    result = work / "test_0001" / "result.json"
+    data = json.loads(result.read_text(encoding="utf-8"))
+    data["variables"]["v"] = [0.5 * value for value in data["variables"]["x"]]
+    del data["variables"]["y"]
+    result.write_text(json.dumps(data), encoding="utf-8")
+    return cfg, work
+
+
+def test_a_criterion_not_scored_says_why_and_takes_no_click(
+    tmp_path, playwright_browser
+):
+    """A points criterion the baseline cannot score draws nothing: its
+    editor says why in the criterion's own words and offers no table and no
+    Ctrl+click — a Ctrl+click on its plot stages nothing — while its fields
+    above still stage an edit, and its window's two ⌖ set them from the
+    plot: press one, click, and the window starts at the snapped click. A
+    tube says the same. And a criterion on a
+    variable the run lacks sits on a card that draws no plot: its editor
+    has no ⌖, whose click would land nowhere."""
+    with _served(
+        tmp_path, playwright_browser, project=_v_not_in_baseline, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        editor = page.locator(".dstf-editor")
+        why = editor.locator(".dstf-why").filter(has_text="Not scored:")
+        said = (
+            "Not scored: variable 'v' not found in the baseline. Nothing of it "
+            "is drawn on the plot to drag; the fields above still edit it."
+        )
+        _open_for_grips(page, 1, "points · v")
+        expect(why).to_have_text(said, timeout=EXPECT_TIMEOUT)
+        assert "Ctrl+click" not in editor.inner_text()
+        assert editor.locator(".dstf-table-row").count() == 0
+        ends = _at(page, 0.25, 0.0, card=1)
+        middle = sum(ends["yrange"]) / 2
+        # At a time no row holds: where its one point stands, a Ctrl+click
+        # would stage nothing even where clicks are taken.
+        _click_at(page, _at(page, 0.25, middle, card=1), "Control")
+        _nothing_staged(page, 0)
+        _shot(page, tmp_path, "onplot-not-scored")
+        assert editor.locator(".dstf-arm").count() == 2
+        _arm(page, editor.get_by_label("window start", exact=True))
+        expect(_hint(page)).to_have_text(ARMED_HINT.format("window start"))
+        page.locator(".js-plotly-plot").nth(1).evaluate(
+            "e => e.scrollIntoView({block: 'center'})"
+        )
+        page.wait_for_timeout(300)
+        at = _at(page, 0.3333, middle, card=1)
+        _click_at(page, at)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+        step = _step(at["xspan"])
+        start = _staged_tree(page)["children"][1]["window"]["start"]
+        assert abs(start - 0.3333) <= step / 2 + 1 / at["ppx"], (start, at)
+        assert _on_grid(start, step), (start, step)
+
+        _open_for_grips(page, 1, "tube · v")
+        expect(why).to_have_text(said, timeout=EXPECT_TIMEOUT)
+        _retype(page, editor.get_by_label("Min width", exact=True), "0.05")
+        page.keyboard.press("Tab")
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "2 pending edits", timeout=EXPECT_TIMEOUT
+        )
+        assert _staged_tree(page)["children"][2]["tube_min_width"] == 0.05
+
+        card = page.locator(".dstf-plot").nth(2)
+        expect(card).to_contain_text("Not in this result: y", timeout=EXPECT_TIMEOUT)
+        assert card.locator(".dstf-plot-slot").count() == 0
+        _open_crit(page, 2, "event-timing · y")
+        lacks = said.replace(
+            "'v' not found in the baseline", "'y' not found in the result"
+        )
+        expect(why).to_have_text(lacks, timeout=EXPECT_TIMEOUT)
+        expect(editor.get_by_label("window start", exact=True)).to_have_count(1)
+        assert editor.locator(".dstf-arm").count() == 0
 
 
 def test_clicks_that_are_not_an_edit_change_nothing(tmp_path, playwright_browser):

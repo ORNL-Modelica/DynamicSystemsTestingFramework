@@ -17,8 +17,6 @@ def _make_test(**overrides) -> TestModel:
     defaults = dict(
         model_id="Demo.Example.A",
         source_file=None,
-        source_package="Demo.Example",
-        short_name="A",
         n_vars=0,
         variable_patterns=["x", "y.z[1]"],
         stop_time=10.0,

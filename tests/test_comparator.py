@@ -10,6 +10,7 @@ from dstf.comparison.algorithms import (
     _split_segments,
 )
 from dstf.comparison.comparator import _check_structural_changes
+from dstf.comparison.registry import summarize
 from dstf.comparison.sides import Sides
 from dstf.storage.baseline_codec import decode_reference
 from scoring import score
@@ -283,6 +284,46 @@ class TestCompareTrajectories:
         vc = score({"mode": "nrmse"}, t, ref_v, t, act_v, tolerance=0.01)
         assert vc.passed is True
 
+    def test_an_nrmse_exactly_at_the_tolerance_fails(self):
+        """A pass is nrmse strictly below the tolerance."""
+        # rmse 0.5 over a range of 1: the nrmse is 0.5 exactly.
+        t = np.array([0.0, 1.0])
+        vc = score(
+            {"mode": "nrmse"}, t, np.array([0.0, 1.0]), t, np.array([0.5, 1.5]), 0.5
+        )
+        assert vc.nrmse == 0.5
+        assert vc.passed is False
+
+    def test_the_last_segment_reads_the_actuals_value_after_an_event_the_reference_lacks(
+        self,
+    ):
+        """The actual jumps 6 -> 9 at t=2, an event the reference does not
+        have: the reference's t=2 sample is scored against 9, not 6."""
+        vc = score(
+            {"mode": "nrmse"},
+            np.array([0.0, 1.0, 1.0, 2.0, 3.0]),
+            np.array([0.0, 1.0, 5.0, 6.0, 7.0]),
+            np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0]),
+            np.array([0.0, 1.0, 5.0, 6.0, 9.0, 7.0]),
+            tolerance=0.01,
+        )
+        # One error of 3 over the five reference samples, over a range of 7.
+        assert vc.nrmse == pytest.approx(np.sqrt(9 / 5) / 7)
+        assert vc.passed is False
+
+    def test_a_one_sample_reference_is_scored_not_refused(self):
+        vc = score(
+            {"mode": "nrmse"},
+            np.array([0.0]),
+            np.array([2.0]),
+            np.array([0.0, 1.0]),
+            np.array([2.0, 2.0]),
+        )
+        assert "error" not in (vc.diagnostics or {})
+        assert vc.passed is True
+        assert vc.nrmse == 0.0
+        assert vc.reference_final == 2.0
+
 
 # ---------------------------------------------------------------------------
 # Final value comparison
@@ -451,8 +492,6 @@ def _make_test(comparison_tolerance=None, variable_overrides=None):
     return TestModel(
         model_id="Test.Model",
         source_file=None,
-        source_package="Test",
-        short_name="Model",
         n_vars=0,
         source="spec",
         variable_patterns=["x"],
@@ -873,6 +912,73 @@ class TestTubeComparison:
         assert vc_floor.passed
         assert vc_floor.tube_points_inside == 1.0
 
+    @pytest.mark.parametrize(
+        "row,act",
+        [({"upper": 0.5}, [0.0, -0.5, 0.0]), ({"lower": 0.5}, [0.0, 0.5, 0.0])],
+        ids=["only upper", "only lower"],
+    )
+    def test_a_control_point_giving_one_side_has_no_width_on_the_other(self, row, act):
+        t = np.array([0.0, 1.0, 2.0])
+        vc = score(
+            {
+                "mode": "tube",
+                "tube_width_mode": "band",
+                "tube_points": [{"time": 0, **row}, {"time": 2, **row}],
+            },
+            t,
+            np.zeros(3),
+            t,
+            np.array(act),
+        )
+        s = summarize(vc)
+        assert s.criterion == "66.7% inside tube → FAIL (requires 100%)"
+        assert s.details[0] == ("worst violation", "5.000000e-01 at t=1")
+
+    @pytest.mark.parametrize(
+        "cfg,ref,worst",
+        [
+            ({"tube_width_mode": "band"}, 0.0, "5.000000e-01"),
+            ({"tube_width_mode": "band", "tube_min_width": 0.25}, 0.0, "2.500000e-01"),
+            ({"tube_width_mode": "rel"}, 1.0, "5.000000e-01"),
+            ({"tube_width_mode": "rel", "tube_min_width": 0.25}, 1.0, "2.500000e-01"),
+        ],
+        ids=["band", "band with a floor", "rel", "rel with a floor"],
+    )
+    def test_a_tube_without_its_width_is_only_as_wide_as_its_floor(
+        self, cfg, ref, worst
+    ):
+        t = np.array([0.0, 1.0, 2.0])
+        vc = score(
+            {"mode": "tube", **cfg},
+            t,
+            np.full(3, ref),
+            t,
+            np.array([ref, ref + 0.5, ref]),
+        )
+        s = summarize(vc)
+        assert s.criterion == "66.7% inside tube → FAIL (requires 100%)"
+        assert s.details[0] == ("worst violation", f"{worst} at t=1")
+
+    @pytest.mark.parametrize(
+        "ref_t,ref_v,act_v,final",
+        [
+            ([0, 1, 2], [1, 2, 3], [1, 2, 3.5], "ref=3.000000e+00  act=3.500000e+00"),
+            ([1], [5], [5, 5.25, 5], "ref=5.000000e+00  act=5.250000e+00"),
+        ],
+        ids=["a ramp", "a one-sample reference"],
+    )
+    def test_the_finals_are_at_the_references_last_time(
+        self, ref_t, ref_v, act_v, final
+    ):
+        vc = score(
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 1.0},
+            np.array(ref_t, dtype=float),
+            np.array(ref_v, dtype=float),
+            np.array([0.0, 1.0, 2.0]),
+            np.array(act_v),
+        )
+        assert dict(summarize(vc).details)["final"] == final
+
 
 # ---------------------------------------------------------------------------
 # Comparison mode strategies (modes.py)
@@ -1170,6 +1276,30 @@ class TestBaselineFreeNoRef:
         assert comps[0].passed is False
         assert comps[0].has_reference is False
 
+    def test_an_override_without_a_mode_is_nrmse_and_needs_a_baseline(self):
+        """A ``points`` table on an override with no ``mode`` scores nrmse
+        (it is not a points criterion), so with no baseline the test is
+        NO_REF, not scored."""
+        from dstf.comparison.comparator import compare_all
+        from dstf.reporting.status import NO_REF, classify
+
+        test = _make_test(
+            variable_overrides={"x": {"points": [{"time": 1.0, "value": 2.0}]}}
+        )
+        result = _result_only(np.array([0.0, 1.0, 2.0]))
+        (c,) = compare_all([test], {test.model_id: result}, _NoBaselineStore())
+        assert classify(c) == NO_REF
+        assert c.error_message == "No reference baseline stored"
+
+    def test_compare_all_says_what_it_compares_on_stderr(self, capsys):
+        from dstf.comparison.comparator import compare_all
+
+        test = _make_test()
+        compare_all(
+            [test], {test.model_id: _result_only(np.zeros(3))}, _NoBaselineStore()
+        )
+        assert capsys.readouterr().err == "Comparing 1 tests against references...\n"
+
     def test_mixed_tree_still_short_circuits_to_no_ref(self):
         """Range + NRMSE leaves → NO_REF (no partial-run support in this fix).
 
@@ -1415,6 +1545,19 @@ class TestPointsDeclaredPath:
         assert result.passed
         assert result.diagnostics["worst_delta"] == pytest.approx(0.001)
 
+    def test_a_time_less_point_without_a_reference_is_checked_at_the_actuals_end(
+        self,
+    ):
+        vc = score(
+            {"mode": "points", "points": [{"value": 2, "tolerance": 0.1}]},
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array([0.0, 1.0, 2.0]),
+        )
+        assert vc.passed is True
+        assert vc.max_abs_error == 0.0
+
     def test_multiple_points_all_must_match(self):
         """A leaf with 3 points fails if any one fails."""
 
@@ -1581,6 +1724,88 @@ class TestPointsDeclaredPath:
         # Linear interp at t=3 gives act=30, delta=0 → PASS.
         assert result.passed
 
+    @pytest.mark.parametrize(
+        "row,act_t,act_v",
+        [
+            ({"time": 1, "value": 2, "tolerance": 0.1}, [1], [2]),
+            (
+                {"time": 1.5, "value": 1, "tolerance": 0.01, "time_tolerance": 0.5},
+                [0, 10],
+                [0, 10],
+            ),
+            (
+                {"time": 0.5, "value": 1, "tolerance": 0.01, "time_tolerance": 0.5},
+                [0, 10],
+                [0, 10],
+            ),
+            (
+                {"time": 1, "value": 5, "tolerance": 0.1, "time_tolerance": 1},
+                [0, 1, 2],
+                [0, 5, 0],
+            ),
+            (
+                {
+                    "time": 0,
+                    "value": 0,
+                    "tolerance": 0.5,
+                    "time_tolerance": {"lower": 0, "upper": 0.5},
+                },
+                [0, 0, 1],
+                [0, 10, 10],
+            ),
+            (
+                {"time": 0.5, "value": 10, "tolerance": 0.5, "time_tolerance": 0.5},
+                [0, 1, 1, 2],
+                [0, 10, 0, 0],
+            ),
+        ],
+        ids=[
+            "one-sample actual",
+            "box start between samples",
+            "box end between samples",
+            "a sample inside the box",
+            "both samples of an event at the box start",
+            "both samples of an event at the box end",
+        ],
+    )
+    def test_the_box_meets_the_target_at_any_of_its_points(self, row, act_t, act_v):
+        """The interpolated box ends, and every sample between them (both of
+        an event's), are where the curve may meet the target."""
+        vc = score(
+            {"mode": "points", "points": [row]},
+            EMPTY,
+            EMPTY,
+            np.array(act_t, dtype=float),
+            np.array(act_v, dtype=float),
+        )
+        assert vc.passed is True
+        assert vc.max_abs_error == 0.0
+
+    @pytest.mark.parametrize(
+        "row,act_t,act_v",
+        [
+            ({"time": 1, "value": 1}, [0, 2], [0, 2]),
+            ({"time": 1, "value": 1}, [0, 2], [2, 0]),
+            ({"time": 1, "value": 5}, [0, 1, 1, 2], [0, 0, 10, 10]),
+        ],
+        ids=["rising", "falling", "at an event"],
+    )
+    def test_a_curve_that_crosses_the_target_inside_the_box_meets_it(
+        self, row, act_t, act_v
+    ):
+        vc = score(
+            {
+                "mode": "points",
+                "points": [{**row, "tolerance": 0.1, "time_tolerance": 1}],
+            },
+            EMPTY,
+            EMPTY,
+            np.array(act_t, dtype=float),
+            np.array(act_v, dtype=float),
+        )
+        assert vc.passed is True
+        assert vc.max_abs_error == 0.0
+
 
 # ---------------------------------------------------------------------------
 # Tree-path config errors are labeled leaf failures, not crashes (D107)
@@ -1602,8 +1827,6 @@ class TestTreeConfigErrorIsALeafFailure:
         return TestModel(
             model_id=model_id,
             source_file=None,
-            source_package="Test",
-            short_name="Model",
             n_vars=1,
             metric_tree_spec=parse_metric_tree(metrics_raw),
         )
@@ -1756,8 +1979,6 @@ def _mk_test(model_id="MyLib.Test", **kw) -> TestModel:
     return TestModel(
         model_id=model_id,
         source_file=Path("x.mo"),
-        source_package="MyLib",
-        short_name="Test",
         n_vars=1,
         **kw,
     )
@@ -1837,6 +2058,26 @@ class TestEmptyDataFails:
         )
         assert not vc.passed
         assert "error" in vc.diagnostics
+
+    def test_a_variable_with_no_samples_the_baseline_lacks_fails_its_criterion(self):
+        test = _mk_test(variable_patterns=["x", "y"])
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[
+                VariableResult(index=1, time=EMPTY, values=EMPTY, name="x"),
+                VariableResult(
+                    index=2, time=np.array([0.0, 1.0]), values=np.ones(2), name="y"
+                ),
+            ],
+        )
+        reference = {
+            "time": [0.0, 1.0],
+            "variables": [{"index": 1, "name": "y", "values": [1.0, 1.0]}],
+        }
+        comp = compare_test(test, result, decode_reference(reference))
+        assert {vc.name: vc.passed for vc in comp.variables} == {"x": False, "y": True}
+        assert not comp.passed
 
     def test_windowed_leaf_excluding_everything_fails(self):
         """A window that slices away every sample must fail the leaf."""
@@ -1918,6 +2159,81 @@ class TestPointsClipping:
             act_v,
         )
         assert not vc.passed
+
+    @pytest.mark.parametrize(
+        "rows,ref,act,details",
+        [
+            (
+                [{"time": 1, "value": 1}, {"time": 1}, {"time": 2}],
+                ([], []),
+                ([0, 1, 2], [0, 1, 2]),
+                (
+                    ("checkpoints", "2 of 3 failed, 2 not scored"),
+                    ("t=1", "no reference data for ref-relative point"),
+                    ("t=2", "no reference data for ref-relative point"),
+                ),
+            ),
+            (
+                [{"time": 1, "value": 1}, {"time": 2}, {"time": 3}],
+                ([0, 1], [0, 1]),
+                ([0, 1, 2, 3], [0, 1, 2, 3]),
+                (
+                    ("checkpoints", "2 of 3 failed, 2 not scored"),
+                    ("t=2", "checkpoint time outside reference range"),
+                    ("t=3", "checkpoint time outside reference range"),
+                ),
+            ),
+            (
+                [{"time": 1}, {"time": 2}],
+                ([0, 1, 2], [0, 1, 2]),
+                ([], []),
+                (
+                    ("checkpoints", "2 of 2 failed, 2 not scored"),
+                    ("t=1", "no actual samples (empty trajectory)"),
+                    ("t=2", "no actual samples (empty trajectory)"),
+                ),
+            ),
+            (
+                [
+                    {"time": 5, "value": 1},
+                    {"time": 6, "value": 1},
+                    {"time": 0.5, "value": 0.5},
+                ],
+                ([], []),
+                ([0, 1], [0, 1]),
+                (
+                    ("checkpoints", "2 of 3 failed, 2 not scored"),
+                    ("t=5", "checkpoint time outside actual trajectory"),
+                    ("t=6", "checkpoint time outside actual trajectory"),
+                ),
+            ),
+            (
+                [{"value": 2, "tolerance": 0.1}],
+                ([], []),
+                ([], []),
+                (
+                    ("checkpoints", "1 of 1 failed, 1 not scored"),
+                    ("t=0", "no actual samples (empty trajectory)"),
+                ),
+            ),
+        ],
+        ids=[
+            "no reference",
+            "outside the reference",
+            "no actual",
+            "beyond the actual",
+            "nothing at all",
+        ],
+    )
+    def test_each_row_that_could_not_be_scored_fails_and_is_listed(
+        self, rows, ref, act, details
+    ):
+        vc = score(
+            {"mode": "points", "points": rows},
+            *(np.array(x, dtype=float) for x in (*ref, *act)),
+        )
+        assert vc.passed is False
+        assert summarize(vc).details == details
 
 
 # ---------------------------------------------------------------------------
@@ -2243,8 +2559,6 @@ def _vi_test(**kw) -> TestModel:
     return TestModel(
         model_id="MyLib.Test",
         source_file=Path("x.mo"),
-        source_package="MyLib",
-        short_name="Test",
         n_vars=kw.pop("n_vars", 1),
         source=kw.pop("source", "unit_tests"),
         **kw,
@@ -3093,6 +3407,94 @@ class TestPairingIsByNameOnly:
         assert [vc.nrmse for vc in comp.variables] == [0.0, 0.0]
 
 
+class TestACriterionOnAMissingVariableNamesItsMetric:
+    """Not scored, by its own metric: a scalar or tube criterion on a
+    variable the run or the baseline lacks read as an nrmse one."""
+
+    _T = np.linspace(0.0, 1.0, 5)
+
+    @pytest.mark.parametrize(
+        "leaf",
+        [
+            {
+                "metric": "scalar",
+                "variable": "y",
+                "quantity": {"reduce": "final"},
+                "tolerance": 0.1,
+            },
+            {"metric": "tube", "variable": "y", "tube_abs": 0.1},
+        ],
+        ids=["scalar", "tube"],
+    )
+    @pytest.mark.parametrize("where", ["result", "baseline"])
+    def test_on_the_tree_path(self, leaf, where):
+        from dstf.comparison.tree_eval import (
+            PRIMARY_BASELINE,
+            BaselineView,
+            collect_leaf_variables,
+            evaluate_spec,
+        )
+        from dstf.storage.baseline import StoredVariable
+
+        t = self._T
+        x = VariableResult(1, t, np.full(5, 3.0), name="x")
+        y = VariableResult(2, t, t * 2.0, name="y")
+        stored = {"x": StoredVariable(1, "x", "", [3.0] * 5)}
+        if where == "result":
+            stored["y"] = StoredVariable(2, "y", "", list(t * 2.0))
+        results = {"x": x} if where == "result" else {"x": x, "y": y}
+        tree = evaluate_spec(
+            parse_metric_tree(leaf),
+            results,
+            {PRIMARY_BASELINE: BaselineView(PRIMARY_BASELINE, stored, t)},
+            1e-3,
+        )
+        (vc,) = collect_leaf_variables(tree)
+        assert summarize(vc).criterion == (
+            f"{leaf['metric']} criterion not scored — variable 'y' not found in "
+            f"the {where}"
+        )
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"mode": "scalar", "quantity": {"reduce": "final"}, "tolerance": 0.1},
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.1},
+            {},
+        ],
+        ids=["scalar", "tube", "no mode"],
+    )
+    def test_on_the_flat_path_with_the_reason(self, override):
+        from dstf.reporting.status import failed_criteria
+
+        t = [0.0, 0.5, 1.0]
+        test = _mk_test(
+            variable_patterns=["x", "y"],
+            variable_overrides={"x": override} if override else {},
+            comparison_tolerance=0.02,
+        )
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[
+                VariableResult(1, np.array(t), np.array([1.0, 2.0, 3.0]), name="x"),
+                VariableResult(2, np.array(t), np.array([0.0, 1.0, 2.0]), name="y"),
+            ],
+        )
+        reference = decode_reference(
+            {"time": t, "variables": [{"index": 1, "name": "y", "values": [0, 1, 2]}]}
+        )
+        comp = compare_test(test, result, reference)
+        (failed,) = failed_criteria(comp)
+        assert failed.head == f"x: {override.get('mode', 'nrmse')} · against primary"
+        assert failed.reason == "variable 'x' not found in the baseline"
+        # The tolerance it would have applied — its own, else the test's —
+        # as a scored criterion carries it.
+        applied = override.get("tolerance", 0.02)
+        x = next(vc for vc in comp.variables if vc.name == "x")
+        assert x.tolerance_used == Sides(applied, applied)
+
+
 class TestTheMigrationHintIsSharedByBothPaths:
     def _un_migrated(self, **kw):
         """A result whose variable is `unitTests.x[1]` against a baseline
@@ -3103,8 +3505,13 @@ class TestTheMigrationHintIsSharedByBothPaths:
             decode_reference(_vi_reference(name="pipe.T[1]", with_expression=False)),
         )
 
-    def test_the_tree_path_says_the_name_to_store(self, caplog):
-        spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+    @pytest.mark.parametrize("tree", [True, False], ids=["tree", "flat"])
+    def test_each_path_says_the_name_to_store(self, tree, caplog):
+        spec = (
+            parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+            if tree
+            else None
+        )
         with caplog.at_level(logging.WARNING):
             comp = self._un_migrated(metric_tree_spec=spec)
         assert not comp.passed
@@ -3186,8 +3593,6 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         test = TestModel(
             model_id="Test.Model",
             source_file=None,
-            source_package="Test",
-            short_name="Model",
             n_vars=1,
             x_expressions=["a.T"],
             source="both",
@@ -3219,8 +3624,6 @@ class TestTheFlatPathScoresWhatTheTestTracks:
         test = TestModel(
             model_id="Test.Model",
             source_file=None,
-            source_package="Test",
-            short_name="Model",
             n_vars=0,
             source="spec",
             variable_patterns=["pipe.T?"],
@@ -3331,12 +3734,20 @@ def _sides_compare(
     }
     if ref_comparison is not None:
         reference["comparison"] = ref_comparison
-    if test is not None:
-        return compare_test(
-            test, result, decode_reference(reference), default_tolerance=1e-4
+    if test is None:
+        test = _sides_test(
+            leaf, flat=flat, extra=extra, comparison_tolerance=comparison_tolerance
         )
+    return compare_test(
+        test, result, decode_reference(reference), default_tolerance=1e-4
+    )
+
+
+def _sides_test(leaf, *, flat, extra=None, comparison_tolerance=None):
+    """The test :func:`_sides_compare` scores ``leaf`` (and ``extra``) by:
+    a ``metrics`` tree, or with ``flat`` the same keys as overrides."""
     test = _make_test(comparison_tolerance=comparison_tolerance)
-    test.variable_patterns = names
+    test.variable_patterns = ["x"] + (["y"] if extra is not None else [])
 
     def override(raw):
         ov = {k: v for k, v in raw.items() if k != "metric"}
@@ -3351,9 +3762,7 @@ def _sides_compare(
         if extra is not None:
             tree = {"combinator": "and", "children": [tree, {**extra, "variable": "y"}]}
         test.metric_tree_spec = parse_metric_tree(tree)
-    return compare_test(
-        test, result, decode_reference(reference), default_tolerance=1e-4
-    )
+    return test
 
 
 def _leaves(result):
@@ -3361,13 +3770,6 @@ def _leaves(result):
     if not result.children:
         return [result]
     return [leaf for child in result.children for leaf in _leaves(child)]
-
-
-def _view_leaves(view):
-    """The leaf nodes of a tree view (`to_view`)."""
-    if not view.get("children"):
-        return [view]
-    return [leaf for child in view["children"] for leaf in _view_leaves(child)]
 
 
 def _sides_fields(vc) -> str:
@@ -3434,19 +3836,22 @@ class TestATolerancesNumberAndEqualPairAreOne:
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_a_leafs_unequal_pair_leaves_as_the_pair(self, flat):
-        """The leaf's diagnostics and the tree view carry the tolerance
-        applied as written: an unequal pair is the pair, never one side."""
-        from dstf.comparison.tree_eval import to_view
+        """The leaf's `tolerance` in verdicts.json and the report
+        (`build_tree_view`) is the tolerance applied as written: an unequal
+        pair is the pair, never one side."""
+        from dstf.reporting.context_builder import build_tree_view
+        from dstf.reporting.tree_rows import leaves_of
 
-        comp = _sides_compare({"metric": "points", "tolerance": _S_UNEVEN}, flat=flat)
-        (leaf,) = _leaves(comp.metric_tree)
-        assert leaf.diagnostics["tolerance"] == _S_UNEVEN
-        (node,) = _view_leaves(to_view(comp.metric_tree))
-        assert node["tolerance"] == _S_UNEVEN
-        # Equal sides are the number.
-        comp = _sides_compare({"metric": "points", "tolerance": _S_EVEN}, flat=flat)
-        (leaf,) = _leaves(comp.metric_tree)
-        assert leaf.diagnostics["tolerance"] == 0.05
+        def written(tolerance):
+            test = _sides_test({"metric": "points", "tolerance": tolerance}, flat=flat)
+            comp = _sides_compare(None, flat=flat, test=test)
+            (leaf,) = leaves_of(
+                build_tree_view(list(comp.variables), test, comp.metric_tree)
+            )
+            return leaf["tolerance"]
+
+        assert written(_S_UNEVEN) == _S_UNEVEN
+        assert written(_S_EVEN) == 0.05  # equal sides are the number
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_nrmse_takes_an_equal_pair(self, flat):
@@ -4171,6 +4576,114 @@ class TestPointsValueSides:
         vc = _pts(act, [{"time": 5.0, "tolerance": self._UNEVEN, **row}])
         assert vc.diagnostics["point_failures"] == [{"time": 5.0, "reason": reason}]
 
+    @pytest.mark.parametrize(
+        "act,criterion",
+        [
+            (
+                [0.0, 0.0, 0.0],
+                "Point at t=1: error −1.000e+00 vs tolerance "
+                "−5.000e-01 / +2.000e+00 → FAIL",
+            ),
+            (
+                [np.nan] * 3,
+                "Point at t=1: error +inf vs tolerance −5.000e-01 / +2.000e+00 → FAIL",
+            ),
+        ],
+        ids=["a miss of exactly one", "no comparable sample"],
+    )
+    def test_the_sentence_signs_the_reported_points_error(self, act, criterion):
+        vc = score(
+            {
+                "mode": "points",
+                "points": [
+                    {"time": 1, "value": 1, "tolerance": {"lower": 0.5, "upper": 2}}
+                ],
+            },
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array(act),
+        )
+        assert summarize(vc).criterion == criterion
+
+    @pytest.mark.parametrize(
+        "act,box",
+        [
+            ([np.inf] * 3, {}),
+            ([-np.inf] * 3, {}),
+            # The box is t in [0, 2]: the NaN at t=0 is in it.
+            ([np.nan, np.inf, np.inf], {"time_tolerance": 1.0}),
+        ],
+        ids=["+inf", "-inf", "NaN beside +inf"],
+    )
+    def test_a_box_of_infinite_samples_names_its_closest_value(self, act, box):
+        """Infinite is a value, and the closest one when nothing else is;
+        a NaN never is."""
+        point = {"time": 1, "value": 1, "tolerance": {"lower": 0.1, "upper": 0.2}}
+        vc = score(
+            {"mode": "points", "points": [{**point, **box}]},
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array(act),
+        )
+        assert vc.passed is False
+        assert vc.diagnostics["point_failures"] == [
+            {"time": 1.0, "reason": f"closest value {act[-1]:g} is outside [0.9, 1.2]"}
+        ]
+
+    @pytest.mark.parametrize(
+        "act", [[0.0, np.inf, np.inf], [2.0, -np.inf, -np.inf]], ids=["+inf", "-inf"]
+    )
+    def test_a_jump_to_an_infinite_value_is_no_crossing(self, act):
+        """From 1 below the target to +inf (or 1 above it to -inf) is not a
+        curve that passed through the band: the box's closest approach is
+        the finite sample, and it misses."""
+        vc = score(
+            {
+                "mode": "points",
+                "points": [
+                    {"time": 1, "value": 1, "tolerance": 0.1, "time_tolerance": 1}
+                ],
+            },
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array(act),
+        )
+        assert vc.passed is False
+        assert vc.max_abs_error == 1.0
+        assert vc.diagnostics["point_failures"] == [
+            {"time": 1.0, "reason": "delta 1 exceeds limit 0.1"}
+        ]
+
+    def test_a_nan_sample_between_two_sides_of_the_band_is_passed_over(self):
+        """0 below the band and 2 above it, a NaN between: the samples
+        either side of the NaN are adjacent, and the curve crossed the band
+        between them. Kept, the NaN split them, and the box missed by 0.8."""
+        vc = score(
+            {
+                "mode": "points",
+                "points": [
+                    {
+                        "time": 1,
+                        "value": 1,
+                        "tolerance": {"lower": 0.1, "upper": 0.2},
+                        "time_tolerance": 1,
+                    }
+                ],
+            },
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0]),
+            np.array([0.0, np.nan, 2.0]),
+        )
+        assert vc.passed is True
+        assert vc.max_abs_error == 0.0
+        assert summarize(vc).criterion == (
+            "Point at t=1: error +0.000e+00 vs tolerance −1.000e-01 / +2.000e-01 → PASS"
+        )
+
     @pytest.mark.parametrize("row", [{}, {"time_tolerance": 0.2}], ids=repr)
     def test_a_target_that_is_not_a_number_says_so(self, row):
         point = {"time": 5.0, "value": float("nan"), "tolerance": self._UNEVEN}
@@ -4327,6 +4840,27 @@ class TestPointsFinalCheckSides:
         vc = _pts(_P_FLAT, None, tolerance=Sides(0.25, 0.25))
         assert vc.diagnostics["tolerance"] == 0.25
         assert isinstance(vc.diagnostics["tolerance"], float)
+
+    @pytest.mark.parametrize(
+        "ref,act",
+        [(([1], [2]), ([0, 1], [2, 2])), (([0, 1], [2, 2]), ([1], [2]))],
+        ids=["one-sample reference", "one-sample actual"],
+    )
+    def test_a_one_sample_trajectory_is_checked(self, ref, act):
+        vc = score(
+            {"mode": "points"}, *(np.array(x, dtype=float) for x in (*ref, *act))
+        )
+        assert vc.passed is True
+        assert vc.diagnostics["delta"] == 0.0
+
+    def test_an_empty_reference_is_not_scored(self):
+        vc = score(
+            {"mode": "points"}, EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([2.0, 2.0])
+        )
+        assert vc.passed is False
+        assert (
+            summarize(vc).criterion == "points criterion not scored — empty trajectory"
+        )
 
 
 class TestPointsIdentity:

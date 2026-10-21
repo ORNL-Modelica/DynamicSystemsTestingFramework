@@ -8,6 +8,7 @@ test-suite-level orchestration.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -292,8 +293,8 @@ def _violation_in_box(
     that comes closest to it.
 
     The violation is ``0.0`` when a candidate (:func:`_box_candidates`) lies
-    in the band, or two adjacent candidates lie on opposite sides of it —
-    the curve crossed it between them; else the smallest distance to the
+    in the band, or two adjacent finite candidates lie on opposite sides of
+    it — the curve crossed it between them; else the smallest distance to the
     band; ``inf`` for a box with no candidate.
 
     Judged on ``d = v - target``, never on the edges ``target ± limit``: the
@@ -310,10 +311,15 @@ def _violation_in_box(
         if -lower <= d <= upper:
             return 0.0, v
         gap = d - upper if d > upper else -lower - d
-        if gap < best:
+        # An infinite sample's gap is inf, never below the starting best: it
+        # still names the closest value. A NaN's gap is NaN and never wins.
+        if gap < best or (gap == best and math.isnan(closest)):
             best, closest = gap, v
     if -lower <= upper:
         for (_, v1), (_, v2) in zip(candidates, candidates[1:]):
+            # A jump to an infinite value is no curve through the band.
+            if not (math.isfinite(v1) and math.isfinite(v2)):
+                continue
             d1, d2 = v1 - target, v2 - target
             if (d1 < -lower and d2 > upper) or (d1 > upper and d2 < -lower):
                 return 0.0, target
@@ -383,6 +389,8 @@ def _min_delta_in_box(
         d2 = v2 - target
         if d1 == 0 or d2 == 0:
             continue  # Already captured by endpoint scan.
+        if not (math.isfinite(v1) and math.isfinite(v2)):
+            continue  # A jump to an infinite value crosses nothing.
         if (d1 > 0) != (d2 > 0):
             # Linear interp solve: t* = t1 + d1 / (d1 - d2) * (t2 - t1).
             denom = d1 - d2
@@ -1664,8 +1672,6 @@ def _compute_fft_spectrum(
     therefore depend on the sample COUNT: the same signal at a different
     resolution lands its peaks on a different grid.
     """
-    import math
-
     if len(t) == 0:
         return np.array([]), np.array([])
     n0 = max(len(t), 64)
@@ -1682,6 +1688,25 @@ def _compute_fft_spectrum(
     return freqs, spectrum
 
 
+def _local_maxima(spectrum: np.ndarray) -> np.ndarray:
+    """The indices of ``spectrum``'s local maxima (a flat top counts once).
+
+    A run of equal values whose outer neighbours are both strictly lower,
+    touching neither end of the array, is one maximum, reported at the
+    run's middle index rounded down — ``scipy.signal.find_peaks``' rule on
+    finite input (on an infinite run they differ: ``[1, inf, inf, 1]`` gives
+    no maximum here, ``[1]`` there). A resonance between two bins can land
+    on both with the same magnitude: strictly greater than both neighbours
+    then found nothing there. Its callers hold at least three values.
+    """
+    starts = np.concatenate(([0], np.flatnonzero(np.diff(spectrum) != 0) + 1))
+    ends = np.concatenate((starts[1:], [len(spectrum)])) - 1
+    values = spectrum[starts]
+    inner = np.arange(1, len(starts) - 1)
+    peak = (values[inner - 1] < values[inner]) & (values[inner + 1] < values[inner])
+    return (starts[inner[peak]] + ends[inner[peak]]) // 2
+
+
 def _find_top_n_peaks(
     freqs: np.ndarray,
     spectrum: np.ndarray,
@@ -1691,8 +1716,8 @@ def _find_top_n_peaks(
     """Return the ``n_peaks`` largest local maxima as ``[(freq, amplitude), ...]``
     sorted by **frequency** (ascending).
 
-    Local maxima are indices strictly greater than both immediate neighbors
-    above ``min_frequency``. The amplitude filter (pick top-N by magnitude)
+    Local maxima (a flat top counts once: :func:`_local_maxima`) above
+    ``min_frequency``. The amplitude filter (pick top-N by magnitude)
     runs first so spectral noise doesn't get counted; the frequency-sort
     runs second so pairing between reference and actual is predictable for
     tests with known frequencies (e.g., PRBS).
@@ -1704,11 +1729,7 @@ def _find_top_n_peaks(
     """
     if len(freqs) < 3 or n_peaks < 1:
         return []
-    interior = np.arange(1, len(spectrum) - 1)
-    is_peak = (spectrum[interior] > spectrum[interior - 1]) & (
-        spectrum[interior] > spectrum[interior + 1]
-    )
-    peak_idx = interior[is_peak]
+    peak_idx = _local_maxima(spectrum)
     floor = max(min_frequency, 0.0)
     peak_idx = peak_idx[freqs[peak_idx] > floor]
     if len(peak_idx) == 0:
@@ -1732,8 +1753,9 @@ def _find_strongest_peak_in_window(
     ``[lo, hi]``, or ``None`` if no local maximum exists in that window.
 
     Used by the declared-peaks pass/fail path. A peak qualifies if it's a
-    local max (greater than both neighbors) AND its frequency sits in
-    ``[lo, hi]``. Returning ``None`` means the leaf fails that peak.
+    local maximum (a flat top counts once: :func:`_local_maxima`) AND its
+    frequency sits in ``[lo, hi]``. Returning ``None`` means the leaf fails
+    that peak.
 
     ``exclude`` holds bin frequencies already claimed by other declared
     peaks; ``min_amplitude`` filters spectral noise (review 2026-07-06:
@@ -1742,12 +1764,8 @@ def _find_strongest_peak_in_window(
     """
     if len(freqs) < 3:
         return None
-    interior = np.arange(1, len(spectrum) - 1)
-    in_window = (freqs[interior] >= lo) & (freqs[interior] <= hi)
-    is_local_max = (spectrum[interior] > spectrum[interior - 1]) & (
-        spectrum[interior] > spectrum[interior + 1]
-    )
-    candidate_idx = interior[in_window & is_local_max]
+    maxima = _local_maxima(spectrum)
+    candidate_idx = maxima[(freqs[maxima] >= lo) & (freqs[maxima] <= hi)]
     if min_amplitude > 0.0:
         candidate_idx = candidate_idx[spectrum[candidate_idx] >= min_amplitude]
     if exclude:
@@ -1932,19 +1950,11 @@ def _compare_dominant_frequency(
     # a diagnostic). With declared peaks, an empty reference is OK
     # (baseline-free path, idea #59 / D83).
     if len(act_values) < 4:
-        return VariableComparison(
-            index=0,
-            name="",
-            passed=False,
-            nrmse=float("inf"),
-            rmse=0.0,
-            signal_range=0.0,
-            max_abs_error=0.0,
-            max_abs_error_time=0.0,
-            reference_final=float("nan"),
-            actual_final=float("nan"),
-            mode="dominant-frequency",
-            diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
+        # Nothing to take a spectrum of: not scored, with the reason where
+        # every surface reads one (``diagnostics["error"]``, the mode
+        # contract) — under ``reason`` the summary said "No peaks declared".
+        return _no_data_failure(
+            "dominant-frequency", "signal too short for FFT (need >=4 samples)"
         )
 
     has_ref = len(ref_values) >= 4

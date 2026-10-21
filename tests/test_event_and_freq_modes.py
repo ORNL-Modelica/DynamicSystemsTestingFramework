@@ -7,7 +7,8 @@ import json
 import numpy as np
 import pytest
 
-from dstf.comparison.geometry import Box
+from dstf.comparison.geometry import Box, Marker, Series
+from dstf.comparison.metric_tree import leaf_from_variable
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
     DominantFrequencyMode,
@@ -15,6 +16,7 @@ from dstf.comparison.modes import (
     EventTimingMode,
     resolve_mode,
 )
+from dstf.comparison.registry import summarize
 from dstf.comparison.sides import Sides
 from dstf.storage.baseline_codec import decode_reference
 from scoring import score
@@ -113,7 +115,12 @@ class TestDominantFrequencyMode:
         )
         result = mode.compare(ref_t, ref_v, ref_t, ref_v)
         assert not result.passed
-        assert "too short" in result.diagnostics.get("reason", "")
+        summary = summarize(result)
+        assert summary.display == "not scored"
+        assert summary.criterion == (
+            "dominant-frequency criterion not scored — "
+            "signal too short for FFT (need >=4 samples)"
+        )
 
     def test_empty_peaks_list_fails_with_hint(self):
         """No declared peaks → hard fail with a pointer at the Detect
@@ -232,6 +239,188 @@ class TestDominantFrequencyMode:
         assert len(diag["ref_spectrum_freq"]) > 0
         assert len(diag["ref_spectrum_mag"]) == len(diag["ref_spectrum_freq"])
         assert len(diag["act_spectrum_freq"]) > 0
+
+
+T64 = np.arange(64.0)
+COS8 = np.cos(2 * np.pi * 8 * T64 / 64)  # one strict peak on bin 8: 0.125 Hz
+
+
+def _peaks(*rows):
+    return {"mode": "dominant-frequency", "peaks": list(rows)}
+
+
+def _geometry(vc, cls, gid):
+    return next(p for p in vc.geometry if isinstance(p, cls) and p.id == gid)
+
+
+class TestDominantFrequencySpectrumAndWindows:
+    """What a declared peak is matched against: the spectrum of the run's
+    time span, its local maxima above a 1 % floor, in an inclusive window."""
+
+    def test_a_run_shorter_than_64_samples_is_resampled_to_64(self):
+        t = np.arange(40.0)
+        vc = score(_peaks({"freq": 0.2}), EMPTY, EMPTY, t, np.cos(2 * np.pi * 0.2 * t))
+        assert vc.passed is True
+        assert summarize(vc).details == (("peak 0.2 Hz", "matched at 0.201923 Hz"),)
+
+    def test_the_spectrum_is_read_from_the_time_span_not_the_time_stamps(self):
+        vc = score(_peaks({"freq": 0.125}), EMPTY, EMPTY, T64 + 64, COS8)
+        assert vc.passed is True
+        assert summarize(vc).details == (("peak 0.125 Hz", "matched at 0.125 Hz"),)
+
+    def test_four_actual_samples_are_enough_for_a_spectrum(self):
+        vc = score(
+            _peaks({"freq": 0.25, "tolerance": 0.5}),
+            EMPTY,
+            EMPTY,
+            np.array([0.0, 1.0, 2.0, 3.0]),
+            np.array([0.0, 1.0, 0.0, -1.0]),
+        )
+        assert vc.passed is True
+        assert summarize(vc).details == (("peak 0.25 Hz", "matched at 0.328125 Hz"),)
+
+    def test_a_four_sample_reference_has_its_peaks_detected(self):
+        vc = score(
+            _peaks({"freq": 0.125}),
+            np.array([0.0, 1.0, 2.0, 3.0]),
+            np.array([0.0, 1.0, 0.0, -1.0]),
+            T64,
+            COS8,
+        )
+        # Its fundamental, the first bin of a 3 s span on 64 points.
+        assert vc.diagnostics["detected_reference_peaks_hz"][0] == 0.328125
+
+    def test_a_run_with_no_time_span_has_no_spectrum(self):
+        vc = score(
+            _peaks({"freq": 0.125}),
+            EMPTY,
+            EMPTY,
+            np.ones(8),
+            np.array([0.0, 1.0] * 4),
+        )
+        assert vc.passed is False
+        assert len(_geometry(vc, Series, "spectrum/act").x) == 0
+        assert _geometry(vc, Marker, "peaks/declared/0").y == 0.0
+
+    def test_a_reference_with_no_time_span_has_no_peaks_to_detect(self):
+        vc = score(
+            _peaks({"freq": 0.125}),
+            np.ones(8),
+            np.array([0.0, 1.0] * 4),
+            T64,
+            COS8,
+        )
+        assert vc.passed is True
+        assert vc.diagnostics["detected_reference_peaks_hz"] == []
+
+    def test_a_tones_leakage_slope_is_not_a_peak(self):
+        # 8.3 cycles over the span: the spectrum rises to bin 8 and falls
+        # after it; only bin 8 is a local maximum.
+        ref = np.cos(2 * np.pi * 8.3 * T64 / 64)
+        vc = score(_peaks({"freq": 0.125}), T64, ref, T64, COS8)
+        assert vc.diagnostics["detected_reference_peaks_hz"] == [0.125]
+
+    def test_a_flat_topped_resonance_is_one_peak(self):
+        """A resonance between bins 8 and 9 lands on both with bit-equal
+        magnitudes: it is one peak, reported at the lower bin, and matched."""
+        tie = np.cos(2 * np.pi * 8 * T64 / 64) + float.fromhex(
+            "0x1.ffffffffffff8p-1"
+        ) * np.cos(2 * np.pi * 9 * T64 / 64)
+        magnitude = np.abs(np.fft.rfft(tie - tie.mean()))
+        assert magnitude[8] == magnitude[9] > max(magnitude[7], magnitude[10])
+        vc = score(
+            _peaks({"freq": 0.1328125, "tolerance": 0.015625, "tolerance_mode": "abs"}),
+            T64,
+            tie,
+            T64,
+            tie,
+        )
+        assert vc.passed is True
+        assert summarize(vc).details == (("peak 0.1328125 Hz", "matched at 0.125 Hz"),)
+        detected = vc.diagnostics["detected_reference_peaks_hz"]
+        assert 0.125 in detected and 0.140625 not in detected
+
+    def test_the_mean_is_no_peak(self):
+        # A large offset leaves its residue on the 0 Hz bin; that bin is
+        # never a peak, even in a window around 0 Hz.
+        act = 1e16 + np.array([0.0, 2.0, 2.0, 2.0] * 16)
+        vc = score(
+            _peaks({"freq": 0, "tolerance": 0.01, "tolerance_mode": "abs"}),
+            EMPTY,
+            EMPTY,
+            T64,
+            act,
+        )
+        assert vc.passed is False
+        assert summarize(vc).details == (("peak 0.0 Hz", "not found"),)
+
+    @pytest.mark.parametrize(
+        "row",
+        [
+            {"freq": 0.25, "tolerance": 0.125, "tolerance_mode": "abs"},
+            {"freq": 0.0625, "tolerance": 0.0625, "tolerance_mode": "abs"},
+        ],
+        ids=["on the lower edge", "on the upper edge"],
+    )
+    def test_a_peak_on_the_windows_edge_is_inside_it(self, row):
+        vc = score(_peaks(row), T64, COS8, T64, COS8)
+        assert vc.passed is True
+        assert summarize(vc).details == (
+            (f"peak {row['freq']} Hz", "matched at 0.125 Hz"),
+        )
+        assert _geometry(vc, Marker, "peaks/matched/0").passed is True
+
+    def test_the_score_is_the_largest_error_relative_to_the_declared_frequency(
+        self,
+    ):
+        vc = score(
+            _peaks({"freq": 0.25, "tolerance": 0.125, "tolerance_mode": "abs"}),
+            T64,
+            COS8,
+            T64,
+            COS8,
+        )
+        # Matched at 0.125 Hz: |0.125 − 0.25| / 0.25.
+        assert leaf_from_variable(vc).score == 0.5
+
+    @pytest.mark.parametrize(
+        "row",
+        [
+            {"freq": 0, "tolerance": 0.25, "tolerance_mode": "abs"},
+            {"tolerance": 0.25, "tolerance_mode": "abs"},
+        ],
+        ids=["declared at 0 Hz", "declared without a frequency"],
+    )
+    def test_a_peak_at_zero_hz_scores_its_absolute_error(self, row):
+        vc = score(_peaks(row), EMPTY, EMPTY, T64, COS8)
+        assert vc.passed is True
+        assert summarize(vc).details == (("peak 0.0 Hz", "matched at 0.125 Hz"),)
+        assert leaf_from_variable(vc).score == 0.125
+        assert _geometry(vc, Marker, "peaks/declared/0").x == 0.0
+
+    @pytest.mark.parametrize(
+        "act,matched",
+        [
+            # bin 20 at 0.1 % of bin 8's amplitude: under the floor
+            (COS8 + 0.001 * np.cos(2 * np.pi * 20 * T64 / 64), False),
+            # at 1.5 %: over it
+            (COS8 + 0.015 * np.cos(2 * np.pi * 20 * T64 / 64), True),
+        ],
+        ids=["under", "over"],
+    )
+    def test_a_peak_under_one_percent_of_the_strongest_is_noise(self, act, matched):
+        vc = score(_peaks({"freq": 0.3125, "tolerance": 0.01}), EMPTY, EMPTY, T64, act)
+        assert vc.passed is matched
+
+    def test_a_peak_exactly_at_the_floor_counts(self):
+        # Bin 11's magnitude is exactly 1 % of bin 16's.
+        act = 100 * np.cos(2 * np.pi * 16 * T64 / 64) + np.cos(
+            2 * np.pi * 11 * T64 / 64
+        )
+        vc = score(
+            _peaks({"freq": 0.171875, "tolerance": 0.01}), EMPTY, EMPTY, T64, act
+        )
+        assert vc.passed is True
 
 
 class TestMetricsAcceptedInTreeSpec:
@@ -514,6 +703,40 @@ class TestEventSidesAutoDetected:
             np.zeros_like(act),
         )
         assert equal.diagnostics["time_tolerance"] == 0.5
+
+    @pytest.mark.parametrize(
+        "time",
+        [[0, 1, 1, 2, 2, 2, 3], [0, 1, 2]],
+        ids=["events that align", "no events"],
+    )
+    def test_nothing_late_or_early_reads_as_zero_at_t_zero(self, time):
+        t = np.array(time, dtype=float)
+        s = summarize(
+            score(
+                {"mode": "event-timing", "time_tolerance": Sides(0.25, 0.5)},
+                t,
+                np.zeros_like(t),
+                t,
+                np.zeros_like(t),
+            )
+        )
+        assert s.criterion.startswith("Max event Δt +0.000e+00 vs")
+        assert dict(s.details)["max Δt"] == "0.000000e+00 at t=0"
+
+    def test_an_inverted_window_prints_the_pair_furthest_outside_it(self):
+        ref = np.array([0, 1, 1, 2, 2, 2, 3], dtype=float)
+        act = np.array([0, 1.25, 1.25, 2.5, 2.5, 2.5, 3])
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": Sides(-0.75, 0.25)},
+            ref,
+            np.zeros_like(ref),
+            act,
+            np.zeros_like(act),
+        )
+        # Δt 0.25 and 0.5; the window [0.75, 0.25] holds nothing, and the
+        # first pair is the one furthest outside it.
+        assert vc.passed is False
+        assert summarize(vc).criterion.startswith("Max event Δt +2.500e-01 vs")
 
     def test_one_pair_out_among_pairs_in_fails_and_is_drawn_so(self):
         ref = _event_times(2.0, 5.0, 8.0)
@@ -819,8 +1042,6 @@ def _through(leaf, flat, time, values):
     kw = dict(
         model_id="T.M",
         source_file=None,
-        source_package="T",
-        short_name="M",
         n_vars=0,
         source="spec",
         variable_patterns=["x"],
@@ -876,4 +1097,60 @@ class TestAMalformedRowIsTheLeafsConfigError:
         assert vc.diagnostics["error"].endswith(
             f'peaks[1].tolerance must be a number or {{"lower": …, "upper": …}}, '
             f"got {json.dumps(bad)}"
+        )
+
+
+@pytest.mark.parametrize(
+    "override,row",
+    [
+        ({"mode": "points", "points": [{"time": 0.5, "tolerance": "abc"}]}, "points"),
+        (
+            {"mode": "event-timing", "events": [{"time": 0.5, "tolerance": "abc"}]},
+            "events",
+        ),
+        (
+            {
+                "mode": "dominant-frequency",
+                "peaks": [{"freq": 1.0, "tolerance": "abc"}],
+            },
+            "peaks",
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) else None,
+)
+def test_a_malformed_row_is_refused_where_the_mode_is_built(override, row):
+    with pytest.raises(ValueError) as box:
+        resolve_mode(override, 1e-3)
+    assert str(box.value) == (
+        f'{row}[0].tolerance must be a number or {{"lower": …, "upper": …}}, got "abc"'
+    )
+
+
+class TestAFrequencyCriterionsBaseline:
+    """Declared peaks are matched in the run's own spectrum: no baseline is
+    read. Without them the criterion reads the reference's peaks."""
+
+    def _evaluate(self, leaf):
+        from dstf.backends.types import VariableResult
+        from dstf.comparison.tree_eval import collect_leaf_variables, evaluate_spec
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        spec = parse_metric_tree(
+            {"metric": "dominant-frequency", "variable": "y", **leaf}
+        )
+        y = VariableResult(1, _PEAK_T, _PEAK_SIG, name="y")
+        result = evaluate_spec(spec, {"y": y}, {}, 1e-3)
+        (vc,) = collect_leaf_variables(result)
+        return result, vc
+
+    def test_declared_peaks_are_scored_with_no_baseline_stored(self):
+        result, vc = self._evaluate({"peaks": [{"freq": 1.0, "tolerance": 0.1}]})
+        assert result.passed is True
+        assert vc.against is None
+
+    def test_without_them_the_primary_baseline_is_needed(self):
+        result, vc = self._evaluate({})
+        assert result.passed is False
+        assert summarize(vc).criterion == (
+            "dominant-frequency criterion not scored — no primary baseline is stored"
         )

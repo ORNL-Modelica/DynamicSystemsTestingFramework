@@ -6,6 +6,49 @@ follow [semantic versioning](https://semver.org/). DSTF is in beta: the command
 line and the `testing.json` keys may still change between minor versions, and
 this file says when they do.
 
+## [Unreleased]
+
+### Fixed
+
+- A points criterion with a lower/upper tolerance pair, whose curve is
+  infinite throughout its time box, names that value as the closest one
+  (`closest value inf is outside [0.9, 1.2]`) instead of saying no sample
+  compares.
+- A dominant-frequency peak whose two neighbouring bins have exactly equal
+  magnitudes is found as one peak; it was no peak at all, and a declared
+  peak at that resonance failed.
+- A criterion on a variable the run or the baseline lacks is named by its own
+  metric (`x: scalar · against primary`), not as an nrmse one; with no
+  metrics tree, one whose baseline lacks the variable now says so
+  (`variable 'x' not found in the baseline`), with the hint to rename a
+  baseline stored under the expression.
+- A dominant-frequency criterion on a run of fewer than four samples reads
+  "not scored — signal too short for FFT", not "No peaks declared".
+- A `testing.json` dependency written `~/…` is under the home directory; it
+  was read as a folder named `~` beside the file.
+- A points criterion whose curve jumps to an infinite value inside its time
+  box no longer passes as if it had crossed the band there.
+- In `dstf author`, the editor of a criterion that was not scored says why
+  (`Not scored: variable 'v' not found in the baseline. …`) where it said
+  `nrmse has no on-plot handles` or offered handles it did not draw, and its
+  hint no longer offers a Ctrl+click that did nothing; its fields still edit
+  it, and its window's ⌖ still sets them from the plot where one is drawn. On
+  a card that draws no plot (none of its variables is in the result), the
+  editor no longer offers a ⌖ that waited for a click on nothing.
+
+### Removed
+
+- `TestModel` no longer has `source_package`, `short_name`, `result_file`,
+  `x_raw` or `error_expected`: nothing read them. A plug-in that builds a
+  `TestModel` drops those arguments.
+- A criterion's `MetricResult.diagnostics`, what a plug-in `Combinator.combine`
+  receives, no longer carries `mode`, `tolerance` or `max_abs_error`; they are
+  its `diagnostics["variable"]` (a `VariableComparison`): `mode`,
+  `tolerance_used` and `max_abs_error`. The removed `tolerance` was the
+  tolerance the criterion was scored with, as one number where its two sides
+  are equal and a `lower`/`upper` dict where they differ; `tolerance_used` is
+  that tolerance as a `Sides`, whose `lower` and `upper` are the two sides.
+
 ## [1.2.0] - 2026-10-19
 
 ### Added

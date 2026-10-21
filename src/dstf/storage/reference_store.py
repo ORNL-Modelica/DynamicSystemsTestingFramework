@@ -445,7 +445,10 @@ class ReferenceStore(_RolesMixin):
                 ):
                     if role_dir.is_dir():
                         shutil.rmtree(role_dir, ignore_errors=True)
-                        logger.info("Removed orphaned role dir: %s", role_dir)
+                        # Said only of a folder that is gone: one the
+                        # removal could not delete is still there.
+                        if not role_dir.exists():
+                            logger.info("Removed orphaned role dir: %s", role_dir)
         return removed
 
 

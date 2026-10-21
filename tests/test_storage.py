@@ -157,6 +157,50 @@ class TestRefIndex:
         index = RefIndex(tmp_path)
         assert index.register("MyLib.Test1") == "0001"
 
+    def test_a_register_colliding_with_another_writers_claim_for_it_returns_that(
+        self, tmp_path
+    ):
+        self._write_ref(tmp_path, "0001", "A")
+        index = RefIndex(tmp_path)
+        index.ensure_loaded()
+        self._write_ref(tmp_path, "0002", "C")  # another process, after the load
+        assert index.register("C") == "0002"
+        assert sorted(p.name for p in tmp_path.glob("ref_*.json")) == [
+            "ref_0001.json",
+            "ref_0002.json",
+        ]
+
+    def test_a_register_colliding_with_another_model_moves_to_the_next_id(
+        self, tmp_path
+    ):
+        self._write_ref(tmp_path, "0001", "A")
+        index = RefIndex(tmp_path)
+        index.ensure_loaded()
+        self._write_ref(tmp_path, "0002", "X")
+        assert index.register("C") == "0003"
+        assert (tmp_path / "ref_0003.json").exists()
+
+    def test_the_rescan_after_a_collision_forgets_a_file_that_is_gone(self, tmp_path):
+        self._write_ref(tmp_path, "0001", "A")
+        index = RefIndex(tmp_path)
+        index.ensure_loaded()
+        (tmp_path / "ref_0001.json").unlink()  # another process's edits
+        self._write_ref(tmp_path, "0002", "X")
+        assert index.register("C") == "0003"
+        assert index.get_id("A") is None
+        assert index.get_model_id("0001") is None
+        assert index.active_tests() == {"0002": "X", "0003": "C"}
+
+    def test_an_index_is_read_once_over_a_missing_directory_too(self, tmp_path):
+        """Loaded on first use, as over a directory that exists: a file
+        another writer adds later is not seen by this index."""
+        ref_dir = tmp_path / "refs"
+        index = RefIndex(ref_dir)
+        assert index.get_id("A") is None
+        self._write_ref(ref_dir, "0001", "A")
+        assert index.get_id("A") is None
+        assert index.next_id() == "0001"
+
     def test_all_tests_includes_all_statuses(self, tmp_path):
         """all_tests() returns everything including obsolete and skip."""
         self._write_ref(tmp_path, "0001", "MyLib.Test1")
@@ -216,8 +260,6 @@ class TestReferenceStore:
         return TestModel(
             model_id=model_id,
             source_file=None,
-            source_package="ModelicaTestingLib.Examples",
-            short_name=model_id.rsplit(".", 1)[-1],
             n_vars=2,
             variable_patterns=[],
             source="unit_tests",
@@ -355,6 +397,135 @@ class TestReferenceStore:
 
         stored = store.store_reference(test, result, provenance=PROVENANCE)
         assert stored is False
+
+    def test_a_failed_result_with_variables_does_not_overwrite(
+        self, sample_models_dir, tmp_path
+    ):
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        )
+        test = self._make_test_model()
+        store.store_reference(test, self._make_test_result(), provenance=PROVENANCE)
+        failed = self._make_test_result()
+        failed.success = False
+        failed.variables[0].values = failed.variables[0].values + 1.0
+        assert store.store_reference(test, failed, provenance=PROVENANCE) is False
+        assert _file(store, test.model_id)["variables"][0]["values"][1] == (
+            pytest.approx(np.sin(0.1))
+        )
+
+    def test_a_successful_result_with_no_variables_is_not_stored(
+        self, sample_models_dir, tmp_path
+    ):
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        )
+        test = self._make_test_model()
+        empty = TestResult(model_id=test.model_id, success=True, variables=[])
+        assert store.store_reference(test, empty, provenance=PROVENANCE) is False
+
+    @pytest.mark.parametrize("gone", ["the file", "the folder"])
+    def test_a_store_rewrites_a_baseline_removed_under_it(
+        self, sample_models_dir, tmp_path, gone
+    ):
+        """A long-lived store (the tool's) whose file or folder another
+        process removed writes the baseline again."""
+        import shutil
+
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        )
+        test = self._make_test_model()
+        store.store_reference(test, self._make_test_result(), provenance=PROVENANCE)
+        if gone == "the file":
+            store.reference_file(test.model_id).unlink()
+        else:
+            shutil.rmtree(store.ref_dir)
+        assert (
+            store.store_reference(test, self._make_test_result(), provenance=PROVENANCE)
+            is True
+        )
+        assert _file(store, test.model_id)["model_id"] == test.model_id
+
+    def test_a_one_row_result_has_one_interval(self, sample_models_dir, tmp_path):
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        )
+        test = self._make_test_model()
+        one = TestResult(
+            model_id=test.model_id,
+            success=True,
+            variables=[
+                VariableResult(
+                    index=1, time=np.array([0.0]), values=np.array([1.0]), name="x"
+                )
+            ],
+        )
+        store.store_reference(test, one, provenance=PROVENANCE)
+        assert _file(store, test.model_id)["simulation"]["number_of_intervals"] == 1
+
+    def test_a_listed_names_summary_is_stored_from_however_many_samples(
+        self, sample_models_dir, tmp_path
+    ):
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        )
+        test = self._make_test_model()
+        result = self._make_test_result()
+        result.diagnostics = [
+            VariableResult(index=0, time=np.array([]), values=np.array([]), name="E"),
+            VariableResult(
+                index=0, time=np.array([0.0]), values=np.array([3.0]), name="One"
+            ),
+        ]
+        store.store_reference(test, result, provenance=PROVENANCE)
+        assert _file(store, test.model_id)["diagnostics"] == [
+            {"name": "E"},
+            {"name": "One", "final": 3.0, "min": 3.0, "max": 3.0},
+        ]
+
+    def test_accept_warns_of_each_test_it_does_not_accept(
+        self, sample_models_dir, tmp_path, caplog
+    ):
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        )
+        test = self._make_test_model()
+        result = self._make_test_result()
+        result.variables[0].values[3] = np.nan
+        with caplog.at_level(logging.WARNING, logger="dstf"):
+            store.accept_results(
+                [test], {test.model_id: result}, provenance=PROVENANCES
+            )
+        assert [r.getMessage() for r in caplog.records] == [
+            f"Not accepting {test.model_id}: refusing to store baseline for "
+            f"{test.model_id}: variable 'x' contains non-finite values (NaN/Inf)"
+        ]
+
+    def test_cleanup_tolerates_a_role_folder_it_cannot_delete(
+        self, sample_models_dir, tmp_path, caplog
+    ):
+        """...and does not say it removed it."""
+        import os
+
+        store = ReferenceStore(
+            Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        )
+        test = self._make_test_model()
+        store.store_reference(test, self._make_test_result(), provenance=PROVENANCE)
+        _set_status(store, test.model_id, "obsolete")
+        locked = store.ref_dir / "soft_checks" / "ref_0001" / "locked"
+        locked.mkdir(parents=True)
+        (locked / "k.json").write_text("{}", encoding="utf-8")
+        os.chmod(locked, 0o555)
+        try:
+            with caplog.at_level(logging.INFO, logger="dstf"):
+                assert store.cleanup_obsolete() == 1
+        finally:
+            os.chmod(locked, 0o755)
+        assert not (store.ref_dir / "ref_0001.json").exists()
+        assert locked.is_dir()
+        assert not any("role dir" in r.getMessage() for r in caplog.records)
 
     def test_cleanup_obsolete(self, sample_models_dir, tmp_path):
         """cleanup_obsolete removes files with obsolete status."""
@@ -585,13 +756,19 @@ class TestExports:
             helper._make_test_model(), helper._make_test_result(), provenance=PROVENANCE
         )
 
-        out = tmp_path / "export" / "summary.csv"
+        out = tmp_path / "export" / "nested" / "summary.csv"
         store.export_csv(out)
 
         with out.open(encoding="utf-8", newline="") as f:
             rows = list(csv.reader(f))
         assert rows[0][0] == "test_id"
-        assert rows[1][1] == "ModelicaTestingLib.Examples.Test1"
+        assert rows[1][:3] == ["0001", "ModelicaTestingLib.Examples.Test1", "active"]
+        stored = _file(store, "ModelicaTestingLib.Examples.Test1")
+        when = dict(zip(rows[0], rows[1]))
+        assert (when["date_added"], when["last_updated"]) == (
+            stored["date_added"],
+            stored["last_updated"],
+        )
         assert list(out.parent.glob("*.tmp")) == []
         # csv embeds \r\n itself. Pin that it reaches disk intact and is
         # never doubled to \r\r\n. Since "\n" became the default
@@ -601,6 +778,20 @@ class TestExports:
         raw = out.read_bytes()
         assert b"\r\n" in raw
         assert b"\r\r\n" not in raw
+
+
+def test_export_json_writes_every_stored_reference(sample_models_dir, tmp_path):
+    config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+    store = ReferenceStore(config)
+    helper = TestReferenceStore()
+    store.store_reference(
+        helper._make_test_model(), helper._make_test_result(), provenance=PROVENANCE
+    )
+    out = tmp_path / "export" / "all.json"
+    store.export_json(out)
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert list(data) == ["ModelicaTestingLib.Examples.Test1"]
+    assert data["ModelicaTestingLib.Examples.Test1"]["variables"][0]["name"] == "x"
 
 
 class TestLineEndings:
@@ -671,8 +862,6 @@ def _mk_model(model_id="Lib.Test1") -> TestModel:
     return TestModel(
         model_id=model_id,
         source_file=None,
-        source_package="Lib",
-        short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,
         variable_patterns=[],
         source="unit_tests",
@@ -760,6 +949,43 @@ class TestDownsampleTailPreservation:
         assert t_out[-1] == t[-1]
 
 
+@pytest.mark.parametrize(
+    "time,points,stored_time,stored_values",
+    [
+        # Every time stamp equal: the first and last samples, once each.
+        ([0, 0, 0, 0, 0], 4, [0, 0, 0, 0], [0, 1, 3, 4]),
+        # The evenly spaced picks and the event's two samples are one more
+        # than the budget: the last pick gives way, never the budget.
+        ([0, 1, 2, 3, 4, 4, 6, 7, 8, 9], 5, [0, 2, 4, 4, 9], [0, 2, 4, 5, 9]),
+        ([0, 1, 1, 3, 4, 5], 4, [0, 1, 1, 5], [0, 1, 2, 5]),
+    ],
+    ids=["constant time", "one pick over", "an event at the budget"],
+)
+def test_a_baseline_stores_at_most_its_points(
+    sample_models_dir, tmp_path, time, points, stored_time, stored_values
+):
+    config = Config(
+        source_path=sample_models_dir,
+        reference_root=tmp_path / "refs",
+        baseline_points=points,
+    )
+    store = ReferenceStore(config)
+    t = np.array(time, dtype=float)
+    result = TestResult(
+        model_id="Lib.Test1",
+        success=True,
+        variables=[
+            VariableResult(
+                index=1, time=t, values=np.arange(len(t), dtype=float), name="x"
+            )
+        ],
+    )
+    store.store_reference(_mk_model(), result, provenance=PROVENANCE)
+    data = _file(store, "Lib.Test1")
+    assert data["time"] == stored_time
+    assert data["variables"][0]["values"] == stored_values
+
+
 # ---------------------------------------------------------------------------
 # Finding 31 — atomic JSON writes
 # ---------------------------------------------------------------------------
@@ -783,6 +1009,26 @@ class TestAtomicWrites:
 
         assert json.loads(target.read_text(encoding="utf-8"))["model_id"] == "Lib.A"
         assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_a_write_waits_out_a_file_held_for_a_moment(self, tmp_path, monkeypatch):
+        """Windows locks a file another process has open: the replace is
+        retried after a pause, not five times back to back."""
+        import time
+
+        real_replace = Path.replace
+        held_until = []
+
+        def held(self, target):
+            if not held_until:
+                held_until.append(time.monotonic() + 0.3)
+            if time.monotonic() < held_until[0]:
+                raise PermissionError("held by another process")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", held)
+        target = tmp_path / "ref_0001.json"
+        _atomic_write_text(target, '{"model_id": "Lib.A"}')
+        assert json.loads(target.read_text(encoding="utf-8")) == {"model_id": "Lib.A"}
 
     def test_all_reference_json_writes_go_through_tmp_files(
         self, store_with_primary, tmp_path, monkeypatch
@@ -874,7 +1120,7 @@ class TestIdAllocation:
         assert index.register("Lib.New") != "0001"
 
     def test_cleanup_obsolete_removes_orphaned_role_dirs(
-        self, store_with_primary, tmp_path
+        self, store_with_primary, tmp_path, caplog
     ):
         """Deleting an obsolete ref must also delete its soft_checks/ and
         companions/ dirs so a reused ID cannot inherit them."""
@@ -897,9 +1143,16 @@ class TestIdAllocation:
         assert sc_dir.is_dir() and co_dir.is_dir()
 
         _set_status(store, test.model_id, "obsolete")
-        assert store.cleanup_obsolete() == 1
+        with caplog.at_level(logging.INFO, logger="dstf"):
+            assert store.cleanup_obsolete() == 1
         assert not sc_dir.exists()
         assert not co_dir.exists()
+        assert [
+            r.getMessage() for r in caplog.records if "role dir" in r.getMessage()
+        ] == [
+            f"Removed orphaned role dir: {sc_dir}",
+            f"Removed orphaned role dir: {co_dir}",
+        ]
 
 
 class TestIdHighWaterMark:
@@ -1070,7 +1323,21 @@ class TestCompanionPathResolution:
 # ---------------------------------------------------------------------------
 
 
-BAD_NAMES = ["a/b", "a\\b", "..", "a..b", "x:y", "w*ld", "q?m", 'a"b', "<x>", "p|q"]
+BAD_NAMES = [
+    "a/b",
+    "a\\b",
+    "..",
+    "a..b",
+    "x:y",
+    "w*ld",
+    "q?m",
+    'a"b',
+    "<x>",
+    "p|q",
+    ".",
+    " x",
+    "x ",
+]
 
 
 class TestRoleNameValidation:
@@ -1202,8 +1469,6 @@ def _mk_test(model_id: str, **kw) -> TestModel:
     return TestModel(
         model_id=model_id,
         source_file=None,
-        source_package=model_id.split(".")[0],
-        short_name=model_id.rsplit(".", 1)[-1],
         n_vars=1,
         variable_patterns=["x"],
         source="test_spec",

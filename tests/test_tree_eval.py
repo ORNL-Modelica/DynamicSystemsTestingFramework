@@ -88,8 +88,6 @@ def _test_model(metrics_raw: dict) -> TestModel:
     return TestModel(
         model_id="Test.Model",
         source_file=None,
-        source_package="Test",
-        short_name="Model",
         n_vars=0,
         metric_tree_spec=parse_metric_tree(metrics_raw),
     )
@@ -136,7 +134,6 @@ class TestLeafEval:
         )
         assert tree.passed
         assert tree.children == []
-        assert tree.diagnostics["tolerance"] == 0.1
 
     def test_nrmse_leaf_fails_outside_tolerance(self):
         spec = parse_metric_tree(
@@ -191,7 +188,6 @@ class TestLeafEval:
             base_tolerance=0.1,  # Generous; should pass
         )
         assert tree.passed
-        assert tree.diagnostics["tolerance"] == 0.1
 
     def test_leaf_against_named_baseline(self):
         """A leaf with ``against: 'experiment'`` scores against that baseline."""
@@ -310,7 +306,6 @@ class TestLeafEval:
             base_tolerance=1e-4,
         )
         assert tree.passed
-        assert tree.diagnostics["mode"] == "tube"
 
     def test_range_leaf_passes_when_signal_within_bounds(self):
         spec = parse_metric_tree(
@@ -342,7 +337,6 @@ class TestLeafEval:
             base_tolerance=1e-4,
         )
         assert tree.passed
-        assert tree.diagnostics["mode"] == "range"
 
     def test_range_leaf_fails_when_signal_exceeds_max(self):
         spec = parse_metric_tree(
@@ -1107,15 +1101,19 @@ class TestSentinelLeavesKeepTheirName:
         assert "ghost" in error
         assert "not found in the result" in error
 
-    def test_variable_missing_from_the_baseline_sentinel(self):
+    @pytest.mark.parametrize("expression", ["", "a.b"])
+    def test_variable_missing_from_the_baseline_sentinel(self, expression):
         """Same sentinel, other call site: the result has the variable and
-        the baseline does not, so the reason must say so."""
+        the baseline does not, so the reason must say so — and no more,
+        with no entry stored under the expression either."""
         spec = parse_metric_tree({"metric": "nrmse", "variable": "x"})
         t, vals = _linear()
         tree = evaluate_spec(
             spec,
             var_results_by_name={
-                "x": VariableResult(index=1, name="x", time=t, values=vals)
+                "x": VariableResult(
+                    index=1, name="x", time=t, values=vals, expression=expression
+                )
             },
             baselines=_primary({}),
             base_tolerance=1e-4,
@@ -1123,9 +1121,7 @@ class TestSentinelLeavesKeepTheirName:
         assert not tree.passed
         vc = tree.diagnostics["variable"]
         assert vc.name == "x"
-        error = vc.diagnostics["error"]
-        assert "x" in error
-        assert "not found in the baseline" in error
+        assert vc.diagnostics["error"] == "variable 'x' not found in the baseline"
 
     def test_missing_quantity_sentinel(self):
         from dstf.comparison.tree_eval import ScalarSources
@@ -1147,6 +1143,114 @@ class TestSentinelLeavesKeepTheirName:
         assert "timing.nope" in error
         assert "current run" in error
 
+    _T = np.linspace(0.0, 1.0, 5)
+    _X = VariableResult(1, _T, np.full(5, 3.0), name="x")
+    _Y = VariableResult(2, _T, _T * 2.0, name="y")
+
+    @pytest.mark.parametrize(
+        "leaf,results,baselines,kind",
+        [
+            ({"metric": "nrmse", "variable": "y"}, "xy", "primary", "spectrum"),
+            ({"metric": "range", "variable": "y"}, "xy", "primary", "time"),
+            ({"metric": "nrmse", "variable": "y"}, "xy", "none", "time"),
+            ({"metric": "nrmse", "variable": "y"}, "x", "primary", "time"),
+        ],
+        ids=["incompatible dataset", "config error", "missing baseline", "lost"],
+    )
+    def test_each_draws_its_own_variables_curve(self, leaf, results, baselines, kind):
+        """The figure pairs a sentinel with the run's curve of ITS name,
+        never with the curve at the index a sentinel does not have."""
+        from dstf.backends.types import DatasetType
+        from dstf.reporting.context_builder import build_trajectories
+
+        stored = {
+            n: {"time": self._T.tolist(), "values": v.values.tolist()}
+            for n, v in (("x", self._X), ("y", self._Y))
+        }
+        tree = evaluate_spec(
+            parse_metric_tree(leaf),
+            var_results_by_name={"x": self._X, "y": self._Y}
+            if results == "xy"
+            else {"x": self._X},
+            baselines=_primary(stored) if baselines == "primary" else {},
+            base_tolerance=1e-3,
+            dataset_kind=DatasetType.SPECTRUM
+            if kind == "spectrum"
+            else DatasetType.TIME_SERIES,
+        )
+        trajectories, _, _ = build_trajectories(
+            collect_leaf_variables(tree),
+            TestResult("Test.Model", True, variables=[self._X, self._Y]),
+            None,
+        )
+        (entry,) = [e for e in trajectories if e["name"] == "y"]
+        assert list(entry["act_values"]) == list(self._T * 2.0)
+
+    @pytest.mark.parametrize(
+        "statistics", [{"translation": {"n": 4}}, {}], ids=["read", "missing"]
+    )
+    def test_a_statistic_draws_no_curve(self, statistics):
+        """A path into the run's statistics names no variable: its entry
+        draws nothing, not the curve at the first index."""
+        from dstf.comparison.tree_eval import ScalarSources
+        from dstf.reporting.context_builder import build_trajectories
+
+        tree = evaluate_spec(
+            parse_metric_tree(
+                {
+                    "metric": "scalar",
+                    "variable": "translation.n",
+                    "quantity": "translation.n",
+                }
+            ),
+            var_results_by_name={"x": self._X, "y": self._Y},
+            baselines={
+                PRIMARY_BASELINE: BaselineView(
+                    PRIMARY_BASELINE, {}, self._T, {"translation": {"n": 4}}
+                )
+            },
+            base_tolerance=1e-3,
+            scalars=ScalarSources(statistics),
+        )
+        trajectories, _, _ = build_trajectories(
+            collect_leaf_variables(tree),
+            TestResult("Test.Model", True, variables=[self._X, self._Y]),
+            None,
+        )
+        (entry,) = [e for e in trajectories if e["name"] == "translation.n"]
+        assert list(entry["act_values"]) == []
+
+    def test_a_variable_with_no_samples_fails_its_criterion_not_the_run(self):
+        spec = parse_metric_tree({"metric": "nrmse", "variable": "y"})
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={
+                "y": VariableResult(2, np.array([]), np.array([]), name="y")
+            },
+            baselines=_primary({"x": {"time": [0.0, 1.0], "values": [0.0, 1.0]}}),
+            base_tolerance=1e-3,
+        )
+        assert not tree.passed
+        assert (
+            tree.diagnostics["variable"].diagnostics["error"]
+            == "variable 'y' not found in the baseline"
+        )
+
+    def test_a_window_holding_no_sample_of_a_one_sample_baseline_is_not_scored(self):
+        spec = parse_metric_tree(
+            {"metric": "nrmse", "variable": "y", "window": {"start": 0.5, "end": 1.0}}
+        )
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={"y": self._Y},
+            baselines=_primary({"y": {"time": [0.0], "values": [5.0]}}),
+            base_tolerance=1e-3,
+        )
+        assert not tree.passed
+        assert tree.diagnostics["variable"].diagnostics["error"] == (
+            "no reference samples to compare (empty baseline or window)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # A leaf's tolerance is a number or a lower/upper pair
@@ -1154,14 +1258,18 @@ class TestSentinelLeavesKeepTheirName:
 
 
 class TestALeafsToleranceIsSides:
-    def _evaluate(self, tolerance, base=1e-4):
-        t, ref = _linear()
+    @staticmethod
+    def _raw(tolerance):
         children = [
             {"metric": "points", "variable": "x", "tolerance": tolerance},
             {"metric": "nrmse", "variable": "y", "tolerance": 0.5},
         ]
+        return {"combinator": "and", "children": children}
+
+    def _evaluate(self, tolerance, base=1e-4):
+        t, ref = _linear()
         return evaluate_spec(
-            parse_metric_tree({"combinator": "and", "children": children}),
+            parse_metric_tree(self._raw(tolerance)),
             var_results_by_name={
                 n: VariableResult(index=i + 1, name=n, time=t, values=ref)
                 for i, n in enumerate(("x", "y"))
@@ -1175,6 +1283,21 @@ class TestALeafsToleranceIsSides:
             base_tolerance=base,
         )
 
+    def _view_tolerance_of_x(self, tolerance, base=1e-4):
+        """The `tolerance` of x's leaf in the tree verdicts.json and the
+        report carry (`build_tree_view`) — what a script reads."""
+        from dstf.reporting.context_builder import build_tree_view
+        from dstf.reporting.tree_rows import leaves_of
+
+        tree = self._evaluate(tolerance, base)
+        view = build_tree_view(
+            [c.diagnostics["variable"] for c in tree.children],
+            _test_model(self._raw(tolerance)),
+            tree,
+        )
+        (x,) = [n for n in leaves_of(view) if n["variable"] == "x"]
+        return x["tolerance"]
+
     def test_a_pair_with_a_third_key_is_the_parsers_to_refuse(self):
         """A key nothing reads, inside the pair: said where the spec is
         read (`strict_keys`), never left for the leaf to fail on."""
@@ -1183,18 +1306,14 @@ class TestALeafsToleranceIsSides:
         with pytest.raises(MetricSpecError, match='tolerance: unknown field "x"'):
             self._evaluate({"lower": 1, "upper": 2, "x": 3})
 
-    def test_the_view_writes_an_equal_pair_as_the_number(self):
-        from dstf.comparison.tree_eval import to_view
-
+    def test_the_leaf_writes_an_equal_pair_as_the_number(self):
         tree = self._evaluate({"lower": 0.05, "upper": 0.05})
         assert tree.passed
         x = tree.children[0]
         assert x.diagnostics["variable"].tolerance_used == Sides(0.05, 0.05)
-        assert x.diagnostics["tolerance"] == 0.05
-        leaf = to_view(tree)["children"][0]
-        assert leaf["tolerance"] == 0.05 and isinstance(leaf["tolerance"], float)
-        # The same as the number's.
-        assert leaf == to_view(self._evaluate(0.05))["children"][0]
+        written = self._view_tolerance_of_x({"lower": 0.05, "upper": 0.05})
+        assert written == 0.05
+        assert isinstance(written, float)
 
     @pytest.mark.parametrize(
         "bad",
@@ -1202,8 +1321,6 @@ class TestALeafsToleranceIsSides:
         ids=repr,
     )
     def test_a_malformed_one_fails_its_leaf_and_the_rest_is_scored(self, bad):
-        from dstf.comparison.tree_eval import to_view
-
         tree = self._evaluate(bad, base=0.25)
         x, y = (c.diagnostics["variable"] for c in tree.children)
         assert not tree.passed and y.passed
@@ -1214,4 +1331,4 @@ class TestALeafsToleranceIsSides:
         )
         # The base is the one it reports as applied, as both sides.
         assert x.tolerance_used == Sides(0.25, 0.25)
-        assert to_view(tree)["children"][0]["tolerance"] == 0.25
+        assert self._view_tolerance_of_x(bad, base=0.25) == 0.25

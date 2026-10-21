@@ -226,6 +226,22 @@ class TestTubeGeometry:
             float(np.interp(0.5, band.time, band.lower))
         )
 
+    def test_a_control_point_at_the_references_last_time_has_its_handles(self):
+        t = np.array([0.0, 1.0, 2.0])
+        rows = [
+            {"time": 0.0, "upper": 0.5, "lower": 0.5},
+            {"time": 2.0, "upper": 0.5, "lower": 0.5},
+        ]
+        vc = score(
+            {"mode": "tube", "tube_width_mode": "band", "tube_points": rows},
+            t,
+            np.zeros(3),
+            t,
+            np.zeros(3),
+        )
+        ids = sorted(p.id for p in vc.geometry if isinstance(p, Marker))
+        assert ids == ["tube/lower/0", "tube/lower/1", "tube/upper/0", "tube/upper/1"]
+
     def test_no_data_sentinel_has_no_geometry(self):
         vc = score(
             {"mode": "tube", "tube_width_mode": "band"},
@@ -442,6 +458,23 @@ class TestScalarGeometry:
         assert lines["scalar/actual"].kind == "act"
         assert lines["scalar/actual"].passed is False
         assert lines["scalar/max"].kind == "handle" and lines["scalar/max"].value == 2.0
+
+    def test_a_value_on_its_bound_is_drawn_passed(self):
+        vc = score(
+            {
+                "mode": "scalar",
+                "quantity": {"reduce": "final"},
+                "min_value": 0.0,
+                "max_value": 2.0,
+            },
+            np.array([]),
+            np.array([]),
+            np.array([0.0, 1.0]),
+            np.array([1.0, 2.0]),
+        )
+        actual = next(p for p in vc.geometry if p.id == "scalar/actual")
+        assert vc.passed is True
+        assert actual.passed is True
 
     def test_baseline_form_draws_actual_and_reference(self):
         t = np.linspace(0.0, 1.0, 11)

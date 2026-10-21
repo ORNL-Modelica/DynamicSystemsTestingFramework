@@ -113,6 +113,10 @@ class TestTheCheck:
             ("m_value", ["min_value", "max_value"], None),
             # one letter is no near miss of another
             ("n", ["k", "children"], None),
+            # one candidate, one letter off
+            ("tolerence", ["tolerance"], "tolerance"),
+            # two letters added are two edits, however alike they look
+            ("kkk", ["k"], None),
         ],
     )
     def test_only_a_near_miss_is_suggested(self, typed, names, meant):

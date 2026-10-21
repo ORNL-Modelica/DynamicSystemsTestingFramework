@@ -941,16 +941,17 @@ def test_the_key_is_written_by_hand_a_patch_may_not_touch_it(tmp_path):
     """`spec update` and the tool edit `comparison`, `metrics` and `plots`:
     the key is outside what a patch may write, so neither stores a value
     the parser would refuse."""
-    from dstf.discovery.patch_apply import PatchError, apply_patch
+    from dstf.discovery.patch_apply import PatchError
+    from dstf.discovery.spec_update import apply_validated_patches
 
     config = _spec_config(tmp_path, entry=50)
     before = config.spec_path.read_bytes()
     for op in ("replace", "remove"):
         with pytest.raises(PatchError, match="baseline_points"):
-            apply_patch(
+            apply_validated_patches(
                 config.spec_path,
-                M,
-                [{"op": op, "path": "/baseline_points", "value": 1}],
+                [(M, [{"op": op, "path": "/baseline_points", "value": 1}])],
+                config,
             )
     assert config.spec_path.read_bytes() == before
 

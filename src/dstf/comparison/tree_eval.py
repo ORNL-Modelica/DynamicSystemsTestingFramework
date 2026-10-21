@@ -278,8 +278,8 @@ def flatten_evaluation(
     view by path lookup.
 
     Each entry carries ``passed``, ``score``, ``label``, plus any diagnostics
-    the evaluator stashed on that node (``mode``, ``tolerance``,
-    ``max_abs_error``, ``against``, ``window``, ``n_passed``, ``warned``, ...).
+    the evaluator stashed on that node (``against``, ``window``,
+    ``n_passed``, ``warned``, ...).
     """
     out: dict[str, dict] = {}
     _flatten_evaluation(tree, root, out)
@@ -305,53 +305,6 @@ def _flatten_evaluation(
     out[path] = entry
     for i, child in enumerate(node.children):
         _flatten_evaluation(child, f"{path}/children/{i}", out)
-
-
-def to_view(tree: MetricResult) -> dict:
-    """Serialize a ``MetricResult`` tree into a JSON-safe nested dict
-    for Jinja consumption. Shape is render-oriented — no simulation data,
-    no numpy arrays.
-
-    Fields per node:
-      * ``kind``      — "leaf" | "combinator"
-      * ``passed``    — bool
-      * ``label``     — human-readable (variable name for leaves,
-                        "and[N]" / "or[N]" / "warn" / "k-of-n[K/N]" for combinators)
-      * ``score``     — float or None
-      * ``mode``      — metric mode on leaves (nrmse / tube / points)
-      * ``tolerance`` — on leaves, the tolerance applied
-      * ``warned``    — True on ``warn`` nodes whose child failed
-      * ``children``  — recursive list (empty for leaves)
-    """
-    node: dict = {
-        "kind": "leaf" if not tree.children else "combinator",
-        "passed": bool(tree.passed),
-        "label": tree.label,
-        "score": tree.score,
-        "children": [to_view(c) for c in tree.children],
-    }
-    diag = tree.diagnostics or {}
-    if not tree.children:
-        # Leaf diagnostics come from leaf_from_variable + _evaluate_leaf
-        if "mode" in diag:
-            node["mode"] = diag["mode"]
-        if "tolerance" in diag:
-            node["tolerance"] = diag["tolerance"]
-        if "max_abs_error" in diag:
-            node["max_abs_error"] = diag["max_abs_error"]
-        if "against" in diag:
-            node["against"] = diag["against"]
-    else:
-        # Combinator diagnostics: n_failed / n_passed / k / n / warned
-        for key in ("n_failed", "n_passed", "k", "n", "warned"):
-            if key in diag:
-                node[key] = diag[key]
-    return node
-
-
-# ---------------------------------------------------------------------------
-# Internals
-# ---------------------------------------------------------------------------
 
 
 def _walk_leaves(node: MetricResult, out: list[VariableComparison]) -> None:
@@ -500,7 +453,9 @@ def _evaluate_leaf(
         if var_result is None:
             # Missing actual result is always a hard fail — no mode can score
             # without the actual trajectory.
-            return _leaf(_missing_variable_comparison(leaf.variable, var_result))
+            return _leaf(
+                _missing_variable_comparison(leaf.variable, var_result, mode=mode.name)
+            )
 
         if ref_var is None:
             if not mode.is_baseline_free():
@@ -528,7 +483,9 @@ def _evaluate_leaf(
                         hint,
                     )
                 return _leaf(
-                    _missing_variable_comparison(leaf.variable, var_result, hint=hint)
+                    _missing_variable_comparison(
+                        leaf.variable, var_result, mode=mode.name, hint=hint
+                    )
                 )
             ref_time = np.array([])
             ref_values = np.array([])
@@ -638,7 +595,7 @@ def _summary_arrays(
                 name=leaf.variable,
             )
     if run is None:
-        return _missing_variable_comparison(leaf.variable, None)
+        return _missing_variable_comparison(leaf.variable, None, mode=mode.name)
 
     if ref_var is not None:
         assert baseline is not None  # a stored variable is in a baseline
@@ -648,7 +605,7 @@ def _summary_arrays(
     elif mode.is_baseline_free():
         ref_time, ref_values = np.array([]), np.array([])
     else:
-        return _missing_variable_comparison(leaf.variable, run)
+        return _missing_variable_comparison(leaf.variable, run, mode=mode.name)
     return ref_time, ref_values, run.time, run.values, run.index
 
 
@@ -958,6 +915,8 @@ def _one_spelling(path: str, names: Collection[str]) -> str:
 def _missing_variable_comparison(
     name: str,
     var_result: VariableResult | None,
+    *,
+    mode: str,
     hint: str = "",
 ) -> VariableComparison:
     actual_final = float("nan")
@@ -976,6 +935,9 @@ def _missing_variable_comparison(
         max_abs_error_time=0.0,
         reference_final=float("nan"),
         actual_final=actual_final,
+        # The criterion's own metric: with none, a scalar or tube criterion
+        # on a missing variable read as an nrmse one.
+        mode=mode,
         # The two call sites are told apart by what they had: no result for
         # the variable at all, or a result the baseline does not carry. The
         # second one carries the migration hint when the baseline holds the

@@ -42,6 +42,11 @@ class TestWeightedCombinator:
         result = comb.combine([_leaf(0.95), _leaf(0.96)])
         assert result.passed is True
 
+    @pytest.mark.parametrize("direction", ["less", "greater"])
+    def test_a_sum_equal_to_the_threshold_fails(self, direction):
+        comb = WeightedCombinator(weights=[1.0], threshold=0.5, direction=direction)
+        assert comb.combine([_leaf(0.5)]).passed is False
+
     def test_none_score_fails_with_diagnostic(self):
         comb = WeightedCombinator(weights=[0.5, 0.5], threshold=0.01)
         result = comb.combine([_leaf(0.01), MetricResult(passed=True, score=None)])

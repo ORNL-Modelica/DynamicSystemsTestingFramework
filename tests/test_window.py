@@ -108,6 +108,19 @@ class TestWindowParsing:
                 }
             )
 
+    def test_a_window_that_ends_where_it_starts_is_rejected(self):
+        with pytest.raises(
+            MetricSpecError,
+            match=r"metrics\.window: The window must end after it starts",
+        ):
+            parse_metric_tree(
+                {
+                    "metric": "nrmse",
+                    "variable": "x",
+                    "window": {"start": 1.0, "end": 1.0},
+                }
+            )
+
     def test_window_not_dict_rejected(self):
         with pytest.raises(MetricSpecError, match="must be an object with start / end"):
             parse_metric_tree(
@@ -676,8 +689,6 @@ class TestFlattenEvaluation:
         assert "/metrics" in eval_by_path
         assert "/metrics/children/0" in eval_by_path
         assert "/metrics/children/1" in eval_by_path
-        # Diagnostics (mode, against) bubble up
-        assert eval_by_path["/metrics/children/0"].get("mode") == "nrmse"
 
     def test_variable_stashed_comparison_not_in_entry(self):
         """`diagnostics['variable']` carries a non-JSON-safe VariableComparison;

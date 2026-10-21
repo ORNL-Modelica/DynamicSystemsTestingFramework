@@ -3665,6 +3665,8 @@ MORE_LEAVES = [
         "variable": "x",
         "peaks": [{"freq": 1.0, "tolerance": 0.1}],
     },
+    # Not scored: D's run has no y. Its own plot, and nothing drawn on it.
+    {"metric": "points", "variable": "y", "points": [{"time": 0.5}]},
 ]
 #: What the hint adds where a Ctrl+click adds a row (D149), in the
 #: metric's own word for one.
@@ -3683,6 +3685,9 @@ HINTS = [
     (8, ARROWS_HINT + ADDS.format("an event"), True),
     # peaks: a ring per declared peak, its window's arrows
     (9, BOTH_HINT + ADDS.format("a peak"), True),
+    # a points criterion that was not scored: no ring, no arrow — and no
+    # Ctrl+click, though its metric adds a point where it is scored
+    (10, FIELDS_HINT, False),
 ]
 
 
@@ -3694,24 +3699,83 @@ async def test_the_hint_and_the_tables_line_follow_what_the_criterion_draws(
     metric's name: rings and arrows, arrows alone (a constant tube and an
     event's window were told to "drag a ring" and to "hover a point" they
     do not have), rings alone, lines alone, or nothing. And "drag on the
-    plot, or edit the table" is said where a table is drawn."""
+    plot, or edit the table" is said where a table is drawn — and none of
+    it where the criterion was not scored."""
     tree = copy.deepcopy(TREE)
     tree["children"] += copy.deepcopy(MORE_LEAVES)
     _stage_tree(shell, D, tree)
     path = f"/metrics/children/{child}"
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
+        (card,) = [i for i, c in enumerate(page.cards) if path in c.rows]
         with page.client:
-            page.cards[0].show()
-        user.find(marker=f"criterion:0:{path}").click()
-        await _settled(lambda: page.open == (0, path))
-        assert _one(user, f"editor-hint:0:{path}").text == hint + STAGED_AND_SAVE
+            page.cards[card].show()
+        user.find(marker=f"criterion:{card}:{path}").click()
+        await _settled(lambda: page.open == (card, path))
+        hinted = _one(user, f"editor-hint:{card}:{path}").text
+        assert hinted == hint + STAGED_AND_SAVE
         said = [
             e.text
-            for e in _one(user, f"editor:0:{path}").descendants()
+            for e in _one(user, f"editor:{card}:{path}").descendants()
             if isinstance(e, ui.label)
         ]
         assert ("drag on the plot, or edit the table" in said) is table
+
+
+#: A tube on x whose window misses every sample of D's run: not scored, on
+#: a card that draws x.
+WINDOW_MISSES = {
+    "metric": "tube",
+    "variable": "x",
+    "tube_width_mode": "band",
+    "tube_abs": 0.3,
+    "window": {"start": 5.0, "end": 6.0},
+}
+
+
+@pytest.mark.parametrize(
+    ("child", "arms"),
+    [
+        # points on x: its window's ends, and its two checkpoints' rows
+        (2, {"window start", "window end", "row 1", "row 2"}),
+        # points on y, which D's run lacks: "Not in this result: y", no plot
+        (10, set()),
+        # not scored on a drawn card: its window's ⌖ stay, to move the
+        # window back onto the run (the owner's call)
+        (11, {"window start", "window end"}),
+    ],
+)
+async def test_a_card_that_draws_no_plot_offers_no_click_on_one(shell, child, arms):
+    """A ⌖ is the first half of a click on the plot: on a card that says
+    "Not in this result" and draws none, the editor offers none. Its
+    window's ⌖ were drawn there, pressed, and said "Click the plot to set
+    window start" with nothing to click. A criterion not scored on a card
+    that draws keeps its window's ⌖."""
+    tree = copy.deepcopy(TREE)
+    tree["children"] += copy.deepcopy(MORE_LEAVES) + [copy.deepcopy(WINDOW_MISSES)]
+    _stage_tree(shell, D, tree)
+    path = f"/metrics/children/{child}"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        (card,) = [i for i, c in enumerate(page.cards) if path in c.rows]
+        if arms:
+            await user.should_not_see(marker=f"plot-missing:{card}")
+        else:
+            missing = _one(user, f"plot-missing:{card}").text
+            assert missing == "Not in this result: y"
+        with page.client:
+            page.cards[card].show()
+        user.find(marker=f"criterion:{card}:{path}").click()
+        await _settled(lambda: page.open == (card, path))
+        editor = list(_one(user, f"editor:{card}:{path}").descendants())
+        labels = {e.props["aria-label"] for e in editor if "dstf-arm" in e.classes}
+        assert labels == {f"Set {arm} by a click on the plot" for arm in arms}
+        # the fields still edit it, ⌖ or none
+        assert [
+            e
+            for e in editor
+            if isinstance(e, ui.number) and e.props.get("label") == "window start"
+        ]
 
 
 async def test_the_editors_hint_follows_a_switch_of_mode(shell):
@@ -10822,10 +10886,10 @@ def test_edit_on_plot_says_the_sessions_reason_for_no_tree(tmp_path):
     spec.write_text(json.dumps(doc), encoding="utf-8")
     session = _opened(cfg, work).session
     assert session.tree_or_reason(A) == (None, NO_TREE)
-    ((path, mode),) = _leaf_paths(
+    ((path, vc),) = _leaf_paths(
         SessionView(session, Selection(tests=frozenset({A}))), A, "x"
     )
-    assert mode == "points"
+    assert vc.mode == "points"
     sel = Selection(tests=frozenset({A}), variable="x", leaf_path=path)
     view = SessionView(session, sel)
     assert EditOnPlot().available(view) == NO_TREE

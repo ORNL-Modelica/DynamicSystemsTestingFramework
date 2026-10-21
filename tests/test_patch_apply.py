@@ -6,78 +6,64 @@ Critical invariant from D66: unknown keys and hand-authored notes
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
+import copy
 
 import pytest
 
 from dstf.config import ConfigError
-from dstf.discovery.patch_apply import PatchError, apply_patch
-
-
-def _write_spec(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-
-def _read_spec(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+from dstf.discovery.patch_apply import (
+    PatchError,
+    apply_patch_to_document,
+    load_spec_document,
+)
 
 
 class TestBasicOps:
-    def test_replace_scalar_in_whitelisted_path(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec, {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
-        )
-        apply_patch(
-            spec,
+    def test_replace_scalar_in_whitelisted_path(self):
+        doc = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
             ],
         )
-        data = _read_spec(spec)
+        data = doc
         assert data["tests"][0]["comparison"]["tolerance"] == 1e-3
 
-    def test_add_new_key(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {}}]})
-        apply_patch(
-            spec,
+    def test_add_new_key(self):
+        doc = {"tests": [{"model": "M", "comparison": {}}]}
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "add", "path": "/comparison/tolerance", "value": 0.01},
             ],
         )
-        data = _read_spec(spec)
+        data = doc
         assert data["tests"][0]["comparison"]["tolerance"] == 0.01
 
-    def test_remove_key(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {"model": "M", "comparison": {"tolerance": 1e-3, "info": "keep me"}}
-                ]
-            },
-        )
-        apply_patch(
-            spec,
+    def test_remove_key(self):
+        doc = {
+            "tests": [
+                {"model": "M", "comparison": {"tolerance": 1e-3, "info": "keep me"}}
+            ]
+        }
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "remove", "path": "/comparison/tolerance"},
             ],
         )
-        data = _read_spec(spec)
+        data = doc
         assert "tolerance" not in data["tests"][0]["comparison"]
         assert data["tests"][0]["comparison"]["info"] == "keep me"
 
-    def test_add_nested_path_creates_intermediates(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M"}]})
-        apply_patch(
-            spec,
+    def test_add_nested_path_creates_intermediates(self):
+        doc = {"tests": [{"model": "M"}]}
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {
@@ -87,7 +73,7 @@ class TestBasicOps:
                 },
             ],
         )
-        data = _read_spec(spec)
+        data = doc
         assert (
             data["tests"][0]["comparison"]["variable_overrides"]["h"]["tolerance"]
             == 0.01
@@ -97,88 +83,74 @@ class TestBasicOps:
 class TestUnknownKeyPreservation:
     """D66 invariant: patch-apply must never destroy hand-authored fields."""
 
-    def test_preserves_entry_level_metadata(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "description": "A critical test — last modified 2024-03-15 by AB.",
-                        "metadata": {"owner": "fluid-group", "priority": "high"},
-                        "comparison": {"tolerance": 1e-4},
-                    }
-                ],
-            },
-        )
-        apply_patch(
-            spec,
+    def test_preserves_entry_level_metadata(self):
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "description": "A critical test — last modified 2024-03-15 by AB.",
+                    "metadata": {"owner": "fluid-group", "priority": "high"},
+                    "comparison": {"tolerance": 1e-4},
+                }
+            ],
+        }
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
             ],
         )
-        entry = _read_spec(spec)["tests"][0]
+        entry = doc["tests"][0]
         assert (
             entry["description"] == "A critical test — last modified 2024-03-15 by AB."
         )
         assert entry["metadata"] == {"owner": "fluid-group", "priority": "high"}
 
-    def test_preserves_comparison_level_unknown_keys(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "comparison": {
-                            "tolerance": 1e-4,
-                            "info": "Expect rising edge at t~2.4s",
-                            "metadata": {
-                                "rationale": "Solver defaults produce ringing"
-                            },
-                        },
-                    }
-                ],
-            },
-        )
-        apply_patch(
-            spec,
+    def test_preserves_comparison_level_unknown_keys(self):
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "comparison": {
+                        "tolerance": 1e-4,
+                        "info": "Expect rising edge at t~2.4s",
+                        "metadata": {"rationale": "Solver defaults produce ringing"},
+                    },
+                }
+            ],
+        }
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
             ],
         )
-        comp = _read_spec(spec)["tests"][0]["comparison"]
+        comp = doc["tests"][0]["comparison"]
         assert comp["info"] == "Expect rising edge at t~2.4s"
         assert comp["metadata"] == {"rationale": "Solver defaults produce ringing"}
 
-    def test_preserves_sibling_tests(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {"model": "A", "comparison": {"tolerance": 1e-4}},
-                    {
-                        "model": "B",
-                        "comparison": {"tolerance": 1e-5},
-                        "metadata": {"note": "keep me untouched"},
-                    },
-                    {"model": "C", "comparison": {"tolerance": 1e-6}},
-                ],
-            },
-        )
-        apply_patch(
-            spec,
+    def test_preserves_sibling_tests(self):
+        doc = {
+            "tests": [
+                {"model": "A", "comparison": {"tolerance": 1e-4}},
+                {
+                    "model": "B",
+                    "comparison": {"tolerance": 1e-5},
+                    "metadata": {"note": "keep me untouched"},
+                },
+                {"model": "C", "comparison": {"tolerance": 1e-6}},
+            ],
+        }
+        apply_patch_to_document(
+            doc,
             "B",
             [
                 {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
             ],
         )
-        data = _read_spec(spec)
+        data = doc
         assert data["tests"][0] == {"model": "A", "comparison": {"tolerance": 1e-4}}
         assert data["tests"][1]["metadata"] == {"note": "keep me untouched"}
         assert data["tests"][1]["comparison"]["tolerance"] == 1e-3
@@ -186,59 +158,51 @@ class TestUnknownKeyPreservation:
 
 
 class TestWhitelist:
-    def test_outside_whitelist_rejected(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "simulation": {"stop_time": 10}}]})
+    def test_outside_whitelist_rejected(self):
+        doc = {"tests": [{"model": "M", "simulation": {"stop_time": 10}}]}
         with pytest.raises(PatchError, match="whitelist"):
-            apply_patch(
-                spec,
+            apply_patch_to_document(
+                doc,
                 "M",
                 [
                     {"op": "replace", "path": "/simulation/stop_time", "value": 100},
                 ],
             )
 
-    def test_default_allows_comparison_and_metrics(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "comparison": {"tolerance": 1e-4},
-                        "metrics": {
-                            "metric": "nrmse",
-                            "variable": "h",
-                            "tolerance": 1e-4,
-                        },
-                    }
-                ]
-            },
-        )
-        apply_patch(
-            spec,
+    def test_default_allows_comparison_and_metrics(self):
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "comparison": {"tolerance": 1e-4},
+                    "metrics": {
+                        "metric": "nrmse",
+                        "variable": "h",
+                        "tolerance": 1e-4,
+                    },
+                }
+            ]
+        }
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
                 {"op": "replace", "path": "/metrics/tolerance", "value": 1e-3},
             ],
         )
-        entry = _read_spec(spec)["tests"][0]
+        entry = doc["tests"][0]
         assert entry["comparison"]["tolerance"] == 1e-3
         assert entry["metrics"]["tolerance"] == 1e-3
 
 
 class TestJsonPointerEscaping:
-    def test_escape_tilde_and_slash(self, tmp_path):
+    def test_escape_tilde_and_slash(self):
         """RFC 6901: `~0` → `~`, `~1` → `/`. Order matters (~1 first)."""
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec, {"tests": [{"model": "M", "comparison": {"variable_overrides": {}}}]}
-        )
+        doc = {"tests": [{"model": "M", "comparison": {"variable_overrides": {}}}]}
         # Variable name literally `a/b~c` escapes to `a~1b~0c`
-        apply_patch(
-            spec,
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {
@@ -248,42 +212,42 @@ class TestJsonPointerEscaping:
                 },
             ],
         )
-        data = _read_spec(spec)
+        data = doc
         assert data["tests"][0]["comparison"]["variable_overrides"]["a/b~c"] == {
             "tolerance": 1e-3
         }
 
 
 class TestErrorSurfacing:
-    def test_missing_op_raises(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {}}]})
+    def test_missing_op_raises(self):
+        doc = {"tests": [{"model": "M", "comparison": {}}]}
         with pytest.raises(PatchError, match="unsupported op"):
-            apply_patch(spec, "M", [{"op": "copy", "path": "/comparison/x"}])
+            apply_patch_to_document(doc, "M", [{"op": "copy", "path": "/comparison/x"}])
 
-    def test_replace_missing_key_rejected(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {}}]})
+    def test_replace_missing_key_rejected(self):
+        doc = {"tests": [{"model": "M", "comparison": {}}]}
         with pytest.raises(PatchError, match="not present"):
-            apply_patch(
-                spec,
+            apply_patch_to_document(
+                doc,
                 "M",
                 [
                     {"op": "replace", "path": "/comparison/does_not_exist", "value": 1},
                 ],
             )
 
-    def test_add_missing_value_rejected(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {}}]})
+    def test_add_missing_value_rejected(self):
+        doc = {"tests": [{"model": "M", "comparison": {}}]}
         with pytest.raises(PatchError, match="requires 'value'"):
-            apply_patch(spec, "M", [{"op": "add", "path": "/comparison/tolerance"}])
+            apply_patch_to_document(
+                doc, "M", [{"op": "add", "path": "/comparison/tolerance"}]
+            )
 
-    def test_invalid_path_shape_rejected(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M"}]})
+    def test_invalid_path_shape_rejected(self):
+        doc = {"tests": [{"model": "M"}]}
         with pytest.raises(PatchError):
-            apply_patch(spec, "M", [{"op": "replace", "path": "bad-path", "value": 1}])
+            apply_patch_to_document(
+                doc, "M", [{"op": "replace", "path": "bad-path", "value": 1}]
+            )
 
 
 class TestWholesaleMetricsReplace:
@@ -291,20 +255,16 @@ class TestWholesaleMetricsReplace:
     the whole new tree. Verify wholesale replacement preserves hand-
     authored sibling keys on the test entry."""
 
-    def test_add_metrics_tree_upserts_when_absent(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "description": "hand-authored",
-                        "comparison": {"tolerance": 1e-4},
-                    }
-                ]
-            },
-        )
+    def test_add_metrics_tree_upserts_when_absent(self):
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "description": "hand-authored",
+                    "comparison": {"tolerance": 1e-4},
+                }
+            ]
+        }
         new_tree = {
             "combinator": "and",
             "children": [
@@ -312,58 +272,50 @@ class TestWholesaleMetricsReplace:
                 {"metric": "nrmse", "variable": "v"},
             ],
         }
-        apply_patch(
-            spec,
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "add", "path": "/metrics", "value": new_tree},
             ],
         )
-        entry = _read_spec(spec)["tests"][0]
+        entry = doc["tests"][0]
         assert entry["metrics"] == new_tree
         assert entry["description"] == "hand-authored"
         assert entry["comparison"]["tolerance"] == 1e-4
 
-    def test_add_metrics_tree_replaces_existing(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "metrics": {"metric": "nrmse", "variable": "h"},
-                        "description": "keep me",
-                    }
-                ]
-            },
-        )
+    def test_add_metrics_tree_replaces_existing(self):
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "metrics": {"metric": "nrmse", "variable": "h"},
+                    "description": "keep me",
+                }
+            ]
+        }
         new_tree = {
             "combinator": "warn",
             "children": [{"metric": "nrmse", "variable": "h"}],
         }
-        apply_patch(
-            spec,
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "add", "path": "/metrics", "value": new_tree},
             ],
         )
-        entry = _read_spec(spec)["tests"][0]
+        entry = doc["tests"][0]
         assert entry["metrics"] == new_tree
         assert entry["description"] == "keep me"
 
-    def test_add_metrics_preserves_sibling_test_entries(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {"model": "A", "metrics": {"metric": "nrmse", "variable": "x"}},
-                    {"model": "B", "metrics": {"metric": "nrmse", "variable": "y"}},
-                ]
-            },
-        )
+    def test_add_metrics_preserves_sibling_test_entries(self):
+        doc = {
+            "tests": [
+                {"model": "A", "metrics": {"metric": "nrmse", "variable": "x"}},
+                {"model": "B", "metrics": {"metric": "nrmse", "variable": "y"}},
+            ]
+        }
         new_tree = {
             "combinator": "and",
             "children": [
@@ -371,14 +323,14 @@ class TestWholesaleMetricsReplace:
                 {"metric": "range", "variable": "y", "min_value": -1, "max_value": 1},
             ],
         }
-        apply_patch(
-            spec,
+        apply_patch_to_document(
+            doc,
             "B",
             [
                 {"op": "add", "path": "/metrics", "value": new_tree},
             ],
         )
-        data = _read_spec(spec)
+        data = doc
         assert data["tests"][0]["metrics"] == {"metric": "nrmse", "variable": "x"}
         assert data["tests"][1]["metrics"] == new_tree
 
@@ -387,25 +339,21 @@ class TestWindowPath:
     """Idea #46 UI surfacing — reporter emits window upserts via 'add' on
     /metrics/.../window. Verify round-trip with tree leaves."""
 
-    def test_add_window_on_root_leaf(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "metrics": {
-                            "metric": "nrmse",
-                            "variable": "h",
-                            "tolerance": 1e-4,
-                        },
-                    }
-                ]
-            },
-        )
-        apply_patch(
-            spec,
+    def test_add_window_on_root_leaf(self):
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "metrics": {
+                        "metric": "nrmse",
+                        "variable": "h",
+                        "tolerance": 1e-4,
+                    },
+                }
+            ]
+        }
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {
@@ -415,33 +363,29 @@ class TestWindowPath:
                 },
             ],
         )
-        metrics = _read_spec(spec)["tests"][0]["metrics"]
+        metrics = doc["tests"][0]["metrics"]
         assert metrics["window"] == {"start": 1.0, "end": 5.0}
         # Original fields untouched
         assert metrics["metric"] == "nrmse"
         assert metrics["variable"] == "h"
 
-    def test_add_window_on_nested_leaf(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "metrics": {
-                            "combinator": "and",
-                            "children": [
-                                {"metric": "nrmse", "variable": "x"},
-                                {"metric": "nrmse", "variable": "y"},
-                            ],
-                        },
-                    }
-                ]
-            },
-        )
-        apply_patch(
-            spec,
+    def test_add_window_on_nested_leaf(self):
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "metrics": {
+                        "combinator": "and",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x"},
+                            {"metric": "nrmse", "variable": "y"},
+                        ],
+                    },
+                }
+            ]
+        }
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {
@@ -451,31 +395,27 @@ class TestWindowPath:
                 },
             ],
         )
-        children = _read_spec(spec)["tests"][0]["metrics"]["children"]
+        children = doc["tests"][0]["metrics"]["children"]
         assert children[0] == {"metric": "nrmse", "variable": "x"}
         assert children[1]["window"] == {"start": 2.0}
 
-    def test_add_upserts_existing_window(self, tmp_path):
+    def test_add_upserts_existing_window(self):
         """'add' on a pre-existing window replaces the value (must_exist=False
         doesn't reject already-present keys — matches reporter's upsert usage)."""
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "metrics": {
-                            "metric": "nrmse",
-                            "variable": "h",
-                            "window": {"start": 0.0, "end": 10.0},
-                        },
-                    }
-                ]
-            },
-        )
-        apply_patch(
-            spec,
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "metrics": {
+                        "metric": "nrmse",
+                        "variable": "h",
+                        "window": {"start": 0.0, "end": 10.0},
+                    },
+                }
+            ]
+        }
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {
@@ -485,70 +425,61 @@ class TestWindowPath:
                 },
             ],
         )
-        assert _read_spec(spec)["tests"][0]["metrics"]["window"] == {
+        assert doc["tests"][0]["metrics"]["window"] == {
             "start": 1.0,
             "end": 5.0,
         }
 
-    def test_remove_window(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec,
-            {
-                "tests": [
-                    {
-                        "model": "M",
-                        "metrics": {
-                            "metric": "nrmse",
-                            "variable": "h",
-                            "window": {"start": 1.0, "end": 5.0},
-                        },
-                    }
-                ]
-            },
-        )
-        apply_patch(
-            spec,
+    def test_remove_window(self):
+        doc = {
+            "tests": [
+                {
+                    "model": "M",
+                    "metrics": {
+                        "metric": "nrmse",
+                        "variable": "h",
+                        "window": {"start": 1.0, "end": 5.0},
+                    },
+                }
+            ]
+        }
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {"op": "remove", "path": "/metrics/window"},
             ],
         )
-        metrics = _read_spec(spec)["tests"][0]["metrics"]
+        metrics = doc["tests"][0]["metrics"]
         assert "window" not in metrics
         assert metrics["metric"] == "nrmse"
 
 
 class TestMissingModel:
-    def test_creates_new_entry_when_model_not_found(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(
-            spec, {"tests": [{"model": "A", "comparison": {"tolerance": 1e-4}}]}
-        )
-        apply_patch(
-            spec,
+    def test_creates_new_entry_when_model_not_found(self):
+        doc = {"tests": [{"model": "A", "comparison": {"tolerance": 1e-4}}]}
+        apply_patch_to_document(
+            doc,
             "B",
             [
                 {"op": "add", "path": "/comparison/tolerance", "value": 1e-3},
             ],
         )
-        data = _read_spec(spec)
+        data = doc
         assert len(data["tests"]) == 2
         assert data["tests"][1]["model"] == "B"
         assert data["tests"][1]["comparison"]["tolerance"] == 1e-3
 
-    def test_creates_spec_file_when_missing(self, tmp_path):
-        spec = tmp_path / "nonexistent.json"
-        apply_patch(
-            spec,
+    def test_a_missing_spec_file_is_the_empty_document(self, tmp_path):
+        doc = load_spec_document(tmp_path / "nonexistent.json")
+        apply_patch_to_document(
+            doc,
             "B",
             [
                 {"op": "add", "path": "/comparison/tolerance", "value": 1e-3},
             ],
         )
-        assert spec.exists()
-        data = _read_spec(spec)
-        assert data["tests"][0]["model"] == "B"
+        assert doc == {"tests": [{"model": "B", "comparison": {"tolerance": 1e-3}}]}
 
 
 class TestRejectionEdges:
@@ -556,83 +487,181 @@ class TestRejectionEdges:
     malformed patches exported by the reporter. They were the uncovered
     branches in the 77% baseline."""
 
-    def _spec(self, tmp_path):
-        spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {"a": [1, 2]}}]})
-        return spec
+    def _spec(self):
+        return {"tests": [{"model": "M", "comparison": {"a": [1, 2]}}]}
 
     def test_corrupt_json_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text("{not json", encoding="utf-8")
         with pytest.raises(ConfigError, match=r"spec\.json: not JSON \("):
-            apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
+            load_spec_document(spec)
         assert spec.read_text(encoding="utf-8") == "{not json"
 
     def test_root_not_object_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text("[1, 2, 3]", encoding="utf-8")
         with pytest.raises(ConfigError, match=r"spec\.json: must be an object, got"):
-            apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
+            load_spec_document(spec)
 
     def test_tests_not_list_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
         spec.write_text('{"tests": {}}', encoding="utf-8")
         with pytest.raises(ConfigError, match=r"spec\.json: tests: must be a list"):
-            apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
+            load_spec_document(spec)
 
-    def test_pointer_must_start_with_slash(self, tmp_path):
+    def test_pointer_must_start_with_slash(self):
         with pytest.raises(PatchError, match="JSON-Pointer"):
-            apply_patch(
-                self._spec(tmp_path),
+            apply_patch_to_document(
+                self._spec(),
                 "M",
                 [{"op": "add", "path": "comparison/x", "value": 1}],
             )
 
-    def test_add_requires_value(self, tmp_path):
+    def test_add_requires_value(self):
         with pytest.raises(PatchError, match="requires 'value'"):
-            apply_patch(
-                self._spec(tmp_path), "M", [{"op": "add", "path": "/comparison/x"}]
+            apply_patch_to_document(
+                self._spec(), "M", [{"op": "add", "path": "/comparison/x"}]
             )
 
-    def test_empty_path_rejected(self, tmp_path):
+    def test_empty_path_rejected(self):
         # An empty pointer fails the RFC 6901 format guard (it does not start
         # with "/"), protecting the entry root from a wholesale overwrite.
         with pytest.raises(PatchError, match="JSON-Pointer"):
-            apply_patch(
-                self._spec(tmp_path), "M", [{"op": "add", "path": "", "value": 1}]
+            apply_patch_to_document(
+                self._spec(), "M", [{"op": "add", "path": "", "value": 1}]
             )
 
-    def test_remove_missing_key(self, tmp_path):
+    def test_remove_missing_key(self):
         with pytest.raises(PatchError, match="not present"):
-            apply_patch(
-                self._spec(tmp_path),
+            apply_patch_to_document(
+                self._spec(),
                 "M",
                 [{"op": "remove", "path": "/comparison/ghost"}],
             )
 
-    def test_list_index_out_of_range(self, tmp_path):
+    def test_list_index_out_of_range(self):
         with pytest.raises(PatchError, match="out of range"):
-            apply_patch(
-                self._spec(tmp_path),
+            apply_patch_to_document(
+                self._spec(),
                 "M",
                 [{"op": "replace", "path": "/comparison/a/9", "value": 0}],
             )
 
-    def test_list_index_not_integer(self, tmp_path):
+    def test_list_index_not_integer(self):
         with pytest.raises(PatchError, match="must be an integer"):
-            apply_patch(
-                self._spec(tmp_path),
+            apply_patch_to_document(
+                self._spec(),
                 "M",
                 [{"op": "replace", "path": "/comparison/a/x", "value": 0}],
             )
 
-    def test_append_token_rejected_on_replace(self, tmp_path):
+    def test_append_token_rejected_on_replace(self):
         with pytest.raises(PatchError, match="append"):
-            apply_patch(
-                self._spec(tmp_path),
+            apply_patch_to_document(
+                self._spec(),
                 "M",
                 [{"op": "replace", "path": "/comparison/a/-", "value": 0}],
             )
+
+
+def _one_leaf_document() -> dict:
+    return {
+        "tests": [
+            {
+                "model": "M",
+                "comparison": {},
+                "metrics": {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "x"}],
+                },
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    "op,reason",
+    [
+        (
+            {"op": "replace", "path": "/metrics/children/1", "value": {}},
+            "list index 1 out of range (len 1)",
+        ),
+        ({"op": "remove", "path": "/metrics/children/1"}, "list index 1 out of range"),
+        (
+            {"op": "replace", "path": "/metrics/children/1/tolerance", "value": 1},
+            "list index 1 out of range",
+        ),
+        (
+            {"op": "remove", "path": "/metrics/children/-"},
+            "'-' (append) not allowed on non-add op",
+        ),
+        (
+            {"op": "replace", "path": "/metrics/children/-/tolerance", "value": 1},
+            "'-' (append) not allowed on non-add op",
+        ),
+        (
+            {"op": "remove", "path": "/comparison/missing/x"},
+            "key 'missing' not present (use 'add' for new keys)",
+        ),
+        (
+            {"op": "add", "path": "/comparison/x/5/y", "value": 1},
+            "key 'x' not present and the next token '5' is an array index — "
+            "refusing to auto-create a dict in place of an array (the test "
+            "entry likely has no explicit 'metrics' tree yet)",
+        ),
+    ],
+    ids=[
+        "replace one past the end",
+        "remove one past the end",
+        "descend one past the end",
+        "remove the append token",
+        "descend through the append token",
+        "remove under a missing key",
+        "an index under a key that is not there",
+    ],
+)
+def test_a_refused_op_is_a_patch_error_and_changes_nothing(op, reason):
+    document = _one_leaf_document()
+    with pytest.raises(PatchError) as box:
+        apply_patch_to_document(document, "M", [op])
+    assert box.value.reason == reason
+    assert document == _one_leaf_document()
+
+
+@pytest.mark.parametrize(
+    ("document", "model_id", "ops"),
+    [
+        # The descent creates `metrics` before it meets the array index.
+        (
+            {"tests": [{"model": "M", "comparison": {}}]},
+            "M",
+            [{"op": "add", "path": "/metrics/children/0/tolerance", "value": 1}],
+        ),
+        # A model the document has no entry for.
+        (
+            _one_leaf_document(),
+            "New",
+            [{"op": "replace", "path": "/comparison/tolerance", "value": 1}],
+        ),
+        # The first op applies; the second is refused.
+        (
+            _one_leaf_document(),
+            "M",
+            [
+                {"op": "add", "path": "/comparison/tolerance", "value": 0.5},
+                {"op": "replace", "path": "/comparison/missing", "value": 1},
+            ],
+        ),
+    ],
+    ids=["a key made on the way", "an absent model", "an op before the refused one"],
+)
+def test_a_refused_patch_leaves_the_document_as_it_was(document, model_id, ops):
+    """All or nothing: what a refused patch did before it was refused is
+    not left in the document."""
+    before = copy.deepcopy(document)
+    with pytest.raises(PatchError):
+        apply_patch_to_document(document, model_id, ops)
+    assert document == before
 
 
 # =========================================================================
@@ -651,46 +680,37 @@ class TestRejectionEdges:
 
 
 class TestFinding49ArrayAdd:
-    def _spec(self, tmp_path) -> Path:
-        spec_path = tmp_path / "spec.json"
-        spec_path.write_text(
-            json.dumps(
+    def _spec(self) -> dict:
+        return {
+            "tests": [
                 {
-                    "tests": [
-                        {
-                            "model": "M",
-                            "metrics": {
-                                "combinator": "and",
-                                "children": [
-                                    {"metric": "nrmse", "variable": "x"},
-                                    {"metric": "nrmse", "variable": "y"},
-                                ],
-                            },
-                        }
-                    ]
+                    "model": "M",
+                    "metrics": {
+                        "combinator": "and",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x"},
+                            {"metric": "nrmse", "variable": "y"},
+                        ],
+                    },
                 }
-            ),
-            encoding="utf-8",
-        )
-        return spec_path
+            ]
+        }
 
-    def test_add_at_existing_index_inserts(self, tmp_path):
-        spec_path = self._spec(tmp_path)
+    def test_add_at_existing_index_inserts(self):
+        doc = self._spec()
         new_leaf = {"metric": "range", "variable": "z"}
-        apply_patch(
-            spec_path,
+        apply_patch_to_document(
+            doc,
             "M",
             [{"op": "add", "path": "/metrics/children/1", "value": new_leaf}],
         )
-        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
-            "metrics"
-        ]["children"]
+        children = doc["tests"][0]["metrics"]["children"]
         assert [c["variable"] for c in children] == ["x", "z", "y"]
 
-    def test_add_dash_appends(self, tmp_path):
-        spec_path = self._spec(tmp_path)
-        apply_patch(
-            spec_path,
+    def test_add_dash_appends(self):
+        doc = self._spec()
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {
@@ -700,15 +720,13 @@ class TestFinding49ArrayAdd:
                 }
             ],
         )
-        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
-            "metrics"
-        ]["children"]
+        children = doc["tests"][0]["metrics"]["children"]
         assert [c["variable"] for c in children] == ["x", "y", "z"]
 
-    def test_add_at_len_appends(self, tmp_path):
-        spec_path = self._spec(tmp_path)
-        apply_patch(
-            spec_path,
+    def test_add_at_len_appends(self):
+        doc = self._spec()
+        apply_patch_to_document(
+            doc,
             "M",
             [
                 {
@@ -718,16 +736,14 @@ class TestFinding49ArrayAdd:
                 }
             ],
         )
-        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
-            "metrics"
-        ]["children"]
+        children = doc["tests"][0]["metrics"]["children"]
         assert [c["variable"] for c in children] == ["x", "y", "z"]
 
-    def test_add_beyond_len_raises_patch_error(self, tmp_path):
-        spec_path = self._spec(tmp_path)
+    def test_add_beyond_len_raises_patch_error(self):
+        doc = self._spec()
         with pytest.raises(PatchError, match="out of range"):
-            apply_patch(
-                spec_path,
+            apply_patch_to_document(
+                doc,
                 "M",
                 [
                     {
@@ -738,15 +754,13 @@ class TestFinding49ArrayAdd:
                 ],
             )
 
-    def test_add_refuses_dict_autocreate_for_array_index(self, tmp_path):
+    def test_add_refuses_dict_autocreate_for_array_index(self):
         """A per-leaf patch against a test with no metrics tree must fail
         loudly instead of silently creating {"children": {"0": ...}}."""
-        spec_path = tmp_path / "spec.json"
-        original = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
-        spec_path.write_text(json.dumps(original), encoding="utf-8")
+        doc = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
         with pytest.raises(PatchError, match="array index"):
-            apply_patch(
-                spec_path,
+            apply_patch_to_document(
+                doc,
                 "M",
                 [
                     {
@@ -756,8 +770,8 @@ class TestFinding49ArrayAdd:
                     }
                 ],
             )
-        # Nothing was written — the spec is not corrupted.
-        assert json.loads(spec_path.read_text(encoding="utf-8")) == original
+        # That nothing is left in the document — not even the `metrics` the
+        # descent made — is test_a_refused_patch_leaves_the_document_as_it_was.
 
 
 def test_plots_is_a_whitelisted_subtree():
@@ -774,12 +788,11 @@ def test_plots_is_a_whitelisted_subtree():
     assert data["tests"][0]["plots"] == [{"var": "x", "context": ["y"]}]
 
 
-def test_variables_is_still_outside_the_whitelist(tmp_path):
-    """A guard (passes before the change): through BOTH entry points."""
+def test_variables_is_still_outside_the_whitelist():
+    """A guard (passes before the change)."""
     from dstf.discovery.patch_apply import (
         DEFAULT_WHITELIST,
         PatchError,
-        apply_patch,
         apply_patch_to_document,
     )
 
@@ -788,10 +801,6 @@ def test_variables_is_still_outside_the_whitelist(tmp_path):
     data = {"tests": [{"model": "M", "variables": ["x"]}]}
     with pytest.raises(PatchError, match="whitelist"):
         apply_patch_to_document(data, "M", op)
-    spec = tmp_path / "test_spec.json"
-    spec.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(PatchError, match="whitelist"):
-        apply_patch(spec, "M", op)
 
 
 def _containers(value) -> set[int]:
@@ -823,7 +832,6 @@ class TestADocumentSharesNothingWithThePatchThatWroteIt:
         ]
 
     def test_applying_a_patch_leaves_its_ops_as_they_were(self):
-        import copy
 
         from dstf.discovery.patch_apply import apply_patch_to_document
 

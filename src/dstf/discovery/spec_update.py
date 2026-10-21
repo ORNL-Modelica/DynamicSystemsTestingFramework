@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 
 
 def spec_entry(data: dict, model_id: str) -> dict | None:
-    """The first entry for ``model_id`` — first wins, as ``apply_patch`` and
-    discovery agree — or ``None``."""
+    """The first entry for ``model_id`` — first wins, as
+    ``apply_patch_to_document`` and discovery agree — or ``None``."""
     for e in data.get("tests", []):
         if isinstance(e, dict) and e.get("model") == model_id:
             return e
@@ -112,8 +112,8 @@ def materialize_implicit_metrics(
     review 2026-07-06 finding 41: per-leaf ops target
     ``/metrics/children/N/...``, but a flat-override entry has no ``metrics``
     block and ``patch_apply`` refuses to auto-create an array parent. A
-    missing entry is left to ``apply_patch`` (which creates it and then
-    reports the real failure)."""
+    missing entry is left to ``apply_patch_to_document``, which refuses such
+    an op with the real failure and adds no entry."""
     ops = list(patch)
     if not needs_materialization(entry, ops):
         return ops
@@ -133,7 +133,8 @@ def has_metrics(entry: dict | None) -> bool:
 
 def needs_materialization(entry: dict | None, patch: Sequence[dict]) -> bool:
     """Some op edits under ``/metrics/`` and neither the entry nor the patch
-    itself supplies the tree (a missing entry is left to ``apply_patch``)."""
+    itself supplies the tree (a missing entry is left to
+    ``apply_patch_to_document``)."""
     if entry is None or has_metrics(entry):
         return False
     edits_under = any(

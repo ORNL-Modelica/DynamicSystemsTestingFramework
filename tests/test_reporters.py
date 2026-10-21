@@ -175,8 +175,6 @@ def _scored(tree: dict) -> TestComparison:
     test = TestModel(
         model_id="Lib.Examples.T",
         source_file=None,
-        source_package="Lib.Examples",
-        short_name="T",
         n_vars=0,
         source="spec",
         variable_patterns=["x"],
@@ -211,8 +209,6 @@ def _flat(overrides: dict, *, default_points: bool = False, reference: dict = No
     test = TestModel(
         model_id="Lib.Examples.T",
         source_file=None,
-        source_package="Lib.Examples",
-        short_name="T",
         n_vars=0,
         source="spec",
         variable_patterns=["x"],
@@ -1044,6 +1040,55 @@ class TestConsoleReport:
             (view,) = test_verdict(comp, test, result)["tree"]["children"]
             assert view["against"] == against
 
+    @pytest.mark.parametrize(
+        ("overrides", "against"),
+        [
+            (
+                {"x": {"mode": "range", "min_value": -100, "max_value": 100}},
+                {"x": None, "y": "primary"},
+            ),
+            (
+                {"y": {"mode": "tube", "tube_width_mode": "abs"}},
+                {"x": "primary", "y": None},
+            ),
+        ],
+        ids=["the first reads none", "the second is refused when it scores"],
+    )
+    def test_each_flat_criterion_names_the_baseline_it_read(self, overrides, against):
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.discovery.test_registry import TestModel
+
+        t = [0.0, 0.5, 1.0]
+        test = TestModel(
+            model_id="Lib.Examples.T",
+            source_file=None,
+            n_vars=0,
+            source="spec",
+            variable_patterns=["x", "y"],
+            variable_overrides=overrides,
+        )
+        result = TestResult(
+            model_id=test.model_id,
+            success=True,
+            variables=[
+                VariableResult(1, np.array(t), np.array([1.0, 2.0, 3.0]), name="x"),
+                VariableResult(2, np.array(t), np.array([0.0, 1.0, 2.0]), name="y"),
+            ],
+        )
+        stored = {
+            "test_id": "0001",
+            "time": t,
+            "variables": [
+                {"index": 1, "name": "x", "values": [1.0, 2.0, 3.0]},
+                {"index": 2, "name": "y", "values": [0.0, 1.0, 2.0]},
+            ],
+        }
+        comp = compare_test(test, result, decode_reference(stored))
+        assert {vc.name: vc.against for vc in comp.variables} == against
+
     @pytest.mark.parametrize("override", [{}, {"tolerance": "wide"}])
     def test_a_criterion_scored_by_points_by_default_says_points(self, override):
         """Scored, or a sentinel whose tolerance is no number: `points`
@@ -1288,8 +1333,6 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     test = TestModel(
         model_id="Test.Model",
         source_file=None,
-        source_package="Test",
-        short_name="Model",
         n_vars=1,
         variable_patterns=["x"],
         variable_overrides={"x": {"mode": "tubee"}},

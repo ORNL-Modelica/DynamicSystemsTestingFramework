@@ -192,8 +192,6 @@ def _generate_compared(out_dir: Path, plots=None):
     test = TestModel(
         model_id="TestLib.Kept.Fixture",
         source_file=Path("fixture.mo"),
-        source_package="TestLib",
-        short_name="Fixture",
         n_vars=len(names),
         metric_tree_spec=parse_metric_tree(_SPEC),
     )
@@ -265,8 +263,6 @@ def _generate_no_baseline(out_dir: Path) -> Path:
     test = TestModel(
         model_id="TestLib.Fresh.Fixture",
         source_file=Path("fixture.mo"),
-        source_package="TestLib",
-        short_name="Fresh",
         n_vars=1,
     )
     overlays = [
@@ -324,8 +320,6 @@ def _generate_open_window(out_dir: Path) -> Path:
     test = TestModel(
         model_id="TestLib.OpenWindow.Fixture",
         source_file=Path("fixture.mo"),
-        source_package="TestLib",
-        short_name="OpenWindow",
         n_vars=1,
         metric_tree_spec=parse_metric_tree(
             {

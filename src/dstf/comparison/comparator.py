@@ -827,25 +827,20 @@ def compare_test(
                 vc.tolerance_used = tolerance
                 comparisons.append(vc)
                 continue
-            comparisons.append(
-                VariableComparison(
-                    index=var_result.index,
-                    name=name,
-                    passed=False,
-                    nrmse=float("inf"),
-                    rmse=float("inf"),
-                    signal_range=0.0,
-                    max_abs_error=float("inf"),
-                    max_abs_error_time=0.0,
-                    reference_final=float("nan"),
-                    actual_final=float(var_result.values[-1])
-                    if len(var_result.values) > 0
-                    else float("nan"),
-                    # The tolerance it would have applied, not the
-                    # default 0.0.
-                    tolerance_used=tolerance,
-                )
+            # Not scored, by its own metric, and saying why — as the tree
+            # path's leaf on a variable its baseline lacks does.
+            from .tree_eval import _missing_variable_comparison
+
+            vc = _missing_variable_comparison(
+                name,
+                var_result,
+                mode=mode.name,
+                hint=migration_hint(
+                    ref_vars_by_name, var_result.name, var_result.expression
+                ),
             )
+            vc.tolerance_used = tolerance
+            comparisons.append(vc)
             continue
 
         ref_time = shared_ref_time
@@ -932,10 +927,10 @@ def _lost_variable_comparisons(
     for name, entry in ref_vars_by_name.items():
         if name in held or not tracked(name):
             continue
-        vc = _missing_variable_comparison(name, None)
-        vc.expression = entry.expression or ""
         override = overrides.get(name, {})
         metric_name = override_metric(override, default_points)
+        vc = _missing_variable_comparison(name, None, mode=metric_name)
+        vc.expression = entry.expression or ""
         try:
             tolerance = parse_sides(
                 override.get("tolerance", base_tolerance), "tolerance"

@@ -45,7 +45,6 @@ class TestLeafFromVariable:
         assert leaf.passed
         assert leaf.score == pytest.approx(0.002)
         assert leaf.label == "pipe.T"
-        assert leaf.diagnostics["mode"] == "nrmse"
         assert leaf.diagnostics["variable"] is vc
         assert leaf.children == []
 
@@ -53,7 +52,6 @@ class TestLeafFromVariable:
         vc = _vc(name="tank.h", passed=True, mode="tube", tube_inside=0.98)
         leaf = leaf_from_variable(vc)
         assert leaf.score == pytest.approx(0.98)
-        assert leaf.diagnostics["mode"] == "tube"
 
     def test_tube_leaf_without_inside_falls_back_to_nrmse(self):
         vc = _vc(mode="tube", tube_inside=None, nrmse=0.5)
@@ -140,6 +138,18 @@ class TestKOfNCombinator:
         ]
         r = KOfNCombinator(k=2).combine(children)
         assert not r.passed
+
+    def test_its_score_is_its_kth_highest_child_score(self):
+        children = [
+            MetricResult(passed=True, score=s, label=str(s)) for s in (0.1, 0.5, 0.3)
+        ]
+        assert KOfNCombinator(k=2).combine(children).score == 0.3
+
+    def test_with_k_above_its_children_its_score_is_their_lowest(self):
+        children = [
+            MetricResult(passed=True, score=s, label=str(s)) for s in (0.1, 0.5)
+        ]
+        assert KOfNCombinator(k=5).combine(children).score == 0.1
 
     def test_negative_k_rejected(self):
         with pytest.raises(ValueError):

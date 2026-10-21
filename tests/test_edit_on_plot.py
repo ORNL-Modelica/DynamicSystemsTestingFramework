@@ -620,6 +620,62 @@ def test_available_needs_one_open_criterion_with_handles(session):
     )
 
 
+@pytest.mark.parametrize(
+    ("run_holds_v", "reason"),
+    [
+        (True, "variable 'v' not found in the baseline"),
+        (False, "variable 'v' not found in the result"),
+    ],
+)
+def test_a_criterion_not_scored_is_not_edited_on_the_plot(
+    tmp_path, run_holds_v, reason
+):
+    """A points or tube criterion on a variable one side lacks carries its
+    own metric and no geometry: nothing of it is on the plot to drag or
+    click, and its place says why in the criterion's own words."""
+    cfg, work = _project(tmp_path)
+    if run_holds_v:
+        result = work / "test_0004" / "result.json"
+        data = json.loads(result.read_text(encoding="utf-8"))
+        data["variables"]["v"] = list(data["variables"]["x"])
+        result.write_text(json.dumps(data), encoding="utf-8")
+    session = Session()
+    session.open(cfg, work_dir=work)
+    session.stage(
+        [
+            PatchOp(
+                D,
+                "add",
+                "/metrics",
+                {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "nrmse", "variable": "x"},
+                        {
+                            "metric": "points",
+                            "variable": "v",
+                            "points": [{"time": 0.5}],
+                        },
+                        {
+                            "metric": "tube",
+                            "variable": "v",
+                            "tube_width_mode": "band",
+                            "tube_abs": 0.1,
+                        },
+                    ],
+                },
+            )
+        ]
+    )
+    said = (
+        f"Not scored: {reason}. Nothing of it is drawn on the plot to drag; "
+        "the fields above still edit it."
+    )
+    for leaf_path in ("/metrics/children/1", "/metrics/children/2"):
+        on_v = Selection(tests=frozenset({D}), variable="v", leaf_path=leaf_path)
+        assert EditOnPlot().available(SessionView(session, on_v)) == said
+
+
 def test_a_drag_on_another_leafs_handle_is_refused_by_name(session):
     """The editor is the open criterion's. Another leaf gets no rings while
     this one is open, but its bound LINES are still drawn and draggable —

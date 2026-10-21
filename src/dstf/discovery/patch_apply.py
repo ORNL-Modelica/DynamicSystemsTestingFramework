@@ -24,12 +24,9 @@ each), so the RFC 6901 unescape rules fit in ~10 lines.
 from __future__ import annotations
 
 import copy
-import json
 import logging
 from pathlib import Path
 from typing import Any
-
-from ..storage.ref_index import _atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +60,22 @@ def apply_patch_to_document(
     whitelist: tuple[str, ...] = DEFAULT_WHITELIST,
 ) -> dict:
     """Apply ``patch_ops`` to the entry in the parsed document ``data`` that
-    matches ``model_id`` (created if absent), in place. Returns ``data``.
+    matches ``model_id`` — to ``{"model": model_id}`` where there is none —
+    and put the patched entry in ``data``'s tests. Returns ``data``.
     Raises :class:`PatchError` naming the failing op. The authoring
-    Session's in-memory document goes through here; the disk path is
-    :func:`apply_patch`."""
-    entry = _find_or_create_entry(data, model_id)
+    Session's in-memory document goes through here; so does the disk path,
+    ``spec_update.apply_validated_patches``.
+
+    All or nothing: the ops are applied to a copy of the entry, which
+    replaces it (or, for a new model, is appended) only once every op has
+    applied. A refused patch leaves ``data`` as it was — not the earlier
+    ops of the patch, not a ``"metrics": {}`` an op's descent made before
+    the op was refused, not a ``{"model": ...}`` for a model it named. The
+    entry is a new object afterwards: read it back from ``data``."""
+    index = _entry_index(data, model_id)
+    entry = (
+        {"model": model_id} if index is None else copy.deepcopy(data["tests"][index])
+    )
     for i, op in enumerate(patch_ops):
         try:
             _apply_one_op(entry, op, whitelist)
@@ -77,32 +85,10 @@ def apply_patch_to_document(
                 path=e.path,
                 reason=e.reason,
             ) from None
-    return data
-
-
-def apply_patch(
-    spec_path: Path,
-    model_id: str,
-    patch_ops: list[dict],
-    *,
-    whitelist: tuple[str, ...] = DEFAULT_WHITELIST,
-    write: bool = True,
-) -> dict:
-    """Apply ``patch_ops`` to the entry in ``spec_path`` matching ``model_id``.
-
-    Returns the (mutated) spec dict. When ``write=True`` (default), also
-    persists it back to disk preserving key order. Raise :class:`PatchError`
-    on any issue; the caller (CLI) surfaces the message and aborts without
-    writing if the dry-run path signals invalidity.
-    """
-    data = apply_patch_to_document(
-        load_spec_document(spec_path), model_id, patch_ops, whitelist=whitelist
-    )
-    if write:
-        spec_path.parent.mkdir(parents=True, exist_ok=True)
-        # review 2026-07-06 (finding 31): atomic — an interrupted patch must
-        # not leave the user's spec truncated.
-        _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
+    if index is None:
+        data["tests"].append(entry)
+    else:
+        data["tests"][index] = entry
     return data
 
 
@@ -122,10 +108,11 @@ def load_spec_document(spec_path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _find_or_create_entry(data: dict, model_id: str) -> dict:
+def _entry_index(data: dict, model_id: str) -> int | None:
+    """Where ``model_id``'s entry is in ``data["tests"]``; None for none."""
     matches = [
-        entry
-        for entry in data["tests"]
+        i
+        for i, entry in enumerate(data["tests"])
         if isinstance(entry, dict) and entry.get("model") == model_id
     ]
     if len(matches) > 1:
@@ -138,11 +125,7 @@ def _find_or_create_entry(data: dict, model_id: str) -> dict:
             len(matches),
             model_id,
         )
-    if matches:
-        return matches[0]
-    entry = {"model": model_id}
-    data["tests"].append(entry)
-    return entry
+    return matches[0] if matches else None
 
 
 def _apply_one_op(entry: dict, op: dict, whitelist: tuple[str, ...]) -> None:

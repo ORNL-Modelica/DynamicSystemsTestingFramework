@@ -85,8 +85,6 @@ def _render_real_page(tmp_path, n_vars: int, n_samples: int, cap: int):
     test = TestModel(
         model_id="TestLib.Wide.Fixture",
         source_file=Path("fixture.mo"),
-        source_package="TestLib",
-        short_name="Fixture",
         n_vars=n_vars,
         variable_patterns=[t["name"] for t in trajectories],
         variable_overrides=overrides,
