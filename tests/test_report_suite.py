@@ -8,6 +8,7 @@ trajectories, the page carries figures and no arrays at all.
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 
@@ -457,13 +458,14 @@ class TestWorstNrmse:
         assert worst is None
         assert n_unscored == 2
 
-    def test_a_scored_nan_is_no_worst_and_not_unscored(self):
+    def test_a_scored_nan_is_the_worst_and_not_unscored(self):
         """An nrmse over a NaN sample was scored (its sentence prints the
-        NaN): it is no worst NRMSE, and no criterion that went unscored."""
+        NaN): the worst NRMSE is nan, beside a criterion that scored 2.0,
+        and no criterion went unscored."""
         from dstf.reporting.context_builder import worst_nrmse
 
         worst, n_unscored = worst_nrmse([self._scored(float("nan")), self._scored(2.0)])
-        assert worst == 2.0
+        assert math.isnan(worst)
         assert n_unscored == 0
 
     def test_a_tube_scored_over_a_nan_sample_is_not_unscored(self):

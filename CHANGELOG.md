@@ -31,6 +31,10 @@ this file says when they do.
 
 ### Fixed
 
+- A test whose nrmse criterion scored NaN (a NaN in its run) reads `nan` as
+  its Worst NRMSE, on the dashboard, its report page and the tool's Suite
+  page, and sorts above every number; it read its other criteria's worst, or
+  `n/a (1 unscored)`.
 - The Worst NRMSE column's "unscored" count is the criteria that were not
   scored. It counted every criterion whose number was not finite, so a tube
   or an nrmse over a NaN sample, and a dominant-frequency criterion with a

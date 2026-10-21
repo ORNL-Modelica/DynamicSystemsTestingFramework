@@ -168,6 +168,57 @@ def test_a_row_with_no_value_sorts_last_both_ways(tmp_path, playwright_browser):
     page.close()
 
 
+def test_a_worst_nrmse_of_nan_reads_nan_and_sorts_above_every_number(
+    tmp_path, playwright_browser
+):
+    """A sidecar writes a worst NRMSE of nan as null, with ``n_nan`` beside
+    it: the page reads ``nan`` in the cell and sorts the row above every
+    number, both ways — Lib.A, with no score at all, stays last."""
+
+    def summary(model, worst, n_nan=0):
+        return {
+            "model_id": model,
+            "written_at": 2.0,
+            "status": "FAIL",
+            "worst_nrmse": worst,
+            "n_nan": n_nan,
+        }
+
+    html = _render(
+        tmp_path,
+        [_entry(i, m) for i, m in enumerate(("Lib.A", "Lib.B", "Lib.N", "Lib.C"), 1)],
+        {
+            "test_0001": summary("Lib.A", None),
+            "test_0002": summary("Lib.B", 1e-6),
+            "test_0003": summary("Lib.N", None, n_nan=1),
+            "test_0004": summary("Lib.C", 0.5),
+        },
+    )
+    page = playwright_browser.new_page()
+    page.goto(html.as_uri())
+
+    def column():
+        return page.evaluate(
+            "() => { const i = Array.from(document.querySelectorAll("
+            "'#results-table thead tr:first-child th')).findIndex("
+            "th => th.dataset.key === 'nrmse'); return Array.from("
+            "document.querySelectorAll('tbody tr')).map(r => "
+            "[r.dataset.model, r.cells[i].textContent.trim()]); }"
+        )
+
+    header = page.locator('th[data-key="nrmse"]')
+    header.click()  # a number column descends first
+    assert column() == [
+        ["Lib.N", "nan"],
+        ["Lib.C", "5.0000e-01"],
+        ["Lib.B", "1.0000e-06"],
+        ["Lib.A", "—"],
+    ]
+    header.click()
+    assert [m for m, _ in column()] == ["Lib.B", "Lib.C", "Lib.N", "Lib.A"]
+    page.close()
+
+
 def test_a_row_with_no_verdict_moves_the_bar_and_no_pill(tmp_path, playwright_browser):
     """A simulated row the compare phase has not scored reads SIMULATED; it
     is in no pill, and the bar's "pending" segment carries it."""

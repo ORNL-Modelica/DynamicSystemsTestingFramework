@@ -65,8 +65,11 @@ _env = Environment(
 # A column filter's placeholder and tooltip, by kind — the Suite table's too.
 _env.globals["filter_hints"] = FILTER_HINTS
 # A sort value as a data-sort-* attribute: None is the empty string, which
-# dashboard.js sorts last in both directions.
-_env.filters["sortval"] = lambda v: "" if v is None else v
+# dashboard.js sorts last in both directions; an infinite one is spelled as
+# JavaScript's parseFloat reads it (a worst NRMSE of nan sorts as one).
+_env.filters["sortval"] = lambda v: (
+    "" if v is None else "Infinity" if v == float("inf") else v
+)
 
 
 def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:

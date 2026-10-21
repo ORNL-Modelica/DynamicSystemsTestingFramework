@@ -1014,6 +1014,108 @@ class TestTheDashboardGetsTheComparisons:
 
 
 # ---------------------------------------------------------------------------
+# A worst NRMSE of nan (the owner's call): a criterion scored by nrmse whose
+# score is NaN makes the test's worst NRMSE nan, which sorts above every number
+# ---------------------------------------------------------------------------
+
+
+class TestAWorstNrmseOfNan:
+    """A NaN sample in the run makes an nrmse score NaN. The test's Worst
+    NRMSE reads ``nan`` — with no metrics tree, with one, and beside another
+    nrmse criterion that scored a number — and sorts as above every number;
+    a test whose nrmse criteria all scored numbers reads its worst."""
+
+    T = np.linspace(0.0, 1.0, 11)
+    NAN_AT_5 = np.where(np.arange(11) == 5, np.nan, np.sin(T))
+
+    ENTRIES = [
+        {"model": "Lib.NanFlat", "variables": ["x"]},
+        {
+            "model": "Lib.NanTree",
+            "variables": ["x"],
+            "metrics": {"metric": "nrmse", "variable": "x", "tolerance": 0.05},
+        },
+        {
+            "model": "Lib.NanMixed",
+            "variables": ["x", "y"],
+            "metrics": {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": 0.05},
+                    {"metric": "nrmse", "variable": "y", "tolerance": 0.05},
+                ],
+            },
+        },
+        {"model": "Lib.Fine", "variables": ["x"]},
+    ]
+
+    def _result(self, model_id, x, y=None):
+        names = {"x": x} if y is None else {"x": x, "y": y}
+        return TestResult(
+            model_id=model_id,
+            success=True,
+            variables=[
+                VariableResult(index=i, time=self.T, values=np.asarray(v), name=n)
+                for i, (n, v) in enumerate(names.items(), 1)
+            ],
+        )
+
+    def _rows(self, page) -> dict[str, tuple[str, str]]:
+        """Each row's Worst NRMSE text and sort value, by model."""
+        html = page.read_text(encoding="utf-8")
+        return {
+            m.group(1): (m.group(2), m.group(3))
+            for m in re.finditer(
+                r'data-model="([^"]*)"(?:.|\n)*?data-nrmse="([^"]*)"\s*'
+                r'data-sort-nrmse="([^"]*)"',
+                html,
+            )
+        }
+
+    def _scored(self, run_env, *extra):
+        sin = np.sin(self.T)
+        baseline = {
+            e["model"]: self._result(e["model"], sin, sin) for e in self.ENTRIES
+        }
+        run_env.make(self.ENTRIES, results=baseline)
+        assert cmd_run(_run_args(run_env, "--accept")) == 0
+        run_env.make(
+            self.ENTRIES,
+            results={
+                "Lib.NanFlat": self._result("Lib.NanFlat", self.NAN_AT_5),
+                "Lib.NanTree": self._result("Lib.NanTree", self.NAN_AT_5),
+                "Lib.NanMixed": self._result("Lib.NanMixed", self.NAN_AT_5, sin + 1e-3),
+                "Lib.Fine": self._result("Lib.Fine", sin + 1e-3),
+            },
+        )
+        cmd_run(_run_args(run_env, *extra))
+        return self._rows(run_env.work_dir / "dashboard.html")
+
+    @pytest.mark.parametrize("extra", [(), ("--report",)], ids=["run", "report"])
+    def test_the_column_reads_nan_and_sorts_above_every_number(self, run_env, extra):
+        rows = self._scored(run_env, *extra)
+        nan = ("nan", "Infinity")
+        assert {m: rows[m] for m in ("Lib.NanFlat", "Lib.NanTree", "Lib.NanMixed")} == {
+            "Lib.NanFlat": nan,
+            "Lib.NanTree": nan,
+            "Lib.NanMixed": nan,
+        }
+        text, sort = rows["Lib.Fine"]
+        assert text == format(float(sort), ".4e") and float(sort) < float("inf")
+
+    def test_the_report_page_reads_nan(self, run_env):
+        self._scored(run_env, "--report")
+        stats = {}
+        for sidecar in (run_env.work_dir / "reports").glob("*/comparison_data.json"):
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+            (worst,) = [k for k in data["key_stats"] if k["label"] == "Worst NRMSE"]
+            stats[data["model_id"]] = worst["current"]
+        assert stats["Lib.NanMixed"] == "nan"
+        assert stats["Lib.NanFlat"] == stats["Lib.NanTree"] == "nan"
+        assert stats["Lib.Fine"] != "nan"
+
+
+# ---------------------------------------------------------------------------
 # Every path that ends a run leaves a static page. The backends' finalize
 # leaves the page LIVE (the compare phase has not scored anything yet); the
 # command that ends the run renders the final one.
