@@ -2998,9 +2998,11 @@ def test_a_library_run_makes_its_work_dir(run_env, tmp_path):
     from dstf.pipeline import run_pipeline
 
     run_env.make(["Lib.T1"], results={"Lib.T1": _mk_result("Lib.T1")})
-    config, tests, backend, store = _pipeline(run_env, tmp_path / "x" / "y" / "work")
+    work = tmp_path / "x" / "y" / "work"
+    config, tests, backend, store = _pipeline(run_env, work)
     out = run_pipeline(config, tests, backend=backend, store=store)
     assert list(out.results) == ["Lib.T1"]
+    assert work.is_dir()
 
 
 def test_a_library_run_clears_the_tests_last_run_and_paints_the_page_first(run_env):

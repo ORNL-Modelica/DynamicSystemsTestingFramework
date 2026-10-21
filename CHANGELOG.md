@@ -10,9 +10,10 @@ this file says when they do.
 
 ### Fixed
 
-- A points criterion whose curve is infinite throughout its time box names
-  that value as the closest one (`closest value inf is outside [0.9, 1.2]`)
-  instead of saying no sample compares.
+- A points criterion with a lower/upper tolerance pair, whose curve is
+  infinite throughout its time box, names that value as the closest one
+  (`closest value inf is outside [0.9, 1.2]`) instead of saying no sample
+  compares.
 - A dominant-frequency peak whose two neighbouring bins have exactly equal
   magnitudes is found as one peak; it was no peak at all, and a declared
   peak at that resonance failed.
@@ -23,8 +24,6 @@ this file says when they do.
   baseline stored under the expression.
 - A dominant-frequency criterion on a run of fewer than four samples reads
   "not scored — signal too short for FFT", not "No peaks declared".
-- `manifest cleanup` no longer logs "Removed orphaned role dir" for a
-  soft-check or companion folder it could not delete.
 - A `testing.json` dependency written `~/…` is under the home directory; it
   was read as a folder named `~` beside the file.
 - A points criterion whose curve jumps to an infinite value inside its time

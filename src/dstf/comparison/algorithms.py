@@ -1693,10 +1693,11 @@ def _local_maxima(spectrum: np.ndarray) -> np.ndarray:
 
     A run of equal values whose outer neighbours are both strictly lower,
     touching neither end of the array, is one maximum, reported at the
-    run's middle index rounded down — ``scipy.signal.find_peaks``' rule. A
-    resonance between two bins can land on both with the same magnitude:
-    strictly greater than both neighbours then found nothing there. Its
-    callers hold at least three values.
+    run's middle index rounded down — ``scipy.signal.find_peaks``' rule on
+    finite input (on an infinite run they differ: ``[1, inf, inf, 1]`` gives
+    no maximum here, ``[1]`` there). A resonance between two bins can land
+    on both with the same magnitude: strictly greater than both neighbours
+    then found nothing there. Its callers hold at least three values.
     """
     starts = np.concatenate(([0], np.flatnonzero(np.diff(spectrum) != 0) + 1))
     ends = np.concatenate((starts[1:], [len(spectrum)])) - 1
