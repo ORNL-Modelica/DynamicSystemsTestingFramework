@@ -112,8 +112,8 @@ def materialize_implicit_metrics(
     review 2026-07-06 finding 41: per-leaf ops target
     ``/metrics/children/N/...``, but a flat-override entry has no ``metrics``
     block and ``patch_apply`` refuses to auto-create an array parent. A
-    missing entry is left to ``apply_patch_to_document``, which refuses the
-    op with the real failure and adds no entry."""
+    missing entry is left to ``apply_patch_to_document``, which refuses such
+    an op with the real failure and adds no entry."""
     ops = list(patch)
     if not needs_materialization(entry, ops):
         return ops

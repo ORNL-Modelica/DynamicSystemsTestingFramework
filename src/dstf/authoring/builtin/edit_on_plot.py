@@ -90,13 +90,15 @@ UNSCORED = "{} — its table and its handles on the plot are edited once it is s
 
 #: Why the place is a sentence for ONE criterion its comparison could not
 #: score (`reporting.status.not_scored_reason`: a variable or a baseline one
-#: side lacks, a config that did not build), ``{}`` being that reason. It
-#: carries its own metric and nothing drawn: no handle to drag, no row a
-#: click settles on the data. The form's fields, above this place, still
-#: stage edits of it.
+#: side lacks, a config that did not build, a window that misses every
+#: sample), ``{}`` being that reason. It carries its own metric and nothing
+#: drawn: no handle to drag, no row a Ctrl+click settles on the data. The
+#: form's fields, above this place, still stage edits of it, and so does a
+#: ⌖ that stays beside one (`placeable`): a window's ends are the click's x,
+#: the way to move a window that misses every sample back onto the run.
 UNSCORED_LEAF = (
-    "Not scored: {}. Its table and its handles on the plot are edited once "
-    "it is scored; the fields above still edit it."
+    "Not scored: {}. Until it is, the plot has nothing of it to drag or "
+    "Ctrl+click; the fields above, and their ⌖, still edit it."
 )
 
 

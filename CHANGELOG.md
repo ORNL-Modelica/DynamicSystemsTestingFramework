@@ -28,15 +28,21 @@ this file says when they do.
   was read as a folder named `~` beside the file.
 - A points criterion whose curve jumps to an infinite value inside its time
   box no longer passes as if it had crossed the band there.
-- `dstf author` no longer offers on-plot editing for a criterion that was not
-  scored: its editor says why (`Not scored: variable 'v' not found in the
-  baseline. …`), and its fields still edit it.
+- In `dstf author`, the editor of a criterion that was not scored says why
+  (`Not scored: variable 'v' not found in the baseline. …`) where it said
+  `nrmse has no on-plot handles` or offered handles it did not draw, and its
+  hint no longer offers a Ctrl+click that did nothing; its fields, and its
+  window's ⌖ on the plot, still edit it.
 
 ### Removed
 
 - `TestModel` no longer has `source_package`, `short_name`, `result_file`,
   `x_raw` or `error_expected`: nothing read them. A plug-in that builds a
   `TestModel` drops those arguments.
+- A criterion's `MetricResult.diagnostics`, what a plug-in `Combinator.combine`
+  receives, no longer carries `mode`, `tolerance` or `max_abs_error`; they are
+  its `diagnostics["variable"]` (a `VariableComparison`): `mode`,
+  `tolerance_used` and `max_abs_error`.
 
 ## [1.2.0] - 2026-10-19
 
