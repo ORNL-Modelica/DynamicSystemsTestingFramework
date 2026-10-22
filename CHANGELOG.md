@@ -87,7 +87,8 @@ this file says when they do.
   loaded.
 - In `dstf author`, re-entering a number field with the keyboard and typing a
   negative number no longer loses its minus sign: Shift+Tab back into a field
-  just left, `-0.7` typed could be taken as 0.7.
+  just left, `-0.7` typed could be taken as 0.7 (and a half-typed `1e-2`
+  as -2).
 
 ### Removed
 
