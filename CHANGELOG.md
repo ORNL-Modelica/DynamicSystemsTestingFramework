@@ -77,6 +77,9 @@ this file says when they do.
 - In `dstf author`, a Test page whose plots were redrawn twice in quick
   succession, on a slow machine, no longer logs "Resize must be passed a
   displayed plot div element." to the browser console once per plot.
+- In `dstf author`, re-entering a number field with the keyboard and typing a
+  negative number no longer loses its minus sign: Shift+Tab back into a field
+  just left, `-0.7` typed could be taken as 0.7.
 
 ### Removed
 

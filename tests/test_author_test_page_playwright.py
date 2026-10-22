@@ -5079,6 +5079,78 @@ def test_a_sign_and_an_exponent_are_staged_as_typed(
         assert _shown_and_staged(page, field, before) == (typed, staged_as)
 
 
+#: Whether a number input holds text that is no number yet (`-`, `1e`): its
+#: value is then "", which `input_value()` cannot tell from an empty field.
+NO_NUMBER_YET = "e => e.validity.badInput"
+
+
+def _range_bound(page):
+    """The range leaf's lower bound — a field a negative is staged from —
+    in its open editor, reading -1."""
+    _open_crit(page, 0, "range · x")
+    editor = page.locator(".dstf-editor")
+    expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+    editor.evaluate("e => e.scrollIntoView({block: 'center'})")
+    bound = editor.get_by_label("Lower bound (optional)", exact=True)
+    expect(bound).to_have_value("-1")
+    return bound
+
+
+def test_a_minus_typed_into_a_field_entered_again_by_keyboard_is_kept(
+    tmp_path, playwright_browser
+):
+    """Tab out of the range's lower bound, Shift+Tab back and `-0.7` typed
+    over it: the field reads `-0.7` and -0.7 is staged. Quasar answers a
+    blur with a timer that writes the field's value into it; on a busy page
+    Chrome runs keys before timers, and that write, landing after the `-`
+    (no number yet, so a value of ""), erased it — 0.7 was staged. The
+    page's clock is held from the Tab to the `-`, then run on: the timer
+    runs between the `-` and the `0`, every time."""
+    with _served(
+        tmp_path, playwright_browser, project=_typing_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        bound = _range_bound(page)
+        bound.click()
+        page.clock.install()
+        page.clock.pause_at(page.evaluate("Date.now()") + 1000)
+        page.keyboard.press("Tab")
+        assert not bound.evaluate("e => document.activeElement === e")
+        page.keyboard.press("Shift+Tab")
+        assert bound.evaluate("e => document.activeElement === e")
+        page.keyboard.press("Control+A")
+        page.keyboard.press("-")
+        assert bound.evaluate(NO_NUMBER_YET)
+        page.clock.run_for(10)  # the timers due, the blur's among them, run now
+        page.clock.resume()
+        page.keyboard.type("0.7", delay=KEY_MS)
+        _answered(page)
+        assert bound.input_value() == "-0.7"
+        assert _staged_tree(page)["children"][1]["min_value"] == -0.7
+
+
+def test_a_field_left_holding_a_bare_minus_shows_its_value_again(
+    tmp_path, playwright_browser
+):
+    """`-` alone typed over the lower bound, then Tab: the field, left,
+    reads its value again (none: a lone `-` is no number, and the bound is
+    unset) and no longer the `-` — what a field typed in and left with text
+    that is no number shows."""
+    with _served(
+        tmp_path, playwright_browser, project=_typing_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        bound = _range_bound(page)
+        _type_over(page, bound, "-")
+        assert bound.evaluate(NO_NUMBER_YET)
+        page.keyboard.press("Tab")
+        assert not bound.evaluate("e => document.activeElement === e")
+        _answered(page)
+        assert not bound.evaluate(NO_NUMBER_YET)
+        assert bound.input_value() == ""
+        assert "min_value" not in _staged_tree(page)["children"][1]
+
+
 def test_a_linked_twin_typed_in_before_the_mirror_lands_keeps_what_was_typed(
     tmp_path, playwright_browser
 ):
@@ -5096,6 +5168,27 @@ def test_a_linked_twin_typed_in_before_the_mirror_lands_keeps_what_was_typed(
         page.keyboard.type("9")
         assert _shown_and_staged(page, upper, POINTS_Y) == ("9", "9.0")
         assert float(lower.input_value()) == 9
+
+
+def test_a_field_entered_and_not_typed_in_shows_its_twins_mirror(
+    tmp_path, playwright_browser
+):
+    """Linked: `0.2` into `−`, and Tab past the toggle into `+` before the
+    server mirrored the 0.2 there. Nothing typed in `+`, it reads the
+    mirrored 0.2 while it holds the focus: a field keeps what is TYPED in
+    it, and is otherwise handed the server's value, focused or not."""
+    with _slow_editor(tmp_path, playwright_browser, 1, "points · y") as (page, editor):
+        lower = editor.get_by_label("− Default tolerance", exact=True)
+        upper = editor.get_by_label("+ Default tolerance", exact=True)
+        expect(upper).to_have_value("0.3")
+        _type_over(page, lower, "0.2", delay=0)
+        page.keyboard.press("Tab")
+        page.keyboard.press("Tab")
+        assert upper.evaluate("e => document.activeElement === e")
+        assert upper.input_value() == "0.3"  # the mirror has not landed
+        _answered(page)
+        assert upper.evaluate("e => document.activeElement === e")
+        assert upper.input_value() == "0.2"
 
 
 @pytest.mark.parametrize(
@@ -5227,7 +5320,7 @@ def test_bounds_out_of_order_and_a_negative_in_a_rows_tolerance_are_refused(
     ("name", "child", "field", "label", "key", "held", "leave"),
     [
         ("points · x", 0, "points", "− tolerance", "tolerance", 0.05, "click"),
-        pytest.param(
+        (
             "points · x",
             0,
             "points",
@@ -5235,15 +5328,6 @@ def test_bounds_out_of_order_and_a_negative_in_a_rows_tolerance_are_refused(
             "time_tolerance",
             0.1,
             "tab",
-            # A known product race, not a test race: a server answer that lands
-            # after the "-" keystroke of a cell entered again, before the field
-            # marks itself as typing, drops the "-" (0.7 is staged for -0.7).
-            # Reproduced by stalling the server 0.15-0.3 s at the cell's blur.
-            # Its fix is the next change; until then this case may fail.
-            marks=pytest.mark.xfail(
-                strict=False,
-                reason="known race: a late server answer can drop a typed '-'",
-            ),
         ),
         (
             "event-timing · x",

@@ -30,6 +30,32 @@ export default {
   data() {
     return { shown: this.modelValue, typing: false, typedIn: null, previewed: null, revision: 0 };
   },
+  // Quasar's QInput (v2.18.5, as NiceGUI 3.16 ships it) answers a blur with
+  // a `setTimeout` that writes the field's value into its input whatever the
+  // input holds (`onFinishEditing`). A field left by Tab and entered again by
+  // Shift+Tab before that timer runs — Chrome runs keys ahead of timers — had
+  // its first key undone by it: "-" holds no number yet, so the input's value
+  // is "", and writing "" over it erased the "-"; `-0.7` was staged as 0.7.
+  // So a write of the value its input already holds is no write while the
+  // field has the focus: Vue never makes one (it writes a value that
+  // differs), and on a number input it can only erase text that is not yet
+  // a number ("-", "1e"). Every other write goes through, and a blurred
+  // field is still put back to its value. Check this on a Quasar upgrade.
+  mounted() {
+    const input = this.$refs.qRef.nativeEl;
+    const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get() {
+        return native.get.call(this);
+      },
+      set(value) {
+        const held = String(value ?? "") === native.get.call(this);
+        if (held && document.activeElement === this) return;
+        native.set.call(this, value);
+      },
+    });
+  },
   computed: {
     display() {
       const previewing = this.previewed !== null && this.previewed !== undefined;
