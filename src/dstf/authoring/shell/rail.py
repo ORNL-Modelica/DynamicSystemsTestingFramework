@@ -10,6 +10,7 @@ it open."""
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 from functools import partial
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -549,14 +550,22 @@ class Rail:
             elif was != "variables":
                 self.variables.rebuild()  # it was not followed while closed
 
-    def _width(self, width: int) -> None:
+    def _width(self, width: int, *, send: bool = True) -> None:
         """The drawer's `width` prop and the panels' width: RAIL alone with
-        no drawer open."""
+        no drawer open. Without ``send`` they are recorded on the elements
+        for a later update to carry, and nothing goes to the browser."""
         kind = self.page.state.drawer
-        self.drawer.props(f"width={RAIL + width if kind else RAIL}")
-        for panel in self.panels.values():
-            panel.style(f"width: {width}px")
-        self.grip.props["aria-valuenow"] = str(width)
+        with ExitStack() as quiet:
+            if not send:
+                for element in (self.drawer, self.grip, *self.panels.values()):
+                    quiet.enter_context(element.props.suspend_updates())
+                    quiet.enter_context(element.style.suspend_updates())
+            self.drawer.props(f"width={RAIL + width if kind else RAIL}")
+            for panel in self.panels.values():
+                panel.style(f"width: {width}px")
+            self.grip.props["aria-valuenow"] = str(width)
+        if not send:
+            return
         self.grip.set_visibility(kind is not None)
         self.grip.update()
         if kind is not None:
@@ -567,14 +576,21 @@ class Rail:
     def resize(self, width: Any, window: Any) -> None:
         """A drag's release (`_DRAG`): the width the browser clamped and the
         window's width, held to the same bounds again here (`max_panel`,
-        then the floor), kept in `TabState`."""
+        then the floor), kept in `TabState`.
+
+        A width the bounds kept is the one the browser already shows: it is
+        recorded on the elements and sent nowhere. Sent, it is an echo that
+        can land after the next key has moved the panel on (→ → tapped
+        quickly), and Vue writes the older width back over it — the step is
+        lost in the browser and the server keeps the wrong width. A width
+        the bounds changed is sent, as the browser shows another."""
         try:
             px = int(round(min(float(width), max_panel(float(window)))))
         except (TypeError, ValueError, OverflowError):
             return
         px = max(MIN_PANEL, px)
         self.page.state.drawer_width = px
-        self._width(px)
+        self._width(px, send=px != width)
 
     def toggle(self, kind: str) -> None:
         self.open(None if self.page.state.drawer == kind else kind)

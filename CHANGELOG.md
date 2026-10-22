@@ -71,6 +71,9 @@ this file says when they do.
   it, and its window's ⌖ still sets them from the plot where one is drawn. On
   a card that draws no plot (none of its variables is in the result), the
   editor no longer offers a ⌖ that waited for a click on nothing.
+- In `dstf author`, tapping the arrow keys quickly on a drawer's grip no
+  longer undoes a step: the drawer could jump back to the width before the
+  last key, and that older width was the one kept for the tab.
 
 ### Removed
 

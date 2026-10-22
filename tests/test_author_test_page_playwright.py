@@ -5931,6 +5931,17 @@ def test_a_width_the_window_no_longer_holds_is_clamped_in_the_browser(
         assert page.evaluate(PANEL_AND_DRAWER) == [380, 420]
 
 
+#: A round trip through the server on the page's own socket. The server
+#: starts a socket's messages as tasks in the order they came, and a grip's
+#: width (`Rail.resize`) is handled at once, with no await: the answer to a
+#: message sent after it says the width was handled. The message is
+#: NiceGUI's ``ack`` with the id it last acknowledged (nothing more to
+#: prune); the answer is socket.io's acknowledgement.
+SERVER_CAUGHT_UP = """() => window.socket.timeout(5000).emitWithAck('ack', {
+  client_id: window.clientId, next_message_id: window.ackedMessageId,
+}).then(() => true)"""
+
+
 def test_the_grip_answers_the_keyboard(tmp_path, playwright_browser):
     """The grip is a focusable separator (WAI-ARIA's window splitter): ←/→
     16 px, with Shift 64, Home the narrowest, End the widest, its
@@ -5962,7 +5973,9 @@ def test_the_grip_answers_the_keyboard(tmp_path, playwright_browser):
         page.keyboard.press("End")
         assert width() == 760
         page.keyboard.press("ArrowLeft")
-        page.wait_for_timeout(400)
+        # a width the bounds keep comes back as nothing (`Rail.resize`): the
+        # server's answer to a later message is what says it was heard
+        assert page.evaluate(SERVER_CAUGHT_UP)
         page.reload()
         expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(800)

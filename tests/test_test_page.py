@@ -10184,6 +10184,45 @@ async def test_a_resized_drawer_sets_the_drawer_the_panels_and_the_tab(extras_sh
         assert not other.rail.grip.visible
 
 
+async def test_a_width_the_browser_shows_is_kept_and_not_sent_back(
+    extras_shell, monkeypatch
+):
+    """A release whose width the bounds keep is what the browser already
+    shows: the server keeps it and sends nothing. An echo lands after the
+    next key has moved the panel on (→ → tapped quickly) and puts the older
+    width back. A width the bounds change is sent: the browser shows
+    another. Read off the client: its outbox of element updates and the
+    script it runs, the two seams to the browser."""
+    from dstf.authoring.shell.rail import RAIL
+
+    shell = extras_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        rail = page.rail
+        rail.open("variables")
+        sent: list[str] = []
+        monkeypatch.setattr(
+            page.client, "run_javascript", lambda code, *a, **k: sent.append(code)
+        )
+        outbox = page.client.outbox
+        ids = {rail.drawer.id, rail.grip.id, *(p.id for p in rail.panels.values())}
+        outbox.updates.clear()
+        rail.resize(400, 1280)
+        assert page.state.drawer_width == 400
+        assert ids.isdisjoint(outbox.updates)
+        assert sent == []
+        # kept on the elements, for the next update that does go out to carry
+        assert rail.drawer.props["width"] == str(RAIL + 400)
+        assert rail.grip.props["aria-valuenow"] == "400"
+        assert all(p.style.get("width") == "400px" for p in rail.panels.values())
+        rail.resize(2000, 1280)  # 1280 - 40 - 480: the bounds hold it at 760
+        assert page.state.drawer_width == 760
+        assert ids <= set(outbox.updates)
+        assert rail.drawer.props["width"] == str(RAIL + 760)
+        assert rail.grip.props["aria-valuenow"] == "760"
+        assert any("fit(760)" in code for code in sent)
+
+
 async def test_a_drawer_rows_label_is_alone_on_its_first_line(extras_shell):
     """2026-09-29: line 1 holds the controls and the label, nothing after
     it; line 2 "plot N" and "+ new plot"."""
