@@ -242,8 +242,10 @@ TESTING_JSON: dict[str, Setting] = {
         None,
         "Where the stored baselines are, relative to this file. They are "
         "kept below it by backend and operating system, <Backend>/<os>/. "
-        "Without it, this file's directory if it is named ReferenceResults, "
-        "else Resources/ReferenceResults beside the library.",
+        "Without it, this file's directory if it is named ReferenceResults; "
+        "else Resources/ReferenceResults in the directory that holds the "
+        "library's package directory, for a modelica source_type, or beside "
+        "this file, for any other.",
     ),
     "test_spec": Setting(
         {"type": "string"},
