@@ -62,9 +62,9 @@ def max_panel(window: float) -> float:
 #: key moves it. `mounted_app.elements[id].props` is NiceGUI 3.16's
 #: INTERNAL client-side store, not an API: the lookup is guarded (`store`),
 #: so on a NiceGUI that renames it the panel still moves and the release
-#: still sends the width — only the drawer lags the panel until the
-#: server's update (the Playwright test reading the drawer's width
-#: mid-drag fails first). `fit` clamps a width the window no longer holds
+#: still sends the width — only the drawer keeps its old width until the
+#: server next sends one (an open, a clamp, a reload); the Playwright test
+#: reading the drawer's width mid-drag fails first. `fit` clamps a width the window no longer holds
 #: — the tab's width from a wider window — on load (the width the server
 #: has, sent at once) and on a window `resize` (sent once, 150 ms after
 #: the last).

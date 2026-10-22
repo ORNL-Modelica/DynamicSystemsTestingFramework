@@ -1899,8 +1899,8 @@ planning.
   here, and the two author files collect about 235 tests (215 in the
   Test-page file), so some 25 to 30 minutes of a run is processes
   importing the same modules; the Test-page file takes about an hour
-  locally. None of it runs in CI (`quality.yml` deselects `playwright`),
-  which D147 lists as a limit. One server process that has done its
+  locally. It ran in no CI job until the `browser` job (2026-10-22), which
+  D147 lists as a limit. One server process that has done its
   imports and forks, or re-opens a fresh project, per test would take most
   of that away. To settle first: what a test may leave behind in a shared
   process (the Session is one project per process; `tabstate` is the
