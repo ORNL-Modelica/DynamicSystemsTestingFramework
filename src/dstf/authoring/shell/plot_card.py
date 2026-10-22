@@ -121,6 +121,28 @@ FOLD_ADDS = (
 GRIPS_JS = Path(__file__).parent / "grips.js"
 GRIPS_URL = "/_dstf/grips.js"
 
+#: No resize is sent to a plot that is no longer in the page. NiceGUI 3.16's
+#: `ui.plotly` (`elements/plotly/plotly.js`) awaits the Plotly module and a
+#: `$nextTick` in `mounted` before it starts the ResizeObserver that resizes
+#: the plot, and its `unmounted` disconnects only an observer already
+#: started. A plot removed in between — a rebuild of the cards that replaced
+#: the plots the rebuild before it had just made, two syncs close together
+#: while the browser lags — is observed after it left the page; Chromium
+#: reports such an element at once, at 0 x 0, and `Plotly.Plots.resize`
+#: rejects it ("Resize must be passed a displayed plot div element."), a
+#: page error nothing catches. So `Plots.resize` is wrapped, in the one
+#: Plotly module every plot of the page imports, from the page's first HTML
+#: — before any plot can start its observer: a div out of the document
+#: resolves untouched, as Plotly's own resize does when there is nothing to
+#: resize; every other call is Plotly's.
+RESIZE_GUARD = """<script>
+import('nicegui-plotly').then(({ Plotly }) => {
+  const resize = Plotly.Plots.resize;
+  Plotly.Plots.resize = (gd) =>
+    gd instanceof Element && !gd.isConnected ? Promise.resolve(gd) : resize(gd);
+});
+</script>"""
+
 #: "Not read yet" — `None` cannot mean it: a test with nothing scored has a
 #: `tree_view` of None, and a card that read it for itself cost one read per
 #: shown card on every row click (the 3b review).

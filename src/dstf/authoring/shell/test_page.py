@@ -46,7 +46,7 @@ from .actions import ActionBar, RowBuild, RowTarget
 from .family_fold import Folding
 from .header import Header
 from .live_view import LIVE_CSS, LiveView
-from .plot_card import GRIPS_URL, UNREAD, PlotCard, folded
+from .plot_card import GRIPS_URL, RESIZE_GUARD, UNREAD, PlotCard, folded
 from .rail import Rail
 from .stats_card import StatsCard
 from .strip import StatusStrip
@@ -168,6 +168,7 @@ class TestPage:
         # `add_head_html` inserts through insertAdjacentHTML, which never
         # runs a <script> (the Suite page's rule).
         ui.add_head_html(f'<script src="{GRIPS_URL}"></script>')
+        ui.add_head_html(RESIZE_GUARD)
         ui.add_css(LIVE_CSS)
         first_paint(self.shell)
         state = await connected_tab_state(self.client)

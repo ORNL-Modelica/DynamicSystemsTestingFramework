@@ -2409,6 +2409,87 @@ def test_a_watch_plot_beside_a_tolerance_typed_and_cleared_saves_the_plot_alone(
             spec.write_bytes(original)
 
 
+#: Counts the plots NiceGUI's `ui.plotly` starts observing after they left
+#: the page — the race `plot_card.RESIZE_GUARD` is for — by the browser's
+#: own `ResizeObserver`, so the test below can say the race happened.
+COUNT_LEFT = """(() => {
+  const Observer = window.ResizeObserver;
+  window.__left = 0;
+  window.ResizeObserver = class extends Observer {
+    observe(target, options) {
+      if (target.classList.contains('js-plotly-plot') && !target.isConnected)
+        window.__left += 1;
+      return super.observe(target, options);
+    }
+  };
+})();"""
+
+#: The edit's two rebuilds asked for (`author_hooks.py`'s `/__watch_and_back`)
+#: and the page's main thread held 1.5 s at once, as a slow runner holds it:
+#: both rebuilds' messages wait, and play back to back.
+WATCH_AND_BACK_HELD = """() => {
+  fetch('/__watch_and_back?var=a0');
+  const t = performance.now();
+  while (performance.now() - t < 1500);
+}"""
+
+#: Each drawn plot's drawing width and its div's, once Plotly has drawn it
+#: at the div's width: what a resize does.
+FITTED = """() => [...document.querySelectorAll('.js-plotly-plot')].map(
+  (d) => [Math.round(d.querySelector('.main-svg').getBoundingClientRect().width),
+          Math.round(d.getBoundingClientRect().width)])"""
+
+
+def test_plots_removed_as_they_were_drawn_send_no_resize(tmp_path, playwright_browser):
+    """Two rebuilds of the cards in quick succession while the browser lags
+    — a watch plot staged and at once discarded — remove the plots the
+    first drew before NiceGUI's `ui.plotly` started observing them. No
+    resize reaches those: before `RESIZE_GUARD` each sent one, and Plotly's
+    "Resize must be passed a displayed plot div element." was a page error
+    per plot (the CI browser job's failure). The plots that stay still
+    follow their size: the Variables drawer opened narrows them, and each
+    one's drawing is redrawn at its div's new width."""
+    problems: list[str] = []
+    with _served(
+        tmp_path,
+        playwright_browser,
+        project=_drawer_project,
+        hooks=True,
+        problems=problems,
+    ) as page:
+        page.context.add_init_script(COUNT_LEFT)
+        page.reload()
+        cards = page.locator(".dstf-plot")
+        expect(cards.locator(".js-plotly-plot")).to_have_count(
+            2, timeout=EXPECT_TIMEOUT
+        )
+        page.evaluate(WATCH_AND_BACK_HELD)
+        # The race happened: plots left the page before they were observed.
+        page.wait_for_function("() => window.__left > 0", timeout=EXPECT_TIMEOUT)
+        expect(cards.locator(".js-plotly-plot")).to_have_count(
+            2, timeout=EXPECT_TIMEOUT
+        )
+        # Two frames: the observer reports at the next one.
+        page.evaluate(
+            "() => new Promise((r) => requestAnimationFrame("
+            "() => requestAnimationFrame(r)))"
+        )
+        assert problems == []
+        assert "0 pending edits" in _pending(page)
+
+        before = page.evaluate(FITTED)
+        assert all(svg == div for svg, div in before), before
+        _open_vars(page)
+        page.wait_for_function(
+            f"""() => {{
+              const now = ({FITTED})();
+              return now.every(([svg, div]) => svg === div)
+                && now.every(([, div], i) => div < {[div for _, div in before]}[i]);
+            }}""",
+            timeout=EXPECT_TIMEOUT,
+        )
+
+
 #: An element's computed background, and the selection token's as the
 #: browser resolves it on a probe element.
 BACKGROUNDS = """e => {

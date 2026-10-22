@@ -74,6 +74,9 @@ this file says when they do.
 - In `dstf author`, tapping the arrow keys quickly on a drawer's grip no
   longer undoes a step: the drawer could jump back to the width before the
   last key, and that older width was the one kept for the tab.
+- In `dstf author`, a Test page whose plots were redrawn twice in quick
+  succession, on a slow machine, no longer logs "Resize must be passed a
+  displayed plot div element." to the browser console once per plot.
 
 ### Removed
 
