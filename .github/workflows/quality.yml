@@ -1,7 +1,7 @@
 # Quality floor (D88): lint + type-check + the hardware-free test suite +
 # coverage ratchet. Runs on a clean ubuntu runner with NO simulators —
 # Dymola / Julia / OpenModelica / fmpy tests skip cleanly, Playwright is
-# deselected. There is no FMPy end-to-end job (one that fetches the Reference
+# deselected (the `browser` job runs it). There is no FMPy end-to-end job (one that fetches the Reference
 # FMUs and runs them on a clean runner): it stays deferred on its own cost.
 name: quality
 
@@ -56,6 +56,31 @@ jobs:
           uv run pytest -q -n 4
           -m "not playwright and not dymola and not fmpy and not ompython and not julia and not reference_fmus"
           --cov=dstf --cov-report=term-missing
+
+  # The browser-driven tests (`-m playwright`): the authoring tool and the
+  # HTML reports in a real Chromium. A job of its own, beside the tests, so
+  # its minutes add nothing to theirs; no coverage, which the `quality` job
+  # measures. `-rf --tb=short` prints each failure's reason in the log.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --extra dev --extra author --extra browser --locked
+
+      # `--no-sync`: the playwright CLI of the venv just synced, unchanged.
+      - name: Install Chromium
+        run: uv run --no-sync playwright install --with-deps chromium
+
+      - name: Pytest (browser)
+        run: uv run --no-sync pytest tests/ -m playwright -n 4 -q -rf --tb=short
 
   # The documentation site, built as Read the Docs builds it: every warning
   # is an error (a reference page that names a type it cannot link to, a
