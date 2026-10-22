@@ -820,6 +820,7 @@ def test_a_criterion_opens_below_its_row_the_plot_stages_and_another_leafs_line_
     (`test_a_refused_drag_is_said_in_the_editor_and_the_plot_snaps_back`)."""
     with _served(tmp_path, playwright_browser) as page:
         page.wait_for_timeout(700)
+        _plots_mounted(page)  # the zoom is the drawn plot's
         # 4. The zoom and the stamp are set BEFORE the editor opens and read
         #    right after it: the figure's `config` can only change at an
         #    open or a close, so a zoom set afterwards would never see a
@@ -1290,6 +1291,7 @@ def _hover_at(page, x: float) -> list[str]:
 def test_a_swatch_hides_a_criterion_and_the_zoom_stays(tmp_path, playwright_browser):
     with _served(tmp_path, playwright_browser) as page:
         page.wait_for_timeout(700)
+        _plots_mounted(page)  # the zoom is the drawn plot's
         page.evaluate(ZOOM_AND_STAMP, [ZOOM_X, LINE_Y])
         page.wait_for_timeout(200)
         start = page.evaluate(READ_SHAPES)
@@ -7361,6 +7363,7 @@ def _open_for_grips(page, card: int, name: str) -> None:
     the mouse: the page scrolls an opening editor into view."""
     _open_crit(page, card, name)
     expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+    _plots_mounted(page)  # what the callers read next is the drawn plot's
     page.locator(".js-plotly-plot").nth(card).evaluate(
         "e => e.scrollIntoView({block: 'center'})"
     )
