@@ -6175,7 +6175,8 @@ def test_a_grip_key_the_focus_left_before_its_release_sends_the_width(
         page.keyboard.press("Tab")
         page.keyboard.up("ArrowRight")
         assert page.evaluate(PANEL_AND_DRAWER)[0] == 336
-        page.wait_for_timeout(400)
+        # the blur's width was handled once the server answers a later message
+        assert page.evaluate(SERVER_CAUGHT_UP)
         page.reload()
         expect(page.locator(".dstf-plot").first).to_be_visible(timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(800)
