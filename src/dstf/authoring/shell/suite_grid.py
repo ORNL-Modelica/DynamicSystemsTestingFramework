@@ -97,9 +97,13 @@ def _sort_value(value: float | str | None) -> float | str | None:
     it: the page's first rows go out through orjson, which writes inf as
     null — a row the sort put last and every number filter dropped — and a
     transaction's through json.dumps, as JavaScript's Infinity. The grid's
-    comparator and the number filter read the string as that number."""
+    comparator and the number filter read the string as that number. A
+    NaN one (a CPU time whose final is NaN) is None, a blank, whichever
+    way it goes: orjson writes it as null, json.dumps as JavaScript's NaN."""
     if isinstance(value, float) and value == math.inf:
         return "Infinity"
+    if isinstance(value, float) and math.isnan(value):
+        return None
     return value
 
 
