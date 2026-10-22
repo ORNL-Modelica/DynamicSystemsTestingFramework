@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 from dstf.backends.types import VariableResult
-from dstf.comparison.algorithms import _compute_fft_spectrum
 from dstf.comparison.modes import resolve_mode
 from dstf.comparison.seeds import (
     SeedData,
@@ -102,9 +101,11 @@ def test_a_peak_seeded_on_one_span_matches_on_another():
 
 def test_a_peak_is_two_bins_wide():
     """0.5 Hz over 10 s is FFT bin 5: two bins either side is 2/5."""
-    freqs, _ = _compute_fft_spectrum(*DATA.ref)
-    (peak,) = seeded_leaf("dominant-frequency", "x", DATA)["peaks"]
-    assert round(peak["freq"] / (freqs[1] - freqs[0])) == 5
+    leaf = seeded_leaf("dominant-frequency", "x", DATA)
+    (peak,) = leaf["peaks"]
+    vc = _score(leaf).diagnostics["variable"]
+    spectrum = next(p for p in vc.geometry if p.id.endswith("spectrum/ref"))
+    assert round(peak["freq"] / (spectrum.x[1] - spectrum.x[0])) == 5
     assert peak["tolerance"] == pytest.approx(0.4)
 
 

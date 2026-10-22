@@ -269,11 +269,11 @@ def test_a_window_edge_that_is_a_sample_is_in_the_runs_span(session):
         assert op.value["points"][1]["time"] == landed
 
 
-def test_a_window_no_sample_stands_in_has_no_span_and_its_grip_still_drags(session):
+def test_a_window_no_sample_stands_in_has_no_span_and_nothing_to_drag(session):
     """A window between two samples holds none of the run: there is no
     span to hold a time to, said as None — not the first and last of an
-    empty series — and a handle drawn all the same, a declared event's
-    late edge, is dragged as ever."""
+    empty series — and the declared event in it is not scored (D163), so
+    nothing of it is drawn: a drag on its late edge snaps back."""
     from dstf.authoring.builtin.edit_on_plot import _run_span
 
     leaf = {
@@ -287,10 +287,9 @@ def test_a_window_no_sample_stands_in_has_no_span_and_its_grip_still_drags(sessi
     (drawn,) = view.leaves
     assert list(view.act_time) == [0.0, 0.25, 0.5, 0.75, 1.0]
     assert _run_span(view, drawn) is None
+    assert [p.id for p in drawn.geometry] == ["/metrics/window"]  # its window alone
     late = {"xanchor": 0.38, "yanchor": 0.5, "path": "M 10,0 L 17,6 L 17,-6 Z"}
-    op = _only_op(_drag(session, "/metrics/events/late/0", late, model_id=A))
-    # A number is both sides: the late edge at 0.38 is 0.03 either way.
-    assert op.value["events"] == [{"time": 0.35, "tolerance": 0.03}]
+    assert _drag(session, "/metrics/events/late/0", late, model_id=A) is None
 
 
 def test_ids_that_name_no_movable_handle_snap_back(session):
@@ -674,6 +673,41 @@ def test_a_criterion_not_scored_is_not_edited_on_the_plot(
     for leaf_path in ("/metrics/children/1", "/metrics/children/2"):
         on_v = Selection(tests=frozenset({D}), variable="v", leaf_path=leaf_path)
         assert EditOnPlot().available(SessionView(session, on_v)) == said
+
+
+@pytest.mark.parametrize(
+    "leaf",
+    [
+        {"metric": "points", "variable": "x", "points": [{"time": 5.5}]},
+        {"metric": "event-timing", "variable": "x"},
+    ],
+    ids=["points", "events"],
+)
+def test_a_window_off_the_run_is_not_edited_on_the_plot(tmp_path, leaf):
+    """A points or event-timing criterion whose window holds none of the
+    run's samples is not scored, as a range so windowed is: its place
+    says why, and nothing of it is offered to drag."""
+    cfg, work = _project(tmp_path)
+    session = Session()
+    session.open(cfg, work_dir=work)
+    windowed = {**leaf, "window": {"start": 5.0, "end": 6.0}}
+    session.stage(
+        [
+            PatchOp(
+                D,
+                "add",
+                "/metrics",
+                {"combinator": "and", "children": [windowed]},
+            )
+        ]
+    )
+    on_x = Selection(
+        tests=frozenset({D}), variable="x", leaf_path="/metrics/children/0"
+    )
+    assert EditOnPlot().available(SessionView(session, on_x)) == (
+        "Not scored: no actual samples to check (empty trajectory or window). "
+        "Nothing of it is drawn on the plot to drag; the fields above still edit it."
+    )
 
 
 def test_a_drag_on_another_leafs_handle_is_refused_by_name(session):

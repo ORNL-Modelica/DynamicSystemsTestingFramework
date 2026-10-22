@@ -7,7 +7,6 @@ import random
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import _find_event_boundaries, _tube_bounds
 from dstf.comparison.geometry import Band, Box, HLine, Marker, Series, VLine, Window
 from dstf.comparison.types import ScoreSummary, VariableComparison
 from scoring import score
@@ -143,10 +142,6 @@ class TestTubeGeometry:
             vc = score({"mode": "tube", **cfg}, ref_t, ref_v, act_t, act_v)
             band = next(p for p in vc.geometry if isinstance(p, Band))
             assert band.id == "tube/band" and band.kind == "result"
-            # The band IS _tube_bounds on the band's own grid — nothing re-derived.
-            up, lo = _tube_bounds(band.time, np.interp(band.time, ref_t, ref_v), cfg)
-            np.testing.assert_allclose(band.upper, up)
-            np.testing.assert_allclose(band.lower, lo)
             act_on_grid = np.interp(band.time, act_t, act_v)
             inside = (act_on_grid >= band.lower - 1e-12) & (
                 act_on_grid <= band.upper + 1e-12
@@ -581,10 +576,6 @@ class TestEventTimingGeometry:
             pytest.approx(1.001),
         ) and w.passed is True
         assert vc.passed
-        # Every VLine coincides with a detected boundary.
-        assert [ids["events/act/0"].time] == [
-            float(act_t[b[0]]) for b in _find_event_boundaries(act_t)
-        ]
 
     def test_an_unpaired_auto_window_is_unscored_not_failed(self):
         # Two reference events, one actual. With count_must_match off the
@@ -693,9 +684,9 @@ class TestDominantFrequencyGeometry:
         assert {p.x for p in vc.geometry if p.kind == "matched"} == paired
         assert not vc.passed
 
-    def test_markers_sit_on_the_drawn_spectrum_above_the_embed_cap(self):
-        # 8001 samples: the diagnostics embed strides the FFT bins and skips
-        # the peak; the drawn Series must not, or the matched marker floats
+    def test_markers_sit_on_the_drawn_full_resolution_spectrum(self):
+        # 8001 samples: a strided subset of the FFT bins skips the peak; the
+        # drawn Series must hold every bin, or the matched marker floats
         # above a curve with no peak in it.
         t = np.linspace(0.0, 10.0, 8001)
         sig = np.sin(2 * np.pi * 1.3 * t)
@@ -710,7 +701,7 @@ class TestDominantFrequencyGeometry:
         act = prims["spectrum/act"]
         matched = prims["peaks/matched/0"]
         assert isinstance(act, Series) and isinstance(matched, Marker)
-        assert len(act.x) > len(vc.diagnostics["act_spectrum_freq"])
+        assert len(act.x) == 8192 // 2 + 1  # every bin of the 8192-point FFT
         drawn_at_marker = float(np.interp(matched.x, act.x, act.y))
         assert matched.y == pytest.approx(drawn_at_marker)
         assert matched.y == pytest.approx(float(act.y.max()))

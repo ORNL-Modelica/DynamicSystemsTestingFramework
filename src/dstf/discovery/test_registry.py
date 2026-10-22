@@ -54,7 +54,6 @@ class TestModel:
     # ends up naming anything.
     unit_tests_instance: str = "unitTests"
     x_expressions: list[str] = field(default_factory=list)
-    x_reference: list[float] | None = None
     # Simulation fields default to None = "not set by any source" so the
     # spec-over-annotation merge can use `is not None` as the explicitly-set
     # sentinel, exactly like number_of_intervals / output_interval — review
@@ -230,8 +229,6 @@ def _build_test_model_from_recognizer_results(
             model.unit_tests_instance = r.unit_tests_instance
         if r.x_expressions:
             model.x_expressions = list(r.x_expressions)
-        if r.x_reference is not None:
-            model.x_reference = list(r.x_reference)
         if r.stop_time is not None:
             model.stop_time = r.stop_time
             model.field_sources["stop_time"] = "annotation"

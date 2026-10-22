@@ -103,6 +103,67 @@ class TestConfigLoadsRecognizers:
             Config(config_file=str(cfg_path))
         assert not issubclass(ConfigError, RecognizerSpecError)
 
+    @pytest.mark.parametrize("removed", ["x_raw", "error_expected", "x_reference"])
+    def test_a_recognizer_filling_a_removed_field_is_refused(self, tmp_path, removed):
+        """Nothing read these fields, so a recognizer that fills one is told
+        so when testing.json loads, not left to fill nothing."""
+        _make_lib(tmp_path)
+        cfg_dir = tmp_path / "refs"
+        cfg_dir.mkdir()
+        cfg_path = _write_testing_json(
+            cfg_dir,
+            "../TestLib",
+            recognizers=[
+                {
+                    "name": "test:old",
+                    "match": {
+                        "type": "component-instantiation",
+                        "component_name": "UT",
+                    },
+                    "fields": {removed: {"from": "parameter", "name": "e"}},
+                }
+            ],
+        )
+        with pytest.raises(
+            ConfigError,
+            match=f"recognizer 'test:old' targets unknown field '{removed}'",
+        ):
+            Config(config_file=str(cfg_path))
+
+    @pytest.mark.parametrize("shape", ["array_floats", "list"])
+    def test_a_shape_nothing_reads_is_refused(self, tmp_path, shape):
+        """A field's shape is one value or a list of expressions; another
+        was read as one value, silently — `array_floats` too, once the one
+        field it filled was gone."""
+        _make_lib(tmp_path)
+        cfg_dir = tmp_path / "refs"
+        cfg_dir.mkdir()
+        cfg_path = _write_testing_json(
+            cfg_dir,
+            "../TestLib",
+            recognizers=[
+                {
+                    "name": "test:shape",
+                    "match": {
+                        "type": "component-instantiation",
+                        "component_name": "UT",
+                    },
+                    "fields": {
+                        "x_expressions": {
+                            "from": "parameter",
+                            "name": "x",
+                            "shape": shape,
+                        }
+                    },
+                }
+            ],
+        )
+        with pytest.raises(
+            ConfigError,
+            match=f"field 'x_expressions' shape \"{shape}\" is none of: scalar, array",
+        ):
+            Config(config_file=str(cfg_path))
+
 
 # ---------------------------------------------------------------------------
 # Discovery picks up user recognizers + respects disable_bundled

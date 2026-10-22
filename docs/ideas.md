@@ -2171,8 +2171,14 @@ To settle in that session:
 
 Grill before planning.
 
-**CI speed and a test-value audit (owner, 2026-10-18; investigate in depth
-before any work).** CI's `quality` job took 54 min on PR #6, and a full local
+**~~CI speed and a test-value audit~~ (owner, 2026-10-18; investigate in depth
+before any work) — DONE (2026-10-21).** All three items below shipped: the
+`_compare_*` calls go through `resolve_mode(...).compare` and test_cli runs a
+fake backend (PR #11), and the planted-bug pass ran over the core modules
+(PR #12). The test trim stays open as its own work, measurement first: over
+core-module mutants only, 1,281 tests have an equal kill set, 1,970 are strict
+subsets and 421 kill nothing; the owner approves the list before any deletion.
+CI's `quality` job took 54 min on PR #6, and a full local
 run takes 40–55 min. The suite is ~8,100 tests in one serial job, with
 coverage on and no parallel runner (`pytest-xdist` is not in the lock), and
 many tests start real processes (the `dstf` CLI, workers, the tool's server).

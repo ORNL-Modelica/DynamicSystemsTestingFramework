@@ -9344,3 +9344,39 @@ every name is under Other variables, every metric offered) and 9 (K1's
 
 *Correcting the record:* `"CPUtime.final"` read the summary raw; only the
 card's bare `"CPUtime"` read the rounded copy.
+
+## D163 — A window with no samples scores nothing (2026-10-21)
+
+**Context.** `_no_data_failure` already held that a comparison with nothing
+to compare — an empty baseline slice, an empty run, a window that excludes
+every sample — FAILS as not scored, never passes vacuously. nrmse, tube,
+range and scalar kept it; dominant-frequency kept it for the run (fewer
+than four samples) but not for its baseline. Three modes did not:
+
+- **event-timing, auto-detected**, in a window holding none of the run's
+  samples found no events on either side, paired none, and PASSED.
+- **points** and **event-timing with declared events** failed there, but
+  as a row not scored (`no actual samples (empty trajectory)`, points) or
+  as declared events not found (event-timing), so the tool drew the
+  criterion as scored and offered its drags and a Ctrl+click on a plot
+  that showed nothing of it.
+- **dominant-frequency with no peaks declared**, over a baseline with
+  fewer than four samples in its window, failed as "No peaks declared" and
+  pointed at Reference peaks the plot could not mark.
+
+**Decision.** A points or event-timing criterion whose run (after its
+window) holds no sample is not scored: `no actual samples to check (empty
+trajectory or window)`, the sentence a range uses, with rows declared as
+without. Auto-detected events whose baseline holds no sample in the window
+read `no reference samples to compare (empty baseline or window)`, as does
+a points criterion with no rows (its final value against the baseline's).
+A dominant-frequency criterion with no peaks declared reads `no reference
+samples to take a spectrum of (empty baseline or window)` over a baseline
+with no samples, and `too few reference samples to take a spectrum of
+(fewer than 4)` over one of one to three (with peaks declared it needs no
+baseline). Either way the test FAILS and says why, and `dstf author`
+follows from `reporting.status.not_scored_reason`: the editor says why,
+offers no drag and no Ctrl+click, and keeps the window's ⌖ where the card
+draws a plot.
+
+TRANSFORM is unaffected: every TRANSFORM criterion is nrmse.

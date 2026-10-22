@@ -773,12 +773,6 @@ def _incompatible_dataset_comparison(
         name=leaf.variable,
         passed=False,
         nrmse=float("inf"),
-        rmse=float("inf"),
-        signal_range=0.0,
-        max_abs_error=float("inf"),
-        max_abs_error_time=0.0,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
         mode=leaf.metric,
         diagnostics={
             "error": (
@@ -809,12 +803,6 @@ def _leaf_config_error_comparison(
         name=leaf.variable,
         passed=False,
         nrmse=float("inf"),
-        rmse=float("inf"),
-        signal_range=0.0,
-        max_abs_error=float("inf"),
-        max_abs_error_time=0.0,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
         mode=leaf.metric,
         diagnostics={
             "error": f"metric {leaf.metric!r} misconfigured: {exc}",
@@ -850,12 +838,6 @@ def _missing_baseline_comparison(
         name=leaf.variable,
         passed=False,
         nrmse=float("inf"),
-        rmse=float("inf"),
-        signal_range=0.0,
-        max_abs_error=float("inf"),
-        max_abs_error_time=0.0,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
         mode=leaf.metric,
         diagnostics={"error": said},
     )
@@ -885,12 +867,6 @@ def _missing_scalar_path_comparison(
         name=leaf.variable,
         passed=False,
         nrmse=float("inf"),
-        rmse=float("inf"),
-        signal_range=0.0,
-        max_abs_error=float("inf"),
-        max_abs_error_time=0.0,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
         mode=leaf.metric,
         diagnostics={
             "error": f"quantity {path!r} not found in {side}"
@@ -929,11 +905,6 @@ def _missing_variable_comparison(
         name=name,
         passed=False,
         nrmse=float("inf"),
-        rmse=float("inf"),
-        signal_range=0.0,
-        max_abs_error=float("inf"),
-        max_abs_error_time=0.0,
-        reference_final=float("nan"),
         actual_final=actual_final,
         # The criterion's own metric: with none, a scalar or tube criterion
         # on a missing variable read as an nrmse one.

@@ -4,11 +4,6 @@ import numpy as np
 import pytest
 
 from dstf.backends.types import TestResult
-from dstf.comparison.algorithms import (
-    _dedup_time_series,
-    _find_event_boundaries,
-    _split_segments,
-)
 from dstf.comparison.comparator import _check_structural_changes
 from dstf.comparison.registry import summarize
 from dstf.comparison.sides import Sides
@@ -16,116 +11,30 @@ from dstf.storage.baseline_codec import decode_reference
 from scoring import score
 
 # ---------------------------------------------------------------------------
-# Event boundary detection
+# Event detection: an event is two or more samples at one time
 # ---------------------------------------------------------------------------
 
 
-class TestFindEventBoundaries:
-    def test_no_events(self):
-        t = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
-        assert _find_event_boundaries(t) == []
-
-    def test_single_event_double(self):
-        t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
-        assert _find_event_boundaries(t) == [(3, 3)]
-
-    def test_single_event_triple(self):
-        """Dymola sometimes produces 3 duplicate time points per event."""
-        t = np.array([0.0, 0.5, 1.0, 1.0, 1.0, 1.5, 2.0])
-        assert _find_event_boundaries(t) == [(3, 4)]
-
-    def test_multiple_events(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0])
-        assert _find_event_boundaries(t) == [(2, 2), (4, 4)]
-
-    def test_event_at_start(self):
-        t = np.array([0.0, 0.0, 1.0, 2.0])
-        assert _find_event_boundaries(t) == [(1, 1)]
-
-    def test_event_at_end(self):
-        t = np.array([0.0, 1.0, 2.0, 2.0])
-        assert _find_event_boundaries(t) == [(3, 3)]
-
-    def test_empty(self):
-        t = np.array([1.0])
-        assert _find_event_boundaries(t) == []
-
-
-# ---------------------------------------------------------------------------
-# Segment splitting
-# ---------------------------------------------------------------------------
-
-
-class TestSplitSegments:
-    def test_no_boundaries(self):
-        t = np.array([0.0, 1.0, 2.0])
-        v = np.array([0.0, 1.0, 2.0])
-        segs = _split_segments(t, v, [])
-        assert len(segs) == 1
-        np.testing.assert_array_equal(segs[0][0], t)
-        np.testing.assert_array_equal(segs[0][1], v)
-
-    def test_single_boundary_double(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0])
-        v = np.array([0.0, 0.9, 1.1, 2.0])
-        segs = _split_segments(t, v, [(2, 2)])
-        assert len(segs) == 2
-        np.testing.assert_array_equal(segs[0][0], [0.0, 1.0])
-        np.testing.assert_array_equal(segs[0][1], [0.0, 0.9])
-        np.testing.assert_array_equal(segs[1][0], [1.0, 2.0])
-        np.testing.assert_array_equal(segs[1][1], [1.1, 2.0])
-
-    def test_single_boundary_triple(self):
-        """Triple time points: middle value is skipped."""
-        t = np.array([0.0, 1.0, 1.0, 1.0, 2.0])
-        v = np.array([0.0, 0.9, 0.95, 1.1, 2.0])
-        segs = _split_segments(t, v, [(2, 3)])
-        assert len(segs) == 2
-        np.testing.assert_array_equal(segs[0][0], [0.0, 1.0])
-        np.testing.assert_array_equal(segs[0][1], [0.0, 0.9])
-        np.testing.assert_array_equal(segs[1][0], [1.0, 2.0])
-        np.testing.assert_array_equal(segs[1][1], [1.1, 2.0])
-
-    def test_two_boundaries(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0])
-        v = np.array([0.0, 0.9, 1.1, 1.9, 2.1, 3.0])
-        segs = _split_segments(t, v, [(2, 2), (4, 4)])
-        assert len(segs) == 3
-
-
-# ---------------------------------------------------------------------------
-# Deduplication
-# ---------------------------------------------------------------------------
-
-
-class TestDedupTimeSeries:
-    def test_keep_first(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0])
-        v = np.array([0.0, 0.9, 1.1, 2.0])
-        t_out, v_out = _dedup_time_series(t, v, keep="first")
-        np.testing.assert_array_equal(t_out, [0.0, 1.0, 2.0])
-        np.testing.assert_array_equal(v_out, [0.0, 0.9, 2.0])
-
-    def test_keep_last(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0])
-        v = np.array([0.0, 0.9, 1.1, 2.0])
-        t_out, v_out = _dedup_time_series(t, v, keep="last")
-        np.testing.assert_array_equal(t_out, [0.0, 1.0, 2.0])
-        np.testing.assert_array_equal(v_out, [0.0, 1.1, 2.0])
-
-    def test_no_duplicates(self):
-        t = np.array([0.0, 1.0, 2.0])
-        v = np.array([0.0, 1.0, 2.0])
-        t_out, v_out = _dedup_time_series(t, v, keep="first")
-        np.testing.assert_array_equal(t_out, t)
-        np.testing.assert_array_equal(v_out, v)
-
-    def test_multiple_duplicates(self):
-        t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0])
-        v = np.array([0.0, 0.9, 1.1, 1.9, 2.1, 3.0])
-        t_out, v_out = _dedup_time_series(t, v, keep="last")
-        np.testing.assert_array_equal(t_out, [0.0, 1.0, 2.0, 3.0])
-        np.testing.assert_array_equal(v_out, [0.0, 1.1, 2.1, 3.0])
+@pytest.mark.parametrize(
+    ("time", "events"),
+    [
+        ([0.0, 0.5, 1.0, 1.5, 2.0], []),
+        ([0.0, 0.5, 1.0, 1.0, 1.5, 2.0], [1.0]),
+        # Dymola sometimes writes three samples at an event: still one.
+        ([0.0, 0.5, 1.0, 1.0, 1.0, 1.5, 2.0], [1.0]),
+        ([0.0, 1.0, 1.0, 2.0, 2.0, 3.0], [1.0, 2.0]),
+        ([0.0, 0.0, 1.0, 2.0], [0.0]),
+        ([0.0, 1.0, 2.0, 2.0], [2.0]),
+        ([1.0], []),
+    ],
+    ids=["none", "double", "triple", "two", "at-start", "at-end", "one-sample"],
+)
+def test_the_events_a_run_holds_are_its_repeated_times(time, events):
+    t = np.array(time)
+    vc = score({"mode": "event-timing"}, t, np.zeros_like(t), t, np.zeros_like(t))
+    drawn = [p.time for p in vc.geometry if p.id.startswith("events/act/")]
+    assert drawn == events
+    assert vc.diagnostics["act_event_count"] == len(events)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +74,17 @@ class TestCompareTrajectories:
         """Identical signals with three events (double time points) => NRMSE = 0."""
         t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0])
         v = np.array([0.0, 0.9, 1.1, 1.9, 2.1, 2.9, 3.1, 4.0])
+        vc = score({"mode": "nrmse"}, t, v, t, v, tolerance=1e-4)
+        assert vc.passed is True
+        assert vc.nrmse == 0.0
+
+    def test_an_events_middle_sample_is_scored_against_nothing(self):
+        """Three samples at an event: the first ends the segment before it,
+        the last starts the one after, and the middle one is neither — it
+        differs from both here, and the score of a run against itself is
+        still 0."""
+        t = np.array([0.0, 1.0, 1.0, 1.0, 2.0])
+        v = np.array([0.0, 0.9, 0.95, 1.1, 2.0])
         vc = score({"mode": "nrmse"}, t, v, t, v, tolerance=1e-4)
         assert vc.passed is True
         assert vc.nrmse == 0.0
@@ -478,7 +398,6 @@ class TestStructuralChanges:
 from pathlib import Path
 
 from dstf.backends.types import VariableResult
-from dstf.comparison.algorithms import _interpolate_tube_widths
 from dstf.comparison.comparator import compare_test
 from dstf.discovery.test_registry import TestModel
 
@@ -589,65 +508,73 @@ class TestToleranceResolution:
 # ---------------------------------------------------------------------------
 
 
+def _widths(times, points, interpolation="linear"):
+    """A tube's widths at ``times``, read off the band it draws over a zero
+    reference: its upper edge is the upper width, its lower edge minus the
+    lower width."""
+    times = np.asarray(times, dtype=float)
+    zero = np.zeros_like(times)
+    vc = score(
+        {
+            "mode": "tube",
+            "tube_width_mode": "band",
+            "tube_points": points,
+            "tube_interpolation": interpolation,
+        },
+        times,
+        zero,
+        times,
+        zero,
+    )
+    (band,) = [p for p in vc.geometry if p.id == "tube/band"]
+    assert band.time.tolist() == times.tolist()
+    return band.upper.tolist(), (-band.lower).tolist()
+
+
 class TestTubeInterpolation:
     def test_single_point_constant(self):
         """Single control point applies everywhere."""
-        times = np.array([0.0, 50.0, 100.0])
         points = [{"time": 0.0, "upper": 10.0, "lower": 10.0}]
-        upper, lower = _interpolate_tube_widths(times, points)
-        np.testing.assert_array_equal(upper, [10.0, 10.0, 10.0])
-        np.testing.assert_array_equal(lower, [10.0, 10.0, 10.0])
-
-    def test_points_without_upper_or_lower_are_rejected(self):
-        """`abs` / `rel` control points are not a control-point format."""
-        times = np.array([0.0, 50.0, 100.0])
-        points = [{"time": 0.0, "abs": 10.0, "rel": 0.05}]
-        with pytest.raises(ValueError, match="'upper' and/or 'lower'"):
-            _interpolate_tube_widths(times, points)
+        upper, lower = _widths([0.0, 50.0, 100.0], points)
+        assert upper == [10.0, 10.0, 10.0]
+        assert lower == [10.0, 10.0, 10.0]
 
     def test_linear_interpolation(self):
         """Linear interpolation between two points."""
-        times = np.array([0.0, 50.0, 100.0])
         points = [
             {"time": 0.0, "upper": 10.0, "lower": 10.0},
             {"time": 100.0, "upper": 20.0, "lower": 20.0},
         ]
-        upper, lower = _interpolate_tube_widths(times, points, "linear")
+        upper, lower = _widths([0.0, 50.0, 100.0], points)
         np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
         np.testing.assert_allclose(lower, [10.0, 15.0, 20.0])
 
     def test_hold_at_boundaries(self):
         """Values before first and after last point are held."""
-        times = np.array([0.0, 50.0, 100.0, 200.0])
         points = [
             {"time": 50.0, "upper": 10.0, "lower": 10.0},
             {"time": 100.0, "upper": 20.0, "lower": 20.0},
         ]
-        upper, _ = _interpolate_tube_widths(times, points, "linear")
+        upper, _ = _widths([0.0, 50.0, 100.0, 200.0], points)
         assert upper[0] == 10.0  # Before first point: hold
         assert upper[3] == 20.0  # After last point: hold
 
     def test_constant_interpolation_stepwise(self):
         """Constant mode uses stepwise (hold previous)."""
-        times = np.array([0.0, 25.0, 75.0, 100.0])
         points = [
             {"time": 0.0, "upper": 10.0, "lower": 10.0},
             {"time": 50.0, "upper": 20.0, "lower": 20.0},
         ]
-        upper, _ = _interpolate_tube_widths(times, points, "constant")
-        assert upper[0] == 10.0
-        assert upper[1] == 10.0
-        assert upper[2] == 20.0
-        assert upper[3] == 20.0
+        upper, _ = _widths([0.0, 25.0, 50.0, 75.0, 100.0], points, "constant")
+        assert upper == [10.0, 10.0, 20.0, 20.0, 20.0]
 
     def test_asymmetric_upper_lower(self):
         """Asymmetric format with independent upper/lower."""
-        times = np.array([0.0, 50.0, 100.0])
         points = [
             {"time": 0.0, "upper": 10.0, "lower": 5.0},
             {"time": 100.0, "upper": 20.0, "lower": 10.0},
         ]
-        upper, lower = _interpolate_tube_widths(times, points, "linear")
+        upper, lower = _widths([0.0, 50.0, 100.0], points)
         np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
         np.testing.assert_allclose(lower, [5.0, 7.5, 10.0])
 
@@ -658,6 +585,16 @@ class TestTubeInterpolation:
 
 
 class TestTubeComparison:
+    def test_a_tubes_nrmse_field_is_its_worst_violation(self):
+        """As a range's: 0.75 above a band of ±0.5 is 0.25 outside it. Its
+        score (what a weighted group sums) stays the fraction inside."""
+        t = np.array([0.0, 1.0, 2.0])
+        cfg = {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.5}
+        vc = score(cfg, t, np.zeros(3), t, np.array([0.0, 0.75, 0.0]))
+        assert (vc.nrmse, vc.tube_worst_violation) == (0.25, 0.25)
+        inside = score(cfg, t, np.zeros(3), t, np.array([0.0, 0.25, 0.0]))
+        assert (inside.nrmse, inside.tube_points_inside) == (0.0, 1.0)
+
     def test_constant_tube_passes(self):
         """Signal inside constant tube passes."""
         ref_time = np.array([0.0, 0.5, 1.0])
@@ -782,22 +719,6 @@ class TestTubeComparison:
         assert not vc.passed
         assert vc.tube_worst_violation == pytest.approx(1.0)
         assert vc.tube_worst_violation_time == 0.0
-
-    def test_nrmse_still_computed_in_tube_mode(self):
-        """NRMSE is computed even in tube mode for reporting."""
-        ref_time = np.array([0.0, 1.0])
-        ref_values = np.array([0.0, 10.0])
-        act_values = np.array([1.0, 11.0])
-
-        vc = score(
-            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 5.0},
-            ref_time,
-            ref_values,
-            ref_time,
-            act_values,
-        )
-        assert vc.nrmse > 0
-        assert vc.rmse > 0
 
     def test_tube_via_compare_test(self):
         """Tube mode dispatched correctly via compare_test."""
@@ -1420,7 +1341,8 @@ class TestPointsDeclaredPath:
         result = score({"mode": "points"}, ref_t, ref_v, act_t, act_v, tolerance=0.01)
         # act[-1] = 5.001, ref[-1] = 5.0, delta = 0.001 < 0.01 → PASS.
         assert result.passed
-        assert result.diagnostics["delta"] == pytest.approx(0.001)
+        assert result.max_abs_error == pytest.approx(0.001)
+        assert summarize(result).criterion.startswith("Final value error 1.000e-03")
 
     def test_single_ref_relative_point_passes(self):
         ref_t, ref_v, act_t, act_v = self._make_traj()
@@ -2002,6 +1924,74 @@ EMPTY = np.array([])
 # ---------------------------------------------------------------------------
 
 
+class TestWhatAModeDoesNotMeasure:
+    """`rmse`, `signal_range`, `max_abs_error`, `max_abs_error_time` and the
+    two finals are set by a mode whose summary reports them; one that has
+    none of them, and a criterion that was not scored, leaves them at
+    ``inf`` (the errors), ``0.0`` (the range and the time) and ``nan`` (the
+    finals): not measured, which a plug-in reading them can tell."""
+
+    UNSET = {
+        "rmse": "inf",
+        "signal_range": "0.0",
+        "max_abs_error": "inf",
+        "max_abs_error_time": "0.0",
+        "reference_final": "nan",
+        "actual_final": "nan",
+    }
+
+    @staticmethod
+    def _read(vc, fields) -> dict:
+        return {f: repr(getattr(vc, f)) for f in fields}
+
+    def test_a_range_measures_none_of_them(self):
+        t = np.linspace(0.0, 1.0, 5)
+        vc = score(
+            {"mode": "range", "min_value": 0.0, "max_value": 2.0}, EMPTY, EMPTY, t, t
+        )
+        assert vc.passed
+        assert self._read(vc, self.UNSET) == self.UNSET
+
+    def test_event_timing_measures_where_its_largest_delta_is(self):
+        ref = np.array([0.0, 1.0, 1.0, 2.0])
+        act = np.array([0.0, 1.05, 1.05, 2.0])
+        vc = score(
+            {"mode": "event-timing", "time_tolerance": 0.1},
+            ref,
+            np.zeros(4),
+            act,
+            np.zeros(4),
+        )
+        assert vc.passed
+        assert vc.max_abs_error_time == 1.0  # the reference event's time
+        unset = {f: v for f, v in self.UNSET.items() if f != "max_abs_error_time"}
+        assert self._read(vc, unset) == unset
+
+    def test_a_criterion_not_scored_measures_none_of_them(self):
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        spec = parse_metric_tree(
+            {
+                "metric": "range",
+                "variable": "x",
+                "min_value": 0.0,
+                "window": {"start": 50.0, "end": 60.0},
+            }
+        )
+        reference = {
+            "time": [0.0, 10.0],
+            "variables": [{"index": 1, "name": "x", "values": [1.0, 1.0]}],
+        }
+        comp = compare_test(
+            _mk_test(metric_tree_spec=spec), _mk_result(), decode_reference(reference)
+        )
+        (vc,) = comp.variables
+        assert vc.diagnostics["error"] == (
+            "no actual samples to check (empty trajectory or window)"
+        )
+        assert self._read(vc, self.UNSET) == self.UNSET
+
+
 class TestEmptyDataFails:
     def test_nrmse_empty_reference_fails(self):
         vc = score(
@@ -2079,6 +2069,29 @@ class TestEmptyDataFails:
         assert {vc.name: vc.passed for vc in comp.variables} == {"x": False, "y": True}
         assert not comp.passed
 
+    @pytest.mark.parametrize(
+        ("n", "reason"),
+        [
+            (
+                0,
+                "no reference samples to take a spectrum of (empty baseline or window)",
+            ),
+            (1, "too few reference samples to take a spectrum of (fewer than 4)"),
+            (2, "too few reference samples to take a spectrum of (fewer than 4)"),
+            (3, "too few reference samples to take a spectrum of (fewer than 4)"),
+        ],
+    )
+    def test_no_peaks_over_a_baseline_of_too_few_samples(self, n, reason):
+        """No peaks declared: the baseline's spectrum is what the plot marks
+        peaks on, and one needs four samples."""
+        from dstf.reporting.status import not_scored_reason
+
+        t = np.linspace(0.0, 1.0, 64)
+        ref = t[:n]
+        vc = score({"mode": "dominant-frequency"}, ref, np.sin(ref), t, np.sin(t))
+        assert not vc.passed
+        assert not_scored_reason(vc) == reason
+
     def test_windowed_leaf_excluding_everything_fails(self):
         """A window that slices away every sample must fail the leaf."""
         from dstf.comparison.tree_spec import parse_metric_tree
@@ -2104,6 +2117,79 @@ class TestEmptyDataFails:
         }
         comp = compare_test(test, result, decode_reference(reference))
         assert not comp.passed
+
+    @pytest.mark.parametrize(
+        "criterion",
+        [
+            {"metric": "points", "points": [{"time": 55.0, "value": 1.0}]},
+            {"metric": "points"},
+            {"metric": "event-timing", "time_tolerance": 0.1},
+            {"metric": "event-timing", "events": [{"time": 55.0}]},
+        ],
+        ids=["points-rows", "points-final", "events-auto", "events-declared"],
+    )
+    def test_a_window_with_no_samples_scores_nothing(self, criterion):
+        """A window that holds none of the run's samples leaves a points or
+        event-timing criterion nothing to check: it is not scored and the
+        test FAILS, saying why — as a range is. Auto-detected events passed
+        here, on no events at all."""
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.reporting.status import not_scored_reason
+
+        spec = parse_metric_tree(
+            {**criterion, "variable": "x", "window": {"start": 50.0, "end": 60.0}}
+        )
+        test = _mk_test(metric_tree_spec=spec)
+        reference = {
+            "time": [0.0, 5.0, 5.0, 10.0],
+            "variables": [{"index": 1, "name": "x", "values": [1.0, 1.0, 2.0, 2.0]}],
+        }
+        comp = compare_test(test, _mk_result(), decode_reference(reference))
+        (vc,) = comp.variables
+        reason = "no actual samples to check (empty trajectory or window)"
+        assert not comp.passed
+        assert not_scored_reason(vc) == reason
+        assert summarize(vc).criterion == (
+            f"{criterion['metric']} criterion not scored — {reason}"
+        )
+
+    @pytest.mark.parametrize(
+        ("metric", "reason"),
+        [
+            (
+                "event-timing",
+                "no reference samples to compare (empty baseline or window)",
+            ),
+            (
+                "dominant-frequency",
+                "no reference samples to take a spectrum of (empty baseline or window)",
+            ),
+            ("points", "no reference samples to compare (empty baseline or window)"),
+        ],
+        ids=["events", "no-peaks", "points-final"],
+    )
+    def test_a_baseline_with_no_samples_in_the_window_scores_nothing(
+        self, metric, reason
+    ):
+        """The run reaches the window and the baseline does not: auto-detected
+        events have nothing to be compared with, a points criterion with no
+        rows no final value, and a dominant-frequency criterion with no
+        peaks declared no spectrum to mark peaks on."""
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.reporting.status import not_scored_reason
+
+        spec = parse_metric_tree(
+            {"metric": metric, "variable": "x", "window": {"start": 7.0, "end": 10.0}}
+        )
+        test = _mk_test(metric_tree_spec=spec)
+        reference = {
+            "time": [0.0, 2.0, 2.0, 5.0],
+            "variables": [{"index": 1, "name": "x", "values": [1.0, 1.0, 2.0, 2.0]}],
+        }
+        comp = compare_test(test, _mk_result(), decode_reference(reference))
+        (vc,) = comp.variables
+        assert not comp.passed
+        assert not_scored_reason(vc) == reason
 
 
 # ---------------------------------------------------------------------------
@@ -2184,16 +2270,6 @@ class TestPointsClipping:
                 ),
             ),
             (
-                [{"time": 1}, {"time": 2}],
-                ([0, 1, 2], [0, 1, 2]),
-                ([], []),
-                (
-                    ("checkpoints", "2 of 2 failed, 2 not scored"),
-                    ("t=1", "no actual samples (empty trajectory)"),
-                    ("t=2", "no actual samples (empty trajectory)"),
-                ),
-            ),
-            (
                 [
                     {"time": 5, "value": 1},
                     {"time": 6, "value": 1},
@@ -2207,23 +2283,8 @@ class TestPointsClipping:
                     ("t=6", "checkpoint time outside actual trajectory"),
                 ),
             ),
-            (
-                [{"value": 2, "tolerance": 0.1}],
-                ([], []),
-                ([], []),
-                (
-                    ("checkpoints", "1 of 1 failed, 1 not scored"),
-                    ("t=0", "no actual samples (empty trajectory)"),
-                ),
-            ),
         ],
-        ids=[
-            "no reference",
-            "outside the reference",
-            "no actual",
-            "beyond the actual",
-            "nothing at all",
-        ],
+        ids=["no reference", "outside the reference", "beyond the actual"],
     )
     def test_each_row_that_could_not_be_scored_fails_and_is_listed(
         self, rows, ref, act, details
@@ -4032,12 +4093,13 @@ class TestAMalformedToleranceIsAConfigError:
         ("mode", "key"), [("band", "tube_abs"), ("rel", "tube_rel")]
     )
     def test_the_tube_scorer_names_the_width_it_read(self, mode, key):
-        """The scorer reads a raw config too (`TubeMode` hands it Sides):
-        each width is refused under its own name."""
-        from dstf.comparison.algorithms import _tube_bounds
+        """A mode built from its config dataclass, not by `resolve_mode`,
+        reads the width raw: each is refused under its own name."""
+        from dstf.comparison.modes import TubeConfig, TubeMode
 
+        raw = TubeConfig(tube_width_mode=mode, **{key: {"lower": 1}})
         with pytest.raises(ValueError, match=f"^{key} must be a number or "):
-            _tube_bounds(_S_T, _S_REF, {"tube_width_mode": mode, key: {"lower": 1}})
+            TubeMode(raw).compare(_S_T, _S_REF, _S_T, _S_REF)
 
     @pytest.mark.parametrize(
         "bad",
@@ -4107,15 +4169,16 @@ class TestAMalformedToleranceIsAConfigError:
         assert unset.config.tube_min_width == 0.0
 
     def test_the_tube_scorer_refuses_a_min_width_it_reads_raw(self):
-        """The scorer reads a raw config too, and refuses it in the same
-        words: no caller of it meets a ``TypeError``."""
-        from dstf.comparison.algorithms import _tube_bounds
+        """A mode built from its config dataclass reaches the scorer with
+        the floor raw, and is refused in the same words: no caller meets a
+        ``TypeError``."""
+        from dstf.comparison.modes import TubeConfig, TubeMode
 
-        raw = {"tube_width_mode": "band", "tube_abs": 0.5, "tube_min_width": "0.1"}
+        raw = TubeConfig(tube_width_mode="band", tube_abs=0.5, tube_min_width="0.1")
         with pytest.raises(
             ValueError, match='^tube_min_width must be one number, got "0.1"$'
         ):
-            _tube_bounds(_S_T, _S_REF, raw)
+            TubeMode(raw).compare(_S_T, _S_REF, _S_T, _S_REF)
 
     @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
     def test_event_timing_does_not_read_the_leafs_tolerance(self, flat):
@@ -4241,9 +4304,6 @@ class TestEveryFieldThatTakesAPairScoresOne:
         a = _sides_compare(number, flat=flat, kind=kind).variables[0]
         b = _sides_compare(pair, flat=flat, kind=kind).variables[0]
         assert "error" not in a.diagnostics, a.diagnostics
-        # The declared peaks are echoed as authored: the one field that differs.
-        for vc in (a, b):
-            vc.diagnostics.pop("peaks_declared", None)
         assert _sides_fields(a) == _sides_fields(b)
         assert _sides_coords(a) == _sides_coords(b)
 
@@ -4529,11 +4589,6 @@ class TestABaseToleranceIsANumber:
 # ---------------------------------------------------------------------------
 
 import random  # noqa: E402
-
-from dstf.comparison.algorithms import (  # noqa: E402
-    _min_delta_in_box,
-    _violation_in_box,
-)
 
 _P_T = np.linspace(0.0, 10.0, 101)
 _P_FLAT = np.full_like(_P_T, 2.0)
@@ -4831,15 +4886,7 @@ class TestPointsFinalCheckSides:
     def test_it_is_strict_on_each_side(self, offset, tol, ok):
         vc = _pts(_P_FLAT + offset, None, tolerance=tol)
         assert vc.passed is ok
-        assert vc.nrmse == abs(offset) and vc.diagnostics["delta"] == abs(offset)
-        # Leaves Python as data: the pair, serialisable.
-        assert vc.diagnostics["tolerance"] == {"lower": tol.lower, "upper": tol.upper}
-        json.dumps(vc.diagnostics)
-
-    def test_equal_sides_are_written_as_the_number(self):
-        vc = _pts(_P_FLAT, None, tolerance=Sides(0.25, 0.25))
-        assert vc.diagnostics["tolerance"] == 0.25
-        assert isinstance(vc.diagnostics["tolerance"], float)
+        assert vc.nrmse == abs(offset) and vc.max_abs_error == abs(offset)
 
     @pytest.mark.parametrize(
         "ref,act",
@@ -4851,15 +4898,16 @@ class TestPointsFinalCheckSides:
             {"mode": "points"}, *(np.array(x, dtype=float) for x in (*ref, *act))
         )
         assert vc.passed is True
-        assert vc.diagnostics["delta"] == 0.0
+        assert vc.max_abs_error == 0.0
 
     def test_an_empty_reference_is_not_scored(self):
         vc = score(
             {"mode": "points"}, EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([2.0, 2.0])
         )
         assert vc.passed is False
-        assert (
-            summarize(vc).criterion == "points criterion not scored — empty trajectory"
+        assert summarize(vc).criterion == (
+            "points criterion not scored — "
+            "no reference samples to compare (empty baseline or window)"
         )
 
 
@@ -4900,12 +4948,13 @@ class TestPointsIdentity:
                 )
                 t = float(at[i])
                 on_edge += 1
-            t_lo, t_hi = max(t - xt, float(at[0])), min(t + xt, float(at[-1]))
-            if t_hi < t_lo:
-                continue
-            delta, _ = _min_delta_in_box(at, av, t_lo, t_hi, target)
-            violation, _ = _violation_in_box(at, av, t_lo, t_hi, target, lim, lim)
-            assert (violation == 0.0) == (delta <= lim), (k, target, lim, delta)
+            row = {"time": t, "value": target, "tolerance": lim, "time_tolerance": xt}
+            vc = score({"mode": "points", "points": [row]}, EMPTY, EMPTY, at, av)
+            if "unscored_point" in vc.diagnostics:
+                continue  # its time box misses the run
+            # The band's verdict, and today's rule on the closest approach.
+            delta = vc.max_abs_error
+            assert vc.passed == (delta <= lim), (k, target, lim, delta)
             checked += 1
             # The sweep must reach the cases where judging the sample against
             # the band's edges (``target ± limit``) would have flipped today's

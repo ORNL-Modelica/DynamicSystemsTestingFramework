@@ -163,7 +163,9 @@ RECOGNIZER: dict[str, Setting] = {
         "What a test takes from its class, by the field it sets (stop_time, "
         'tolerance, simulate_only, ...): {"from": "parameter" | '
         '"annotation" | "experiment-annotation" | "constant", ...} with '
-        "that source's own keys — name, annotation, shape, value.",
+        "that source's own keys — name, annotation, shape, value. shape is "
+        '"scalar" (the default: one value) or "array" (a {...} list); any '
+        "other is refused.",
     ),
 }
 

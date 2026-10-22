@@ -50,8 +50,12 @@ verdicts:
   filter a regular expression and `Aa` makes it match case. Number columns
   take `>x`, `<=x`, `=x` or a range `a..b`.
 - **Criteria** counts the criteria that passed out of all of them; **Worst
-  NRMSE** is the worst `nrmse` score of the test's criteria, `—` for a test
-  with none; **Resolution** says whether the test's simulation settings came
+  NRMSE** is the worst score of the test's `nrmse` criteria that were scored.
+  It reads `nan` when one of them scored a number that is not finite (NaN or
+  inf, from a sample of the run or baseline that is not finite), and sorts above every number then. With no
+  `nrmse` criterion scored, it reads `n/a (N unscored)` when N of the test's
+  criteria, of any metric, were not scored, and `—` when no criterion went unscored;
+  **Resolution** says whether the test's simulation settings came
   from the model's annotation, from `test_spec.json`, or both (hover for which
   field came from where).
 - A row reads `SIMULATED` when its simulation ran and nothing scored it — after

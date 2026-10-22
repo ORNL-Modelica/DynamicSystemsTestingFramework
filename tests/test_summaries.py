@@ -538,7 +538,7 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
         )
         # The score and where it is stay the largest |Δ|'s, as a number's.
         assert vc.max_abs_error == pytest.approx(0.04)
-        assert vc.max_abs_error_time == pytest.approx(0.5)
+        assert vc.diagnostics["worst_time"] == pytest.approx(0.5)
         assert vc.diagnostics["worst_delta"] == pytest.approx(0.04)
         assert [f["time"] for f in vc.diagnostics["point_failures"]] == [
             pytest.approx(0.8)
@@ -610,10 +610,10 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
         vc, crit = self._ten({5: +0.125, 8: -0.125})
         assert vc.passed
         assert crit.startswith("Point at t=5: error +1.250e-01 vs ")
-        assert vc.max_abs_error_time == 5.0
+        assert vc.diagnostics["worst_time"] == 5.0
         vc, crit = self._ten({8: -0.125, 5: +0.125})
         assert crit.startswith("Point at t=8: error −1.250e-01 vs ")
-        assert vc.max_abs_error_time == 8.0
+        assert vc.diagnostics["worst_time"] == 8.0
 
     def test_points_relative_rows_rank_by_the_distance_beyond_the_scaled_band(self):
         """In the signal's units, not the band's: at target 1 the band is
@@ -645,7 +645,6 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
         assert crit == "Largest point error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
         # ... the verdict and the score as they were: the largest |Δ|.
         assert not vc.passed and vc.max_abs_error == pytest.approx(0.04)
-        assert vc.max_abs_error_time == pytest.approx(0.5)
         assert ("worst delta", "4.000000e-02 at t=0.5") in summarize(vc).details
         vc, crit = self._points({5: +0.01, 8: -0.02}, 0.03)
         assert crit == "Largest point error 2.000e-02 vs tolerance 3.000e-02 → PASS"
@@ -672,7 +671,6 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
         )
         assert vc.nrmse == pytest.approx(0.04)
         assert vc.max_abs_error_time == 5.0
-        assert vc.diagnostics["max_time_delta"] == pytest.approx(0.04)
         # ... whichever comes first.
         _, crit = self._events(+0.04, -0.03, self.BAND)
         assert crit.startswith("Max event Δt −3.000e-02 vs ")
@@ -824,7 +822,6 @@ class TestADeclaredEventNeverFound:
         assert vc.diagnostics == {
             "ref_event_count": 3,
             "act_event_count": 3,
-            "max_time_delta": pytest.approx(0.05),
             "time_tolerance": 0.1,
             "counts_match": True,
             "unmatched_events": 0,
@@ -925,7 +922,6 @@ class TestADeclaredEventNeverFound:
         assert set(vc.diagnostics) == {
             "ref_event_count",
             "act_event_count",
-            "max_time_delta",
             "time_tolerance",
             "counts_match",
         }
@@ -1151,28 +1147,20 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
             )
             assert vc.diagnostics["unscored_point"] == {"time": 5.0, "reason": reason}
 
-    @pytest.mark.parametrize(
-        ("ref_time", "act_time", "reason"),
-        [
-            ("T", "empty", "no actual samples (empty trajectory)"),
-            ("empty", "T", "no reference data for ref-relative point"),
-        ],
-    )
-    def test_a_checkpoint_with_nothing_to_score_is_recorded_unscored(
-        self, ref_time, act_time, reason
-    ):
-        """An empty run, or a ref-relative checkpoint with no reference: the
-        row fails without a delta, so it is the `unscored_point` the
-        sentence reports — not a row among the scored ones."""
+    def test_a_checkpoint_with_nothing_to_score_is_recorded_unscored(self):
+        """A ref-relative checkpoint with no reference: the row fails without
+        a delta, so it is the `unscored_point` the sentence reports — not a
+        row among the scored ones."""
         from dstf.comparison.sides import Sides
 
-        times = {"T": self.T, "empty": np.array([])}
+        reason = "no reference data for ref-relative point"
+        empty = np.array([])
         vc = score(
             {"mode": "points", "points": [{"time": 0.5}]},
-            times[ref_time],
-            times[ref_time],
-            times[act_time],
-            times[act_time],
+            empty,
+            empty,
+            self.T,
+            self.T,
             tolerance=Sides(0.03, 0.03),
         )
         vc.tolerance_used = Sides(0.03, 0.03)
@@ -1260,7 +1248,7 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
             act,
             tolerance=Sides(0.01, 0.05),
         )
-        assert vc.max_abs_error_time == pytest.approx(0.4)
+        assert vc.diagnostics["worst_time"] == pytest.approx(0.4)
         assert vc.diagnostics["worst_point_time"] == 0.5
         assert summarize(vc).criterion == (
             "Point at t=0.5: error +1.000e-01 vs tolerance "
@@ -1343,7 +1331,6 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
     EVENT_KEYS = {
         "ref_event_count",
         "act_event_count",
-        "max_time_delta",
         "time_tolerance",
         "counts_match",
         "unmatched_events",

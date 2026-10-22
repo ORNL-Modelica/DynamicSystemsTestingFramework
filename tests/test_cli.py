@@ -822,6 +822,22 @@ def _run_args(env, *extra) -> argparse.Namespace:
     )
 
 
+def _with_baseline(env, model_id: str) -> None:
+    """Accept ``model_id``'s result as its primary baseline: a later run of
+    the same result PASSes against it."""
+    env.make([model_id], results={model_id: _mk_result(model_id)})
+    assert cmd_run(_run_args(env, "--accept")) == 0
+
+
+def _with_cpu_time(result: TestResult, seconds: float) -> TestResult:
+    """``result`` holding a ``CPUtime`` that ends at ``seconds``: the Sim (s)
+    a page shows where the run kept no wall time."""
+    t = result.variables[0].time
+    cpu = np.linspace(0.0, seconds, len(t))
+    result.diagnostics = [VariableResult(index=2, time=t, values=cpu, name="CPUtime")]
+    return result
+
+
 def _stored_model_ids(env) -> set[str]:
     ref_dir = env.ref_root / FAKE / detect_os()
     if not ref_dir.exists():
@@ -892,21 +908,19 @@ class TestRerunEmptySetIsSuccess:
         assert "Nothing to rerun" in out
         assert "failed" in out
 
-    def test_empty_rerun_still_produces_merged_report(
-        self, run_env, capsys, monkeypatch
-    ):
-        called = {}
-
-        def fake_suite(comparisons, results, tests, store, config, **_):
-            called["comparisons"] = list(comparisons)
-
-        monkeypatch.setattr("dstf.cli.run_cmds._generate_report_suite", fake_suite)
+    def test_empty_rerun_still_produces_merged_report(self, run_env, capsys):
+        """Nothing failed, so nothing reruns; `--report` still writes the
+        prior run's pages, each with the verdict it was scored with."""
         t1 = "Lib.T1"
-        run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
+        _with_baseline(run_env, t1)
+        run_env.make([t1], results={}, prior_results={t1: _mk_result(t1)})
         rc = cmd_run(_run_args(run_env, "--rerun", "failed", "--report"))
         assert rc == 0
-        assert called, "merged report suite was not generated"
-        assert (run_env.work_dir / "dashboard.html").exists()
+        (sidecar,) = (run_env.work_dir / "reports").glob("*/comparison_data.json")
+        assert (sidecar.parent / "interactive.html").exists()
+        assert json.loads(sidecar.read_text(encoding="utf-8"))["summary"]["status"] == (
+            "PASS"
+        )
 
     def test_plain_empty_filter_still_exits_one(self, run_env, capsys):
         t1 = "Lib.T1"
@@ -923,43 +937,23 @@ class TestRerunEmptySetIsSuccess:
 
 
 class TestTheDashboardGetsTheComparisons:
-    def _record(self, monkeypatch) -> dict:
-        seen: dict = {}
+    """Each page a scoring command writes carries the verdict it scored and
+    the run's CPU time, read off the page: no sidecar holds either."""
 
-        # The results ride along: the page's Sim (s) takes a CPU time
-        # from them where no wall time was kept.
-        def final(
-            work_dir, rerun_flags=None, comparisons=(), results=None, theme="default"
-        ):
-            seen["final"] = [c.model_id for c in comparisons]
-            seen["final_results"] = sorted(results or {})
-
-        def final_to(
-            work_dir,
-            output_path,
-            rerun_flags=None,
-            comparisons=(),
-            results=None,
-            theme="default",
-        ):
-            seen["final_to"] = [c.model_id for c in comparisons]
-            seen["final_to_results"] = sorted(results or {})
-
-        monkeypatch.setattr("dstf.reporting.dashboard_render.render_final", final)
-        monkeypatch.setattr("dstf.reporting.dashboard_render.render_final_to", final_to)
-        return seen
+    @staticmethod
+    def _says(page) -> tuple[bool, bool]:
+        """Whether ``page`` reads PASS and a Sim (s) of 4.25 (the CPU time)."""
+        html = page.read_text(encoding="utf-8")
+        return ('data-status="pass"' in html, 'data-sort-sim="4.25"' in html)
 
     @pytest.mark.parametrize("command", ["run", "compare"])
     def test_the_page_is_rendered_with_the_comparisons(
-        self, run_env, monkeypatch, tmp_path, command
+        self, run_env, tmp_path, command
     ):
-        seen = self._record(monkeypatch)
         t1 = "Lib.T1"
-        run_env.make(
-            [t1],
-            results={"Lib.T1": _mk_result("Lib.T1")},
-            prior_results={"Lib.T1": _mk_result("Lib.T1")},
-        )
+        _with_baseline(run_env, t1)
+        result = _with_cpu_time(_mk_result(t1), 4.25)
+        run_env.make([t1], results={t1: result}, prior_results={t1: result})
         out = tmp_path / "page.html"
         args = build_arg_parser().parse_args(
             ["--config", str(run_env.config_dir), command]
@@ -967,27 +961,24 @@ class TestTheDashboardGetsTheComparisons:
             + ["--report-format", "html", "--output", str(out)]
         )
         (cmd_run if command == "run" else cmd_compare)(args)
-        assert seen == {
-            "final": ["Lib.T1"],
-            "final_results": ["Lib.T1"],
-            "final_to": ["Lib.T1"],
-            "final_to_results": ["Lib.T1"],
-        }
+        assert self._says(run_env.work_dir / "dashboard.html") == (True, True)
+        assert self._says(out) == (True, True)
 
-    def test_an_empty_rerun_renders_the_prior_comparisons(self, run_env, monkeypatch):
+    def test_an_empty_rerun_renders_the_prior_comparisons(self, run_env):
         """`--rerun` with nothing to rerun still refreshes the page, with
         the comparisons it scored the prior results by."""
-        seen = self._record(monkeypatch)
         t1 = "Lib.T1"
-        run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
+        _with_baseline(run_env, t1)
+        prior = _with_cpu_time(_mk_result(t1), 4.25)
+        run_env.make([t1], results={}, prior_results={t1: prior})
         assert cmd_run(_run_args(run_env, "--rerun", "failed")) == 0
-        assert seen == {"final": ["Lib.T1"], "final_results": ["Lib.T1"]}
+        assert self._says(run_env.work_dir / "dashboard.html") == (True, True)
 
-    def test_the_report_suite_renders_with_the_comparisons(self, run_env, monkeypatch):
-        """`run --report` writes the sidecars, then the page — with the
-        comparisons: a test whose run timed out has no sidecar verdict to
-        read, and without its comparison it would read TIMED OUT, not the
-        SIM_FAIL the console printed."""
+    def test_a_timed_out_run_reads_the_sim_fail_its_comparison_says(self, run_env):
+        """Without --report there is no sidecar: the page's verdict is the
+        comparison the command hands it. A test whose run timed out reads
+        the SIM_FAIL the console printed, not the TIMED OUT its progress
+        recorded."""
         from dstf.backends.progress import ProgressReporter
 
         t1 = "Lib.T1"
@@ -1003,13 +994,178 @@ class TestTheDashboardGetsTheComparisons:
             return _run(tests)
 
         backend.run_tests = run_tests
-        monkeypatch.setattr(
-            "dstf.reporting.report_suite.generate_report_suite", lambda *a, **k: None
-        )
-        cmd_run(_run_args(run_env, "--report"))
+        cmd_run(_run_args(run_env))
         html = (run_env.work_dir / "dashboard.html").read_text(encoding="utf-8")
-        assert 'data-status="sim-fail"' in html
+        assert html.count('data-status="sim-fail"') == 1
         assert 'data-status="timed-out"' not in html
+
+    def test_the_report_page_lists_each_test_with_its_verdict_and_cpu(self, run_env):
+        """`run --report` writes the per-test pages, then the dashboard: with
+        no status.json (this backend keeps none), the comparisons and
+        results the command hands it are what put the test on the page —
+        its PASS, and its CPU time as Sim (s)."""
+        t1 = "Lib.T1"
+        _with_baseline(run_env, t1)
+        result = _with_cpu_time(_mk_result(t1), 4.25)
+        run_env.make([t1], results={t1: result})
+        cmd_run(_run_args(run_env, "--report"))
+        assert not (run_env.work_dir / "status.json").exists()
+        assert self._says(run_env.work_dir / "dashboard.html") == (True, True)
+
+
+# ---------------------------------------------------------------------------
+# A worst NRMSE of nan (the owner's call): a criterion scored by nrmse whose
+# score is NaN makes the test's worst NRMSE nan, which sorts above every number
+# ---------------------------------------------------------------------------
+
+
+class TestAWorstNrmseOfNan:
+    """A NaN sample in the run makes an nrmse score NaN. The test's Worst
+    NRMSE reads ``nan`` — with no metrics tree, with one, and beside another
+    nrmse criterion that scored a number, listed before it — and sorts as
+    above every number; a test whose nrmse criteria all scored numbers reads
+    its worst, and one whose only criterion was not scored reads the count."""
+
+    T = np.linspace(0.0, 1.0, 11)
+    NAN_AT_5 = np.where(np.arange(11) == 5, np.nan, np.sin(T))
+    #: sin + 1e-3 against sin over [0, 1]: an RMSE of 1e-3 over a range of
+    #: sin(1).
+    FINE = 1e-3 / np.sin(1.0)
+
+    ENTRIES = [
+        {"model": "Lib.NanFlat", "variables": ["x"]},
+        {
+            "model": "Lib.NanTree",
+            "variables": ["x"],
+            "metrics": {"metric": "nrmse", "variable": "x", "tolerance": 0.05},
+        },
+        {
+            "model": "Lib.NanMixed",
+            "variables": ["x", "y"],
+            "metrics": {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": 0.05},
+                    {"metric": "nrmse", "variable": "y", "tolerance": 0.05},
+                ],
+            },
+        },
+        {
+            "model": "Lib.Unscored",
+            "variables": ["x"],
+            "metrics": {"metric": "nrmse", "variable": "z", "tolerance": 0.05},
+        },
+        {"model": "Lib.Fine", "variables": ["x"]},
+    ]
+
+    def _result(self, model_id, x, y=None):
+        names = {"x": x} if y is None else {"x": x, "y": y}
+        return TestResult(
+            model_id=model_id,
+            success=True,
+            variables=[
+                VariableResult(index=i, time=self.T, values=np.asarray(v), name=n)
+                for i, (n, v) in enumerate(names.items(), 1)
+            ],
+        )
+
+    def _rows(self, page) -> dict[str, tuple[str, str]]:
+        """Each row's Worst NRMSE cell text and sort value, by model."""
+        html = page.read_text(encoding="utf-8")
+        rows = {}
+        for row in re.findall(r"<tr class=(?:.|\n)*?</tr>", html):
+            model = re.search(r'data-model="([^"]*)"', row)
+            if model is None:
+                continue
+            sort = re.search(r'data-sort-nrmse="([^"]*)"', row).group(1)
+            # The cell: the one after the Elapsed cell's, its span's text
+            # where it has one.
+            cell = re.search(
+                r'class="elapsed-cell">[^<]*</td>\s*<td>(?:<span[^>]*>)?([^<]*)', row
+            ).group(1)
+            rows[model.group(1)] = (cell, sort)
+        return rows
+
+    def _scored(self, run_env, *extra, progress=False):
+        """Accept sin, then run the NaN (and the fine) results. With
+        ``progress`` the run keeps a status.json, as a backend does, naming
+        each test's report directory."""
+        from dstf.backends.progress import ProgressReporter
+
+        sin = np.sin(self.T)
+        baseline = {
+            e["model"]: self._result(e["model"], sin, sin) for e in self.ENTRIES
+        }
+        run_env.make(self.ENTRIES, results=baseline)
+        assert cmd_run(_run_args(run_env, "--accept")) == 0
+        refs = {
+            json.loads(f.read_text(encoding="utf-8"))["model_id"]: f.stem
+            for f in (run_env.ref_root / FAKE / detect_os()).glob("ref_*.json")
+        }
+        backend = run_env.make(
+            self.ENTRIES,
+            results={
+                "Lib.NanFlat": self._result("Lib.NanFlat", self.NAN_AT_5),
+                "Lib.NanTree": self._result("Lib.NanTree", self.NAN_AT_5),
+                "Lib.NanMixed": self._result("Lib.NanMixed", sin + 1e-3, self.NAN_AT_5),
+                "Lib.Unscored": self._result("Lib.Unscored", sin),
+                "Lib.Fine": self._result("Lib.Fine", sin + 1e-3),
+            },
+        )
+        if progress:
+
+            def run_tests(tests, _run=backend.run_tests):
+                reporter = ProgressReporter(run_env.work_dir, total=len(tests))
+                for i, t in enumerate(tests, 1):
+                    key = f"test_{i:04d}"
+                    reporter.register(key, t.model_id, report_dir=refs[t.model_id])
+                    reporter.on_finish(key, success=True, elapsed=0.1)
+                reporter.finalize()
+                return _run(tests)
+
+            backend.run_tests = run_tests
+        cmd_run(_run_args(run_env, *extra))
+        return self._rows(run_env.work_dir / "dashboard.html")
+
+    def _says(self, rows) -> None:
+        nan = ("nan", "Infinity")
+        assert {m: rows[m] for m in ("Lib.NanFlat", "Lib.NanTree", "Lib.NanMixed")} == {
+            "Lib.NanFlat": nan,
+            "Lib.NanTree": nan,
+            "Lib.NanMixed": nan,
+        }
+        assert rows["Lib.Unscored"] == ("n/a (1 unscored)", "")
+        text, sort = rows["Lib.Fine"]
+        assert (text, float(sort)) == ("1.1884e-03", pytest.approx(self.FINE))
+
+    @pytest.mark.parametrize("extra", [(), ("--report",)], ids=["run", "report"])
+    def test_the_column_reads_nan_and_sorts_above_every_number(self, run_env, extra):
+        self._says(self._scored(run_env, *extra))
+
+    def test_a_page_built_from_the_sidecars_alone_reads_nan(self, run_env):
+        """The report suite writes each test's sidecar, where a NaN is null;
+        a page rendered from those sidecars and the run's status.json alone,
+        with no comparison in hand, reads nan again by the sidecar's count."""
+        from dstf.reporting.dashboard_render import render_final
+
+        self._scored(run_env, "--report", progress=True)
+        render_final(run_env.work_dir)
+        self._says(self._rows(run_env.work_dir / "dashboard.html"))
+
+    def test_the_report_page_reads_nan(self, run_env):
+        self._scored(run_env, "--report")
+        stats = {}
+        for sidecar in (run_env.work_dir / "reports").glob("*/comparison_data.json"):
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+            (worst,) = [k for k in data["key_stats"] if k["label"] == "Worst NRMSE"]
+            stats[data["model_id"]] = worst["current"]
+        assert stats == {
+            "Lib.NanFlat": "nan",
+            "Lib.NanTree": "nan",
+            "Lib.NanMixed": "nan",
+            "Lib.Unscored": "n/a (1 unscored criterion)",
+            "Lib.Fine": "1.1884e-03",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1085,6 +1241,7 @@ class TestEveryRunEndsOnAStaticPage:
             assert _REFRESH in self._page(run_env)  # live until the compare
             raise exc
 
+        # A patch of DSTF's own step, by exception: its raising is the point.
         monkeypatch.setattr("dstf.comparison.comparator.compare_all", compare_all)
         with pytest.raises(type(exc)):
             cmd_run(_run_args(run_env))
@@ -1103,6 +1260,7 @@ class TestEveryRunEndsOnAStaticPage:
         def render_final(*a, **k):
             raise OSError("disk full")
 
+        # Patches of DSTF's own steps, by exception: their raising is the point.
         monkeypatch.setattr("dstf.comparison.comparator.compare_all", compare_all)
         monkeypatch.setattr(
             "dstf.reporting.dashboard_render.render_final", render_final
@@ -1136,6 +1294,7 @@ class TestEveryRunEndsOnAStaticPage:
         def accept_run_results(*a, **k):
             raise OSError("reference dir read-only")
 
+        # A patch of DSTF's own step, by exception: its raising is the point.
         monkeypatch.setattr(
             "dstf.storage.accept.accept_run_results", accept_run_results
         )

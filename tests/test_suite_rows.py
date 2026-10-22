@@ -33,6 +33,30 @@ def test_a_scored_pass(session):
     assert row.edits == 0 and not row.waiting
 
 
+def test_a_nan_score_is_the_rows_worst_and_sorts_above_every_number(tmp_path):
+    """A NaN sample in D's run makes its nrmse score NaN: the Suite row's
+    Worst NRMSE reads ``nan`` and sorts as above every number, as the
+    dashboard's does (the owner's call)."""
+    import json
+    import math
+
+    from dstf.reporting.rows import COLUMNS
+
+    cfg, work = _project(tmp_path)
+    result = work / "test_0004" / "result.json"
+    data = json.loads(result.read_text(encoding="utf-8"))
+    data["variables"]["x"][3] = float("nan")
+    result.write_text(json.dumps(data), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    (nrmse,) = [c for c in COLUMNS if c.key == "nrmse"]
+    row = suite_row(s, D)
+    assert (nrmse.text(row), nrmse.sort(row)) == ("nan", math.inf)
+    fine = suite_row(s, A)
+    assert nrmse.text(fine) == "1.5309e-01"
+    assert nrmse.sort(fine) == pytest.approx(0.153093108924, rel=1e-12)
+
+
 def test_no_baseline_has_no_ref_id(session):
     row = suite_row(session, B)
     assert row.status == "NO_REF"

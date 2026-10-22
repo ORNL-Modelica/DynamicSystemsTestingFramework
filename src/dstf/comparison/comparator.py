@@ -786,12 +786,6 @@ def compare_test(
                     name=name,
                     passed=False,
                     nrmse=float("inf"),
-                    rmse=float("inf"),
-                    signal_range=0.0,
-                    max_abs_error=float("inf"),
-                    max_abs_error_time=0.0,
-                    reference_final=float("nan"),
-                    actual_final=float("nan"),
                     mode=mode.name,
                     # As on the no-baseline comparison below: the one it
                     # would have applied, not the default 0.0.
@@ -975,12 +969,6 @@ def _config_error_comparison(
         name=var_result.name,
         passed=False,
         nrmse=float("inf"),
-        rmse=float("inf"),
-        signal_range=0.0,
-        max_abs_error=float("inf"),
-        max_abs_error_time=0.0,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
         mode=metric_name if registry_metric(metric_name) is not None else "",
         diagnostics={"error": str(exc), "config_error": True},
     )

@@ -11,6 +11,7 @@ per-test sidecar writes them, and the dashboard reads them back through
 
 from __future__ import annotations
 
+import math
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -21,7 +22,7 @@ from ..backends.common.statistics import diagnostic_final
 from ..backends.types import VariableResult
 from ..comparison.types import TestComparison
 from ..storage.baseline_codec import recorded_digits
-from .context_builder import worst_nrmse
+from .context_builder import nan_nrmse_count, worst_nrmse
 from .status import (
     CANCELLED,
     LIVE_STATES,
@@ -195,6 +196,14 @@ def _num_col(key: str, label: str, get: Callable[[TestRow], Any], spec: str) -> 
 SIM_CPU_TIP = "CPU time from the result file (no wall time was kept)"
 
 
+def _nrmse_sort(row: TestRow) -> float | None:
+    """A worst NRMSE of ``nan`` (a criterion scored no finite number) sorts
+    above every number, as an infinite one."""
+    if row.worst_score is not None and math.isnan(row.worst_score):
+        return math.inf
+    return row.worst_score
+
+
 def _nrmse_text(row: TestRow) -> str:
     if row.worst_score is not None:
         return format(row.worst_score, ".4e")
@@ -232,7 +241,7 @@ COLUMNS: tuple[Column, ...] = (
         label="Worst NRMSE",
         kind="number",
         text=_nrmse_text,
-        sort=lambda r: r.worst_score,
+        sort=_nrmse_sort,
     ),
     Column(
         # What is counted is CRITERIA — the leaves of the test's tree, one
@@ -338,6 +347,9 @@ def summary_fields(
         # directly to the stored reference JSON.
         "ref_file": ref_file.as_uri() if ref_file else None,
         "worst_nrmse": worst,
+        # ``worst_nrmse`` is NaN where this is not 0, and strict JSON writes
+        # a NaN as null: the sidecar's reader says nan again by this count.
+        "n_nan": nan_nrmse_count(variables),
         "n_unscored": n_unscored,
         "n_vars": len(variables),
         "n_vars_passed": sum(1 for v in variables if v.passed),
@@ -451,6 +463,9 @@ def enrich_row(
     # An empty provenance says nothing: the live row's stands.
     if not changes.get("field_sources", True):
         del changes["field_sources"]
+    # A worst NRMSE of NaN was written as null: its count says it was one.
+    if summary.get("n_nan"):
+        changes["worst_score"] = math.nan
     # The compare phase's verdict replaces the live state. A sidecar written
     # before ``status`` existed carries only the word a person reads. A
     # status outside the vocabulary, or not a word at all, is ignored: the

@@ -17,6 +17,7 @@ from ..comparison.types import VariableComparison
 from ..storage.baseline import ReferenceFile, StoredVariable
 from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 from .stats_rows import SECTION_TITLES, report_text, statistics_rows
+from .status import not_scored_reason
 
 logger = logging.getLogger(__name__)
 
@@ -60,24 +61,49 @@ def worst_nrmse(comparisons: list) -> tuple[float | None, int]:
     header and the tool's Suite page show.
 
     ``VariableComparison.nrmse`` is overloaded: it carries the mode's own
-    number (a range's worst violation, an event's Δt), and for a tube the
-    NRMSE against the reference — which the tube does not score by. A max
-    over every leaf showed ``2.8213e-01`` for a test whose tube passed at
-    100 % inside while the criterion that failed, an nrmse, was at
-    ``4.264e-02``. Only a criterion whose mode is ``nrmse`` has an NRMSE
-    that decided anything; a test with none has no worst one (``None``:
-    the column reads "—").
+    number (a range's or a tube's worst violation, an event's Δt). A max
+    over every leaf once showed a tube's ``2.8213e-01`` for a test whose
+    tube passed at 100 % inside while the criterion that failed, an nrmse,
+    was at ``4.264e-02``. Only a criterion whose mode is ``nrmse`` has an
+    NRMSE that decided anything; a test with none has no worst one
+    (``None``: the column reads "—"). One whose score is not a finite
+    number (an nrmse over a NaN sample) makes the worst ``nan`` (the
+    owner's call): the column reads "nan", and the test sorts above every
+    number, whatever its other nrmse criteria scored.
 
-    A sentinel leaf of any mode (a metric config that would not build, no
-    data to compare) carries ``inf``/``nan``: it is left out and counted,
-    so one of them cannot swallow the real numbers, and the surface can
-    say that criteria went unscored.
+    A criterion that was not scored (`reporting.status.not_scored_reason`:
+    a metric config that would not build, no data to compare) carries
+    ``inf``/``nan``: it is left out and counted, so one of them cannot
+    swallow the real numbers, and the surface can say that criteria went
+    unscored. That rule, and not the number, decides what is counted: a
+    tube scored over a NaN sample, or a dominant-frequency criterion with a
+    peak not found, carries a non-finite number and WAS scored.
     """
-    scored = [
-        vc.nrmse for vc in comparisons if vc.mode == "nrmse" and math.isfinite(vc.nrmse)
+    scored = _nrmse_scores(comparisons)
+    n_unscored = sum(1 for vc in comparisons if not_scored_reason(vc) is not None)
+    if not scored:
+        return None, n_unscored
+    if not all(math.isfinite(s) for s in scored):
+        return math.nan, n_unscored
+    return max(scored), n_unscored
+
+
+def _nrmse_scores(comparisons: Iterable[VariableComparison]) -> list[float]:
+    """The scores of the criteria scored by nrmse: of mode ``nrmse``, and
+    scored (`reporting.status.not_scored_reason`)."""
+    return [
+        vc.nrmse
+        for vc in comparisons
+        if vc.mode == "nrmse" and not_scored_reason(vc) is None
     ]
-    n_unscored = sum(1 for vc in comparisons if not math.isfinite(vc.nrmse))
-    return (max(scored) if scored else None, n_unscored)
+
+
+def nan_nrmse_count(comparisons: Iterable[VariableComparison]) -> int:
+    """How many criteria scored by nrmse scored a number that is not finite:
+    what makes `worst_nrmse` ``nan``. A sidecar writes that ``nan`` as null
+    (strict JSON), so it carries this count beside it for a reader to say
+    ``nan`` again."""
+    return sum(1 for s in _nrmse_scores(comparisons) if not math.isfinite(s))
 
 
 def _text_of(texts: dict[str, VariableText] | None, name: str, expression: str) -> str:
@@ -545,9 +571,10 @@ def _build_key_stats(
 
     key_stats = []
     # "Worst NRMSE": the worst among the criteria scored by nrmse
-    # (`worst_nrmse`), the dashboard column's number. A test whose
-    # criteria are all of other metrics reads "—": it has none. Sentinel
-    # leaves are left out and counted.
+    # (`worst_nrmse`), the dashboard column's number — "nan" where one of
+    # them scored no finite number. A test whose criteria are all of other
+    # metrics reads "—": it has none. Sentinel leaves are left out and
+    # counted.
     worst_score, n_unscored = worst_nrmse(comparisons)
     # The unscored count rides in ``current`` (the template prefixes
     # ``reference`` with "ref:", which this is not).
@@ -581,7 +608,8 @@ def _build_key_stats(
             }
         )
     elif comparisons:
-        # Criteria, and none of them scored by nrmse.
+        # Criteria, none of them both of mode nrmse and scored, and none
+        # left unscored.
         key_stats.append({"label": "Worst NRMSE", "current": "—", "reference": ""})
 
     for path, label in (

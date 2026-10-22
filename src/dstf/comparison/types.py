@@ -33,6 +33,11 @@ class VariableComparison:
     """A criterion's verdict on one variable, as a mode's
     :meth:`~dstf.comparison.modes.ComparisonMode.compare` returns it.
 
+    ``rmse`` through ``actual_final`` are set by a mode whose summary reports
+    them; a mode that has none of them, and a criterion that could not be
+    scored, leaves them at their defaults (``inf`` / ``nan``: not measured,
+    and ``0.0`` for a range or a time).
+
     Attributes:
         index: Set by the framework; 0 from a mode.
         name: Set by the framework; ``""`` from a mode.
@@ -53,12 +58,12 @@ class VariableComparison:
     name: str
     passed: bool
     nrmse: float  # Normalized RMSE (pass/fail metric)
-    rmse: float  # Raw RMSE
-    signal_range: float  # max(ref) - min(ref), for context
-    max_abs_error: float  # Largest absolute deviation
-    max_abs_error_time: float  # Time at which it occurs
-    reference_final: float
-    actual_final: float
+    rmse: float = float("inf")  # Raw RMSE
+    signal_range: float = 0.0  # max(ref) - min(ref), for context
+    max_abs_error: float = float("inf")  # Largest absolute deviation
+    max_abs_error_time: float = 0.0  # Time at which it occurs
+    reference_final: float = float("nan")
+    actual_final: float = float("nan")
     is_constant: bool = False  # True if reference signal has zero range
     # The tolerance applied for this variable, per side (a number is both).
     tolerance_used: Sides = Sides(0.0, 0.0)

@@ -255,4 +255,5 @@
 - Every per-test report directory writes `comparison_data.json` alongside `interactive.html` — the full render context serialized to JSON, trajectories at full resolution
 - A downstream viewer or tool can be built against this file without touching the Python side; the dashboard's final page reads its summary for each row's numbers and its report link
 - **Preserve this** when extending reports: new context fields go into the dict, old fields stay JSON-serializable
+- It is strict JSON: a number that is not finite is written as null. `summary.worst_nrmse` is null both for a test with no nrmse criterion scored and for one whose worst is nan; `summary.n_nan` (how many nrmse criteria scored a number that is not finite) tells them apart, and the dashboard reads nan back by it
 - Editing is not built on it: the report page computes nothing and mutates nothing (D125), and criteria are edited in `dstf author`, which scores in Python

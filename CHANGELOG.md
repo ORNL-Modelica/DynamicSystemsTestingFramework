@@ -8,8 +8,44 @@ this file says when they do.
 
 ## [Unreleased]
 
+### Changed
+
+- `VariableComparison`'s `rmse`, `signal_range`, `max_abs_error`,
+  `max_abs_error_time`, `reference_final` and `actual_final` have defaults
+  (`inf`, `0.0`, `inf`, `0.0`, `nan`, `nan`: not measured), and a mode sets
+  only those its summary reports. A tube's `nrmse` is its worst violation, as
+  a range's is (it was an NRMSE nothing scored by). Its `diagnostics` no
+  longer carry what nothing showed: the embedded spectra,
+  `detected_reference_peaks_hz`, `peaks_declared`, `max_rel_error`,
+  `reason`, `max_time_delta`, `reference_scalar`, `actual_scalar`, and a
+  points final check's `tolerance` and `delta`.
+- A window that holds no samples scores nothing. A points or event-timing
+  criterion whose window holds none of the run's is not scored and FAILS
+  saying so (`no actual samples to check (empty trajectory or window)`), as
+  are auto-detected events whose baseline holds none there (`no reference
+  samples to compare …`). In either case auto-detected events used to PASS
+  when the other side had no events either, and with `count_must_match:
+  false` whatever events the other side had.
+  A dominant-frequency criterion with no peaks declared is not scored either
+  over a baseline with no samples (`no reference samples to take a spectrum
+  of …`) or fewer than four (`too few reference samples to take a spectrum
+  of (fewer than 4)`), where it failed as "No peaks declared".
+
 ### Fixed
 
+- A test whose nrmse criterion scored a number that is not finite (NaN or
+  inf, from a sample of its run or baseline that is
+  not finite) reads `nan` as its Worst NRMSE, on the
+  dashboard, its report page and the tool's Suite page, and sorts above every
+  number; it read its other criteria's worst, or `n/a (1 unscored)`. In
+  `comparison_data.json`, `summary.worst_nrmse` is then null, even beside
+  criteria that scored numbers, and the new `summary.n_nan` counts the
+  nrmse criteria that scored no finite number.
+- The Worst NRMSE column's "unscored" count is the criteria that were not
+  scored. It counted every criterion whose number was not finite, so a tube
+  or an nrmse over a NaN sample, and a dominant-frequency criterion with a
+  peak not found or none declared (over a baseline of 4 or more samples),
+  read as unscored though each was scored.
 - A points criterion with a lower/upper tolerance pair, whose curve is
   infinite throughout its time box, names that value as the closest one
   (`closest value inf is outside [0.9, 1.2]`) instead of saying no sample
@@ -41,13 +77,26 @@ this file says when they do.
 - `TestModel` no longer has `source_package`, `short_name`, `result_file`,
   `x_raw` or `error_expected`: nothing read them. A plug-in that builds a
   `TestModel` drops those arguments.
+- `TestModel.x_reference` and `RecognizerResult.x_raw` / `error_expected` /
+  `x_reference` are gone, and the bundled recognizer no longer reads
+  `errorExpected` or `x_reference`: nothing read them. A `testing.json`
+  recognizer whose `fields` names `x_raw`, `error_expected` or `x_reference`
+  now fails to load (`targets unknown field`); drop that field. A field's
+  `shape` is `scalar` or `array`: `array_floats`, which only `x_reference`
+  could use, is gone, and any other shape, read as `scalar` until now, fails
+  to load.
 - A criterion's `MetricResult.diagnostics`, what a plug-in `Combinator.combine`
   receives, no longer carries `mode`, `tolerance` or `max_abs_error`; they are
   its `diagnostics["variable"]` (a `VariableComparison`): `mode`,
-  `tolerance_used` and `max_abs_error`. The removed `tolerance` was the
-  tolerance the criterion was scored with, as one number where its two sides
-  are equal and a `lower`/`upper` dict where they differ; `tolerance_used` is
-  that tolerance as a `Sides`, whose `lower` and `upper` are the two sides.
+  `tolerance_used` and `max_abs_error`. Only nrmse, tube and points measure
+  `max_abs_error`; range, scalar, event-timing and dominant-frequency leave it
+  `inf` (not measured), as does a criterion that was not scored, and their own
+  number is the criterion's `nrmse`: a range's or a bounded scalar's worst
+  violation, a scalar's deviation from its baseline, the largest event Δt, the
+  largest relative peak error. The removed `tolerance` was the tolerance the
+  criterion was scored with, as one number where its two sides are equal and
+  a `lower`/`upper` dict where they differ; `tolerance_used` is that tolerance
+  as a `Sides`, whose `lower` and `upper` are the two sides.
 
 ## [1.2.0] - 2026-10-19
 

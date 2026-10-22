@@ -3778,6 +3778,51 @@ async def test_a_card_that_draws_no_plot_offers_no_click_on_one(shell, child, ar
         ]
 
 
+#: A points criterion with a row, and auto-detected events, on x, each
+#: windowed off D's run: neither has a sample to check, so neither is scored
+#: (D163) — on a card that draws x.
+OFF_THE_RUN = {
+    "points": {
+        "metric": "points",
+        "variable": "x",
+        "points": [{"time": 5.5}],
+        "window": {"start": 5.0, "end": 6.0},
+    },
+    "events": {
+        "metric": "event-timing",
+        "variable": "x",
+        "window": {"start": 5.0, "end": 6.0},
+    },
+}
+
+
+@pytest.mark.parametrize("leaf", OFF_THE_RUN.values(), ids=OFF_THE_RUN.keys())
+async def test_a_window_off_the_run_leaves_nothing_to_drag_or_add(shell, leaf):
+    """Nothing of it is scored, so nothing of it is drawn: the hint says
+    to edit the fields — no Ctrl+click, though its metric adds a row where
+    it is scored — and only its window's ⌖ stay, to move the window back
+    onto the run."""
+    tree = copy.deepcopy(TREE)
+    tree["children"].append(copy.deepcopy(leaf))
+    _stage_tree(shell, D, tree)
+    path = f"/metrics/children/{len(tree['children']) - 1}"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        (card,) = [i for i, c in enumerate(page.cards) if path in c.rows]
+        with page.client:
+            page.cards[card].show()
+        user.find(marker=f"criterion:{card}:{path}").click()
+        await _settled(lambda: page.open == (card, path))
+        hinted = _one(user, f"editor-hint:{card}:{path}").text
+        assert hinted == FIELDS_HINT + STAGED_AND_SAVE
+        editor = list(_one(user, f"editor:{card}:{path}").descendants())
+        labels = {e.props["aria-label"] for e in editor if "dstf-arm" in e.classes}
+        assert labels == {
+            f"Set {arm} by a click on the plot"
+            for arm in ("window start", "window end")
+        }
+
+
 async def test_the_editors_hint_follows_a_switch_of_mode(shell):
     """The hint is the open criterion's: switched from nrmse to a mode
     with lines to drag in the editor, it says the new mode's."""

@@ -15,6 +15,7 @@ row patched since. `SuiteGrid.seal()` makes that loud."""
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,18 @@ PILLS: tuple[tuple[str, str, bool], ...] = (
 )
 
 
+def _sort_value(value: float | str | None) -> float | str | None:
+    """A sort value as the grid holds it. An infinite one (a worst NRMSE of
+    nan sorts as one) is the string ``"Infinity"``, as the dashboard writes
+    it: the page's first rows go out through orjson, which writes inf as
+    null — a row the sort put last and every number filter dropped — and a
+    transaction's through json.dumps, as JavaScript's Infinity. The grid's
+    comparator and the number filter read the string as that number."""
+    if isinstance(value, float) and value == math.inf:
+        return "Infinity"
+    return value
+
+
 def row_json(row: TestRow) -> dict[str, Any]:
     """One row as the grid holds it: every column's text and sort value
     (a number filter reads the sort value, never the text), the package it
@@ -104,7 +117,7 @@ def row_json(row: TestRow) -> dict[str, Any]:
     }
     for c in TOOL_COLUMNS:
         data[c.key] = c.text(row)
-        data[f"{c.key}__sort"] = c.sort(row)
+        data[f"{c.key}__sort"] = _sort_value(c.sort(row))
         # A number of another kind (Sim (s)'s CPU time): its tag and tooltip.
         for part, get in (("tag", c.tag), ("tip", c.tip)):
             value = get(row) if get is not None else None

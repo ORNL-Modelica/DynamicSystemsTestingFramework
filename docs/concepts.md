@@ -59,6 +59,15 @@ The criteria of a test form a tree. A group (`and`, `or`, `k-of-n`, `warn`,
 with no tree scores every tracked variable by its own override, or by `nrmse`,
 and all must pass.
 
+A criterion that had nothing to compare is **not scored**: its variable is
+missing from the run or from the baseline, its window holds none of the
+samples, there are too few samples for its metric (a spectrum needs four), or
+the soft check it names is not stored. It counts as a failed criterion — it
+fails the test, or warns under `warn` — and says why: `points criterion not
+scored — no actual samples to check (empty trajectory or window)`. In
+`dstf author` nothing of it is drawn on the plot to drag or click; its fields,
+and its window's ⌖, still edit it.
+
 ## Backend
 
 A backend is the simulator dstf drives: Dymola, OpenModelica, FMPy, Julia or

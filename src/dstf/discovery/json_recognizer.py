@@ -38,8 +38,7 @@ Modelica match types (registered via `@_register_match`):
 Field sources (registered via `@_register_field`):
   - `parameter` (`name`, optional `shape`): extract from the matched
     component's parameter list. Only valid where the spec contains a
-    `component-instantiation` leaf. `shape`: `scalar` (default), `array`,
-    `array_floats`.
+    `component-instantiation` leaf. `shape`: `scalar` (default) or `array`.
   - `constant` (`value`): use the literal value verbatim.
   - `annotation` (`annotation`, `name`, optional `shape`): extract a key
     from an arbitrary annotation block (e.g. `__MyVendor_Test`).
@@ -67,7 +66,6 @@ from .mo_parser import (
     _extract_model_name,
     _extract_within,
     _find_experiment_span,
-    _parse_float_list,
     _parse_x_expressions,
     _strip_modelica_literals,
 )
@@ -88,9 +86,6 @@ _VALID_FIELDS = frozenset(
     {
         "n_vars",
         "x_expressions",
-        "x_raw",
-        "x_reference",
-        "error_expected",
         "stop_time",
         "tolerance",
         "method",
@@ -108,7 +103,6 @@ _VALID_FIELDS = frozenset(
 _NUMERIC_FIELDS = frozenset(
     {
         "n_vars",
-        "error_expected",
         "stop_time",
         "tolerance",
         "number_of_intervals",
@@ -416,12 +410,6 @@ def _extract_param_value(param_text: str, name: str, shape: str) -> Any:
             return None
         raw = _extract_balanced_braces(param_text, m.end() - 1)
         return _parse_x_expressions(raw)
-    if shape == "array_floats":
-        m = re.search(rf"\b{re.escape(name)}\s*=\s*\{{", param_text)
-        if not m:
-            return None
-        raw = _extract_balanced_braces(param_text, m.end() - 1)
-        return _parse_float_list(raw)
     # scalar — try quoted string first, then bare token
     m = re.search(rf'\b{re.escape(name)}\s*=\s*"([^"]*)"', param_text)
     if m:
@@ -615,6 +603,10 @@ _MATCH_KEYS = {
     "all-of": ("type", "matchers"),
     "any-of": ("type", "matchers"),
 }
+#: The values a field's ``shape`` takes: one value, or a ``{...}`` list of
+#: expressions. Another was read as ``scalar``, silently.
+_SHAPES = ("scalar", "array")
+
 _FIELD_KEYS = {
     "parameter": ("from", "name", "shape"),
     "constant": ("from", "value"),
@@ -723,6 +715,12 @@ def parse_recognizer_spec(spec: object, where: str = "recognizer") -> Recognizer
                 f"{sorted(allowed_sources)}"
             )
         _refuse_unknown(f"{where}.fields.{fname}", fspec, _FIELD_KEYS.get(source))
+        shape = fspec.get("shape", "scalar")
+        if shape not in _SHAPES:
+            raise RecognizerSpecError(
+                f"{said} field '{fname}' shape {_as_json(shape)} is none of: "
+                f"{', '.join(_SHAPES)}"
+            )
         if source == "parameter" and "name" not in fspec:
             raise RecognizerSpecError(
                 f"{said} field '{fname}' (source=parameter) requires 'name'"
