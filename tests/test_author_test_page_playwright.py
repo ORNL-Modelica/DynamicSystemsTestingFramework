@@ -5096,22 +5096,50 @@ def _range_bound(page):
     return bound
 
 
-def test_a_minus_typed_into_a_field_entered_again_by_keyboard_is_kept(
-    tmp_path, playwright_browser
+#: A spy on one input's value writes, outside the page's code: it counts
+#: each write made while the input has the focus and holds text that is no
+#: number yet — the writes that could erase that text — and passes every
+#: write on to the setter it wraps.
+COUNT_RISKY_WRITES = """e => {
+  const inner = Object.getOwnPropertyDescriptor(e, 'value')
+    ?? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  window.__riskyWrites = 0;
+  Object.defineProperty(e, 'value', {
+    configurable: true,
+    get() { return inner.get.call(this); },
+    set(v) {
+      if (document.activeElement === this && this.validity.badInput) window.__riskyWrites += 1;
+      inner.set.call(this, v);
+    },
+  });
+}"""
+RISKY_WRITES = "() => window.__riskyWrites"
+
+
+@pytest.mark.parametrize(
+    ("first", "rest", "shown", "staged"),
+    [("-", "0.7", "-0.7", -0.7), ("1e", "-2", "1e-2", 0.01)],
+    ids=["minus", "exponent"],
+)
+def test_text_no_number_yet_in_a_field_entered_again_by_keyboard_is_kept(
+    tmp_path, playwright_browser, first, rest, shown, staged
 ):
-    """Tab out of the range's lower bound, Shift+Tab back and `-0.7` typed
-    over it: the field reads `-0.7` and -0.7 is staged. Quasar answers a
-    blur with a timer that writes the field's value into it; on a busy page
-    Chrome runs keys before timers, and that write, landing after the `-`
-    (no number yet, so a value of ""), erased it — 0.7 was staged. The
-    page's clock is held from the Tab to the `-`, then run on: the timer
-    runs between the `-` and the `0`, every time."""
+    """Tab out of the range's lower bound, Shift+Tab back and `-0.7` (or
+    `1e-2`) typed over it: the field reads what was typed and that number
+    is staged. Quasar answers a blur with a timer that writes the field's
+    value into it; on a busy page Chrome runs keys before timers, and that
+    write, landing after the `-` (or the `1e`: no number yet, so a value of
+    ""), erased it — 0.7 (or -2) was staged. The page's clock is held from
+    the Tab to that text, then run on: the timer runs between it and the
+    rest, every time, and the spy sees its write land while the field
+    holds the text."""
     with _served(
         tmp_path, playwright_browser, project=_typing_project, hooks=True
     ) as page:
         page.wait_for_timeout(700)
         bound = _range_bound(page)
         bound.click()
+        bound.evaluate(COUNT_RISKY_WRITES)
         page.clock.install()
         page.clock.pause_at(page.evaluate("Date.now()") + 1000)
         page.keyboard.press("Tab")
@@ -5119,14 +5147,39 @@ def test_a_minus_typed_into_a_field_entered_again_by_keyboard_is_kept(
         page.keyboard.press("Shift+Tab")
         assert bound.evaluate("e => document.activeElement === e")
         page.keyboard.press("Control+A")
-        page.keyboard.press("-")
+        page.keyboard.type(first)
         assert bound.evaluate(NO_NUMBER_YET)
+        before = page.evaluate(RISKY_WRITES)
         page.clock.run_for(10)  # the timers due, the blur's among them, run now
+        # Quasar's timer did write while the text was there: the race ran
+        assert page.evaluate(RISKY_WRITES) > before
         page.clock.resume()
-        page.keyboard.type("0.7", delay=KEY_MS)
+        page.keyboard.type(rest, delay=KEY_MS)
         _answered(page)
-        assert bound.input_value() == "-0.7"
-        assert _staged_tree(page)["children"][1]["min_value"] == -0.7
+        assert bound.input_value() == shown
+        assert _staged_tree(page)["children"][1]["min_value"] == staged
+
+
+def test_a_focused_field_keeps_text_no_number_yet_over_a_write_of_nothing(
+    tmp_path, playwright_browser
+):
+    """`-` typed over the lower bound, the field still focused: a write of
+    nothing — `""`, or `null`, which an input reads as `""` — is a write of
+    the value the input holds, and leaves the `-`. A write of a number goes
+    through."""
+    with _served(
+        tmp_path, playwright_browser, project=_typing_project, hooks=True
+    ) as page:
+        page.wait_for_timeout(700)
+        bound = _range_bound(page)
+        _type_over(page, bound, "-")
+        assert bound.evaluate(NO_NUMBER_YET)
+        for nothing in ("null", '""'):
+            assert bound.evaluate(
+                f"e => {{ e.value = {nothing};"
+                " return [document.activeElement === e, e.validity.badInput]; }"
+            ) == [True, True], nothing
+        assert bound.evaluate("e => { e.value = 0.5; return e.value; }") == "0.5"
 
 
 def test_a_field_left_holding_a_bare_minus_shows_its_value_again(
