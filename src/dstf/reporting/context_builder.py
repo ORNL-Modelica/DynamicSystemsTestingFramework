@@ -144,12 +144,16 @@ def _leaf_tolerance(view: dict, vc: VariableComparison) -> float | dict | None:
     for a metric that takes one — its config has the field — and scored by
     it: a scalar with bounds does not. None otherwise: a tube's width, a
     range's bounds and a table's rows are the leaf's own ``params``, and
-    the base tolerance the evaluator handed such a mode decided nothing."""
+    the base tolerance the evaluator handed such a mode decided nothing.
+    None too for a comparison of no metric (``mode`` ``""``: a flat override
+    naming a mode nothing is registered under), which no tolerance decided;
+    the spec's ``nrmse`` beside it read its unset ``tolerance_used`` as a
+    tolerance of 0.0."""
     from ..comparison.mode_schema import derive_schema
     from ..comparison.registry import metric
     from ..comparison.sides import Sides, as_written
 
-    desc = metric(vc.mode or view.get("metric", ""))
+    desc = metric(vc.mode)
     if desc is None or {"min_value", "max_value"} & set(view.get("params") or {}):
         return None
     fields = {f.name for f in derive_schema(desc.config_cls, mode=desc.name).fields}

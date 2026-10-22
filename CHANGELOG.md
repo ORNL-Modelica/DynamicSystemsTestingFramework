@@ -58,6 +58,10 @@ this file says when they do.
   metrics tree, one whose baseline lacks the variable now says so
   (`variable 'x' not found in the baseline`), with the hint to rename a
   baseline stored under the expression.
+- A criterion whose override names a mode nothing is registered under
+  (`{"mode": "tubee"}`) carries no `tolerance` in `verdicts.json` and
+  `comparison_data.json`: it was scored by no metric. It read
+  `"tolerance": 0.0`.
 - A dominant-frequency criterion on a run of fewer than four samples reads
   "not scored — signal too short for FFT", not "No peaks declared".
 - A `testing.json` dependency written `~/…` is under the home directory; it

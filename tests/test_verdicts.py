@@ -145,6 +145,33 @@ def test_the_tree_is_the_one_the_report_page_holds(broken):
         assert trees[data["summary"]["model_id"]] == data["tree_view"]
 
 
+def test_a_criterion_of_a_mode_nothing_is_registered_under_has_no_tolerance(
+    tmp_path,
+):
+    """An override naming a mode no metric is registered under (`tubee`)
+    is scored by nothing: no tolerance decided it. Its leaf read
+    `"tolerance": 0.0` — the comparison's unset default — as if it had
+    been scored against a tolerance of zero."""
+    config, _tests, dstf = _ran(tmp_path)
+    spec_path = config.config_file.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    (entry,) = [e for e in spec["tests"] if e["model"] == RAMP]
+    entry["comparison"] = {
+        "variable_overrides": {"x": {"mode": "tubee", "tolerance": 0.2}}
+    }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    assert dstf("compare") == 1
+    (ramp,) = [
+        t
+        for t in _strict(config.work_dir / "verdicts.json")["tests"]
+        if t["model_id"] == RAMP
+    ]
+    (leaf,) = ramp["tree"]["children"]
+    assert leaf["passed"] is False and leaf["mode_effective"] == ""
+    assert "unknown comparison mode 'tubee'" in leaf["criterion"]
+    assert "tolerance" not in leaf
+
+
 def test_an_accept_scores_nothing_and_leaves_no_stale_verdict(tmp_path):
     """Over the FAIL a compare left in `verdicts.json`. It rewrites the
     baselines: a project of its own."""
