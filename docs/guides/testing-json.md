@@ -7,8 +7,13 @@ runs it, where its baselines are kept. Every command reads it through
 
 ## Where it lives
 
-Keep it in the folder that holds the project's baselines, the reference root,
-inside your library's repository so both are versioned with the library:
+The file can live anywhere. The folder it is in anchors every relative path
+in it. Name that folder `ReferenceResults` and it is also the reference root,
+the folder that holds the baselines, with `test_spec.json` found beside the
+file. Both layouts below do that.
+
+**A — inside the library.** Best when you own the library and want its
+baselines versioned with it:
 
 ```text
 MyLib/
@@ -20,10 +25,7 @@ MyLib/
         └── Dymola/linux/ref_0001.json ...
 ```
 
-Every relative path in the file is relative to the file itself. With the
-layout above, the reference root is the file's own folder (it is named
-`ReferenceResults`) and `test_spec.json` is found beside it, so a Modelica
-library needs one key:
+The library is two folders up, so a Modelica library needs one key:
 
 <!-- snippet: testing -->
 ```json
@@ -32,11 +34,39 @@ library needs one key:
 }
 ```
 
-Then every command takes the file's path:
+**B — a test project beside the library.** Best when you do not own the
+library, when several projects test one library, or to keep thousands of
+baseline files out of the library's repository:
+
+```text
+MyLib/
+└── package.mo
+MyLibTests/
+└── ReferenceResults/
+    ├── testing.json
+    ├── test_spec.json
+    └── Dymola/linux/ref_0001.json ...
+```
+
+The library is beside the test project:
+
+<!-- snippet: testing -->
+```json
+{
+  "source_path": "../../MyLib"
+}
+```
+
+Every command takes the file's path, here A's and then B's:
 
 ```console
 $ dstf --config MyLib/Resources/ReferenceResults/testing.json discover
+$ dstf --config MyLibTests/ReferenceResults/testing.json discover
 ```
+
+The baselines and the test definitions can be elsewhere too: set
+{ref}`reference_root <key-testing-reference-root>` and
+{ref}`test_spec <key-testing-test-spec>`.
 
 ## The keys most projects set
 
