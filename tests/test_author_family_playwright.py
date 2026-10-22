@@ -27,7 +27,7 @@ from playwright.sync_api import expect  # noqa: E402
 
 from family_project import family_project  # noqa: E402
 from test_author_suite_playwright import EXPECT_TIMEOUT  # noqa: E402
-from test_author_test_page_playwright import _served  # noqa: E402
+from test_author_test_page_playwright import _plots_mounted, _served  # noqa: E402
 
 #: The one fixed sentence of a folded editor's hint (`family_fold.HINT`).
 HINT = "These fields change all {n} criteria. Unfold to drag one on the plot."
@@ -168,6 +168,7 @@ def test_a_folded_field_changes_every_member_and_the_count_follows(
         expect(editor).to_contain_text(HINT.format(n=6))
         expect(editor.get_by_label("Indices")).to_have_value("1:6")
         # fields only: no ring, no arrow, no bound line is drawn for a fold
+        _plots_mounted(page)
         assert (
             page.evaluate(
                 "document.querySelectorAll('.js-plotly-plot')[1]"
@@ -520,6 +521,7 @@ def test_a_fold_takes_no_click_on_the_plot_and_an_unfolded_member_does(
         expect(editor.locator(".dstf-why").first).to_contain_text(HINT.format(n=4))
         expect(editor.locator(".dstf-why").first).not_to_contain_text("Ctrl+click")
         expect(editor.locator(".dstf-arm")).to_have_count(0)
+        _plots_mounted(page)  # each click is aimed through the drawn axes
         card.locator(".js-plotly-plot").evaluate(
             "e => window.scrollBy(0, e.getBoundingClientRect().top - 190)"
         )

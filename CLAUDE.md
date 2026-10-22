@@ -97,7 +97,7 @@ DynamicSystemsTestingFramework/
 │                                 #      not on the site: decisions.md, vision.md, architecture.md, qa/, ideas.md, releasing.md
 ├── CHANGELOG.md                  # what changed per version, for the PyPI user (also a page of the site)
 ├── scripts/                      # fetch_reference_fmus.py, smoke_test_dymola_export.py
-├── pyproject.toml                # uv/hatchling config; optional extras: [dev], [author], [fmpy], [om]
+├── pyproject.toml                # uv/hatchling config; optional extras: [dev], [author], [browser], [fmpy], [om]
 └── CLAUDE.md
 ```
 
@@ -139,12 +139,16 @@ stay green: `uv run` re-locks silently where `uv sync --locked` refuses. In a
 
 `uv sync` prunes anything you did not ask for **on that command line**, lock
 member or not, so name every extra at once (`uv sync --extra dev --extra fmpy
---extra om --extra author --locked`). CI installs `author` (NiceGUI), so the
+--extra om --extra author --extra browser --locked`). CI installs `author` (NiceGUI), so the
 authoring-shell tests run there; a local `uv sync --extra dev --locked` alone
-leaves them skipped by their `importorskip`. A package inside `.venv` but outside the lock — `pytest-playwright`
-for the browser tests — needs `--inexact` or the next sync removes it.
-(`pre-commit` sidesteps this: install it with `uv tool install`, outside
-`.venv`, as `.pre-commit-config.yaml` documents.)
+leaves them skipped by their `importorskip`. The browser tests (`-m
+playwright`) need the `browser` extra (Playwright's own API; no pytest plugin)
+and a Chromium: `uv sync --extra dev --extra author --extra browser --locked`,
+then `uv run --no-sync playwright install chromium` once. CI runs them in a
+job of their own (`browser` in `quality.yml`). A package inside `.venv` but
+outside the lock needs `--inexact` or the next sync removes it (`pre-commit`
+sidesteps this: install it with `uv tool install`, outside `.venv`, as
+`.pre-commit-config.yaml` documents).
 
 A green local `pytest` does not predict CI, which also runs `ruff check`, `ruff
 format --check`, `mypy`, and pytest under a 66% coverage floor with the

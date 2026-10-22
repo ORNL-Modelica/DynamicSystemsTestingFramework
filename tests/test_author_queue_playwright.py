@@ -563,6 +563,11 @@ def test_the_rows_scroll_inside_the_panel_above_the_table(tmp_path, playwright_b
             _box(page, model_id).click()
         _queue(page, "Queue 6")
         expect(page.locator(".dstf-queue-row")).to_have_count(6, timeout=RUN_TIMEOUT)
+        # A's start is the queue's last change while A is held: each change
+        # draws the rows again, and a row read before it is gone after
+        expect(page.locator(INDICATOR)).to_have_text(
+            "1 running · 5 queued", timeout=RUN_TIMEOUT
+        )
         rows = page.locator(".dstf-queue-rows")
         held = rows.evaluate(read)
         assert held["client"] <= 0.34 * 600 + 1 < held["scroll"], held
@@ -578,11 +583,13 @@ def test_the_rows_scroll_inside_the_panel_above_the_table(tmp_path, playwright_b
         _keep(page, tmp_path, "queue-panel-capped")
 
         page.set_viewport_size({"width": 1280, "height": 600})
-        page.wait_for_timeout(300)
-        beside = rows.evaluate(read)
-        assert beside["client"] == beside["scroll"], beside
+        page.wait_for_function(
+            "() => { const e = document.querySelector('.dstf-queue-rows');"
+            " return e.clientHeight === e.scrollHeight; }",
+            timeout=EXPECT_TIMEOUT,
+        )
         _release(cfg, A)
         expect(page.locator(INDICATOR)).to_have_text("idle", timeout=RUN_TIMEOUT)
-        assert errors == []
+        assert errors == [], errors
     finally:
         _stop(proc)

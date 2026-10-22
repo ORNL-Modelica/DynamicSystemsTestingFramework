@@ -27,6 +27,22 @@ async def _stage(model: str = "FakeLib.A") -> dict:
     return {"pending": len(session.spec.pending)}
 
 
+@app.get("/__watch_and_back")
+async def _watch_and_back(var: str, model: str = "FakeLib.A", gap: float = 0.1) -> dict:
+    """A watch plot of ``var`` staged on ``model`` and, ``gap`` s later,
+    every pending edit discarded: two rebuilds of an open Test page's cards,
+    in two messages, the second removing the plots the first just drew."""
+    import asyncio
+
+    from dstf.authoring.spec_document import PatchOp
+
+    session = _shell().session
+    session.stage([PatchOp(model, "add", "/plots", [{"var": var}])])
+    await asyncio.sleep(gap)
+    session.discard()
+    return {"pending": len(session.spec.pending)}
+
+
 @app.get("/__tree")
 async def _tree(model: str = "FakeLib.A") -> dict:
     """The tree ``model`` is scored by — staged edits included — and how
