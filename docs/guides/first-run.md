@@ -62,7 +62,7 @@ per test:
 
 ```text
 Running 3 tests (parallel=1, timeout=60s)
-Backend: Python · linux · DSTF 1.2.0
+Backend: Python · linux · DSTF 1.3.0
 ...
   PASS  [0001] PythonTestingLib.Examples.ConstantCsv
   PASS  [0003] PythonTestingLib.Examples.PointsCheck
