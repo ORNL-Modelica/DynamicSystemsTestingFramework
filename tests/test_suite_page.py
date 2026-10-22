@@ -564,3 +564,26 @@ def test_a_worst_nrmse_of_nan_reaches_the_grid_as_a_number_above_every_other(tmp
     sent = json.loads(ng_json.dumps(row_json(suite_row(s, D))))
     assert sent["nrmse"] == "nan"
     assert float(sent["nrmse__sort"]) == math.inf
+
+
+def test_a_nan_sort_value_reaches_the_grid_as_a_blank_by_either_path():
+    """A CPU time whose final is NaN (Sim (s), where the run kept no wall)
+    sorts with the blanks, however the row goes out: the page's first rows
+    through NiceGUI's JSON (orjson, which writes NaN as null) and a later
+    transaction's through json.dumps, which wrote JavaScript's NaN — a
+    value the grid sorts nowhere in particular."""
+    from nicegui import json as ng_json
+
+    from dstf.authoring.shell.suite_grid import row_json
+    from dstf.reporting.rows import TestRow
+
+    def strict(text: str) -> dict:
+        def refuse(token: str):
+            raise AssertionError(f"non-strict JSON constant: {token}")
+
+        return json.loads(text, parse_constant=refuse)
+
+    row = row_json(TestRow(model_id="Lib.A", sim_cpu=float("nan")))
+    first, later = strict(ng_json.dumps(row)), strict(json.dumps(row))
+    assert first["sim__sort"] is None
+    assert later == first

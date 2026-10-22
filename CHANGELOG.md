@@ -30,6 +30,10 @@ this file says when they do.
   over a baseline with no samples (`no reference samples to take a spectrum
   of …`) or fewer than four (`too few reference samples to take a spectrum
   of (fewer than 4)`), where it failed as "No peaks declared".
+- In `comparison_data.json`, a test whose nrmse criterion scored a number
+  that is not finite has `summary.worst_nrmse` null, even beside criteria
+  that scored numbers, and the new `summary.n_nan` counts the nrmse
+  criteria that scored no finite number.
 
 ### Fixed
 
@@ -37,10 +41,7 @@ this file says when they do.
   inf, from a sample of its run or baseline that is
   not finite) reads `nan` as its Worst NRMSE, on the
   dashboard, its report page and the tool's Suite page, and sorts above every
-  number; it read its other criteria's worst, or `n/a (1 unscored)`. In
-  `comparison_data.json`, `summary.worst_nrmse` is then null, even beside
-  criteria that scored numbers, and the new `summary.n_nan` counts the
-  nrmse criteria that scored no finite number.
+  number; it read its other criteria's worst, or `n/a (1 unscored)`.
 - The Worst NRMSE column's "unscored" count is the criteria that were not
   scored. It counted every criterion whose number was not finite, so a tube
   or an nrmse over a NaN sample, and a dominant-frequency criterion with a
@@ -58,6 +59,10 @@ this file says when they do.
   metrics tree, one whose baseline lacks the variable now says so
   (`variable 'x' not found in the baseline`), with the hint to rename a
   baseline stored under the expression.
+- A criterion whose override names a mode nothing is registered under
+  (`{"mode": "tubee"}`) carries no `tolerance` in `verdicts.json` and
+  `comparison_data.json`: it was scored by no metric. It read
+  `"tolerance": 0.0`.
 - A dominant-frequency criterion on a run of fewer than four samples reads
   "not scored — signal too short for FFT", not "No peaks declared".
 - A `testing.json` dependency written `~/…` is under the home directory; it
@@ -77,9 +82,13 @@ this file says when they do.
 - In `dstf author`, a Test page whose plots were redrawn twice in quick
   succession, on a slow machine, no longer logs "Resize must be passed a
   displayed plot div element." to the browser console once per plot.
+- In `dstf author`, a Suite row whose Sim (s) is a CPU time of NaN sorts
+  with the blank rows after the table updates, as it did when the page
+  loaded.
 - In `dstf author`, re-entering a number field with the keyboard and typing a
   negative number no longer loses its minus sign: Shift+Tab back into a field
-  just left, `-0.7` typed could be taken as 0.7.
+  just left, `-0.7` typed could be taken as 0.7 (and a half-typed `1e-2`
+  as -2).
 
 ### Removed
 

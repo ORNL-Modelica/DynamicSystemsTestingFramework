@@ -10221,6 +10221,14 @@ async def test_a_width_the_browser_shows_is_kept_and_not_sent_back(
         assert rail.drawer.props["width"] == str(RAIL + 760)
         assert rail.grip.props["aria-valuenow"] == "760"
         assert any("fit(760)" in code for code in sent)
+        outbox.updates.clear()
+        sent.clear()
+        rail.resize(100, 1280)  # under the floor: held at 240
+        assert page.state.drawer_width == 240
+        assert ids <= set(outbox.updates)
+        assert rail.drawer.props["width"] == str(RAIL + 240)
+        assert rail.grip.props["aria-valuenow"] == "240"
+        assert any("fit(240)" in code for code in sent)
 
 
 async def test_a_drawer_rows_label_is_alone_on_its_first_line(extras_shell):

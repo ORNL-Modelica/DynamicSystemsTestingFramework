@@ -732,8 +732,9 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
             metavar="DIR",
             help="Where the reference results are kept. Default: testing.json's "
             "reference_root; without one, testing.json's own directory when "
-            "that is named ReferenceResults, else Resources/ReferenceResults "
-            "beside the library.",
+            "that is named ReferenceResults; else Resources/ReferenceResults "
+            "in the directory that holds the library's package directory, for "
+            "a modelica source_type, or beside testing.json, for any other.",
         ),
     ),
     "test_spec": (

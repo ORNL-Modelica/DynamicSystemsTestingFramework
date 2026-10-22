@@ -39,8 +39,13 @@ export default {
   // So a write of the value its input already holds is no write while the
   // field has the focus: Vue never makes one (it writes a value that
   // differs), and on a number input it can only erase text that is not yet
-  // a number ("-", "1e"). Every other write goes through, and a blurred
-  // field is still put back to its value. Check this on a Quasar upgrade.
+  // a number ("-", "1e"). Every other write goes through, and so does every
+  // write once another element has the focus: a field Tabbed or clicked
+  // away from is put back to its value. "Has the focus" is the document's
+  // active element, which a blur of the whole window (another window or tab
+  // brought forward) leaves on the input: Quasar's write of the held value
+  // after that blur is skipped too, and text that is no number yet stays in
+  // the field. Check this on a Quasar upgrade.
   mounted() {
     const input = this.$refs.qRef.nativeEl;
     const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
