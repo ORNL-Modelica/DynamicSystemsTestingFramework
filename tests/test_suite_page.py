@@ -537,3 +537,30 @@ async def test_a_transaction_that_fails_is_sent_again_next_tick(shell, monkeypat
         assert sent == [[], [A, B, C, D, G]]
         shell.tick()
         assert len(sent) == 2
+
+
+def test_a_worst_nrmse_of_nan_reaches_the_grid_as_a_number_above_every_other(tmp_path):
+    """The Suite grid's first rows go out through NiceGUI's JSON (orjson), which
+    writes an infinite float as null: a nan row then sorted last and every
+    number filter dropped it. The row's sort value must survive that
+    serializer as a value the page reads as +Infinity (``parseFloat``), as
+    the dashboard's does. A browser test drives the sort; this one holds the
+    boundary where CI can see it."""
+    import math
+
+    from nicegui import json as ng_json
+
+    from dstf.authoring.session import Session
+    from dstf.authoring.shell.suite_grid import row_json
+    from dstf.authoring.suite_rows import suite_row
+
+    cfg, work = _project(tmp_path)
+    result = work / "test_0004" / "result.json"
+    data = json.loads(result.read_text(encoding="utf-8"))
+    data["variables"]["x"][3] = float("nan")
+    result.write_text(json.dumps(data), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    sent = json.loads(ng_json.dumps(row_json(suite_row(s, D))))
+    assert sent["nrmse"] == "nan"
+    assert float(sent["nrmse__sort"]) == math.inf

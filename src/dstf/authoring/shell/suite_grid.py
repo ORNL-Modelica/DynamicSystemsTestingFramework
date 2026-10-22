@@ -98,8 +98,8 @@ def _sort_value(value: float | str | None) -> float | str | None:
     null — a row the sort put last and every number filter dropped — and a
     transaction's through json.dumps, as JavaScript's Infinity. The grid's
     comparator and the number filter read the string as that number."""
-    if isinstance(value, float) and math.isinf(value):
-        return "Infinity" if value > 0 else "-Infinity"
+    if isinstance(value, float) and value == math.inf:
+        return "Infinity"
     return value
 
 

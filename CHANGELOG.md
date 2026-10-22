@@ -34,12 +34,13 @@ this file says when they do.
 ### Fixed
 
 - A test whose nrmse criterion scored a number that is not finite (NaN or
-  inf, from a NaN in its run) reads `nan` as its Worst NRMSE, on the
+  inf, from a sample of its run or baseline that is
+  not finite) reads `nan` as its Worst NRMSE, on the
   dashboard, its report page and the tool's Suite page, and sorts above every
   number; it read its other criteria's worst, or `n/a (1 unscored)`. In
   `comparison_data.json`, `summary.worst_nrmse` is then null, even beside
-  criteria that scored numbers, and the new `summary.n_nan` counts those
-  criteria.
+  criteria that scored numbers, and the new `summary.n_nan` counts the
+  nrmse criteria that scored no finite number.
 - The Worst NRMSE column's "unscored" count is the criteria that were not
   scored. It counted every criterion whose number was not finite, so a tube
   or an nrmse over a NaN sample, and a dominant-frequency criterion with a

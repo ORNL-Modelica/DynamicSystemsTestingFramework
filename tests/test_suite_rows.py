@@ -53,7 +53,8 @@ def test_a_nan_score_is_the_rows_worst_and_sorts_above_every_number(tmp_path):
     row = suite_row(s, D)
     assert (nrmse.text(row), nrmse.sort(row)) == ("nan", math.inf)
     fine = suite_row(s, A)
-    assert (nrmse.text(fine), nrmse.sort(fine)) == ("1.5309e-01", 0.15309310892394862)
+    assert nrmse.text(fine) == "1.5309e-01"
+    assert nrmse.sort(fine) == pytest.approx(0.153093108924, rel=1e-12)
 
 
 def test_no_baseline_has_no_ref_id(session):

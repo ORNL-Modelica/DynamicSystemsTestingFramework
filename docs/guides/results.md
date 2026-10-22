@@ -52,9 +52,9 @@ verdicts:
 - **Criteria** counts the criteria that passed out of all of them; **Worst
   NRMSE** is the worst score of the test's `nrmse` criteria that were scored.
   It reads `nan` when one of them scored a number that is not finite (NaN or
-  inf, from a NaN in the run), and sorts above every number then. With no
+  inf, from a sample of the run or baseline that is not finite), and sorts above every number then. With no
   `nrmse` criterion scored, it reads `n/a (N unscored)` when N of the test's
-  criteria, of any metric, were not scored, and `—` when none was;
+  criteria, of any metric, were not scored, and `—` when no criterion went unscored;
   **Resolution** says whether the test's simulation settings came
   from the model's annotation, from `test_spec.json`, or both (hover for which
   field came from where).
