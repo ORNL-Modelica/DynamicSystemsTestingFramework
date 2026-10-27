@@ -693,9 +693,6 @@ class TestFinding49ArrayAdd:
                 ],
             )
 
-        # That nothing is left in the document — not even the `metrics` the
-        # descent made — is test_a_refused_patch_leaves_the_document_as_it_was.
-
 
 def test_plots_is_a_whitelisted_subtree():
     from dstf.discovery.patch_apply import apply_patch_to_document
