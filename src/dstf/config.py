@@ -1,5 +1,6 @@
 """Configuration constants and path resolution for the testing system."""
 
+import errno
 import json
 import logging
 import os
@@ -148,11 +149,19 @@ def json_from_bytes(raw: bytes, label: str) -> Any:
 def _resolved(path: Path) -> Path:
     """``path``, absolute and with its links followed — or
     :class:`ConfigError` naming it where the system cannot follow them (a
-    link that leads back to itself)."""
+    link that leads back to itself).
+
+    Strict, because from Python 3.13 a lenient ``resolve()`` returns a loop
+    as it is, with no error; a path that is not there yet is no loop and
+    resolves leniently."""
     try:
-        return path.resolve()
-    except (OSError, RuntimeError) as e:  # RuntimeError: pathlib before 3.13
+        return path.resolve(strict=True)
+    except RuntimeError as e:  # a loop, in pathlib before 3.13
         raise ConfigError(f"{path}: {e}") from e
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise ConfigError(f"{path}: {e}") from e
+        return path.resolve()
 
 
 def config_file_named(path: Path) -> Path:
