@@ -294,6 +294,24 @@ class TestDerivedControls:
         assert "final-slope" in schema["$defs"]["leaf"]["properties"]["metric"]["enum"]
         assert "max_slope" in schema["$defs"]["mode_final_slope"]["properties"]
 
+    def test_a_metric_whose_config_is_no_dataclass_leaves_its_override_open(self):
+        """Nothing says what such a metric reads, and the parser does not
+        check its keys: its override's schema takes any key beside ``mode``,
+        while a builtin's stays closed to its params."""
+        from dstf.reporting.schema_export import build_schema
+
+        class Opaque:
+            pass
+
+        register_metric(
+            MetricDescriptor(name="energy", config_cls=Opaque, build=lambda o, t: None)
+        )
+        defs = build_schema()["$defs"]
+        energy = dict(defs["override_energy"])
+        assert list(energy.pop("properties")) == ["mode"]
+        assert energy == {"type": "object", "title": "energy override"}
+        assert defs["override_nrmse"]["additionalProperties"] is False
+
 
 # ---------------------------------------------------------------------------
 # (e) accepted_datasets gating

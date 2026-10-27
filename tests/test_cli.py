@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import sys
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2649,6 +2650,25 @@ class TestTheThreeReportsAreIndependent:
         out = capsys.readouterr().out
         assert "Nothing to rerun" in out and "Results: 1/2 passed" in out
         assert ET.parse(out_file).getroot().get("failures") == "1"
+
+    def test_the_report_phase_times_each_page_by_its_own_render(self, scored, capsys):
+        """`--report`'s summary line: a page's time is how long ITS render
+        took, so no page took longer than the whole command did."""
+        capsys.readouterr()
+        start = time.monotonic()
+        scored("compare", "--report")
+        spent = time.monotonic() - start
+        (line,) = [
+            ln
+            for ln in capsys.readouterr().out.splitlines()
+            if ln.startswith("Report phase:")
+        ]
+        avg, slowest = map(
+            float,
+            re.search(r"\(avg ([\d.]+)s/test, slowest ([\d.]+)s\)", line).groups(),
+        )
+        # Printed to 0.1 s: a render may read 0.05 s longer than it took.
+        assert 0.0 <= avg <= slowest <= spent + 0.05, (line, spent)
 
 
 # =========================================================================

@@ -906,6 +906,36 @@ def test_the_cells_keep_their_markup(tmp_path):
     assert '<td class="detail-cell" title="a message">a message</td>' in a
 
 
+def test_a_mixed_resolution_names_each_fields_source_in_its_title(tmp_path):
+    """Fields resolved from more than one source: the cell reads "mixed",
+    and its title says where each field came from."""
+    snapshot = {
+        "total": 1,
+        "elapsed": 5.0,
+        "eta_seconds": None,
+        "counts": {"passed": 1},
+        "tests": [
+            {
+                "test_key": "test_0001",
+                "model_id": "Lib.A",
+                "status": "passed",
+                "elapsed": 2.0,
+                "worker_id": 0,
+                "report_dir": "test_0001",
+                "field_sources": {"stop_time": "test_spec", "tolerance": "annotation"},
+            }
+        ],
+        "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    (row,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert _attrs(row)["data-resolution"] == "mixed"
+    assert (
+        '<span title="stop_time: test_spec, tolerance: annotation">mixed</span>'
+    ) in row
+
+
 def _model_cell(tr: str) -> str:
     return re.search(r'<td class="model-cell".*?</td>', tr, flags=re.S).group(0)
 
