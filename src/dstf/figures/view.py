@@ -192,7 +192,7 @@ def _decimate_overlay(ov: OverlayView, max_samples: int) -> OverlayView:
 def decimate_view(view: VariableView, max_samples: int) -> VariableView:
     """A copy under the sample budget: trajectories, overlays, error series
     and bands are LTTB-decimated; ``full_samples`` records what they were."""
-    if max_samples is None or max_samples <= 0:
+    if max_samples <= 0:
         return view
     at, av = _pair(view.act_time, view.act_values, max_samples)
     rt, rv = _pair(view.ref_time, view.ref_values, max_samples)
