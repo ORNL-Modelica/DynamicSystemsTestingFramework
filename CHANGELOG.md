@@ -6,6 +6,16 @@ follow [semantic versioning](https://semver.org/). DSTF is in beta: the command
 line and the `testing.json` keys may still change between minor versions, and
 this file says when they do.
 
+## [Unreleased]
+
+### Fixed
+
+- On Python 3.13, a `--source-path`, `--reference-root` or `--config` (or a
+  `testing.json` path) that is a symbolic-link loop is refused with
+  `Config error: <path>: … Too many levels of symbolic links`, as on earlier
+  Pythons. 3.13's `Path.resolve()` returns a loop without an error, so the
+  run went on and said no Modelica package could be found.
+
 ## [1.3.0] - 2026-10-22
 
 ### Changed
