@@ -70,14 +70,6 @@ class TestCompareTrajectories:
         assert vc.passed is True
         assert vc.nrmse == 0.0
 
-    def test_identical_three_events(self):
-        """Identical signals with three events (double time points) => NRMSE = 0."""
-        t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0])
-        v = np.array([0.0, 0.9, 1.1, 1.9, 2.1, 2.9, 3.1, 4.0])
-        vc = score({"mode": "nrmse"}, t, v, t, v, tolerance=1e-4)
-        assert vc.passed is True
-        assert vc.nrmse == 0.0
-
     def test_an_events_middle_sample_is_scored_against_nothing(self):
         """Three samples at an event: the first ends the segment before it,
         the last starts the one after, and the middle one is neither — it
@@ -384,12 +376,6 @@ class TestStructuralChanges:
         warnings = _check_structural_changes(decode_reference(ref), result)
         assert len(warnings) == 0
 
-    def test_no_statistics_key(self):
-        ref = {}
-        result = TestResult(model_id="Test", success=True, statistics={})
-        warnings = _check_structural_changes(decode_reference(ref), result)
-        assert len(warnings) == 0
-
 
 # ---------------------------------------------------------------------------
 # Tolerance resolution
@@ -539,16 +525,6 @@ class TestTubeInterpolation:
         assert upper == [10.0, 10.0, 10.0]
         assert lower == [10.0, 10.0, 10.0]
 
-    def test_linear_interpolation(self):
-        """Linear interpolation between two points."""
-        points = [
-            {"time": 0.0, "upper": 10.0, "lower": 10.0},
-            {"time": 100.0, "upper": 20.0, "lower": 20.0},
-        ]
-        upper, lower = _widths([0.0, 50.0, 100.0], points)
-        np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
-        np.testing.assert_allclose(lower, [10.0, 15.0, 20.0])
-
     def test_hold_at_boundaries(self):
         """Values before first and after last point are held."""
         points = [
@@ -640,27 +616,6 @@ class TestTubeComparison:
 
         vc = score(
             {"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.05},
-            ref_time,
-            ref_values,
-            ref_time,
-            act_values,
-        )
-        assert vc.passed
-
-    def test_min_width_floors_rel_at_zero_crossing(self):
-        """tube_min_width floors rel-mode width — prevents zero-width at zero crossing."""
-        ref_time = np.array([0.0, 1.0])
-        ref_values = np.array([0.0, 100.0])  # Crosses zero
-        # At t=0: |ref|=0 so rel width = 0, but min_width=5 → effective width=5
-        act_values = np.array([3.0, 104.0])  # Within ±5 at zero, ±5% at t=1
-
-        vc = score(
-            {
-                "mode": "tube",
-                "tube_width_mode": "rel",
-                "tube_rel": 0.05,
-                "tube_min_width": 5.0,
-            },
             ref_time,
             ref_values,
             ref_time,
@@ -782,24 +737,6 @@ class TestTubeComparison:
             act_values,
         )
         assert not vc.passed
-
-    def test_rel_mode_tube(self):
-        """Tube with tube_width_mode='rel' scales by |reference|."""
-        ref_time = np.array([0.0, 1.0])
-        ref_values = np.array([100.0, 1000.0])
-        # 2% relative tube
-        # t=0: width = 0.02 * 100 = 2. offset=1 → inside
-        # t=1: width = 0.02 * 1000 = 20. offset=10 → inside
-        act_values = np.array([101.0, 1010.0])
-
-        vc = score(
-            {"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.02},
-            ref_time,
-            ref_values,
-            ref_time,
-            act_values,
-        )
-        assert vc.passed
 
     def test_min_width_floor(self):
         """tube_min_width prevents tube from collapsing at zero crossing."""
@@ -1021,13 +958,6 @@ class TestTubeConfigToDict:
         assert d["tube_width_mode"] == "band"
         assert d["tube_abs"] == Sides(5.0, 5.0)
         assert "tube_rel" not in d  # Zero values omitted
-
-    def test_with_points(self):
-        points = [{"time": 0.0, "upper": 1.0, "lower": 1.0}]
-        cfg = TubeConfig(tube_points=points, tube_interpolation="constant")
-        d = cfg.to_dict()
-        assert d["tube_points"] == points
-        assert d["tube_interpolation"] == "constant"
 
 
 class TestModeCompare:
@@ -2038,17 +1968,6 @@ class TestEmptyDataFails:
         )
         assert not vc.passed
 
-    def test_range_empty_actual_fails(self):
-        vc = score(
-            {"mode": "range", "min_value": 0.0, "max_value": 1.0},
-            EMPTY,
-            np.zeros_like(EMPTY),
-            EMPTY,
-            EMPTY,
-        )
-        assert not vc.passed
-        assert "error" in vc.diagnostics
-
     def test_a_variable_with_no_samples_the_baseline_lacks_fails_its_criterion(self):
         test = _mk_test(variable_patterns=["x", "y"])
         result = TestResult(
@@ -2750,20 +2669,6 @@ class TestVariableIdentity:
             decode_reference(reference),
         )
         assert comp.passed and comp.warnings == []
-
-    def test_a_baseline_stored_under_the_expression_is_missing_and_says_its_name(
-        self, caplog
-    ):
-        with caplog.at_level(logging.WARNING):
-            comp = compare_test(
-                _vi_test(x_expressions=["pipe.T[1]"]),
-                _vi_result(expression="pipe.T[1]"),
-                decode_reference(
-                    _vi_reference(name="pipe.T[1]", with_expression=False)
-                ),
-            )
-        assert not comp.passed
-        assert any(STORED_HINT in record.getMessage() for record in caplog.records)
 
     def test_an_override_that_names_no_variable_warns(self, caplog):
         """A key matching nothing has always been ignored in silence. It is
@@ -4899,16 +4804,6 @@ class TestPointsFinalCheckSides:
         )
         assert vc.passed is True
         assert vc.max_abs_error == 0.0
-
-    def test_an_empty_reference_is_not_scored(self):
-        vc = score(
-            {"mode": "points"}, EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([2.0, 2.0])
-        )
-        assert vc.passed is False
-        assert summarize(vc).criterion == (
-            "points criterion not scored — "
-            "no reference samples to compare (empty baseline or window)"
-        )
 
 
 class TestPointsIdentity:

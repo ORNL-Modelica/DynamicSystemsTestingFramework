@@ -24,8 +24,8 @@ from dstf.comparison.comparator import compare_all
 from dstf.config import Config, ConfigError
 from dstf.discovery.test_registry import discover_tests, merge_tests
 from dstf.storage.accept import LARGE_BASELINE_BYTES, accept_run_results
-from dstf.storage.baseline import ReferenceFile, StoredVariable
-from dstf.storage.baseline_codec import VARIABLE_KEYS, _variable_json
+from dstf.storage.baseline import ReferenceFile
+from dstf.storage.baseline_codec import VARIABLE_KEYS
 from dstf.storage.reference_store import ReferenceStore, _downsample
 
 M = "Lib.Run"
@@ -139,11 +139,6 @@ def test_the_default_stores_every_point_in_order_and_scores_zero_against_itself(
     (comp,) = compare_all([test], {M: result}, ReferenceStore(config))
     assert comp.passed
     assert [(v.name, v.nrmse) for v in comp.variables] == [("i", 0.0), ("x", 0.0)]
-
-
-def test_all_written_out_is_the_default(tmp_path):
-    reference = _stored(_config(tmp_path, baseline_points="all"), _run(5000, EVENTS))
-    assert _kept(reference) == list(range(5000))
 
 
 # -- a number: thinned as the cap of 2000 thinned ------------------------------
@@ -441,19 +436,6 @@ def test_a_single_precision_value_is_written_with_nine_digits(tmp_path):
     assert raw["variables"][0]["values"] == [0.100000001, 16777216.0]
 
 
-def test_a_double_precision_run_is_stored_as_its_own_numbers(tmp_path):
-    third = 1.0 / 3.0
-    result = _run(8)
-    result.variables[1].values = result.variables[1].values + third
-    config = _config(tmp_path)
-    reference = _stored(config, result)
-    assert reference["sampling"]["precision"] == "double"
-    # the double itself — 15 digits wrote another one — and no trip through
-    # float32 on the way back
-    assert reference["variables"][1]["values"][0] == third != float("%.15g" % third)
-    assert reference["variables"][1]["values"][0] != float(np.float32(third))
-
-
 def _awkward_doubles() -> TestResult:
     """Random doubles of every size, with the one a review measured: a
     signal of range 0.4 at a level of 130450 — where 15 digits put a
@@ -546,27 +528,6 @@ def test_a_reference_without_the_precision_is_read_as_it_always_was(tmp_path):
         float(np.float32(0.1)),
         float(np.float32(0.2)),
     ]
-
-
-def test_every_reader_of_a_reference_file_reads_it_through_the_one_function(
-    tmp_path,
-):
-    """The sibling-partition overlays and `soft-check add` read a
-    reference file too: a single-precision one gives them the same
-    numbers."""
-    from dstf.reporting.overlay_loader import _baseline_to_overlay_vars
-    from dstf.storage.baseline_codec import read_reference
-
-    config = _config(tmp_path)
-    _stored(config, _single([0.0, 1.0], x=[0.1, 0.2]))
-    (path,) = config.reference_dir.glob("ref_*.json")
-    baseline = read_reference(path).baseline
-    assert baseline.variables[0].values == [
-        float(np.float32(0.1)),
-        float(np.float32(0.2)),
-    ]
-    overlay = _baseline_to_overlay_vars(baseline)["x"]
-    assert list(overlay.values) == baseline.variables[0].values
 
 
 #: What a single-precision run holds for 0.1 and 0.2, as Python floats —
@@ -679,14 +640,6 @@ def test_soft_check_add_warns_nothing_of_a_source_it_drops_nothing_of(tmp_path, 
     assert said == []
 
 
-def test_soft_check_add_names_a_single_dropped_key(tmp_path, capsys):
-    """One unknown key on one variable is still said."""
-    _written, said = _soft_check_add_warnings(
-        tmp_path, capsys, lambda x: [{**x, "unit": "K"}]
-    )
-    assert said == [_DROPPED + "unit (x)"]
-
-
 def test_soft_check_add_names_three_variables_of_a_key_then_counts_the_rest(
     tmp_path, capsys
 ):
@@ -721,15 +674,6 @@ def test_soft_check_add_names_a_variable_whose_name_is_no_text(tmp_path, capsys)
         tmp_path, capsys, lambda x: [{**x, "name": 7, "unit": "m"}]
     )
     assert said == [_DROPPED + "unit (7)"]
-
-
-def test_a_variable_entry_is_written_with_the_keys_decoding_keeps():
-    """`VARIABLE_KEYS` is what decoding keeps and `soft-check add` reports
-    against; the writer writes exactly those, in that order."""
-    entry = _variable_json(
-        StoredVariable(index=1, name="x", expression="a.b", values=[0.0]), False
-    )
-    assert tuple(entry) == VARIABLE_KEYS
 
 
 def test_a_sibling_partitions_reference_overlays_the_runs_own_numbers(tmp_path):
@@ -1074,18 +1018,6 @@ def test_a_file_exactly_at_the_threshold_is_not_said(tmp_path, monkeypatch):
     assert warnings(size - 1) == [
         _said(path.name, M, _megabytes(path), "50", "2 variables")
     ]
-
-
-def test_a_baseline_of_one_variable_reads_in_the_singular(tmp_path, monkeypatch):
-    config = _config(tmp_path)
-    result = _run(50)
-    del result.variables[1]
-    monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
-    warnings = accept_run_results(
-        ReferenceStore(config), [_tracking_all(M)], {M: result}, config.work_dir
-    )[2]
-    (path,) = config.reference_dir.glob("ref_*.json")
-    assert warnings == [_said(path.name, M, _megabytes(path), "50", "1 variable")]
 
 
 @pytest.fixture

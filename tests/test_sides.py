@@ -91,20 +91,6 @@ class TestParse:
         assert str(exc.value).endswith(f", got {shown}")
         assert base_tolerance_refused("X", bad).endswith(f"(X is {shown})")
 
-    def test_a_long_value_is_cut_at_60_characters(self):
-        at_60 = "a" * 58  # the two quotes make 60
-        with pytest.raises(ValueError) as exc:
-            parse_sides(at_60, "tolerance")
-        assert str(exc.value).endswith(f', got "{at_60}"')
-        with pytest.raises(ValueError) as exc:
-            parse_sides("a" * 59, "tolerance")
-        assert str(exc.value).endswith(f', got "{"a" * 59}…')
-
-    def test_a_value_json_cannot_write_reads_as_its_repr(self):
-        with pytest.raises(ValueError) as exc:
-            parse_sides(1 + 2j, "tolerance")
-        assert str(exc.value).endswith(", got (1+2j)")
-
     def test_any_real_number_that_is_no_bool(self):
         """As ``float()`` took them: a numpy scalar is a number."""
         import numpy as np

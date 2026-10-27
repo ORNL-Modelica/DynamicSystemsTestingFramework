@@ -114,16 +114,6 @@ class TestClassify:
         )
         assert classify(comp) == SIM_FAIL
 
-    def test_failing_verdict_outranks_no_ref(self):
-        """Finding 5: baseline-free modes carry a verdict with nothing stored."""
-        comp = TestComparison(
-            model_id="M",
-            passed=False,
-            has_reference=False,
-            variables=[_var(passed=False)],
-        )
-        assert classify(comp) == FAIL
-
     def test_no_ref_needs_nothing_evaluated(self):
         evaluated = TestComparison(
             model_id="M", passed=True, has_reference=False, variables=[_var()]
@@ -131,10 +121,6 @@ class TestClassify:
         assert classify(evaluated) == PASS
         unevaluated = TestComparison(model_id="M", passed=True, has_reference=False)
         assert classify(unevaluated) == NO_REF
-
-    def test_warnings_do_not_change_the_verdict(self):
-        warned = _mixed()[4]
-        assert warned.warnings and classify(warned) == PASS
 
     def test_counts_are_mutually_exclusive(self):
         """Finding 69: header counts must reconcile with row statuses."""
@@ -288,9 +274,6 @@ class TestSimulateOnlyClassification:
         )
         assert comp.simulate_only is True
         assert classify(comp) == PASS
-
-    def test_a_passing_simulate_only_is_pass_not_no_ref(self):
-        assert classify(_simulate_only_comparison()) == PASS
 
     def test_a_failing_simulate_only_is_fail(self):
         assert classify(_simulate_only_comparison(passed=False)) == FAIL

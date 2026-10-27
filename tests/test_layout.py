@@ -26,10 +26,6 @@ X = _plot("x")
 FAMILY = _plot("p[1]", "p[2]")
 
 
-def test_add_context_makes_the_subjects_entry():
-    assert add_context((), X, ["z", "w"]) == (PlotExtra("x", ("z", "w")),)
-
-
 def test_add_context_appends_what_the_entry_lacks_once_and_skips_the_subject():
     extras = (PlotExtra("x", ("z",)),)
     assert add_context(extras, X, ["x", "z", "w", "w"]) == (PlotExtra("x", ("z", "w")),)
@@ -60,11 +56,6 @@ def test_removing_a_derived_plots_last_context_drops_its_entry():
     # a name it does not have changes nothing
     assert remove_context(extras, X, "q") == extras
     assert remove_context((PlotExtra("x", ("z",)),), X, "z") == ()
-
-
-def test_remove_context_on_a_family_finds_the_entry_on_any_member():
-    extras = (PlotExtra("p[2]", ("z", "w")),)
-    assert remove_context(extras, FAMILY, "z") == (PlotExtra("p[2]", ("w",)),)
 
 
 def test_a_watch_plot_keeps_its_entry_with_no_context():

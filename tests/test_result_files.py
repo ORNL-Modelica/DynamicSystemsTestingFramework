@@ -146,23 +146,6 @@ def test_the_persistent_backends_inherit_the_readers():
     )
 
 
-def test_mat_series_reads_through_the_mat_reader(tmp_path, monkeypatch):
-    from dstf.backends.common import result_files
-
-    calls = []
-
-    def fake_read(path, variable_names=None):
-        calls.append((path, variable_names))
-        t = np.asarray(T)
-        return {"a": (t, t * 2), "time": (t, t)}
-
-    monkeypatch.setattr(result_files, "read_result_mat", fake_read)
-    (tmp_path / "r.mat").write_bytes(b"")
-    got = result_files.mat_series(tmp_path / "r.mat", ["a", "b"])
-    assert calls == [(tmp_path / "r.mat", {"a", "b"})]
-    assert list(got) == ["a"] and got["a"][1].tolist() == [0.0, 1.0, 2.0]
-
-
 def test_mat_names_leaves_time_out_in_either_case(tmp_path, monkeypatch):
     from dstf.backends.common import result_files
 

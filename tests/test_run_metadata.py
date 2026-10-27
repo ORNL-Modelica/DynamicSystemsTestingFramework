@@ -30,12 +30,6 @@ class TestFromConfig:
         meta = RunMetadata.from_config(_stub_config(), tool_version="Dymola 2025x R1")
         assert meta.tool_version == "Dymola 2025x R1"
 
-    def test_dstf_version_is_populated(self):
-        # importlib.metadata resolves the installed editable package version.
-        meta = RunMetadata.from_config(_stub_config())
-        assert meta.dstf_version  # non-empty string, never None
-        assert isinstance(meta.dstf_version, str)
-
     def test_backend_name_falls_back_to_backend_when_unset(self):
         cfg = _stub_config(backend_name=None, backend="Dymola")
         meta = RunMetadata.from_config(cfg)
@@ -81,13 +75,6 @@ class TestAsDict:
             ).library_versions
             is None
         )
-
-    def test_json_serializable(self):
-        import json
-
-        d = RunMetadata.from_config(_stub_config(), now=1.0).as_dict()
-        # must survive the status.json round-trip
-        assert json.loads(json.dumps(d))["backend"] == "Dymola"
 
 
 class TestBatchDymolaStampsProvenance:

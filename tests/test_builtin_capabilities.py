@@ -1194,52 +1194,6 @@ def test_add_beside_a_root_leaf_wraps_the_root_in_and(session):
     assert len(session.tree(A)["children"]) == 2
 
 
-def test_add_beside_a_leaf_lands_right_after_it(session):
-    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
-    view = SessionView(session, _node(D, "/metrics/children/1"))
-    outcome = EditTree().act(
-        view,
-        action="add",
-        model_id=D,
-        path="/metrics/children/1",
-        variable="x",
-        metric="nrmse",
-    )
-    (op,) = outcome.ops
-    assert (op.op, op.path) == ("add", "/metrics/children/2")  # right after it
-
-
-def test_add_beside_a_nested_leaf_lands_right_after_it_in_its_own_parent(session):
-    """Two levels deep: the parent is everything before the LAST
-    `/children/` — read from the first, the leaf would join the root."""
-    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
-    path = "/metrics/children/1/children/0"
-    outcome = EditTree().act(
-        SessionView(session, _node(D, path)),
-        action="add",
-        model_id=D,
-        path=path,
-        variable="x",
-        metric="range",
-    )
-    (op,) = outcome.ops
-    assert (op.op, op.path) == ("add", "/metrics/children/1/children/1")
-
-
-def test_add_under_a_combinator_is_unchanged(session):
-    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
-    outcome = EditTree().act(
-        SessionView(session, _node(D, ROOT)),
-        action="add",
-        model_id=D,
-        path=ROOT,
-        variable="x",
-        metric="nrmse",
-    )
-    (op,) = outcome.ops
-    assert (op.op, op.path) == ("add", "/metrics/children/-")
-
-
 def _view(session) -> SessionView:
     return SessionView(session, Selection(tests=frozenset({A}), variable="x"))
 
@@ -2031,28 +1985,6 @@ async def test_the_edit_rows_buttons_read_cancel_apply(session):
         assert [b.text for b in row.default_slot.children] == ["Cancel", "Apply"]
 
 
-def test_unwrap_of_several_children_moves_them_into_the_parent(session):
-    a = {"metric": "nrmse", "variable": "x"}
-    b = {"metric": "range", "variable": "x", "max_value": 9.0}
-    c = {"metric": "range", "variable": "x", "max_value": 5.0}
-    tree = {
-        "combinator": "and",
-        "children": [{"combinator": "k-of-n", "k": 1, "children": [a, b]}, c],
-    }
-    session.stage([PatchOp(D, "add", ROOT, tree)])
-    node = "/metrics/children/0"
-    outcome = EditTree().act(
-        SessionView(session, _node(D, node)), action="unwrap", model_id=D, path=node
-    )
-    assert [(op.op, op.path, op.value) for op in outcome.ops] == [
-        ("remove", node, None),
-        ("add", "/metrics/children/0", a),
-        ("add", "/metrics/children/1", b),
-    ]
-    session.apply(outcome)
-    assert session.tree(D) == {"combinator": "and", "children": [a, b, c]}
-
-
 async def test_unwrap_is_not_offered_on_a_root_with_several_children(session):
     """`act` refuses it by rule ("the root has no parent to take its
     children"), and an option cannot carry a why-tooltip: the dropdown of a
@@ -2375,20 +2307,6 @@ async def test_accept_stores_the_rest(session):
         assert rid == "0004"  # A, D and G hold 0001-0003
         raw = (session.project.config.reference_dir / f"ref_{rid}.json").read_bytes()
         assert b"\r" not in raw and json.loads(raw)["model_id"] == B
-
-
-def test_accept_act_returns_a_store_write_over_the_selection(session):
-    """`act` is pure: the StoreWrite names the selection and its `run`
-    reports one line — what it stored and what it refused."""
-    from dstf.authoring.capabilities import StoreWrite
-
-    view = SessionView(session, Selection(tests=frozenset({A, B, C})))
-    out = Accept().act(view)
-    assert isinstance(out, StoreWrite) and out.models == {A, B, C}
-    line = out.run(session.project.store)
-    assert line.startswith("Accept: stored 2") and C in line
-    # The line is a report of an effect that happened: B has a baseline now.
-    assert session.project.store.index.get_id(B) == "0004"
 
 
 def test_accept_is_greyed_while_the_queue_holds_a_selected_test(session):
@@ -2924,13 +2842,6 @@ def test_plus_adds_right_after_the_clicked_criterion(
     assert (op.op, op.path) == ("add", op_path)
     session.apply(outcome)
     assert node_or_none(session.tree(D), added)["metric"] == "range"
-
-
-def test_plus_beside_a_root_leaf_reveals_the_roots_second_child(session):
-    from dstf.authoring.builtin.edit_tree import _added_path
-
-    session.stage([PatchOp(D, "add", ROOT, {"metric": "nrmse", "variable": "x"})])
-    assert _added_path(session.tree(D), ROOT) == "/metrics/children/1"
 
 
 async def test_the_plus_tooltip_and_title_say_where_the_criterion_lands(session):

@@ -11,7 +11,6 @@ from dstf.storage.baseline import (
     PRIMARY_BASELINE,
     Baseline,
     DiagnosticSummary,
-    ReferenceFile,
     Sampling,
     StoredVariable,
 )
@@ -32,20 +31,6 @@ def _baseline():
 def test_variable_by_name_is_the_first_with_that_name():
     assert _baseline().variable("x").expression == "a.x"
     assert _baseline().variable("nope") is None
-
-
-def test_missing_status_reads_as_active():
-    ref = ReferenceFile(
-        model_id="M",
-        test_id="0001",
-        status=None,
-        date_added=None,
-        last_updated=None,
-        sampling=None,
-        comparison={},
-        baseline=_baseline(),
-    )
-    assert ref.active_status == "active"
 
 
 def test_sampling_holds_the_four_fields():

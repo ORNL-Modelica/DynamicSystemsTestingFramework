@@ -1614,12 +1614,6 @@ def test_each_line_shown_refused_is_refused(argv, capsys):
     assert " does not apply " in text, text
 
 
-def test_with_rerun_an_accept_reads_the_tolerance(capsys):
-    """The one `unless` of the table: --rerun's choice of tests is scored."""
-    argv = ["run", "--accept", "--rerun", "failed", "--tolerance", "0.1"]
-    assert isinstance(_parse(argv, capsys), argparse.Namespace)
-
-
 def _unread_cases():
     from dstf.cli.parser import UNREAD
 

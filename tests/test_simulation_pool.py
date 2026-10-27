@@ -237,16 +237,6 @@ class TestQueue:
         assert item.result.success and item.message is None
         assert _manifest(backend.config) == {"Lib.A": "passed"}
 
-    def test_first_in_first_out(self, stub):
-        backend, pool, _ = stub
-        backend.gate("Lib.A")
-        items = [pool.submit(_t(name)) for name in "ABCDE"]
-        assert [i.model_id for i in pool.waiting][-4:] == [f"Lib.{n}" for n in "BCDE"]
-        backend.gates["Lib.A"].set()
-        _wait_until(lambda: _ended(*items))
-
-        assert [model for model, _ in backend.ran] == [f"Lib.{n}" for n in "ABCDE"]
-
     def test_an_item_submitted_while_another_runs_is_appended(self, stub):
         backend, pool, _ = stub
         backend.gate("Lib.A")

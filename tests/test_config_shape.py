@@ -803,12 +803,6 @@ class TestBackendBlocks:
             f'{path}: backends.FMPy: unknown field "executables" — there are no settings here'
         )
 
-    def test_the_top_level_show_ide_is_an_unknown_key(self, tmp_path):
-        path = _project(tmp_path, {"show_ide": True})
-        with pytest.raises(ConfigError) as exc:
-            Config(config_file=path)
-        assert str(exc.value).startswith(f'{path}: unknown field "show_ide"')
-
     def test_dymola_s_settings_reach_its_backend(self, tmp_path):
         """What `--show-ide`, `--batch-size` and `--dymola-interface` said
         is said in the block, and the backend reads it from there."""

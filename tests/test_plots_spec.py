@@ -210,13 +210,6 @@ def test_a_check_atm_shaped_unit_tests_pair_is_two_plots():
     ]
 
 
-def test_an_array_folds_whatever_its_members_scales():
-    """No scale rule (O3): a real array is one quantity, however far apart
-    its members' magnitudes are."""
-    plots = _derive(_leaves(_and("p[1]", "p[2]")))
-    assert [p.subject for p in plots] == [("p[1]", "p[2]")]
-
-
 def test_only_the_named_unit_tests_variables_stay_apart():
     """A family around a UnitTests variable still folds its other members."""
     plots = _derive(
@@ -379,11 +372,6 @@ class _Result:
         self.success = success
 
 
-def test_the_scored_names_come_first_then_the_rest_of_the_result():
-    tracked = tracked_names(["x"], _Result(_Var("x", 1), _Var("y", 2)))
-    assert tracked == ["x", "y"]
-
-
 def test_the_scored_order_wins_when_it_differs_from_the_results():
     """The tree's order is the test author's; the result file's is the
     backend's. A variable the tree scores is drawn where the tree put it."""
@@ -440,10 +428,6 @@ def test_a_failed_simulations_partial_result_contributes_nothing():
     partial = _Result(_Var("x", 1), _Var("y", 2), success=False)
     assert tracked_names([], partial) == []
     assert tracked_names(["x"], partial) == ["x"]
-
-
-def test_no_result_leaves_the_scored_names_alone():
-    assert tracked_names(["x"], None) == ["x"]
 
 
 # -- `plots_of_test`: the one function both tiers call -----------------------

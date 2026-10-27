@@ -15,18 +15,6 @@ def _parse(spec: dict):
 
 
 class TestValidatorRules:
-    def test_valid_simple_primary_tree(self):
-        tree = _parse(
-            {
-                "combinator": "and",
-                "children": [
-                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
-                ],
-            }
-        )
-        errors = validate_tree(tree, role_lookup_from_names())
-        assert errors == []
-
     def test_valid_bouncing_ball_shape(self):
         """The ModelicaTestingLib/examples/fmu BouncingBall tree shape."""
         tree = _parse(

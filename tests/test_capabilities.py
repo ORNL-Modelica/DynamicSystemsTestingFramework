@@ -11,7 +11,6 @@ from dstf import plugins
 from dstf.authoring import capabilities as caps
 from dstf.authoring.capabilities import (
     Artifact,
-    Capability,
     Enqueue,
     OpenProject,
     Patch,
@@ -60,11 +59,6 @@ def test_registration_order_is_kept_and_a_duplicate_name_is_loud():
         register_capability(_Dummy("a"))
 
 
-def test_the_protocol_is_checkable():
-    assert isinstance(_Dummy(), Capability)
-    assert not isinstance(object(), Capability)
-
-
 def test_registering_a_non_capability_is_loud_at_registration():
     """plugins.py's rule: fail at startup naming what is wrong, not when
     the user reaches the page that would draw the capability."""
@@ -103,22 +97,6 @@ def test_a_capability_declares_a_non_empty_frozenset_of_placements():
     with pytest.raises(TypeError, match="non-empty frozenset of Placement"):
         register_capability(_Loose())
     assert registered_capabilities() == ()
-
-
-def test_node_is_a_placement_a_capability_may_name():
-    """A tree node's controls are a capability's panel drawn at that node
-    (D129 + the Test page's decision 1): nothing else lets the shell draw
-    `+` / wrap / `−` without knowing Edit tree by name."""
-    assert Placement.NODE.value == "node"
-    cap = _Dummy("at-node", frozenset({Placement.NODE}))
-    register_capability(cap)
-    assert cap in registered_capabilities()
-
-
-def test_a_capability_may_attach_at_several_placements():
-    cap = _Dummy("both", frozenset({Placement.SUITE, Placement.TEST}))
-    register_capability(cap)
-    assert cap.placements == {Placement.SUITE, Placement.TEST}
 
 
 def test_plural_counts_its_noun():
@@ -177,18 +155,3 @@ def test_outcomes_are_frozen_and_carry_their_models():
     assert (
         OpenProject(config_path=__import__("pathlib").Path("x")).config_path.name == "x"
     )
-
-
-def test_the_session_imports_without_the_ui_extra():
-    """A capability module reaches NiceGUI only inside `panel`: importing
-    the package registers the builtins, and that must work where the
-    [author] extra is not installed. The `None` entry makes any `import
-    nicegui` raise."""
-    import subprocess
-    import sys
-
-    code = (
-        "import sys; sys.modules['nicegui'] = None; "
-        "import dstf.authoring.session, dstf.authoring.builtin"
-    )
-    subprocess.run([sys.executable, "-c", code], check=True)

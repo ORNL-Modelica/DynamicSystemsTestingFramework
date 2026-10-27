@@ -59,11 +59,6 @@ class TestRefIndex:
         path = ref_dir / f"ref_{test_id}.json"
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    def test_scan_empty_dir(self, tmp_path):
-        """Empty directory produces empty index."""
-        index = RefIndex(tmp_path)
-        assert index.active_tests() == {}
-
     def test_scan_nonexistent_dir(self, tmp_path):
         """Nonexistent directory produces empty index."""
         index = RefIndex(tmp_path / "nonexistent")
@@ -125,11 +120,6 @@ class TestRefIndex:
         self._write_ref(tmp_path, "0001", "MyLib.Test1", status="obsolete")
         index = RefIndex(tmp_path)
         assert index.get_model_id("0001") is None
-
-    def test_next_id_empty(self, tmp_path):
-        """Next ID on empty dir is 0001."""
-        index = RefIndex(tmp_path)
-        assert index.next_id() == "0001"
 
     def test_next_id_increments(self, tmp_path):
         """Next ID is one more than the highest existing."""

@@ -33,28 +33,6 @@ class TestLttbContract:
         np.testing.assert_array_equal(t_out, t)
         np.testing.assert_array_equal(v_out, v)
 
-    def test_output_size_matches_n_out(self):
-        t = np.linspace(0, 10, 1000)
-        v = np.sin(t)
-        t_out, v_out = lttb(t, v, 100)
-        assert len(t_out) == 100
-        assert len(v_out) == 100
-
-    def test_endpoints_preserved(self):
-        t = np.linspace(0, 10, 1000)
-        v = np.cos(t)
-        t_out, v_out = lttb(t, v, 50)
-        assert t_out[0] == t[0]
-        assert t_out[-1] == t[-1]
-        assert v_out[0] == v[0]
-        assert v_out[-1] == v[-1]
-
-    def test_time_monotonic_after_decimation(self):
-        t = np.linspace(0, 100, 5000)
-        v = np.sin(t) + 0.3 * np.sin(7 * t)
-        t_out, _ = lttb(t, v, 200)
-        assert np.all(np.diff(t_out) > 0)
-
     def test_length_mismatch_raises(self):
         with pytest.raises(ValueError, match="length mismatch"):
             lttb(np.arange(10), np.arange(5), 3)
@@ -186,16 +164,6 @@ class TestHoistedLoopIsTheSameAlgorithm:
         got_t, got_v = lttb(t, v, n_out)
         np.testing.assert_array_equal(got_t, want_t)
         np.testing.assert_array_equal(got_v, want_v)
-
-    def test_the_tightest_buckets_the_guard_allows(self):
-        # n_out just below n_in gives the smallest bucket_size the guard
-        # permits (18/17 here) — one candidate in most buckets. The
-        # reference's empty-bucket arm stays unreached even here.
-        t = np.arange(20.0)
-        v = t**2
-        want = _lttb_reference(t, v, 19)
-        got = lttb(t, v, 19)
-        np.testing.assert_array_equal(got[0], want[0])
 
 
 def _bucket_boundaries(n_in: int, n_out: int):

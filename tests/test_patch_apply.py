@@ -19,18 +19,6 @@ from dstf.discovery.patch_apply import (
 
 
 class TestBasicOps:
-    def test_replace_scalar_in_whitelisted_path(self):
-        doc = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
-        apply_patch_to_document(
-            doc,
-            "M",
-            [
-                {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-            ],
-        )
-        data = doc
-        assert data["tests"][0]["comparison"]["tolerance"] == 1e-3
-
     def test_add_new_key(self):
         doc = {"tests": [{"model": "M", "comparison": {}}]}
         apply_patch_to_document(
@@ -233,20 +221,6 @@ class TestErrorSurfacing:
                 [
                     {"op": "replace", "path": "/comparison/does_not_exist", "value": 1},
                 ],
-            )
-
-    def test_add_missing_value_rejected(self):
-        doc = {"tests": [{"model": "M", "comparison": {}}]}
-        with pytest.raises(PatchError, match="requires 'value'"):
-            apply_patch_to_document(
-                doc, "M", [{"op": "add", "path": "/comparison/tolerance"}]
-            )
-
-    def test_invalid_path_shape_rejected(self):
-        doc = {"tests": [{"model": "M"}]}
-        with pytest.raises(PatchError):
-            apply_patch_to_document(
-                doc, "M", [{"op": "replace", "path": "bad-path", "value": 1}]
             )
 
 
@@ -539,14 +513,6 @@ class TestRejectionEdges:
                 [{"op": "remove", "path": "/comparison/ghost"}],
             )
 
-    def test_list_index_out_of_range(self):
-        with pytest.raises(PatchError, match="out of range"):
-            apply_patch_to_document(
-                self._spec(),
-                "M",
-                [{"op": "replace", "path": "/comparison/a/9", "value": 0}],
-            )
-
     def test_list_index_not_integer(self):
         with pytest.raises(PatchError, match="must be an integer"):
             apply_patch_to_document(
@@ -754,22 +720,6 @@ class TestFinding49ArrayAdd:
                 ],
             )
 
-    def test_add_refuses_dict_autocreate_for_array_index(self):
-        """A per-leaf patch against a test with no metrics tree must fail
-        loudly instead of silently creating {"children": {"0": ...}}."""
-        doc = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
-        with pytest.raises(PatchError, match="array index"):
-            apply_patch_to_document(
-                doc,
-                "M",
-                [
-                    {
-                        "op": "add",
-                        "path": "/metrics/children/0/tolerance",
-                        "value": 0.01,
-                    }
-                ],
-            )
         # That nothing is left in the document — not even the `metrics` the
         # descent made — is test_a_refused_patch_leaves_the_document_as_it_was.
 

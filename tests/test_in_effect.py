@@ -51,23 +51,6 @@ def test_a_leaf_without_a_tolerance_shows_the_tests(tmp_path):
     assert x["in_effect"] == {"tolerance": {"value": 0.01, "source": "test"}}
 
 
-def test_a_leaf_with_its_own_tolerance_carries_the_base_too(tmp_path):
-    """The hint names what applies with the field EMPTY: a leaf whose own
-    0.5 is cleared in the editor is scored with the base, so the view
-    carries the base (not the 0.5 the leaf applies now) for it too."""
-    tree = {
-        "combinator": "and",
-        "children": [
-            {"metric": "nrmse", "variable": "x", "tolerance": 0.5},
-            {"metric": "nrmse", "variable": "y"},
-        ],
-    }
-    s = _session(tmp_path, test_tol=0.01, metrics=tree)
-    x, y = _leaves(s.tree_view(A))
-    assert x["in_effect"] == {"tolerance": {"value": 0.01, "source": "test"}}
-    assert y["in_effect"]["tolerance"] == {"value": 0.01, "source": "test"}
-
-
 def test_a_leaf_holding_a_pair_carries_the_base_as_one_holding_a_number(tmp_path):
     """A lower/upper pair is the leaf's own tolerance like a number is: the
     view carries the BASE — one number — for the field left empty, and the

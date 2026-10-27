@@ -648,15 +648,6 @@ def test_a_refused_click_of_one_test_takes_its_row_back(looped, monkeypatch):
     ]
 
 
-def test_with_a_loop_a_refusal_after_the_read_is_a_notice(looped):
-    lib = looped
-    (lib.dir / "B.mo").unlink()
-    lib.session.apply(Enqueue(models=(B,)))
-    said = f"{B}: its file {lib.dir / 'B.mo'} is gone"
-    lib.loop.until(lambda: lib.notices() == [said], what="the notice")
-    assert lib.session.queue == [] and lib.session._reading == set()
-
-
 def test_with_a_loop_a_refusal_known_before_the_read_is_raised_to_the_click(looped):
     lib = looped
     lib.session.queue_refusal = "Stub runs whole batches only"

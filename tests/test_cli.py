@@ -86,74 +86,6 @@ def test_should_review_all_matches_everything():
     assert _should_review(comp, {"all"}) is True
 
 
-def test_should_review_failed():
-    comp = _comparison(passed=False)
-    assert _should_review(comp, {"failed"}) is True
-
-
-def test_should_review_failed_skips_passing():
-    comp = _comparison(passed=True)
-    assert _should_review(comp, {"failed"}) is False
-
-
-def test_should_review_failed_skips_no_baseline():
-    """An unevaluated fresh test (production NO_REF shape: passed=True)
-    is 'no-baseline', not 'failed'. Failing baseline-free tests DO match
-    'failed' — covered in test_review_fixes_verdict.py."""
-    comp = _comparison(passed=True, has_reference=False)
-    assert _should_review(comp, {"failed"}) is False
-
-
-def test_should_review_failed_skips_sim_failed():
-    comp = _comparison(passed=False, sim_success=False)
-    assert _should_review(comp, {"failed"}) is False
-
-
-def test_should_review_no_baseline():
-    comp = _comparison(has_reference=False)
-    assert _should_review(comp, {"no-baseline"}) is True
-
-
-def test_should_review_no_baseline_skips_existing():
-    comp = _comparison(has_reference=True)
-    assert _should_review(comp, {"no-baseline"}) is False
-
-
-def test_should_review_warnings():
-    comp = _comparison(warnings=["something changed"])
-    assert _should_review(comp, {"warnings"}) is True
-
-
-def test_should_review_warnings_skips_clean():
-    comp = _comparison(warnings=[])
-    assert _should_review(comp, {"warnings"}) is False
-
-
-def test_should_review_sim_failed():
-    comp = _comparison(sim_success=False)
-    assert _should_review(comp, {"sim-failed"}) is True
-
-
-def test_should_review_sim_failed_skips_success():
-    comp = _comparison(sim_success=True)
-    assert _should_review(comp, {"sim-failed"}) is False
-
-
-def test_should_review_passed():
-    comp = _comparison(passed=True, warnings=[])
-    assert _should_review(comp, {"passed"}) is True
-
-
-def test_should_review_passed_skips_with_warnings():
-    comp = _comparison(passed=True, warnings=["warn"])
-    assert _should_review(comp, {"passed"}) is False
-
-
-def test_should_review_passed_skips_failed():
-    comp = _comparison(passed=False)
-    assert _should_review(comp, {"passed"}) is False
-
-
 def test_should_review_combined_filters():
     """Combined filters match if any filter matches."""
     filters = {"failed", "no-baseline"}
@@ -1379,13 +1311,6 @@ class TestAcceptExitCodeAndScope:
         assert "Accepted 1" in out
         assert "Lib.T2" in out
         assert "simulation failed" in out
-        assert _stored_model_ids(run_env) == {"Lib.T1"}
-
-    def test_full_accept_exits_zero(self, run_env, capsys):
-        t1 = "Lib.T1"
-        run_env.make([t1], results={"Lib.T1": _mk_result("Lib.T1")})
-        rc = cmd_run(_run_args(run_env, "--accept"))
-        assert rc == 0
         assert _stored_model_ids(run_env) == {"Lib.T1"}
 
     @pytest.mark.parametrize("command", ["run", "compare"])

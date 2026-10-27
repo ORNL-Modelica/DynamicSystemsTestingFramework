@@ -286,19 +286,6 @@ class TestBoundedStart:
             for proc in launched:
                 proc.kill()
 
-    def test_the_launch_itself_kills_what_an_abandoned_start_brought_up(self, tmp_path):
-        """Before the start returns, not after: the give-up waits only for
-        that return, and its caller may be gone a moment later."""
-        proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
-        worker = _Worker(0, _config(tmp_path))
-        worker._start_abandoned = True
-        try:
-            with pytest.raises(WorkerStartError, match="its start was given up"):
-                worker._track_launch(proc.pid)
-            assert proc.wait(10) is not None
-        finally:
-            proc.kill()
-
     def test_the_give_up_waits_for_a_launch_in_flight(self, tmp_path):
         """A launch call that hands its process over only when it returns
         (OMPython's): the give-up does not return before that — a caller

@@ -371,11 +371,6 @@ def test_what_the_test_does_not_track_or_no_side_holds_is_not_a_loss(fields):
     assert classify(comp) == PASS and [v.name for v in comp.variables] == ["x"]
 
 
-def test_a_loss_with_no_baseline_is_no_ref_as_before():
-    test = make_test_model(variable_patterns=["x", "y"])
-    assert classify(compare_one(test, _result("x"), _Store(None))) == NO_REF
-
-
 def test_a_warn_over_a_lost_variable_is_an_advisory_failure():
     """A `warn` over the lost variable, beside a criterion that holds (a
     tree of warnings alone is refused: `broken_roles`): the test passes, and

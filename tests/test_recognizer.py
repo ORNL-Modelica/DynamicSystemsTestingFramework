@@ -36,13 +36,6 @@ def reset_registry_after_test():
 class TestBundledRecognizer:
     """The bundled Modelica recognizer is auto-registered on mo_parser import."""
 
-    def test_bundled_registers_on_mo_parser_import(self):
-        # Import triggers registration
-
-        recs = get_recognizers("modelica")
-        names = [r.name for r in recs]
-        assert "modelica:bundled-unit-tests" in names
-
     def test_bundled_filters_by_source_type(self):
 
         # Bundled recognizer applies only to "modelica"

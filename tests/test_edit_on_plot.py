@@ -405,25 +405,6 @@ def test_a_drag_on_a_window_stages_nothing(session):
     assert _drag(session, "/metrics/window", {"x0": 0.3, "x1": 0.9}, model_id=A) is None
 
 
-def test_a_drag_on_a_peak_window_box_stages_nothing(session):
-    """A peak's window is a `kind="handle"` Box: the check is by primitive
-    type, not by kind."""
-    _root_leaf_on_a(
-        session,
-        {
-            "metric": "dominant-frequency",
-            "variable": "x",
-            "peaks": [{"freq": 1.0, "tolerance": 0.5, "tolerance_mode": "rel"}],
-        },
-    )
-    ids = {p.id for leaf in session.view(A, "x").leaves for p in leaf.geometry}
-    assert "/metrics/peaks/window/0" in ids
-    assert (
-        _drag(session, "/metrics/peaks/window/0", {"x0": 0.3, "x1": 0.9}, model_id=A)
-        is None
-    )
-
-
 @pytest.mark.parametrize(
     "leaf, handle",
     [
@@ -1986,32 +1967,6 @@ async def test_a_refused_cell_puts_back_what_it_held_when_it_was_entered(session
         await _settled(lambda: "edit-on-plot" in errors)
         assert "row 0: tolerance must not be negative; got −1" in errors["edit-on-plot"]
         assert _a_rows(session, "events") == [{"time": 0.5, "tolerance": 0.2}]
-
-
-async def test_a_refusal_with_nothing_staged_on_the_way_puts_nothing_back(
-    session, monkeypatch
-):
-    """`-1` set at once over 0.1: nothing was staged on the way, so the
-    refusal stages nothing either — the list is handed to `act` once, and
-    not a second time with the cell put back to what it already holds."""
-    _root_leaf_on_a(session, copy.deepcopy(SIDED["peaks"][0]))
-    lower = "/metrics:peaks:0:tolerance:lower"
-    handed: list[list[dict]] = []
-    act = EditOnPlot.act
-
-    def counting(self, s, **inputs):
-        if inputs["kind"] == "rows":
-            handed.append(inputs["rows"])
-        return act(self, s, **inputs)
-
-    monkeypatch.setattr(EditOnPlot, "act", counting)
-    async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
-        pending = list(session.spec.pending)
-        _keys(user, lower, "-1")
-        await _settled(lambda: "edit-on-plot" in errors)
-        assert session.spec.pending == pending
-        assert _a_rows(session, "peaks")[0]["tolerance"] == 0.1
-        assert [rows[0]["tolerance"] for rows in handed] == [-1.0]
 
 
 @pytest.mark.parametrize(

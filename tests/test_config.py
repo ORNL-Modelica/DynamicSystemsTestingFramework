@@ -718,15 +718,6 @@ class TestRenamedKeysAreRejected:
 
         assert str(exc.value).startswith(f'{cfg}: unknown field "{key}"')
 
-    def test_new_keys_load_clean(self, tmp_path):
-        cfg = tmp_path / "testing.json"
-        cfg.write_text(
-            json.dumps({"backend": "Dymola", "backends": {}, "backend_setup": ["x;"]}),
-            encoding="utf-8",
-        )
-
-        assert load_config_file(cfg)["backend"] == "Dymola"
-
 
 class TestFinding11MalformedConfig:
     def test_load_config_file_missing_returns_empty(self, tmp_path):

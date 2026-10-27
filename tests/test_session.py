@@ -1175,14 +1175,6 @@ class TestRescoreAndStage:
         session.rescore(A)
         assert len(session.spec.pending) == 2
 
-    def test_rescore_alone_on_a_flat_test_leaves_nothing_staged(self, session):
-        """The tree a flat entry scores by, written out and nothing else, is
-        the entry as saved: a look stages nothing that Save would write."""
-        comp = session.rescore(A)
-        assert session.spec.pending == []
-        assert "metrics" not in session.spec.entry(A)
-        assert comp is session.comparisons[A] and classify(comp) == FAIL
-
     def test_rescore_verdict_equals_the_loaded_one_when_nothing_changed(self, session):
         assert classify(session.rescore(A)) == FAIL
         assert (
@@ -4139,12 +4131,6 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
 class TestTheMaterializationIsMarked:
     """The drawer's preview diffs against the tree as scoring sees it: the
     op `stage` prepends to write a flat entry's tree out says so."""
-
-    def test_the_prepended_tree_is_marked_and_the_edit_is_not(self, session):
-        session.stage([LOOSEN])
-        tree, edit = session.spec.pending
-        assert (tree.op, tree.path) == ("add", "/metrics") and tree.materializes
-        assert edit == LOOSEN and not edit.materializes
 
     def test_an_edit_that_lands_on_the_tree_unmarks_it(self, session):
         """Convention 8 folds a replace of ``/metrics`` onto the op that

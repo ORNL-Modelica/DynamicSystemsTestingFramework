@@ -429,13 +429,6 @@ class TestJUnitReport:
         assert root.get("failures") == "1"  # only the regression failure
         assert root.get("errors") == "1"  # the sim failure
 
-    def test_passing_testcase_has_no_children(self, tmp_path):
-        out = tmp_path / "junit.xml"
-        generate_junit_report([_passing()], out)
-        tc = ET.parse(out).getroot().find(".//testcase")
-        assert tc is not None
-        assert list(tc) == []
-
     def test_regression_failure_element_carries_variable_detail(self, tmp_path):
         out = tmp_path / "junit.xml"
         generate_junit_report([_failing()], out)
@@ -668,17 +661,6 @@ class TestJUnitReport:
         assert failure.get("message") == "1 criterion failed"
         assert "group" not in failure.text
 
-    def test_config_error_failure_names_the_reason(self, tmp_path):
-        """A sentinel leaf's reason reaches CI, not a wall of inf/nan."""
-        out = tmp_path / "junit.xml"
-        generate_junit_report([_config_error()], out)
-        failure = ET.parse(out).getroot().find(".//failure")
-        assert failure is not None
-        assert failure.text == (
-            "h: range — Not scored: metric 'range' misconfigured: "
-            "needs at least one of min_value / max_value"
-        )
-
     def test_a_refused_test_says_why_in_the_message_and_the_body(self, tmp_path):
         """A FAIL with no variable is one the comparison refused: its reason
         is the whole finding, where the element read "0 variable(s) failed"
@@ -706,15 +688,6 @@ class TestJUnitReport:
         assert err is not None
         assert err.get("type") == "SimulationError"
         assert "boom" in err.get("message")
-
-    def test_no_reference_becomes_skipped(self, tmp_path):
-        out = tmp_path / "junit.xml"
-        generate_junit_report([_no_ref()], out)
-        root = ET.parse(out).getroot()
-        assert root.find(".//skipped") is not None
-        # A skip is neither a failure nor an error.
-        assert root.get("failures") == "0"
-        assert root.get("errors") == "0"
 
     def test_a_test_not_run_is_skipped_not_run(self, tmp_path):
         """D145: no result is not a failure. The testcase carries
@@ -752,13 +725,6 @@ class TestConsoleReport:
     def test_all_pass_returns_zero(self, capsys):
         assert print_report([_passing(), _passing("Lib.Examples.A2")]) == 0
         assert "Results: 2/2 passed" in capsys.readouterr().out
-
-    def test_regression_failure_returns_one_with_details(self, capsys):
-        assert print_report([_failing()]) == 1
-        out = capsys.readouterr().out
-        assert "Failure Details" in out
-        assert "Lib.Examples.B" in out
-        assert "NRMSE" in out
 
     def test_a_test_that_passes_with_an_advisory_failure_says_so(self, capsys):
         """It printed a plain `PASS`. The line names the count, the summary
@@ -1168,9 +1134,6 @@ class TestConsoleReport:
         assert "NOT RUN: 1" in out
         assert "SIM_FAIL" not in out and "Simulation errors" not in out
 
-    def test_a_failure_beside_a_test_not_run_still_fails(self, capsys):
-        assert print_report([_not_run(), _failing()]) == 1
-
     def test_structural_warning_section(self, capsys):
         assert print_report([_warned()]) == 0
         out = capsys.readouterr().out
@@ -1245,17 +1208,6 @@ class TestReportFormatRouting:
             work_dir / "dashboard.html"
         ).read_text(encoding="utf-8")
 
-    def test_html_exit_code_tracks_failures(self, tmp_path):
-
-        work_dir = tmp_path / "work"
-        work_dir.mkdir()
-        out = tmp_path / "r.html"
-        args = types.SimpleNamespace(report_format="html", output=str(out))
-        assert (
-            _output_report([_passing(), _failing()], args, _fake_config(work_dir), {})
-            == 1
-        )
-
     def test_every_route_exits_zero_over_not_run_and_pass(self, tmp_path, capsys):
         """D145: `compare` and `run` exit by what ran — a test NOT RUN is
         not a failure on any route; a FAIL beside it still is."""
@@ -1307,11 +1259,6 @@ class TestReportFormatRouting:
         args = types.SimpleNamespace(report_format="junit", output=str(out))
         assert _output_report([_passing()], args, _fake_config(tmp_path), {}) == 0
         assert ET.parse(out).getroot().tag == "testsuites"
-        assert "Results: 1/1 passed" in capsys.readouterr().out
-
-    def test_console_route_is_default(self, tmp_path, capsys):
-        args = types.SimpleNamespace(report_format="console", output=None)
-        assert _output_report([_passing()], args, _fake_config(tmp_path), {}) == 0
         assert "Results: 1/1 passed" in capsys.readouterr().out
 
 

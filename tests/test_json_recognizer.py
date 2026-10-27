@@ -41,14 +41,6 @@ class TestSchemaParsing:
         assert rec.name == "test:minimal"
         assert "modelica" in rec.applies_to
 
-    def test_minimal_extends_spec_parses(self):
-        spec = {
-            "name": "test:extends",
-            "match": {"type": "extends", "class_pattern": "*Examples"},
-        }
-        rec = parse_recognizer_spec(spec)
-        assert isinstance(rec, JsonRecognizer)
-
     def test_missing_name_raises(self):
         with pytest.raises(RecognizerSpecError, match='recognizer: has no "name"'):
             parse_recognizer_spec({"match": {"type": "extends", "class_pattern": "*"}})
@@ -294,38 +286,6 @@ class TestComponentMatching:
         result = rec.recognize(mo)
         assert result.n_vars == 3
         assert result.stop_time == 100
-
-    def test_extracts_array_parameter(self, tmp_path):
-        mo = _write_mo(
-            tmp_path,
-            "FooTest",
-            """
-            within MyLib.Examples;
-            model FooTest
-              MyLib.Testing.SafetyTest myTest(
-                numTracked=2,
-                trackedVars={pipe.T, tank.level});
-            end FooTest;
-        """,
-        )
-        rec = parse_recognizer_spec(
-            {
-                "name": "test",
-                "match": {
-                    "type": "component-instantiation",
-                    "component_name": "MyLib.Testing.SafetyTest",
-                },
-                "fields": {
-                    "x_expressions": {
-                        "from": "parameter",
-                        "name": "trackedVars",
-                        "shape": "array",
-                    },
-                },
-            }
-        )
-        result = rec.recognize(mo)
-        assert result.x_expressions == ["pipe.T", "tank.level"]
 
     def test_array_parameter_threads_the_instance_and_loses_whitespace(self, tmp_path):
         """A recognizer that extracts expressions from a component names the

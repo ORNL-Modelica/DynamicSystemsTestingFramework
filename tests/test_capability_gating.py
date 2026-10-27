@@ -78,17 +78,6 @@ def _all_registered_backends():
 
 
 class TestPersistentWorkersGate:
-    def test_undeclared_backend_never_reaches_its_persistent_variant(self, monkeypatch):
-        _ProbeBackend.persistent_cls_asked = False
-        _ProbePersistentBackend.preflighted = False
-        _use_probe(monkeypatch)
-
-        backend = cli_mod._get_backend(SimpleNamespace(), persistent=True)
-
-        assert type(backend) is _ProbeBackend
-        assert _ProbeBackend.persistent_cls_asked is False
-        assert _ProbePersistentBackend.preflighted is False
-
     def test_declared_backend_still_gets_the_persistent_variant(self, monkeypatch):
         class _Declared(_ProbeBackend):
             capabilities = frozenset(

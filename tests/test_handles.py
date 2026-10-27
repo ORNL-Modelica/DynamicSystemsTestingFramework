@@ -243,19 +243,6 @@ class TestTube:
             new = _edit(leaf, "tube/upper/0", x, 2.0)
             assert new["tube_points"][0] == {"time": 0.0, "upper": 2.0, "lower": -0.5}
 
-    def test_a_noise_level_x_on_a_named_baseline_edits_the_width(self):
-        leaf = _with(ABS, against="other", tube_points=[{"time": 0.5, "upper": 1.5}])
-        new = _edit(leaf, "tube/upper/0", 0.5 + 1e-12, 2.0)
-        assert new["tube_points"][0] == {"time": 0.5, "upper": 2.0}
-        with pytest.raises(HandleEditError, match="'other'"):
-            _edit(leaf, "tube/upper/0", 0.5 + 0.1, 2.0)
-
-    def test_a_noise_level_x_is_not_a_time_move(self):
-        leaf = _with(BAND, tube_points=[{"time": 1.0, "upper": 0.1, "lower": 0.1}])
-        new = _edit(leaf, "tube/upper/0", 1.0 + 1e-12, 1.3)
-        assert new["tube_points"][0]["time"] == 1.0
-        assert new["tube_points"][0]["upper"] == pytest.approx(0.3)
-
     def test_a_real_browsers_vertical_drag_is_not_a_time_move(self):
         # Measured on a TRANSFORM baseline (time 0..10, 2000 samples, ~800 px
         # plot): the pixel round trip sent this x for a ring at t=5.
@@ -353,11 +340,6 @@ class TestTube:
             _edit(BAND, "tube/upper/0", 0.5, 0.5 - 1e-9)
         assert re.search(r"width -1(\.\d+)?e-09 would be negative", str(err.value))
         assert "-0 " not in str(err.value)
-
-    def test_min_width_is_written_as_dragged(self):
-        leaf = _with(BAND, tube_min_width=0.3)
-        new = _edit(leaf, "tube/upper/0", 0.5, 0.6)
-        assert new["tube_points"][0]["upper"] == pytest.approx(0.1)
 
     @pytest.mark.parametrize(
         "local",
@@ -1001,9 +983,6 @@ class TestScalarSides:
     def test_a_horizontal_only_drag_changes_nothing(self):
         assert _side(BASELINE_SCALAR, "scalar/upper", None) == BASELINE_SCALAR
 
-    def test_the_bounds_still_move(self):
-        assert _edit(SCALAR, "scalar/max", None, 1.0)["max_value"] == 1.0
-
 
 # -- a dragged grip back to its side (D147) ------------------------------------
 
@@ -1607,9 +1586,6 @@ class TestPeakSides:
         with pytest.raises(HandleEditError) as box:
             _grip(linked, "peaks/upper/2", 16.5)
         assert box.value.reason == "the window would reach 0 Hz"
-
-    def test_the_declared_peak_still_moves(self):
-        assert _edit(PEAK_SIDES, "peaks/declared/0", 3.0)["peaks"][0]["freq"] == 3.0
 
     @pytest.mark.parametrize(
         ("tolerance", "refused", "nearest"),

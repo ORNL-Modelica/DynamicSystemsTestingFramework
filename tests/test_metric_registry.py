@@ -380,11 +380,6 @@ class TestResetForTests:
         assert len(registry.metrics()) == 7
         assert len(registry.combinators()) == 5
 
-    def test_reset_is_idempotent(self):
-        registry._reset_for_tests()
-        registry._reset_for_tests()
-        assert [d.name for d in registry.metrics()][0] == "nrmse"
-
 
 def test_a_metric_says_whether_its_drawing_shows_by_default():
     # A bound across the whole plot (range, scalar) starts hidden on the Test

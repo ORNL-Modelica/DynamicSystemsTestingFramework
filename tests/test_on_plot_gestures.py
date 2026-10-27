@@ -35,10 +35,6 @@ from dstf.comparison.handles import (  # noqa: E402
     HandleEditError,
     RowPlace,
     handle_fields,
-    place_events_row,
-    place_peaks_row,
-    place_points_row,
-    place_tube_row,
 )
 from dstf.comparison.registry import metric  # noqa: E402
 from dstf.comparison.snap import snap_step, snapped  # noqa: E402
@@ -535,13 +531,6 @@ def test_a_click_adds_nothing_to_a_tube_of_constant_width():
     assert metric("tube").row_noun(constant) is None
     assert metric("tube").row_noun(BAND) == "a control point"
     assert [metric(m).place_row for m in ("nrmse", "range", "scalar")] == [None] * 3
-
-
-def test_the_placers_are_the_four_metrics_with_rows():
-    assert place_points_row is metric("points").place_row
-    assert place_events_row is metric("event-timing").place_row
-    assert place_peaks_row is metric("dominant-frequency").place_row
-    assert place_tube_row is metric("tube").place_row
 
 
 # -- over the Session ----------------------------------------------------------

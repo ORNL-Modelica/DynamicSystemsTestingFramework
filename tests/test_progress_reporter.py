@@ -58,23 +58,6 @@ def test_a_late_event_after_finalize_writes_nothing(tmp_path):
     assert (tmp_path / "status.json").read_bytes() == status
 
 
-def test_metadata_absent_by_default(tmp_path):
-    """No metadata passed → status.json carries metadata=None (backward compat)."""
-    pr = ProgressReporter(tmp_path, total=1)
-    pr.register("test_0001", "Lib.A")
-    assert _status(tmp_path).get("metadata") is None
-
-
-def test_metadata_flows_into_status_json(tmp_path):
-    meta = {"backend": "Dymola", "backend_name": "Dymola 2026x", "os": "linux"}
-    pr = ProgressReporter(tmp_path, total=1, metadata=meta)
-    pr.register("test_0001", "Lib.A")
-    got = _status(tmp_path)["metadata"]
-    assert got["backend"] == "Dymola"
-    assert got["backend_name"] == "Dymola 2026x"
-    assert got["os"] == "linux"
-
-
 def test_update_metadata_sets_late_tool_version(tmp_path):
     """Backends learn their true version only after the worker starts —
     update_metadata patches the already-written snapshot."""

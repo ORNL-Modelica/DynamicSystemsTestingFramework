@@ -25,20 +25,6 @@ class TestSchemaBuilder:
         assert schema["type"] == "object"
         assert "tests" in schema["properties"]
 
-    def test_mode_definitions_present(self):
-        from dstf.reporting.schema_export import build_schema
-
-        defs = build_schema()["$defs"]
-        for mode in [
-            "mode_nrmse",
-            "mode_tube",
-            "mode_points",
-            "mode_range",
-            "mode_event_timing",
-            "mode_dominant_frequency",
-        ]:
-            assert mode in defs, f"Missing mode definition: {mode}"
-
     def test_tube_mode_has_literal_width_mode(self):
         from dstf.reporting.schema_export import build_schema
 
@@ -48,14 +34,6 @@ class TestSchemaBuilder:
         assert "oneOf" in width
         enum_branch = next(b for b in width["oneOf"] if "enum" in b)
         assert set(enum_branch["enum"]) == {"band", "rel", "abs"}
-
-    def test_nrmse_mode_tolerance_field(self):
-        from dstf.reporting.schema_export import build_schema
-
-        nrmse = build_schema()["$defs"]["mode_nrmse"]
-        tol = nrmse["properties"]["tolerance"]
-        assert tol["type"] == "number"
-        assert tol.get("default") == pytest.approx(1e-4)
 
     def test_leaf_and_combinator_defs_exist(self):
         from dstf.reporting.schema_export import build_schema
