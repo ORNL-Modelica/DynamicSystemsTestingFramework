@@ -45,12 +45,6 @@ def _leaves(view):
     return [leaf for c in view.get("children") or [] for leaf in _leaves(c)]
 
 
-def test_a_leaf_without_a_tolerance_shows_the_tests(tmp_path):
-    s = _session(tmp_path, test_tol=0.01)
-    x, y = _leaves(s.tree_view(A))
-    assert x["in_effect"] == {"tolerance": {"value": 0.01, "source": "test"}}
-
-
 def test_a_leaf_holding_a_pair_carries_the_base_as_one_holding_a_number(tmp_path):
     """A lower/upper pair is the leaf's own tolerance like a number is: the
     view carries the BASE — one number — for the field left empty, and the
@@ -73,6 +67,7 @@ def test_a_leaf_holding_a_pair_carries_the_base_as_one_holding_a_number(tmp_path
 @pytest.mark.parametrize(
     ("kw", "value", "source"),
     [
+        ({"test_tol": 0.01}, 0.01, "test"),
         ({"ref_tol": 0.02}, 0.02, "reference"),
         ({"cfg_tol": 0.03}, 0.03, "project"),
         ({}, 1e-4, "project"),

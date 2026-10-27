@@ -72,6 +72,8 @@ class TestWindowParsing:
         )
         assert tree.window_start == 1.0
         assert tree.window_end == 5.0
+        # window is hoisted to its own fields, not left in params.
+        assert "window" not in tree.params
 
     def test_window_open_start(self):
         tree = parse_metric_tree(
@@ -130,18 +132,6 @@ class TestWindowParsing:
                     "window": "10-20",
                 }
             )
-
-    def test_window_not_in_params(self):
-        """window is hoisted to its own fields, not left in params."""
-        tree = parse_metric_tree(
-            {
-                "metric": "nrmse",
-                "variable": "x",
-                "tolerance": 1e-3,
-                "window": {"start": 1.0, "end": 5.0},
-            }
-        )
-        assert "window" not in tree.params
 
 
 class TestWindowEvaluation:
@@ -406,27 +396,24 @@ class TestSynthesizeImplicitTree:
         assert [c.variable for c in tree.children] == ["h", "v"]
         assert all(isinstance(c, LeafSpec) for c in tree.children)
 
-    def test_override_mode_translates_to_metric(self):
-        tree = synthesize_implicit_tree(
-            ["h"],
-            variable_overrides={"h": {"mode": "tube", "tube_rel": 0.05}},
-        )
+    @pytest.mark.parametrize(
+        ("override", "metric", "params"),
+        [
+            ({"mode": "tube", "tube_rel": 0.05}, "tube", {"tube_rel": 0.05}),
+            (
+                {"mode": "range", "min_value": -1.0, "max_value": 1.0},
+                "range",
+                {"min_value": -1.0, "max_value": 1.0},
+            ),
+        ],
+        ids=["tube", "range"],
+    )
+    def test_override_mode_translates_to_metric(self, override, metric, params):
+        tree = synthesize_implicit_tree(["h"], variable_overrides={"h": override})
         leaf = tree.children[0]
-        assert leaf.metric == "tube"
+        assert leaf.metric == metric
         # mode key consumed; other keys flow into params
-        assert "mode" not in leaf.params
-        assert leaf.params["tube_rel"] == 0.05
-
-    def test_override_range_metric(self):
-        tree = synthesize_implicit_tree(
-            ["h"],
-            variable_overrides={
-                "h": {"mode": "range", "min_value": -1.0, "max_value": 1.0}
-            },
-        )
-        leaf = tree.children[0]
-        assert leaf.metric == "range"
-        assert leaf.params == {"min_value": -1.0, "max_value": 1.0}
+        assert leaf.params == params
 
     def test_base_tolerance_filled_when_override_silent(self):
         tree = synthesize_implicit_tree(["h"], base_tolerance=1e-3)

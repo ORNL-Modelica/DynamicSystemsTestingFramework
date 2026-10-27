@@ -186,28 +186,21 @@ def test_watch_plots_keep_their_list_order_after_the_derived_ones():
 UT = [f"unitTests.x[{i}]" for i in range(1, 5)]
 
 
-def test_unit_tests_variables_never_fold_whatever_their_expressions():
+@pytest.mark.parametrize("names", [UT[:2], UT], ids=["check_atm", "four"])
+def test_unit_tests_variables_never_fold_whatever_their_expressions(names):
     """`unitTests.x[1..4]` whose expressions read `pipe.T[1..4]`: each is
     its own test quantity (the UnitTests contract) — four plots. The fold
-    reads NAMES, and a UnitTests name is kept out of it."""
-    plots = _derive(_leaves(_and(*UT)), unit_tests=UT)
-    assert [p.subject for p in plots] == [(n,) for n in UT]
+    reads NAMES, and a UnitTests name is kept out of it. `check_atm`: a
+    local `x[2]` holding 1 Pa in atm and 1 atm in Pa, as `unitTests.x[1]`
+    and `unitTests.x[2]` — two plots."""
+    plots = _derive(_leaves(_and(*names)), unit_tests=names)
+    assert [p.subject for p in plots] == [(n,) for n in names]
 
 
 def test_an_array_tracked_by_its_names_is_one_family_plot():
     names = [f"pipe.T[{i}]" for i in range(1, 5)]
     plots = _derive(_leaves(_and(*reversed(names))))
     assert [p.subject for p in plots] == [tuple(names)]
-
-
-def test_a_check_atm_shaped_unit_tests_pair_is_two_plots():
-    """`check_atm`: a local `x[2]` holding 1 Pa in atm and 1 atm in Pa, as
-    `unitTests.x[1]` and `unitTests.x[2]`."""
-    pair = UT[:2]
-    assert [p.subject for p in _derive(_leaves(_and(*pair)), unit_tests=pair)] == [
-        (UT[0],),
-        (UT[1],),
-    ]
 
 
 def test_only_the_named_unit_tests_variables_stay_apart():
@@ -379,23 +372,32 @@ def test_the_scored_order_wins_when_it_differs_from_the_results():
     assert tracked_names(["z", "y"], result) == ["z", "y", "x"]
 
 
-def test_a_result_variable_is_listed_under_its_own_name_once():
+@pytest.mark.parametrize(
+    "variables",
+    [
+        [("unitTests.x[1]", 1), ("y", 2)],
+        # An AUTHORED tree may name the variable as the result file spells
+        # it, and the rest-of-result pass then added the comparison's label
+        # for the SAME trajectory beside it.
+        [("cat(1, a, b)", 1), ("y", 2)],
+        # Text this function used to special-case — a `cat(` expression, a
+        # name a wrapped `.mo` line left a newline in — reached it as a
+        # variable's NAME while the comparison relabelled the same variable
+        # `x[N]`.
+        [("cat(1, a, b)", 1)],
+        [("a\nb", 4)],
+    ],
+    ids=["unit-tests", "tree-raw-name", "cat", "newline"],
+)
+def test_a_result_variable_is_listed_under_its_own_name_once(variables):
     """Nothing relabels a name: a variable is listed under the name its
     result file gives it, whether or not the comparison scored it. Listing it
     under two spellings put the same trajectory in the list twice — a second
     card with its own "Add a criterion for …" footer (the 3b review)."""
-    result = _Result(_Var("unitTests.x[1]", 1), _Var("y", 2))
-    assert tracked_names(["unitTests.x[1]", "y"], result) == ["unitTests.x[1]", "y"]
-    assert tracked_names([], result) == ["unitTests.x[1]", "y"]
-
-
-def test_an_awkward_name_is_no_longer_special():
-    """Text this function used to special-case — a `cat(` expression, a name
-    a wrapped `.mo` line left a newline in — reached it as a variable's NAME
-    while the comparison relabelled the same variable `x[N]`. Whatever a
-    result calls a variable is what is listed."""
-    assert tracked_names([], _Result(_Var("cat(1, a, b)", 1))) == ["cat(1, a, b)"]
-    assert tracked_names([], _Result(_Var("a\nb", 4))) == ["a\nb"]
+    result = _Result(*(_Var(name, index) for name, index in variables))
+    names = [name for name, _ in variables]
+    assert tracked_names(names, result) == names
+    assert tracked_names([], result) == names
 
 
 def test_a_nameless_result_variable_has_nothing_to_plot_by():
@@ -410,14 +412,6 @@ def test_a_nameless_result_variable_has_nothing_to_plot_by():
 def test_a_repeated_scored_name_is_listed_once():
     """Several leaves may score one variable."""
     assert tracked_names(["x", "x", "y"], None) == ["x", "y"]
-
-
-def test_a_variable_a_tree_scores_by_its_raw_name_is_not_listed_twice():
-    """The tree-path variant of the same duplicate: an AUTHORED tree may name
-    the variable as the result file spells it, and the rest-of-result pass
-    then added the comparison's label for the SAME trajectory beside it."""
-    result = _Result(_Var("cat(1, a, b)", 1), _Var("y", 2))
-    assert tracked_names(["cat(1, a, b)", "y"], result) == ["cat(1, a, b)", "y"]
 
 
 def test_a_failed_simulations_partial_result_contributes_nothing():

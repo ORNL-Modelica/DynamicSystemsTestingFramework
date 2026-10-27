@@ -435,6 +435,8 @@ class TestJUnitReport:
         failure = ET.parse(out).getroot().find(".//failure")
         assert failure is not None
         assert failure.get("type") == "RegressionFailure"
+        # The message keeps the count.
+        assert failure.get("message") == "1 criterion failed"
         # Only the failed variable ('h') is reported, not the passing one.
         assert failure.text == (
             "h: nrmse — NRMSE 5.000e-01 vs tolerance 0.000e+00 → FAIL"
@@ -674,12 +676,6 @@ class TestJUnitReport:
         assert failure.get("type") == "RegressionFailure"
         assert failure.get("message") == REFUSED
         assert failure.text == REFUSED
-
-    def test_a_failing_variable_keeps_the_count_as_the_message(self, tmp_path):
-        out = tmp_path / "junit.xml"
-        generate_junit_report([_failing()], out)
-        failure = ET.parse(out).getroot().find(".//failure")
-        assert failure.get("message") == "1 criterion failed"
 
     def test_sim_failure_becomes_error_element(self, tmp_path):
         out = tmp_path / "junit.xml"
@@ -1124,7 +1120,9 @@ class TestConsoleReport:
     def test_no_reference_does_not_fail_run(self, capsys):
         # NO_REF is informational — it must not flip the exit code.
         assert print_report([_no_ref()]) == 0
-        assert "No baseline: 1" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "No baseline: 1" in out
+        assert "NO_REF" in out
 
     def test_a_test_not_run_does_not_fail_the_run(self, capsys):
         """D145: NOT RUN + PASS exits 0; the line says NOT RUN."""
@@ -1354,13 +1352,6 @@ class TestReportClassification:
         assert rc == 1
         out = capsys.readouterr().out
         assert "FAIL" in out
-
-    def test_console_no_ref_still_exit_zero(self, capsys):
-        from dstf.reporting.console_report import print_report
-
-        rc = print_report([_no_ref_comp()])
-        assert rc == 0
-        assert "NO_REF" in capsys.readouterr().out
 
     def test_junit_failing_baseline_free_is_failure(self, tmp_path):
         import xml.etree.ElementTree as ET

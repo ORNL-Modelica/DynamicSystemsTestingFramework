@@ -264,21 +264,6 @@ def test_the_ready_flag_is_set_before_the_redraw_is_posted(tmp_path):
     assert seen == [True]
 
 
-def test_a_warm_that_fails_posts_nothing(tmp_path, monkeypatch):
-    cfg, work = _project(tmp_path)
-
-    def broken(config):
-        raise OSError("the sibling root is unreadable")
-
-    monkeypatch.setattr(ol, "warm_sibling_backend_index", broken)
-    posted: list = []
-    s = Session(post=posted.append)
-    s.open(cfg, work_dir=work)
-    assert s.overlay_index_ready.wait(5.0)
-    time.sleep(0.2)
-    assert posted == []
-
-
 def test_a_gone_ui_loop_does_not_kill_the_warm_thread(tmp_path, monkeypatch):
     """A shutdown while the index builds: the post onto the closed loop
     raises, on the warm thread, where nothing catches it."""

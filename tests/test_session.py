@@ -526,7 +526,8 @@ class TestOpen:
         self, tmp_path, monkeypatch, caplog
     ):
         """A sibling tree that raises (a PermissionError from iterdir) is
-        logged, and the Event is set anyway — a waiter never hangs on it."""
+        logged, and the Event is set anyway — a waiter never hangs on it.
+        A warm that fails posts nothing."""
         from dstf.reporting import overlay_loader as ol
 
         def broken(config):
@@ -534,11 +535,14 @@ class TestOpen:
 
         monkeypatch.setattr(ol, "warm_sibling_backend_index", broken)
         cfg, work = _project(tmp_path)
-        s = Session()
+        posted: list = []
+        s = Session(post=posted.append)
         with caplog.at_level("ERROR", logger="dstf.authoring.session"):
             s.open(cfg, work_dir=work)
             assert s.overlay_index_ready.wait(5.0)
         assert "warming the sibling-backend overlay index failed" in caplog.text
+        time.sleep(0.2)
+        assert posted == []
 
     def test_the_recorded_backend_wins_over_the_config(self, tmp_path):
         cfg, work = _project(tmp_path)
@@ -2031,8 +2035,9 @@ class TestOutcomes:
         from dstf.authoring.session import PendingEditsError
 
         session.stage([LOOSEN])
-        with pytest.raises(PendingEditsError, match="1 staged"):
+        with pytest.raises(PendingEditsError, match="1 staged") as raised:
             session.close()
+        assert raised.value.count == 1
         other_cfg, other_work = _project(tmp_path / "other")
         with pytest.raises(PendingEditsError):
             session.apply(OpenProject(config_path=other_cfg, work_dir=other_work))
@@ -3518,15 +3523,6 @@ class TestOneStageIsOneEdit:
         assert (
             s.spec.pending == [] and s.spec.entry(A)["metrics"]["children"][1] == second
         )
-
-    def test_the_refusal_to_close_counts_edits(self, session):
-        from dstf.authoring.session import PendingEditsError
-
-        session.stage([LOOSEN])
-        with pytest.raises(PendingEditsError) as raised:
-            session.close()
-        assert raised.value.count == 1
-        session.discard()
 
 
 class TestStageCollapses:

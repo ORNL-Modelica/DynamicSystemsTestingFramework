@@ -109,24 +109,6 @@ class TestMoParser:
         result = parse_mo_file(Path("/nonexistent/file.mo"))
         assert result is None
 
-    def test_bare_variable(self):
-        """x=y where y is an array — bare variable without braces."""
-        text = "Utilities.ErrorAnalysis.UnitTests unitTests(n=2, x=y)"
-        info = _parse_unit_tests(text)
-        assert info.x_expressions == ["y"]
-
-    def test_bare_qualified_variable(self):
-        """x=some.qualified.name — dotted path without braces."""
-        text = "UnitTests ut(n=2, x=heatTransfer.alphas)"
-        info = _parse_unit_tests(text)
-        assert info.x_expressions == ["heatTransfer.alphas"]
-
-    def test_bare_deep_qualified_variable(self):
-        """x=a.b.c.d — deeply nested dotted path."""
-        text = "UnitTests ut(x=ductOut.port_b.C_outflow)"
-        info = _parse_unit_tests(text)
-        assert info.x_expressions == ["ductOut.port_b.C_outflow"]
-
     def test_no_x_param(self):
         """UnitTests with only x_reference but no x= gives empty expressions."""
         text = "UnitTests ut(n=2, x_reference={1.0, 2.0})"
@@ -260,6 +242,15 @@ class TestMoParser:
         ]
         info = _parse_unit_tests("UnitTests ut(n=1, x=a.b[1].c, x_reference={1})")
         assert info.x_expressions == ["a.b[1].c"]
+        # x=y where y is an array, under a qualified type name.
+        text = "Utilities.ErrorAnalysis.UnitTests unitTests(n=2, x=y)"
+        assert _parse_unit_tests(text).x_expressions == ["y"]
+        # x=some.qualified.name — a dotted path without braces.
+        text = "UnitTests ut(n=2, x=heatTransfer.alphas)"
+        assert _parse_unit_tests(text).x_expressions == ["heatTransfer.alphas"]
+        # x=a.b.c.d — a deeply nested dotted path, with no n=.
+        text = "UnitTests ut(x=ductOut.port_b.C_outflow)"
+        assert _parse_unit_tests(text).x_expressions == ["ductOut.port_b.C_outflow"]
 
 
 # ---------------------------------------------------------------------------

@@ -862,7 +862,8 @@ def test_the_header_is_the_column_list(tmp_path):
 def test_every_row_carries_every_columns_attributes(tmp_path):
     from dstf.reporting.rows import COLUMNS
 
-    rows = _body_rows(_two_row_final_page(tmp_path))
+    html = _two_row_final_page(tmp_path)
+    rows = _body_rows(html)
     assert len(rows) == 2
     for tr in rows:
         attrs = _attrs(tr)
@@ -882,6 +883,12 @@ def test_every_row_carries_every_columns_attributes(tmp_path):
     # only the cell reads "—".
     assert b["data-nrmse"] == "" and b["data-sort-nrmse"] == ""
     assert a["data-detail"] == "a message"
+    # An absent text value: the cell reads "—"; the filter attribute is
+    # empty, so a regex `.` matches only rows that have a message, and "—"
+    # matches none.
+    assert b["data-detail"] == "" and b["data-ref"] == ""
+    assert '<td class="detail-cell"' in rows[1]
+    assert "—" in rows[1]
 
 
 def test_the_cells_keep_their_markup(tmp_path):
@@ -1306,18 +1313,6 @@ def test_the_pending_badge_is_styled(tmp_path):
         r"\.status-badge\.pending\s*\{\s*background:\s*var\(--dstf-pending-fill\)",
         html,
     )
-
-
-def test_an_absent_text_value_is_empty_to_the_filter(tmp_path):
-    """The cell reads "—"; the filter attribute is empty, so a regex `.`
-    matches only rows that have a message, and "—" matches none."""
-    _two_row_final_page(tmp_path)
-    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    a, b = (_attrs(tr) for tr in _body_rows(html))
-    assert a["data-detail"] == "a message"
-    assert b["data-detail"] == "" and b["data-ref"] == ""
-    assert '<td class="detail-cell"' in _body_rows(html)[1]
-    assert "—" in _body_rows(html)[1]
 
 
 def test_a_sidecar_with_an_unknown_status_does_not_break_the_page(tmp_path):

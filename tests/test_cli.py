@@ -46,17 +46,16 @@ def _comparison(**fields) -> TestComparison:
 # --- _parse_review_filter ---
 
 
-def test_parse_filter_all():
-    assert _parse_review_filter("all") == {"all"}
-
-
-def test_parse_filter_single():
-    assert _parse_review_filter("failed") == {"failed"}
-
-
-def test_parse_filter_multiple():
-    result = _parse_review_filter("failed,no-baseline,warnings")
-    assert result == {"failed", "no-baseline", "warnings"}
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("all", {"all"}),
+        ("failed", {"failed"}),
+        ("failed,no-baseline,warnings", {"failed", "no-baseline", "warnings"}),
+    ],
+)
+def test_parse_filter_multiple(text, expected):
+    assert _parse_review_filter(text) == expected
 
 
 def test_parse_filter_all_absorbs_others():
@@ -68,14 +67,12 @@ def test_parse_filter_strips_whitespace():
     assert result == {"failed", "no-baseline"}
 
 
-def test_parse_filter_invalid_raises():
-    with pytest.raises(argparse.ArgumentTypeError, match="Invalid review filter"):
-        _parse_review_filter("bogus")
-
-
-def test_parse_filter_partial_invalid_raises():
-    with pytest.raises(argparse.ArgumentTypeError, match="bogus"):
-        _parse_review_filter("failed,bogus")
+@pytest.mark.parametrize("text", ["bogus", "failed,bogus"])
+def test_parse_filter_invalid_raises(text):
+    with pytest.raises(
+        argparse.ArgumentTypeError, match=r"Invalid review filter.*bogus"
+    ):
+        _parse_review_filter(text)
 
 
 # --- _should_review ---
@@ -86,20 +83,24 @@ def test_should_review_all_matches_everything():
     assert _should_review(comp, {"all"}) is True
 
 
-def test_should_review_combined_filters():
+@pytest.mark.parametrize(
+    ("filters", "cases"),
+    [
+        (
+            {"failed", "no-baseline"},
+            [({"passed": False}, True), ({"has_reference": False}, True)],
+        ),
+        # sim-failed + failed covers both crash and comparison failure.
+        (
+            {"sim-failed", "failed"},
+            [({"sim_success": False}, True), ({"passed": False}, True)],
+        ),
+    ],
+)
+def test_should_review_combined_filters(filters, cases):
     """Combined filters match if any filter matches."""
-    filters = {"failed", "no-baseline"}
-    assert _should_review(_comparison(passed=False), filters) is True
-    assert _should_review(_comparison(has_reference=False), filters) is True
-    assert _should_review(_comparison(passed=True), filters) is False
-
-
-def test_should_review_sim_failed_with_failed():
-    """sim-failed + failed covers both crash and comparison failure."""
-    filters = {"sim-failed", "failed"}
-    assert _should_review(_comparison(sim_success=False), filters) is True
-    assert _should_review(_comparison(passed=False), filters) is True
-    assert _should_review(_comparison(passed=True), filters) is False
+    for fields, expected in [*cases, ({"passed": True}, False)]:
+        assert _should_review(_comparison(**fields), filters) is expected, fields
 
 
 # --- the review's status word and its categories are the classifier's ---
@@ -1854,17 +1855,17 @@ def test_filter_matching_is_case_sensitive_even_if_fnmatch_is_not(monkeypatch):
 
 
 class TestFilterCommaSplit:
-    def test_character_class_comma_survives(self):
-        assert _resolve_filter_patterns("Test[A,B]*,Other.*") == [
-            "Test[A,B]*",
-            "Other.*",
-        ]
-
-    def test_plain_comma_split_unchanged(self):
-        assert _resolve_filter_patterns("Foo.A, Foo.B") == ["Foo.A", "Foo.B"]
-
-    def test_unclosed_bracket_is_one_pattern(self):
-        assert _resolve_filter_patterns("Test[A,B") == ["Test[A,B"]
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Test[A,B]*,Other.*", ["Test[A,B]*", "Other.*"]),
+            ("Foo.A, Foo.B", ["Foo.A", "Foo.B"]),
+            ("Test[A,B", ["Test[A,B"]),
+        ],
+        ids=["character-class", "plain", "unclosed-bracket"],
+    )
+    def test_character_class_comma_survives(self, text, expected):
+        assert _resolve_filter_patterns(text) == expected
 
     def test_filter_tests_with_character_class(self):
         tests = [

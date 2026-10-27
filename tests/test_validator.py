@@ -171,7 +171,14 @@ class TestValidatorRules:
         )
         errors = validate_tree(tree, role_lookup_from_names())
         assert len(errors) == 1
-        assert "a tree of warnings alone can never fail" in errors[0].message
+        # The tool shows ``message`` alone, beside the row it came from; the
+        # CLI prints ``str()``, which keeps the location.
+        (err,) = errors
+        assert err.message == (
+            "Every tree needs at least one criterion scored against the primary "
+            "baseline outside a 'warn': a tree of warnings alone can never fail."
+        )
+        assert str(err) == f"metrics: {err.message}"
 
     def test_multiple_errors_all_reported(self):
         """Validator reports all errors in one pass (not first-only)."""
@@ -328,17 +335,3 @@ class TestWeightedDirectionConsistency:
         )
         errors = validate_tree(tree, role_lookup_from_names())
         assert not any("cannot mix lower-is-better" in e.message for e in errors)
-
-
-def test_the_no_anchor_error_is_a_sentence_and_keeps_its_path():
-    """The tool shows ``message`` alone, beside the row it came from; the
-    CLI prints ``str()``, which keeps the location."""
-    tree = _parse(
-        {"combinator": "warn", "children": [{"metric": "nrmse", "variable": "x"}]}
-    )
-    (err,) = validate_tree(tree, role_lookup_from_names())
-    assert err.message == (
-        "Every tree needs at least one criterion scored against the primary "
-        "baseline outside a 'warn': a tree of warnings alone can never fail."
-    )
-    assert str(err) == f"metrics: {err.message}"

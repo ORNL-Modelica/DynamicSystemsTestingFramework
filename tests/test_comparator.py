@@ -675,23 +675,6 @@ class TestTubeComparison:
         assert vc.tube_worst_violation == pytest.approx(1.0)
         assert vc.tube_worst_violation_time == 0.0
 
-    def test_tube_via_compare_test(self):
-        """Tube mode dispatched correctly via compare_test."""
-        test = _make_test(
-            variable_overrides={
-                "x": {
-                    "mode": "tube",
-                    "tube_width_mode": "band",
-                    "tube_abs": 0.01,
-                },
-            }
-        )
-        result, ref = _make_result_and_ref(offset=0.005)
-        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
-        assert comp.passed
-        assert comp.variables[0].mode == "tube"
-        assert comp.variables[0].tube_points_inside == 1.0
-
     def test_asymmetric_tube_passes(self):
         """Asymmetric tube with different upper/lower widths."""
         ref_time = np.array([0.0, 1.0])
@@ -869,21 +852,6 @@ class TestResolveMode:
         assert isinstance(mode, NrmseMode)
         assert mode.config.tolerance == 0.01
 
-    def test_explicit_tube(self):
-        """mode='tube' → TubeMode with tube params extracted."""
-        override = {
-            "mode": "tube",
-            "tube_abs": 5.0,
-            "tube_rel": 0.02,
-            "tube_width_mode": "band",
-        }
-        mode = resolve_mode(override, tolerance=1e-4)
-        assert isinstance(mode, TubeMode)
-        assert mode.name == "tube"
-        assert mode.config.tube_abs == Sides(5.0, 5.0)
-        assert mode.config.tube_rel == Sides(0.02, 0.02)
-        assert mode.config.tube_width_mode == "band"
-
     def test_explicit_default_points(self):
         """mode='default_points' → PointsMode."""
         mode = resolve_mode({"mode": "points"}, tolerance=0.05)
@@ -916,16 +884,22 @@ class TestResolveMode:
         assert isinstance(mode, NrmseMode)
 
     def test_tube_config_ignores_non_tube_keys(self):
-        """Non-tube keys in override dict are not passed to TubeConfig."""
+        """mode='tube' → TubeMode with tube params extracted; non-tube keys in
+        the override dict are not passed to TubeConfig."""
         override = {
             "mode": "tube",
             "tube_abs": 3.0,
+            "tube_rel": 0.02,
+            "tube_width_mode": "band",
             "tolerance": 0.5,  # Not a tube config key
             "some_other_key": True,
         }
         mode = resolve_mode(override, tolerance=0.5)
         assert isinstance(mode, TubeMode)
+        assert mode.name == "tube"
         assert mode.config.tube_abs == Sides(3.0, 3.0)
+        assert mode.config.tube_rel == Sides(0.02, 0.02)
+        assert mode.config.tube_width_mode == "band"
 
     def test_tube_with_time_varying_points(self):
         """Tube config with tube_points passes through correctly."""
@@ -968,59 +942,54 @@ class TestModeCompare:
     act_values_close = np.array([1.0001, 2.0001, 3.0001])
     act_values_far = np.array([1.5, 2.5, 3.5])
 
-    def test_nrmse_mode_pass(self):
-        mode = NrmseMode(NrmseConfig(tolerance=0.01))
+    @pytest.mark.parametrize(
+        ("tolerance", "actual", "passed"),
+        [(0.01, "act_values_close", True), (1e-4, "act_values_far", False)],
+        ids=["pass", "fail"],
+    )
+    def test_nrmse_mode_pass(self, tolerance, actual, passed):
+        mode = NrmseMode(NrmseConfig(tolerance=tolerance))
         vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
+            self.ref_time, self.ref_values, self.ref_time, getattr(self, actual)
         )
-        assert vc.passed
+        assert vc.passed is passed
         assert vc.mode == "nrmse"
 
-    def test_nrmse_mode_fail(self):
-        mode = NrmseMode(NrmseConfig(tolerance=1e-4))
+    @pytest.mark.parametrize(
+        ("tube_abs", "actual", "passed"),
+        [(1.0, "act_values_close", True), (0.001, "act_values_far", False)],
+        ids=["pass", "fail"],
+    )
+    def test_tube_mode_pass(self, tube_abs, actual, passed):
+        mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=tube_abs))
         vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
+            self.ref_time, self.ref_values, self.ref_time, getattr(self, actual)
         )
-        assert not vc.passed
-
-    def test_tube_mode_pass(self):
-        mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=1.0))
-        vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
-        )
-        assert vc.passed
+        assert vc.passed is passed
         assert vc.mode == "tube"
-        assert vc.tube_points_inside == 1.0
+        assert (vc.tube_points_inside == 1.0) is passed
 
-    def test_tube_mode_fail(self):
-        mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=0.001))
+    @pytest.mark.parametrize(
+        ("tolerance", "actual", "passed"),
+        [(0.01, "act_values_close", True), (1e-6, "act_values_far", False)],
+        ids=["pass", "fail"],
+    )
+    def test_default_points_mode_pass(self, tolerance, actual, passed):
+        mode = PointsMode(PointsConfig(tolerance=tolerance))
         vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
+            self.ref_time, self.ref_values, self.ref_time, getattr(self, actual)
         )
-        assert not vc.passed
-        assert vc.tube_points_inside < 1.0
-
-    def test_default_points_mode_pass(self):
-        mode = PointsMode(PointsConfig(tolerance=0.01))
-        vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
-        )
-        assert vc.passed
+        assert vc.passed is passed
         assert vc.mode == "points"
-
-    def test_default_points_mode_fail(self):
-        mode = PointsMode(PointsConfig(tolerance=1e-6))
-        vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
-        )
-        assert not vc.passed
 
 
 class TestCompareTestWithModes:
     """End-to-end: compare_test dispatches via resolve_mode correctly."""
 
-    def test_default_points_flag_does_not_override_tube(self):
-        """Bug fix: default_points=True must not override mode='tube'."""
+    @pytest.mark.parametrize("default_points", [False, True])
+    def test_default_points_flag_does_not_override_tube(self, default_points):
+        """Tube mode is dispatched via compare_test; bug fix:
+        default_points=True must not override mode='tube'."""
         test = _make_test(
             variable_overrides={
                 "x": {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01},
@@ -1032,10 +1001,11 @@ class TestCompareTestWithModes:
             result,
             decode_reference(ref),
             default_tolerance=1e-4,
-            default_points=True,
+            default_points=default_points,
         )
         assert comp.passed
         assert comp.variables[0].mode == "tube"
+        assert comp.variables[0].tube_points_inside == 1.0
 
     def test_default_points_flag_applies_when_no_explicit_mode(self):
         """default_points=True applies to variables without explicit mode."""
@@ -3153,17 +3123,6 @@ class TestTheExpressionRidesOnEveryComparison:
 
 
 class TestTheExpressionCheckPairsByName:
-    def test_a_reordered_baseline_is_paired_by_name(self):
-        """The stored entries are in the order they were accepted in; a
-        re-accept after an `x={...}` edit can reorder them. Pairing the
-        check by position then reports every variable as changed."""
-        comp = compare_test(
-            _vi_test(n_vars=2),
-            _vi_two_result(),
-            decode_reference(_vi_two_reference(order=(1, 0))),
-        )
-        assert comp.passed and comp.warnings == []
-
     def test_a_duplicate_name_is_read_from_the_first_entry(self):
         """Pairing reads the FIRST entry under a name; the check must read
         the same one, or a stale duplicate further down the file reports a
@@ -3363,7 +3322,10 @@ class TestPairingIsByNameOnly:
 
     def test_a_baseline_holding_the_name_at_another_index_still_scores(self):
         """Pairing is by name, so a reordered baseline scores as it did
-        before the reorder."""
+        before the reorder. The stored entries are in the order they were
+        accepted in; a re-accept after an `x={...}` edit can reorder them.
+        Pairing the expression check by position would then report every
+        variable as changed."""
         comp = compare_test(
             _vi_test(n_vars=2),
             _vi_two_result(),
@@ -3371,6 +3333,7 @@ class TestPairingIsByNameOnly:
         )
         assert comp.passed
         assert [vc.nrmse for vc in comp.variables] == [0.0, 0.0]
+        assert comp.warnings == []
 
 
 class TestACriterionOnAMissingVariableNamesItsMetric:
@@ -3778,8 +3741,17 @@ class TestATolerancesNumberAndEqualPairAreOne:
     """The identity rule: a spec holding ``v`` and one holding
     ``{"lower": v, "upper": v}`` score the same, on both paths."""
 
-    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
-    @pytest.mark.parametrize("name", _S_LEAF_KEYS)
+    @pytest.mark.parametrize(
+        ("name", "flat"),
+        [
+            pytest.param(name, flat, id=f"{name}-{'flat' if flat else 'tree'}")
+            for name in _S_LEAF_KEYS
+            for flat in (False, True)
+            # A tube key on the tree path: its number and its equal pair
+            # are scored alike by test_its_equal_pair_scores_as_the_number.
+            if flat or name not in ("tube_abs", "tube_rel")
+        ],
+    )
     def test_a_leaf_key(self, name, flat):
         kind, leaf, key, v = _S_LEAF_KEYS[name]
         a = _sides_compare({**leaf, key: v}, flat=flat, kind=kind).variables[0]
@@ -4211,6 +4183,7 @@ class TestEveryFieldThatTakesAPairScoresOne:
         assert "error" not in a.diagnostics, a.diagnostics
         assert _sides_fields(a) == _sides_fields(b)
         assert _sides_coords(a) == _sides_coords(b)
+        assert a.passed is b.passed
 
     def test_the_stand_in_guard_is_gone(self):
         from dstf.comparison import modes

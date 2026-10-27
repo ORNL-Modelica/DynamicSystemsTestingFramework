@@ -41,13 +41,20 @@ class TestSchemaParsing:
         assert rec.name == "test:minimal"
         assert "modelica" in rec.applies_to
 
-    def test_missing_name_raises(self):
-        with pytest.raises(RecognizerSpecError, match='recognizer: has no "name"'):
-            parse_recognizer_spec({"match": {"type": "extends", "class_pattern": "*"}})
-
-    def test_missing_match_raises(self):
-        with pytest.raises(RecognizerSpecError, match='recognizer: has no "match"'):
-            parse_recognizer_spec({"name": "x"})
+    @pytest.mark.parametrize(
+        ("spec", "message"),
+        [
+            (
+                {"match": {"type": "extends", "class_pattern": "*"}},
+                'recognizer: has no "name"',
+            ),
+            ({"name": "x"}, 'recognizer: has no "match"'),
+        ],
+        ids=["name", "match"],
+    )
+    def test_missing_name_raises(self, spec, message):
+        with pytest.raises(RecognizerSpecError, match=message):
+            parse_recognizer_spec(spec)
 
     def test_unknown_match_type_raises(self):
         with pytest.raises(
@@ -78,29 +85,19 @@ class TestSchemaParsing:
                 }
             )
 
-    def test_the_instance_name_is_not_spec_writable(self):
+    @pytest.mark.parametrize(
+        ("field", "value"), [("unit_tests_instance", "ut"), ("made_up", 1)]
+    )
+    def test_the_instance_name_is_not_spec_writable(self, field, value):
         """It comes from the matched component, never from the spec: a
-        recognizer naming a component names its instance by matching it."""
-        with pytest.raises(
-            RecognizerSpecError, match="unknown field 'unit_tests_instance'"
-        ):
+        recognizer naming a component names its instance by matching it.
+        A made-up field is refused the same way."""
+        with pytest.raises(RecognizerSpecError, match=f"unknown field '{field}'"):
             parse_recognizer_spec(
                 {
                     "name": "x",
                     "match": {"type": "extends", "class_pattern": "*"},
-                    "fields": {
-                        "unit_tests_instance": {"from": "constant", "value": "ut"}
-                    },
-                }
-            )
-
-    def test_unknown_field_name_raises(self):
-        with pytest.raises(RecognizerSpecError, match="unknown field 'made_up'"):
-            parse_recognizer_spec(
-                {
-                    "name": "x",
-                    "match": {"type": "extends", "class_pattern": "*"},
-                    "fields": {"made_up": {"from": "constant", "value": 1}},
+                    "fields": {field: {"from": "constant", "value": value}},
                 }
             )
 
@@ -861,9 +858,14 @@ class TestExperimentAnnotationField:
         result = rec.recognize(mo)
         assert result.simulate_only is True
 
-    def test_constant_bool_field(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("simulate_only", True), ("requested_baselines", ["dymola-via-fmpy"])],
+        ids=["bool", "list"],
+    )
+    def test_constant_bool_field(self, tmp_path, field, value):
         # PTA.4 — recognizer can stamp a constant boolean (e.g., "every model
-        # matching this pattern is simulate-only")
+        # matching this pattern is simulate-only"), or a constant list
         mo = _write_mo(
             tmp_path,
             "FooTest",
@@ -879,38 +881,13 @@ class TestExperimentAnnotationField:
                 "name": "test",
                 "match": {"type": "extends", "class_pattern": "*Icons.Example"},
                 "fields": {
-                    "simulate_only": {"from": "constant", "value": True},
+                    field: {"from": "constant", "value": value},
                 },
             }
         )
         result = rec.recognize(mo)
-        assert result.simulate_only is True
-
-    def test_constant_list_field(self, tmp_path):
-        mo = _write_mo(
-            tmp_path,
-            "FooTest",
-            """
-            within MyLib.Examples;
-            model FooTest
-              extends Modelica.Icons.Example;
-            end FooTest;
-        """,
-        )
-        rec = parse_recognizer_spec(
-            {
-                "name": "test",
-                "match": {"type": "extends", "class_pattern": "*Icons.Example"},
-                "fields": {
-                    "requested_baselines": {
-                        "from": "constant",
-                        "value": ["dymola-via-fmpy"],
-                    },
-                },
-            }
-        )
-        result = rec.recognize(mo)
-        assert result.requested_baselines == ["dymola-via-fmpy"]
+        assert getattr(result, field) == value
+        assert type(getattr(result, field)) is type(value)
 
     def test_paths_include_filters(self, tmp_path):
         """PTA-follow.1 — paths_include only feeds matching files."""

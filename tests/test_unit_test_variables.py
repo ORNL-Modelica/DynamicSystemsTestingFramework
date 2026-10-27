@@ -8,6 +8,8 @@ relabel it) asks this function instead.
 
 from __future__ import annotations
 
+import pytest
+
 from dstf.discovery.test_registry import TestModel
 from dstf.discovery.unit_tests import is_unit_test_variable, unit_test_variables
 
@@ -35,24 +37,29 @@ def test_one_expression_per_variable_is_that_variables_expression():
     ]
 
 
-def test_one_expression_for_many_variables_is_indexed():
+@pytest.mark.parametrize(
+    ("n", "expressions", "expected"),
+    [
+        (2, ["x"], [("unitTests.x[1]", "x[1]"), ("unitTests.x[2]", "x[2]")]),
+        (
+            3,
+            ["cat(1, a, b)"],
+            [
+                ("unitTests.x[1]", "cat(1, a, b)[1]"),
+                ("unitTests.x[2]", "cat(1, a, b)[2]"),
+                ("unitTests.x[3]", "cat(1, a, b)[3]"),
+            ],
+        ),
+    ],
+    ids=["array", "concatenation"],
+)
+def test_one_expression_for_many_variables_is_indexed(n, expressions, expected):
     """``x=y`` where y is an array: the model named the array, not each
-    element, so element i reads as ``y[i]``."""
-    assert _pairs(_test(2, ["x"])) == [
-        ("unitTests.x[1]", "x[1]"),
-        ("unitTests.x[2]", "x[2]"),
-    ]
-
-
-def test_a_single_concatenation_for_many_variables_is_indexed_too():
-    """``x=cat(1, a, b)`` is one expression covering the whole array, so it
-    indexes like ``x=y`` does. (It is NOT the mismatch case: that is two
-    expressions for three variables, below.)"""
-    assert _pairs(_test(3, ["cat(1, a, b)"])) == [
-        ("unitTests.x[1]", "cat(1, a, b)[1]"),
-        ("unitTests.x[2]", "cat(1, a, b)[2]"),
-        ("unitTests.x[3]", "cat(1, a, b)[3]"),
-    ]
+    element, so element i reads as ``y[i]``. ``x=cat(1, a, b)`` is one
+    expression covering the whole array, so it indexes like ``x=y`` does.
+    (It is NOT the mismatch case: that is two expressions for three
+    variables, below.)"""
+    assert _pairs(_test(n, expressions)) == expected
 
 
 def test_expressions_that_match_neither_shape_leave_the_label_empty():

@@ -1336,6 +1336,9 @@ def test_a_k_above_the_children_reads_as_what_the_node_has(session, action, k, t
 
 
 async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
+    """Applying a form stages the act and the row is gone — a menu then, a
+    row now: left open it would offer a form for a node that has just
+    changed."""
     session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, errors, _figure):
@@ -1343,9 +1346,12 @@ async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
             await user.should_see(marker=marker)
         await user.should_not_see(marker="host-click")  # a leaf has no fields
         user.find(marker=f"wrap:{leaf}").click()  # the row is built on the click
+        await user.should_see(marker=f"apply-wrap:{leaf}")
         user.find(marker=f"apply-wrap:{leaf}").click()
         await _settled(lambda: "combinator" in session.tree(D)["children"][1])
         assert errors == {}
+        assert _none(user, f"apply-wrap:{leaf}")
+        assert _none(user, "host-row:title")
 
 
 async def test_a_cluster_builds_a_form_only_when_its_icon_is_clicked(session):
@@ -1699,20 +1705,6 @@ async def test_a_node_and_a_variable_together_draw_the_nodes_controls(session):
         await user.should_see(marker=f"add:{leaf}")
         await user.should_not_see(marker="apply-add:x")
         await user.should_not_see(marker="add-for:x")
-
-
-async def test_applying_a_form_closes_its_row(session):
-    """The act is staged and the row is gone — a menu then, a row now: left
-    open it would offer a form for a node that has just changed."""
-    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
-    leaf = "/metrics/children/1"
-    async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
-        user.find(marker=f"wrap:{leaf}").click()
-        await user.should_see(marker=f"apply-wrap:{leaf}")
-        user.find(marker=f"apply-wrap:{leaf}").click()
-        await _settled(lambda: "combinator" in session.tree(D)["children"][1])
-        assert _none(user, f"apply-wrap:{leaf}")
-        assert _none(user, "host-row:title")
 
 
 async def test_the_variable_panel_adds_a_criterion_for_it(two_var_session):
@@ -3919,34 +3911,21 @@ async def test_a_reduce_scalar_keeps_its_mode_window_and_quantity(session):
         assert "mode" in labels and "window start" in labels and "Quantity" in labels
 
 
-def test_a_statistics_criterion_is_edited_at_its_own_placement():
+@pytest.mark.parametrize(
+    "placement",
+    [caps.Placement.TREE_CRITERION, caps.Placement.STATISTIC_CRITERION],
+    ids=["tree", "statistics"],
+)
+def test_a_statistics_criterion_is_edited_at_its_own_placement(placement):
     """B2: Edit criteria alone attaches where the Statistics card hosts a
-    criterion's editor; Edit on plot, which needs a plot, does not."""
+    criterion's editor; Edit on plot, which needs a plot, does not.
+    U5 Y4: under a tree row likewise only Edit criteria attaches — Edit on
+    plot needs a drawn figure, and the tree editor links to the plot's."""
     from dstf.authoring.builtin.edit_on_plot import EditOnPlot
-    from dstf.authoring.capabilities import Placement
 
-    at = {
-        c.name
-        for c in caps.registered_capabilities()
-        if Placement.STATISTIC_CRITERION in c.placements
-    }
+    at = {c.name for c in caps.registered_capabilities() if placement in c.placements}
     assert at == {EditCriteria.name}
-    assert Placement.STATISTIC_CRITERION not in EditOnPlot.placements
-
-
-def test_a_tree_criterion_is_edited_by_edit_criteria_alone():
-    """U5 Y4: under a tree row only Edit criteria attaches — Edit on plot
-    needs a drawn figure, and the tree editor links to the plot's."""
-    from dstf.authoring.builtin.edit_on_plot import EditOnPlot
-    from dstf.authoring.capabilities import Placement
-
-    at = {
-        c.name
-        for c in caps.registered_capabilities()
-        if Placement.TREE_CRITERION in c.placements
-    }
-    assert at == {EditCriteria.name}
-    assert Placement.TREE_CRITERION not in EditOnPlot.placements
+    assert placement not in EditOnPlot.placements
 
 
 # -- one act, one pending edit ------------------------------------------------

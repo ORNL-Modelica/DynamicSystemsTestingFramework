@@ -180,7 +180,8 @@ class TestSelectBackend:
         self, monkeypatch, capsys
     ):
         """`run` has `--batch`: its refusal of the workers names it, and only
-        where the backend's script mode would run."""
+        where the backend's script mode would run. `_get_backend` is the only
+        place the abort message is printed, and it exits 1."""
         for batch_runs, said in ((True, True), (False, False)):
 
             def _raise(config, *, persistent, to_run, batch_runs=batch_runs):
@@ -189,24 +190,12 @@ class TestSelectBackend:
                 )
 
             monkeypatch.setattr("dstf.backends.select_backend", _raise)
-            with pytest.raises(SystemExit):
+            with pytest.raises(SystemExit) as excinfo:
                 cli_mod._get_backend(SimpleNamespace(), persistent=True)
             err = capsys.readouterr().err
+            assert excinfo.value.code == 1
+            assert "Persistent-worker Probe unavailable." in err
             assert ("Or re-run with `--batch`" in err) is said, err
-
-    def test_cli_wrapper_turns_the_error_into_exit_1(self, monkeypatch, capsys):
-        """`_get_backend` is the only place the abort message is printed."""
-
-        def _raise(config, *, persistent, to_run):
-            raise BackendUnavailableError("Persistent-worker Probe unavailable.")
-
-        monkeypatch.setattr("dstf.backends.select_backend", _raise)
-
-        with pytest.raises(SystemExit) as excinfo:
-            cli_mod._get_backend(SimpleNamespace(), persistent=True)
-
-        assert excinfo.value.code == 1
-        assert "Persistent-worker Probe unavailable." in capsys.readouterr().err
 
     def test_unregistered_backend_name_is_unavailable_not_a_value_error(self):
         with pytest.raises(BackendUnavailableError) as excinfo:

@@ -385,19 +385,21 @@ class TestAutoDetectBackend:
     and its integration through Config.__post_init__ when testing.json omits
     the `backend` key."""
 
-    def test_looks_like_path_linux(self):
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("/usr/bin/omc", True),
+            ("omc", False),
+            ("dymola.exe", False),
+            ("C:\\Program Files\\Dymola.exe", True),
+            ("D:/some/path", True),
+            ("Dymola", False),
+        ],
+    )
+    def test_looks_like_path_linux(self, text, expected):
         from dstf.backends.locate import looks_like_path
 
-        assert looks_like_path("/usr/bin/omc")
-        assert not looks_like_path("omc")
-        assert not looks_like_path("dymola.exe")
-
-    def test_looks_like_path_windows(self):
-        from dstf.backends.locate import looks_like_path
-
-        assert looks_like_path("C:\\Program Files\\Dymola.exe")
-        assert looks_like_path("D:/some/path")
-        assert not looks_like_path("Dymola")
+        assert looks_like_path(text) is expected
 
     def test_auto_detect_picks_first_resolvable(self, tmp_path, monkeypatch):
         """First entry whose binary resolves wins. If an earlier entry has

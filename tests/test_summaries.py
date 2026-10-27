@@ -33,12 +33,18 @@ def test_every_registered_metric_summarizes_a_sentinel_without_raising():
     for desc in metrics():
         s = desc.summarize(_vc(mode=desc.name))
         assert isinstance(s, ScoreSummary) and s.display and s.criterion
+        # Its details are (label, value) string pairs.
+        assert isinstance(s.details, tuple)
+        assert all(isinstance(k, str) and isinstance(v, str) for k, v in s.details), (
+            desc.name
+        )
 
 
 def test_an_error_sentinel_is_mode_agnostic():
     s = summarize(_vc(mode="tube", diagnostics={"error": "empty window"}))
     assert s.display == "not scored"
     assert s.criterion == "tube criterion not scored — empty window"
+    assert s.details == ()
 
 
 def test_tube_summary_reads_the_inside_fraction():
@@ -105,14 +111,6 @@ class TestDetails:
     2026-09-08 ruling: the review loop keeps the old numbers, but only under
     labels that are true for the mode (a range leaf's ``nrmse`` field holds
     its worst violation, so it must never print as "NRMSE")."""
-
-    def test_every_registered_metric_yields_string_pairs(self):
-        for desc in metrics():
-            s = desc.summarize(_vc(mode=desc.name))
-            assert isinstance(s.details, tuple)
-            assert all(
-                isinstance(k, str) and isinstance(v, str) for k, v in s.details
-            ), desc.name
 
     def test_nrmse_details_are_the_old_review_block(self):
         t = np.linspace(0.0, 1.0, 11)
@@ -186,10 +184,6 @@ class TestDetails:
         assert d["checkpoints"] == "1 of 2 failed"
         assert "exceeds limit" in d["t=8"]
         assert "t=2" not in d
-
-    def test_an_error_sentinel_has_no_details(self):
-        s = summarize(_vc(mode="tube", diagnostics={"error": "empty window"}))
-        assert s.details == ()
 
 
 class TestTheToleranceInACriterionSentence:
@@ -1218,6 +1212,9 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
             self.T,
             tolerance=Sides(1, 2),
         )
+        assert dict(summarize(vc).details)["checkpoints"] == (
+            "1 of 1 failed, 1 not scored"
+        )
         vc.tolerance_used = Sides(1, 2)
         assert vc.diagnostics["scored_points"] == 0
         assert "worst_sides" not in vc.diagnostics
@@ -1259,21 +1256,6 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         assert vc.diagnostics["scored_points"] == 2
         assert vc.diagnostics["failed_points"] == len(failing) + len(extra)
         assert dict(summarize(vc).details)["checkpoints"] == said
-
-    def test_with_no_scored_point_the_checkpoints_line_counts_the_unscored(self):
-        from dstf.comparison.sides import Sides
-
-        vc = score(
-            {"mode": "points", "points": [{"time": 5.0, "value": 1.0}]},
-            self.T,
-            self.T,
-            self.T,
-            self.T,
-            tolerance=Sides(1, 2),
-        )
-        assert dict(summarize(vc).details)["checkpoints"] == (
-            "1 of 1 failed, 1 not scored"
-        )
 
     # ---- declared events
 

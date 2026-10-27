@@ -119,20 +119,16 @@ class TestBuiltinRegistrations:
             {"and", "or", "k-of-n", "warn", "weighted"}
         )
 
-    @pytest.mark.parametrize(
-        "name,direction",
-        [
-            ("nrmse", "lower"),
-            ("tube", "higher"),
-            ("points", "lower"),
-            ("range", "lower"),
-            ("event-timing", "lower"),
-            ("dominant-frequency", "lower"),
-            ("scalar", "lower"),
-        ],
-    )
-    def test_score_directions(self, name, direction):
-        assert registry.metric(name).score_direction == direction
+    def test_score_directions(self):
+        assert {d.name: d.score_direction for d in registry.metrics()} == {
+            "nrmse": "lower",
+            "tube": "higher",
+            "points": "lower",
+            "range": "lower",
+            "event-timing": "lower",
+            "dominant-frequency": "lower",
+            "scalar": "lower",
+        }
 
     def test_all_builtins_accept_time_series(self):
         for desc in registry.metrics():

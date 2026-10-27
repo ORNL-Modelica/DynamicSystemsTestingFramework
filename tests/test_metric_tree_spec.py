@@ -25,48 +25,44 @@ class TestLeafSpec:
         assert node.metric == "nrmse"
         assert node.variable == "h"
         assert node.params == {}
-
-    def test_leaf_collects_extra_keys_as_params(self):
-        node = parse_metric_tree(
-            {
-                "metric": "nrmse",
-                "variable": "h",
-                "tolerance": 0.01,
-            }
-        )
-        assert isinstance(node, LeafSpec)
-        assert node.params == {"tolerance": 0.01}
-
-    def test_tube_leaf_keeps_tube_specific_params(self):
-        node = parse_metric_tree(
-            {
-                "metric": "tube",
-                "variable": "v",
-                "tube_rel": 0.05,
-                "tube_width_mode": "rel",
-            }
-        )
-        assert isinstance(node, LeafSpec)
-        assert node.metric == "tube"
-        assert node.params == {"tube_rel": 0.05, "tube_width_mode": "rel"}
-
-    def test_range_leaf_keeps_min_max_params(self):
-        node = parse_metric_tree(
-            {
-                "metric": "range",
-                "variable": "h",
-                "min_value": 0.0,
-                "max_value": 1.1,
-            }
-        )
-        assert isinstance(node, LeafSpec)
-        assert node.metric == "range"
-        assert node.params == {"min_value": 0.0, "max_value": 1.1}
-
-    def test_leaf_against_defaults_to_primary(self):
-        node = parse_metric_tree({"metric": "nrmse", "variable": "h"})
-        assert isinstance(node, LeafSpec)
         assert node.against == "primary"
+
+    @pytest.mark.parametrize(
+        ("leaf", "metric", "params"),
+        [
+            (
+                {"metric": "nrmse", "variable": "h", "tolerance": 0.01},
+                "nrmse",
+                {"tolerance": 0.01},
+            ),
+            (
+                {
+                    "metric": "tube",
+                    "variable": "v",
+                    "tube_rel": 0.05,
+                    "tube_width_mode": "rel",
+                },
+                "tube",
+                {"tube_rel": 0.05, "tube_width_mode": "rel"},
+            ),
+            (
+                {
+                    "metric": "range",
+                    "variable": "h",
+                    "min_value": 0.0,
+                    "max_value": 1.1,
+                },
+                "range",
+                {"min_value": 0.0, "max_value": 1.1},
+            ),
+        ],
+        ids=["nrmse", "tube", "range"],
+    )
+    def test_leaf_collects_extra_keys_as_params(self, leaf, metric, params):
+        node = parse_metric_tree(leaf)
+        assert isinstance(node, LeafSpec)
+        assert node.metric == metric
+        assert node.params == params
 
     def test_leaf_against_explicit_named_baseline(self):
         node = parse_metric_tree(
@@ -97,13 +93,17 @@ class TestLeafSpec:
         with pytest.raises(MetricSpecError, match="unknown metric 'fft-peak'"):
             parse_metric_tree({"metric": "fft-peak", "variable": "x"})
 
-    def test_missing_variable_rejected(self):
-        with pytest.raises(MetricSpecError, match="variable.*required"):
-            parse_metric_tree({"metric": "nrmse"})
-
-    def test_empty_variable_rejected(self):
-        with pytest.raises(MetricSpecError, match="variable"):
-            parse_metric_tree({"metric": "nrmse", "variable": ""})
+    @pytest.mark.parametrize(
+        ("leaf", "pattern"),
+        [
+            ({"metric": "nrmse"}, "variable.*required"),
+            ({"metric": "nrmse", "variable": ""}, "variable"),
+        ],
+        ids=["missing", "empty"],
+    )
+    def test_missing_variable_rejected(self, leaf, pattern):
+        with pytest.raises(MetricSpecError, match=pattern):
+            parse_metric_tree(leaf)
 
 
 # ---------------------------------------------------------------------------
@@ -112,34 +112,33 @@ class TestLeafSpec:
 
 
 class TestCombinatorSpec:
-    def test_and_with_two_leaf_children(self):
-        node = parse_metric_tree(
-            {
-                "combinator": "and",
-                "children": [
+    @pytest.mark.parametrize(
+        ("combinator", "children"),
+        [
+            (
+                "and",
+                [
                     {"metric": "nrmse", "variable": "h", "tolerance": 0.01},
                     {"metric": "tube", "variable": "v", "tube_rel": 0.05},
                 ],
-            }
-        )
-        assert isinstance(node, CombinatorSpec)
-        assert node.combinator == "and"
-        assert len(node.children) == 2
-        assert all(isinstance(c, LeafSpec) for c in node.children)
-        assert node.children[0].variable == "h"
-
-    def test_or_combinator(self):
-        node = parse_metric_tree(
-            {
-                "combinator": "or",
-                "children": [
+            ),
+            (
+                "or",
+                [
                     {"metric": "nrmse", "variable": "x", "tolerance": 0.001},
                     {"metric": "nrmse", "variable": "x", "tolerance": 0.05},
                 ],
-            }
-        )
+            ),
+        ],
+        ids=["and", "or"],
+    )
+    def test_and_with_two_leaf_children(self, combinator, children):
+        node = parse_metric_tree({"combinator": combinator, "children": children})
         assert isinstance(node, CombinatorSpec)
-        assert node.combinator == "or"
+        assert node.combinator == combinator
+        assert len(node.children) == 2
+        assert all(isinstance(c, LeafSpec) for c in node.children)
+        assert node.children[0].variable == children[0]["variable"]
 
     def test_warn_wraps_single_child(self):
         node = parse_metric_tree(

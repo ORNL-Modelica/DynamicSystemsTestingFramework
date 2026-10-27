@@ -374,12 +374,18 @@ def test_validator_for_says_the_parsers_message_without_its_path():
 
 
 def test_validator_for_joins_the_validators_messages():
+    """The messages are joined with one space, as stage joins them."""
     raw = C("and", C("warn", L("a")), L("s", against="sc"), L("c", against="co"))
+    errors = validate_tree(
+        parse_metric_tree(raw), role_lookup_from_names(soft_checks=["sc"])
+    )
+    assert len(errors) >= 2
     with pytest.raises(MoveRefused) as e:
         VALIDATE(raw)
     text = str(e.value)
     assert "'sc' outside a 'warn'" in text and "'co' outside a 'warn'" in text
     assert ".metrics" not in text and "metrics." not in text
+    assert text == " ".join(err.message for err in errors)
 
 
 def test_the_validator_is_called_last_with_the_new_tree():
@@ -489,17 +495,6 @@ def test_a_weighted_can_always_fail_so_it_moves_into_an_or():
     group = C("weighted", C("warn", L("a")), weights=[1], threshold=1.0)
     tree = C("and", L("z"), group, C("or", L("b"), L("c")))
     assert move(tree, p(1), Dest("at", p(2), 0)) is not None
-
-
-def test_validator_for_joins_the_messages_with_one_space_as_stage_does():
-    raw = C("and", C("warn", L("a")), L("s", against="sc"), L("c", against="co"))
-    errors = validate_tree(
-        parse_metric_tree(raw), role_lookup_from_names(soft_checks=["sc"])
-    )
-    assert len(errors) >= 2
-    with pytest.raises(MoveRefused) as e:
-        VALIDATE(raw)
-    assert str(e.value) == " ".join(err.message for err in errors)
 
 
 def test_d4_is_said_before_the_validators_sentence():
