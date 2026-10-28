@@ -349,11 +349,19 @@ def test_the_suite_table_groups_filters_sorts_and_names(tmp_path, playwright_bro
         group.click()
         _shown(page, ALL)
         # The keyboard: focus A's name cell, up to its group row, Enter
-        # collapses it and Space opens it again.
+        # collapses it and Space opens it again. The collapse redraws the
+        # group row, and AG Grid focuses the new one in a setTimeout(0)
+        # (AG Grid 34's RowCtrl.setComp): until then the focus is on the
+        # body, and a key pressed there reaches no row. The table repaints
+        # before that timer runs, so `_shown` passing is not the keyboard
+        # being back — on a slow runner the Space was lost.
+        group_row = page.locator(".ag-row[row-id='g:FakeLib']")
         page.locator(".ag-row[row-id='FakeLib.A'] .ag-cell[col-id='status']").click()
         page.keyboard.press("ArrowUp")
+        expect(group_row).to_be_focused()
         page.keyboard.press("Enter")
         _shown(page, "G:FakeLib G:FakeLib.Cases X")
+        expect(group_row).to_be_focused()
         page.keyboard.press(" ")
         _shown(page, ALL)
 
