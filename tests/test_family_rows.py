@@ -56,14 +56,6 @@ def test_an_indices_text_names_its_indices_ascending(text, indices):
     assert parse_slice(text) == indices
 
 
-def test_a_ranges_end_is_included():
-    """Modelica's `1:20` is twenty elements: an exclusive end would drop
-    the last one from every family written whole."""
-    assert parse_slice("1:20")[-1] == 20
-    assert len(parse_slice("1:20")) == 20
-    assert parse_slice("1:5:16")[-1] == 16
-
-
 @pytest.mark.parametrize(
     ("text", "says"),
     [

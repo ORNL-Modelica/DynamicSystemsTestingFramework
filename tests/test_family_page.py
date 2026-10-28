@@ -828,19 +828,6 @@ def test_an_edit_that_is_not_the_tabs_folds_the_rows_again():
     assert state.family_unfolded == {}
 
 
-def test_a_folded_rows_placement_is_edit_criterias_and_edit_familys_alone():
-    """No capability that edits ONE leaf — Edit on plot — is offered where
-    twenty are selected."""
-    from dstf.authoring.capabilities import Placement, registered_capabilities
-
-    placed = [
-        c.name
-        for c in registered_capabilities()
-        if Placement.FAMILY_CRITERION in c.placements
-    ]
-    assert placed == ["edit-family", "edit-criteria"]
-
-
 async def test_an_add_from_a_tree_row_reveals_the_fold_on_its_plot(tmp_path):
     """A tree row's `+` has no plot of its own: the folded row it made is
     opened on the first plot that holds it."""

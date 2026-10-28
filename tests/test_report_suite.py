@@ -2734,12 +2734,6 @@ class TestTheTrajectoriesCarryTheExpression:
             ("unitTests.x[1]", "pipe.T[1]")
         ]
 
-    def test_a_variable_whose_model_wrote_none_carries_the_empty_text(self):
-        from dstf.reporting.context_builder import build_trajectories
-
-        _traj, _diag, nobaseline = build_trajectories([], self._result(""), None)
-        assert nobaseline[0]["expression"] == ""
-
 
 def test_the_drawn_reference_is_paired_by_name_not_by_index():
     """A baseline accepted before the pattern-order change stored the spec's

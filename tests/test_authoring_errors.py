@@ -10,29 +10,41 @@ import pytest
 
 from dstf.authoring.errors import user_text
 from dstf.comparison.handles import HandleEditError
+from dstf.config import ConfigError
 from dstf.discovery.patch_apply import PatchError, apply_patch_to_document
 
 
-def test_a_patch_error_shows_its_reason_only():
-    e = PatchError("validator rejected the patched tree: metrics: X", reason="X")
-    assert user_text(e) == "X"
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (
+            PatchError("validator rejected the patched tree: metrics: X", reason="X"),
+            "X",
+        ),
+        (
+            HandleEditError(
+                "/metrics/children/1: range/max: lower above upper",
+                reason="lower above upper",
+            ),
+            "lower above upper",
+        ),
+    ],
+    ids=["patch", "handle"],
+)
+def test_a_patch_error_shows_its_reason_only(error, reason):
+    assert user_text(error) == reason
 
 
-def test_a_handle_error_shows_its_reason_only():
-    e = HandleEditError(
-        "/metrics/children/1: range/max: lower above upper", reason="lower above upper"
-    )
-    assert user_text(e) == "lower above upper"
-
-
-def test_an_expected_error_has_no_class_name():
-    assert user_text(ValueError("no result for x")) == "no result for x"
-
-
-def test_a_config_error_has_no_class_name():
-    from dstf.config import ConfigError
-
-    assert user_text(ConfigError("no test_spec.json")) == "no test_spec.json"
+@pytest.mark.parametrize(
+    ("error", "text"),
+    [
+        (ValueError("no result for x"), "no result for x"),
+        (ConfigError("no test_spec.json"), "no test_spec.json"),
+    ],
+    ids=["value", "config"],
+)
+def test_an_expected_error_has_no_class_name(error, text):
+    assert user_text(error) == text
 
 
 def test_a_config_error_is_not_logged_and_a_bare_value_error_is(caplog):

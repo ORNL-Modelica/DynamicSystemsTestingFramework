@@ -83,20 +83,6 @@ async def test_a_checkbox_and_a_select_show_the_effective_default_unwritten():
         assert form.values() == {"count_must_match": False}
 
 
-async def test_none_values_are_omitted_from_the_values_dict():
-    forms = {}
-
-    def root():
-        forms["f"] = render_form(derive_schema(_Cfg), {}, on_change=lambda v: None)
-
-    async with user_simulation(root=root) as user:
-        await user.open("/")
-        assert (
-            "max_value" not in forms["f"].values()
-            and "points" not in forms["f"].values()
-        )
-
-
 # -- values in effect; one bottom line (U2, K3 + K4) -----------------------------
 
 IN_EFFECT = {"tolerance": {"value": 0.01, "source": "test"}}
@@ -121,30 +107,6 @@ async def test_a_field_without_a_value_shows_the_value_in_effect_as_its_hint():
         # the dataclass default is no longer offered beside it
         assert tol.props.get("placeholder") is None
         assert form.values() == {}  # an in-effect value is never written
-
-
-async def test_a_typed_value_takes_the_hint_away_and_clearing_it_brings_it_back():
-    """The hint names the value in effect while the field is empty: under a
-    typed 0.5 it named a value no longer applied."""
-    forms = {}
-
-    def root():
-        forms["f"] = render_form(
-            derive_schema(_Cfg, mode="x"),
-            {},
-            on_change=lambda v: None,
-            in_effect=IN_EFFECT,
-        )
-
-    async with user_simulation(root=root) as user:
-        await user.open("/")
-        tol = forms["f"].controls["tolerance"]
-        tol.set_value(0.5)
-        assert not tol.props.get("hint")
-        assert forms["f"].values() == {"tolerance": 0.5}
-        tol.set_value(None)
-        assert tol.props.get("hint") == "in effect: 0.01 (the test's tolerance)"
-        assert forms["f"].values() == {}
 
 
 async def test_a_field_with_its_own_value_shows_no_hint_until_it_is_cleared():

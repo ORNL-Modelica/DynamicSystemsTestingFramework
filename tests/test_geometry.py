@@ -8,25 +8,8 @@ import numpy as np
 import pytest
 
 from dstf.comparison.geometry import Band, Box, HLine, Marker, Series, VLine, Window
-from dstf.comparison.types import ScoreSummary, VariableComparison
+from dstf.comparison.types import ScoreSummary
 from scoring import score
-
-
-def _vc(**kw) -> VariableComparison:
-    base = dict(
-        index=0,
-        name="x",
-        passed=True,
-        nrmse=0.0,
-        rmse=0.0,
-        signal_range=1.0,
-        max_abs_error=0.0,
-        max_abs_error_time=0.0,
-        reference_final=0.0,
-        actual_final=0.0,
-    )
-    base.update(kw)
-    return VariableComparison(**base)
 
 
 class TestPrimitives:
@@ -57,9 +40,6 @@ class TestPrimitives:
 
 
 class TestResultTypes:
-    def test_variable_comparison_geometry_defaults_empty(self):
-        assert _vc().geometry == ()
-
     def test_score_summary_is_frozen(self):
         s = ScoreSummary(display="NRMSE 1e-3", criterion="NRMSE 1e-3 vs 1e-4 → FAIL")
         with pytest.raises(AttributeError):
@@ -540,10 +520,6 @@ class TestScalarGeometry:
         lines = self._allowed(0.0, Sides(0.25, 0.5), "rel")
         assert lines["scalar/upper"] == (0.5, "handle")
         assert lines["scalar/lower"] == (-0.25, "handle")
-
-    def test_the_bounds_form_draws_no_tolerance(self):
-        lines = self._allowed(4.0, 0.1, lo=0.0, hi=5.0)
-        assert set(lines) == {"scalar/actual", "scalar/min", "scalar/max"}
 
 
 class TestEventTimingGeometry:

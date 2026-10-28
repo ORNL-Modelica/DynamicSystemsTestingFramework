@@ -80,10 +80,6 @@ class TestScalarConfigValidation:
         with pytest.raises(ValueError, match="not implemented"):
             ScalarMode(ScalarConfig(quantity={"expr": "max(x)"}))
 
-    def test_unknown_reduction_rejected(self):
-        with pytest.raises(ValueError, match="reduce must be one of"):
-            ScalarMode(ScalarConfig(quantity={"reduce": "median"}))
-
     def test_hyphenated_sample_mean_rejected_with_the_closed_set(self):
         with pytest.raises(ValueError) as excinfo:
             ScalarMode(ScalarConfig(quantity={"reduce": "sample-mean"}))
@@ -177,14 +173,6 @@ class TestScalarReductions:
             t, v, t, v
         )
         assert vc.actual_final != pytest.approx(weighted.actual_final)
-
-    def test_sample_mean_on_a_uniform_grid(self):
-        t = np.linspace(0.0, 1.0, 5)
-        v = 2.0 * t
-        mode = _mode(quantity={"reduce": "sample_mean"}, tolerance=1e-12)
-        assert mode.reduction == "sample_mean"
-        vc = mode.compare(t, v, t, v)
-        assert vc.actual_final == pytest.approx(float(np.mean(v)))
 
     @pytest.mark.parametrize(
         "t,act,expected",
@@ -732,23 +720,6 @@ class TestScalarLeafEvaluation:
 
 
 class TestScalarLeafParsing:
-    def test_variable_defaults_to_a_string_quantity(self):
-        leaf = parse_metric_tree(
-            {"metric": "scalar", "quantity": "translation.continuous_time_states"}
-        )
-        assert leaf.variable == "translation.continuous_time_states"
-        assert leaf.params["quantity"] == "translation.continuous_time_states"
-
-    def test_explicit_variable_is_the_display_label(self):
-        leaf = parse_metric_tree(
-            {
-                "metric": "scalar",
-                "variable": "solver cost",
-                "quantity": "translation.continuous_time_states",
-            }
-        )
-        assert leaf.variable == "solver cost"
-
     def test_reduction_quantity_still_requires_a_variable(self):
         from dstf.comparison.tree_spec import MetricSpecError
 

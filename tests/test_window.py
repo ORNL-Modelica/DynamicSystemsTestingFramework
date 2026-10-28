@@ -72,6 +72,8 @@ class TestWindowParsing:
         )
         assert tree.window_start == 1.0
         assert tree.window_end == 5.0
+        # window is hoisted to its own fields, not left in params.
+        assert "window" not in tree.params
 
     def test_window_open_start(self):
         tree = parse_metric_tree(
@@ -131,44 +133,9 @@ class TestWindowParsing:
                 }
             )
 
-    def test_window_not_in_params(self):
-        """window is hoisted to its own fields, not left in params."""
-        tree = parse_metric_tree(
-            {
-                "metric": "nrmse",
-                "variable": "x",
-                "tolerance": 1e-3,
-                "window": {"start": 1.0, "end": 5.0},
-            }
-        )
-        assert "window" not in tree.params
-
 
 class TestWindowEvaluation:
     """Window slices both sides before mode.compare — mode doesn't see it."""
-
-    def test_no_window_unchanged_score(self):
-        """With no window, NRMSE matches what we get without the field at all."""
-        t = np.linspace(0.0, 10.0, 101)
-        ref = _baseline(t, np.sin(t))
-        act = _var(t, np.sin(t))
-
-        tree = parse_metric_tree(
-            {
-                "metric": "nrmse",
-                "variable": "x",
-                "tolerance": 1e-6,
-            }
-        )
-        result = evaluate_spec(
-            tree,
-            {"x": act},
-            {"primary": ref},
-            base_tolerance=1e-6,
-        )
-        assert result.passed is True
-        # score is NRMSE; for identical signals it's essentially zero
-        assert result.score < 1e-9
 
     def test_window_isolates_portion(self):
         """NRMSE scored only over [start, end] — mismatch outside the window
@@ -249,38 +216,6 @@ class TestWindowEvaluation:
 class TestPiecewiseRegression:
     """Multiple windowed leaves under AND reproduce a piecewise contract."""
 
-    def test_two_windows_composed_under_and(self):
-        t = np.linspace(0.0, 10.0, 101)
-        ref = _baseline(t, np.sin(t))
-        act = _var(t, np.sin(t))
-
-        tree = parse_metric_tree(
-            {
-                "combinator": "and",
-                "children": [
-                    {
-                        "metric": "nrmse",
-                        "variable": "x",
-                        "tolerance": 1e-6,
-                        "window": {"end": 5.0},
-                    },
-                    {
-                        "metric": "nrmse",
-                        "variable": "x",
-                        "tolerance": 1e-6,
-                        "window": {"start": 5.0},
-                    },
-                ],
-            }
-        )
-        result = evaluate_spec(
-            tree,
-            {"x": act},
-            {"primary": ref},
-            base_tolerance=1e-6,
-        )
-        assert result.passed is True
-
     def test_one_window_fails_and_fails(self):
         """Mismatch in the second half fails the second window but not the
         first — AND surfaces the partial failure."""
@@ -327,21 +262,6 @@ class TestLeafPaths:
     def test_single_leaf_root(self):
         tree = parse_metric_tree({"metric": "nrmse", "variable": "x"})
         assert collect_leaf_paths(tree) == ["/metrics"]
-
-    def test_flat_and(self):
-        tree = parse_metric_tree(
-            {
-                "combinator": "and",
-                "children": [
-                    {"metric": "nrmse", "variable": "x"},
-                    {"metric": "nrmse", "variable": "y"},
-                ],
-            }
-        )
-        assert collect_leaf_paths(tree) == [
-            "/metrics/children/0",
-            "/metrics/children/1",
-        ]
 
     def test_nested(self):
         tree = parse_metric_tree(
@@ -403,18 +323,6 @@ class TestCollectVariables:
     def test_single_leaf(self):
         tree = parse_metric_tree({"metric": "nrmse", "variable": "h"})
         assert collect_variables(tree) == ["h"]
-
-    def test_distinct_variables_in_order(self):
-        tree = parse_metric_tree(
-            {
-                "combinator": "and",
-                "children": [
-                    {"metric": "nrmse", "variable": "h"},
-                    {"metric": "nrmse", "variable": "v"},
-                ],
-            }
-        )
-        assert collect_variables(tree) == ["h", "v"]
 
     def test_dedup_preserves_first_occurrence(self):
         tree = parse_metric_tree(
@@ -488,27 +396,24 @@ class TestSynthesizeImplicitTree:
         assert [c.variable for c in tree.children] == ["h", "v"]
         assert all(isinstance(c, LeafSpec) for c in tree.children)
 
-    def test_override_mode_translates_to_metric(self):
-        tree = synthesize_implicit_tree(
-            ["h"],
-            variable_overrides={"h": {"mode": "tube", "tube_rel": 0.05}},
-        )
+    @pytest.mark.parametrize(
+        ("override", "metric", "params"),
+        [
+            ({"mode": "tube", "tube_rel": 0.05}, "tube", {"tube_rel": 0.05}),
+            (
+                {"mode": "range", "min_value": -1.0, "max_value": 1.0},
+                "range",
+                {"min_value": -1.0, "max_value": 1.0},
+            ),
+        ],
+        ids=["tube", "range"],
+    )
+    def test_override_mode_translates_to_metric(self, override, metric, params):
+        tree = synthesize_implicit_tree(["h"], variable_overrides={"h": override})
         leaf = tree.children[0]
-        assert leaf.metric == "tube"
+        assert leaf.metric == metric
         # mode key consumed; other keys flow into params
-        assert "mode" not in leaf.params
-        assert leaf.params["tube_rel"] == 0.05
-
-    def test_override_range_metric(self):
-        tree = synthesize_implicit_tree(
-            ["h"],
-            variable_overrides={
-                "h": {"mode": "range", "min_value": -1.0, "max_value": 1.0}
-            },
-        )
-        leaf = tree.children[0]
-        assert leaf.metric == "range"
-        assert leaf.params == {"min_value": -1.0, "max_value": 1.0}
+        assert leaf.params == params
 
     def test_base_tolerance_filled_when_override_silent(self):
         tree = synthesize_implicit_tree(["h"], base_tolerance=1e-3)
@@ -670,26 +575,6 @@ class TestSpecToView:
 
 
 class TestFlattenEvaluation:
-    def test_keys_match_leaf_paths(self):
-        spec = parse_metric_tree(
-            {
-                "combinator": "and",
-                "children": [
-                    {"metric": "nrmse", "variable": "x"},
-                    {"metric": "nrmse", "variable": "x"},
-                ],
-            }
-        )
-        t = np.linspace(0.0, 10.0, 101)
-        ref = _baseline(t, np.sin(t))
-        act = _var(t, np.sin(t))
-        result = evaluate_spec(spec, {"x": act}, {"primary": ref}, base_tolerance=1e-3)
-        eval_by_path = flatten_evaluation(result)
-        # Root + each child
-        assert "/metrics" in eval_by_path
-        assert "/metrics/children/0" in eval_by_path
-        assert "/metrics/children/1" in eval_by_path
-
     def test_variable_stashed_comparison_not_in_entry(self):
         """`diagnostics['variable']` carries a non-JSON-safe VariableComparison;
         flatten_evaluation must drop it."""

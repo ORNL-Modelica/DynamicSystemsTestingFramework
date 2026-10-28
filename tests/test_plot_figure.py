@@ -637,11 +637,6 @@ def test_a_name_no_ascii_whitelist_anticipates_still_has_a_family(name):
     assert family_of(name) is not None
 
 
-def test_non_ascii_names_fold_into_one_family():
-    names = ["θ[1]", "θ[2]", "θ[3]"]
-    assert group_families(names) == [("θ[]", names)]
-
-
 @pytest.mark.parametrize(
     "label",
     ["sum(pipe.Qs[1])", "sum(pipe.Qs[2])", "abs(x[1])", "max(a.b[2])", "cat(1, y)[1]"],
@@ -659,11 +654,6 @@ def test_a_negated_derivative_is_an_element_either_way_round(label):
     element of an array and `-der(x[2])` was not."""
     fam = family_of(label, expression=True)
     assert fam is not None and fam[1] == 2
-
-
-def test_two_reductions_of_one_array_stay_two_families():
-    labels = {N1: "sum(pipe.Qs[1])", N2: "sum(pipe.Qs[2])"}
-    assert group_families([N1, N2], labels) == [(N1, [N1]), (N2, [N2])]
 
 
 def test_two_series_sharing_one_expression_read_label_and_name():
@@ -696,15 +686,6 @@ def test_two_series_sharing_one_expression_read_label_and_name():
     ]
     colors = {by_id[f"actual/{n}"]["line"]["color"] for n in (N1, N2)}
     assert len(colors) == 2
-
-
-def test_two_series_with_their_own_expressions_read_the_label_alone():
-    """The guard on the rule above: the name rides along only where the
-    label is ambiguous."""
-    fig = plot_figure([_labelled(N1, "a.Q"), _labelled(N2, "b.Q")])
-    by_id = {tr["meta"]["id"]: tr for tr in fig["data"] if tr.get("meta")}
-    assert by_id[f"actual/{N1}"]["name"] == "a.Q"
-    assert by_id[f"actual/{N2}"]["name"] == "b.Q"
 
 
 @pytest.mark.parametrize("build", ["single", "multi"])

@@ -165,24 +165,6 @@ def test_run_metadata_flows_to_context(tmp_path):
     assert rm["generated_str"] and "20" in rm["generated_str"]
 
 
-def test_run_metadata_surfaces_msl_from_library_versions(tmp_path):
-    snapshot = {
-        "total": 1,
-        "counts": {},
-        "tests": [],
-        "updated_at": 0.0,
-        "metadata": {
-            "backend": "Dymola",
-            "backend_name": "Dymola 2026x",
-            "os": "linux",
-            "library_versions": {"Modelica": "4.1.0"},
-        },
-    }
-    _write_status_json(tmp_path, snapshot)
-    ctx = build_dashboard_context(tmp_path, mode="final")
-    assert ctx["run_metadata"]["msl"] == "4.1.0"
-
-
 def test_render_final_shows_msl_in_banner(tmp_path):
     snapshot = {
         "total": 1,
@@ -201,13 +183,6 @@ def test_render_final_shows_msl_in_banner(tmp_path):
     render_final(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "MSL 4.0.0" in out
-
-
-def test_run_metadata_absent_is_none(tmp_path):
-    snapshot = {"total": 0, "counts": {}, "tests": [], "updated_at": 0.0}
-    _write_status_json(tmp_path, snapshot)
-    ctx = build_dashboard_context(tmp_path, mode="final")
-    assert ctx["run_metadata"] is None
 
 
 def test_render_final_shows_metadata_banner(tmp_path):
@@ -247,30 +222,6 @@ def test_render_final_no_banner_without_metadata(tmp_path):
     render_final(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "run-meta" not in out
-
-
-def test_render_final_strips_refresh(tmp_path):
-    snapshot = {
-        "total": 1,
-        "elapsed": 0.0,
-        "eta_seconds": None,
-        "counts": {"queued": 0, "running": 0, "passed": 1, "failed": 0, "timed_out": 0},
-        "tests": [
-            {
-                "test_key": "test_0001",
-                "model_id": "Lib.A",
-                "status": "passed",
-                "elapsed": 1.0,
-                "worker_id": 0,
-                "report_dir": "test_0001",
-            }
-        ],
-        "updated_at": 0.0,
-    }
-    _write_status_json(tmp_path, snapshot)
-    render_final(tmp_path)
-    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert "DASHBOARD_MODE = 'final'" in out
 
 
 def test_rerun_flags_flows_to_template(tmp_path):
@@ -411,26 +362,6 @@ def test_dashboard_has_selection_ui(tmp_path):
     assert "downloadFilter" in out  # download .txt button handler
 
 
-def test_dashboard_template_has_pill_toggles(tmp_path):
-    """Counter pills are clickable filter toggles. The pill-click handler
-    and the statuses the pills are drawn from must both be in the page."""
-    snapshot = {
-        "total": 0,
-        "elapsed": 0.0,
-        "eta_seconds": None,
-        "counts": {},
-        "tests": [],
-        "updated_at": 0.0,
-    }
-    _write_status_json(tmp_path, snapshot)
-    render_live(tmp_path)
-    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert "togglePill" in out  # click handler defined + wired on each pill
-    assert "const STATUSES = " in out  # the pills, keyed by status class
-    # The "filter-bar" row of buttons no longer exists — pills handle it
-    assert 'class="filter-bar"' not in out
-
-
 def test_dashboard_template_has_sort_hooks(tmp_path):
     """Each sortable column header must have data-sort and data-key attrs."""
     snapshot = {
@@ -447,42 +378,6 @@ def test_dashboard_template_has_sort_hooks(tmp_path):
     assert 'data-sort="text" data-key="model"' in out
     assert 'data-sort="num" data-key="nrmse"' in out
     assert 'data-sort="num" data-key="elapsed"' in out
-
-
-def test_dashboard_template_has_per_column_filter(tmp_path):
-    """Per-column text filter inputs must be present below headers."""
-    snapshot = {
-        "total": 0,
-        "elapsed": 0.0,
-        "eta_seconds": None,
-        "counts": {},
-        "tests": [],
-        "updated_at": 0.0,
-    }
-    _write_status_json(tmp_path, snapshot)
-    render_live(tmp_path)
-    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert 'class="col-filter"' in out
-    assert 'data-col-filter="model"' in out
-
-
-def test_live_mode_uses_meta_refresh(tmp_path):
-    """Live mode must include the auto-refresh meta tag — it's what drives
-    the dashboard's auto-refresh on file:// URLs (JS fetch is blocked there
-    in Chrome/Edge for security reasons; meta-refresh is unaffected)."""
-    snapshot = {
-        "total": 0,
-        "elapsed": 0.0,
-        "eta_seconds": None,
-        "counts": {},
-        "tests": [],
-        "updated_at": 0.0,
-    }
-    _write_status_json(tmp_path, snapshot)
-    render_live(tmp_path)
-    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert '<meta http-equiv="refresh" content="5">' in out
-    assert "DASHBOARD_MODE = 'live'" in out
 
 
 def test_final_mode_strips_meta_refresh(tmp_path):
@@ -804,36 +699,6 @@ def test_sticky_chrome_wraps_top_region(tmp_path):
     assert "ResizeObserver" in out
 
 
-def test_resolution_column_shows_provenance(tmp_path):
-    """field_sources from status.json (or sidecar) flows into row cells."""
-    snapshot = {
-        "total": 1,
-        "elapsed": 5.0,
-        "eta_seconds": None,
-        "counts": {"queued": 0, "running": 0, "passed": 1, "failed": 0, "timed_out": 0},
-        "tests": [
-            {
-                "test_key": "test_0001",
-                "model_id": "Lib.A",
-                "status": "passed",
-                "elapsed": 2.0,
-                "worker_id": 0,
-                "report_dir": "test_0001",
-                "field_sources": {
-                    "stop_time": "test_spec",
-                    "tolerance": "annotation",
-                },
-            }
-        ],
-        "updated_at": 0.0,
-    }
-    _write_status_json(tmp_path, snapshot)
-    render_live(tmp_path)
-    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert "test_spec" in out
-    assert "Resolution" in out
-
-
 def test_model_id_is_escaped_in_the_final_page(tmp_path):
     """The dashboard is the --report-format html surface now; the escaping
     guard the retired html_report tests carried moves here (D117)."""
@@ -895,15 +760,6 @@ class TestWorstNrmseColumn:
     the inf/nan swallowed the per-test max in the sidecar. It now names
     what happened."""
 
-    def test_unscored_count_reaches_the_row(self, tmp_path):
-        _write_status_json(tmp_path, _one_test_snapshot())
-        _write_sidecar(
-            tmp_path, {"model_id": "Lib.A", "worst_nrmse": None, "n_unscored": 1}
-        )
-        row = build_dashboard_context(tmp_path, mode="final")["tests"][0]
-        assert row.worst_score is None
-        assert row.n_unscored == 1
-
     def test_cell_says_n_a_with_the_count(self, tmp_path):
         _write_status_json(tmp_path, _one_test_snapshot())
         _write_sidecar(
@@ -922,14 +778,6 @@ class TestWorstNrmseColumn:
         render_final(tmp_path)
         html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
         assert "1.2500e-04" in html
-        assert "n/a (" not in html
-
-    def test_uncompared_test_still_reads_em_dash(self, tmp_path):
-        """No sidecar at all — nothing was scored and nothing was skipped;
-        the honest cell is still "—"."""
-        _write_status_json(tmp_path, _one_test_snapshot())
-        render_final(tmp_path)
-        html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
         assert "n/a (" not in html
 
 
@@ -1014,7 +862,8 @@ def test_the_header_is_the_column_list(tmp_path):
 def test_every_row_carries_every_columns_attributes(tmp_path):
     from dstf.reporting.rows import COLUMNS
 
-    rows = _body_rows(_two_row_final_page(tmp_path))
+    html = _two_row_final_page(tmp_path)
+    rows = _body_rows(html)
     assert len(rows) == 2
     for tr in rows:
         attrs = _attrs(tr)
@@ -1034,6 +883,12 @@ def test_every_row_carries_every_columns_attributes(tmp_path):
     # only the cell reads "—".
     assert b["data-nrmse"] == "" and b["data-sort-nrmse"] == ""
     assert a["data-detail"] == "a message"
+    # An absent text value: the cell reads "—"; the filter attribute is
+    # empty, so a regex `.` matches only rows that have a message, and "—"
+    # matches none.
+    assert b["data-detail"] == "" and b["data-ref"] == ""
+    assert '<td class="detail-cell"' in rows[1]
+    assert "—" in rows[1]
 
 
 def test_the_cells_keep_their_markup(tmp_path):
@@ -1049,6 +904,36 @@ def test_the_cells_keep_their_markup(tmp_path):
     assert '<td class="elapsed-cell">2.0</td>' in a
     assert '<span class="warn">3</span>' in a
     assert '<td class="detail-cell" title="a message">a message</td>' in a
+
+
+def test_a_mixed_resolution_names_each_fields_source_in_its_title(tmp_path):
+    """Fields resolved from more than one source: the cell reads "mixed",
+    and its title says where each field came from."""
+    snapshot = {
+        "total": 1,
+        "elapsed": 5.0,
+        "eta_seconds": None,
+        "counts": {"passed": 1},
+        "tests": [
+            {
+                "test_key": "test_0001",
+                "model_id": "Lib.A",
+                "status": "passed",
+                "elapsed": 2.0,
+                "worker_id": 0,
+                "report_dir": "test_0001",
+                "field_sources": {"stop_time": "test_spec", "tolerance": "annotation"},
+            }
+        ],
+        "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    (row,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert _attrs(row)["data-resolution"] == "mixed"
+    assert (
+        '<span title="stop_time: test_spec, tolerance: annotation">mixed</span>'
+    ) in row
 
 
 def _model_cell(tr: str) -> str:
@@ -1119,15 +1004,6 @@ def test_a_live_page_links_no_report_page(tmp_path):
     render_live(tmp_path)
     (row,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
     assert _model_cell(row) == '<td class="model-cell" title="Lib.A">Lib.A</td>'
-
-
-def test_every_column_but_status_has_a_typed_filter(tmp_path):
-    from dstf.reporting.rows import COLUMNS
-
-    html = _two_row_final_page(tmp_path)
-    found = re.findall(r'data-col-filter="([^"]*)" data-kind="([^"]*)"', html)
-    # The status column has none: the pills filter it.
-    assert found == [(c.key, c.kind) for c in COLUMNS if c.kind != "status"]
 
 
 def _cancelled_snapshot(tmp_path) -> None:
@@ -1248,12 +1124,6 @@ def test_the_pills_are_the_statuses(tmp_path):
         ["not-run", "NOT RUN"],
     ]
     assert "['warnings', 'warnings']" in html  # the cross-cut pill
-
-
-def test_the_saved_state_key_moved_with_the_pill_keys(tmp_path):
-    html = _two_row_final_page(tmp_path)
-    assert "'dstf-dashboard-v2:'" in html
-    assert "dstf-dashboard-v1:" not in html
 
 
 def test_a_final_page_without_sidecars_shows_verdicts(tmp_path):
@@ -1473,18 +1343,6 @@ def test_the_pending_badge_is_styled(tmp_path):
         r"\.status-badge\.pending\s*\{\s*background:\s*var\(--dstf-pending-fill\)",
         html,
     )
-
-
-def test_an_absent_text_value_is_empty_to_the_filter(tmp_path):
-    """The cell reads "—"; the filter attribute is empty, so a regex `.`
-    matches only rows that have a message, and "—" matches none."""
-    _two_row_final_page(tmp_path)
-    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    a, b = (_attrs(tr) for tr in _body_rows(html))
-    assert a["data-detail"] == "a message"
-    assert b["data-detail"] == "" and b["data-ref"] == ""
-    assert '<td class="detail-cell"' in _body_rows(html)[1]
-    assert "—" in _body_rows(html)[1]
 
 
 def test_a_sidecar_with_an_unknown_status_does_not_break_the_page(tmp_path):

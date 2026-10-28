@@ -526,7 +526,8 @@ class TestOpen:
         self, tmp_path, monkeypatch, caplog
     ):
         """A sibling tree that raises (a PermissionError from iterdir) is
-        logged, and the Event is set anyway — a waiter never hangs on it."""
+        logged, and the Event is set anyway — a waiter never hangs on it.
+        A warm that fails posts nothing."""
         from dstf.reporting import overlay_loader as ol
 
         def broken(config):
@@ -534,11 +535,14 @@ class TestOpen:
 
         monkeypatch.setattr(ol, "warm_sibling_backend_index", broken)
         cfg, work = _project(tmp_path)
-        s = Session()
+        posted: list = []
+        s = Session(post=posted.append)
         with caplog.at_level("ERROR", logger="dstf.authoring.session"):
             s.open(cfg, work_dir=work)
             assert s.overlay_index_ready.wait(5.0)
         assert "warming the sibling-backend overlay index failed" in caplog.text
+        time.sleep(0.2)
+        assert posted == []
 
     def test_the_recorded_backend_wins_over_the_config(self, tmp_path):
         cfg, work = _project(tmp_path)
@@ -1174,14 +1178,6 @@ class TestRescoreAndStage:
         # And a rescore is a no-op: the tree is there now.
         session.rescore(A)
         assert len(session.spec.pending) == 2
-
-    def test_rescore_alone_on_a_flat_test_leaves_nothing_staged(self, session):
-        """The tree a flat entry scores by, written out and nothing else, is
-        the entry as saved: a look stages nothing that Save would write."""
-        comp = session.rescore(A)
-        assert session.spec.pending == []
-        assert "metrics" not in session.spec.entry(A)
-        assert comp is session.comparisons[A] and classify(comp) == FAIL
 
     def test_rescore_verdict_equals_the_loaded_one_when_nothing_changed(self, session):
         assert classify(session.rescore(A)) == FAIL
@@ -2039,8 +2035,9 @@ class TestOutcomes:
         from dstf.authoring.session import PendingEditsError
 
         session.stage([LOOSEN])
-        with pytest.raises(PendingEditsError, match="1 staged"):
+        with pytest.raises(PendingEditsError, match="1 staged") as raised:
             session.close()
+        assert raised.value.count == 1
         other_cfg, other_work = _project(tmp_path / "other")
         with pytest.raises(PendingEditsError):
             session.apply(OpenProject(config_path=other_cfg, work_dir=other_work))
@@ -3527,15 +3524,6 @@ class TestOneStageIsOneEdit:
             s.spec.pending == [] and s.spec.entry(A)["metrics"]["children"][1] == second
         )
 
-    def test_the_refusal_to_close_counts_edits(self, session):
-        from dstf.authoring.session import PendingEditsError
-
-        session.stage([LOOSEN])
-        with pytest.raises(PendingEditsError) as raised:
-            session.close()
-        assert raised.value.count == 1
-        session.discard()
-
 
 class TestStageCollapses:
     """Every layout gesture stages the whole `/plots` list, so a run of
@@ -4139,12 +4127,6 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
 class TestTheMaterializationIsMarked:
     """The drawer's preview diffs against the tree as scoring sees it: the
     op `stage` prepends to write a flat entry's tree out says so."""
-
-    def test_the_prepended_tree_is_marked_and_the_edit_is_not(self, session):
-        session.stage([LOOSEN])
-        tree, edit = session.spec.pending
-        assert (tree.op, tree.path) == ("add", "/metrics") and tree.materializes
-        assert edit == LOOSEN and not edit.materializes
 
     def test_an_edit_that_lands_on_the_tree_unmarks_it(self, session):
         """Convention 8 folds a replace of ``/metrics`` onto the op that

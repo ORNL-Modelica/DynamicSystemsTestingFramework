@@ -225,13 +225,12 @@ class TestTube:
             _edit(REL, "tube/upper/0", None, 0.6, reference=None)
         with pytest.raises(HandleEditError, match="'other'"):
             _edit(_with(BAND, against="other"), "tube/upper/0", 0.5, 0.8)
-        assert _edit(_with(BAND, against="primary"), "tube/upper/0", 0.5, 0.8)
-
-    def test_band_and_rel_refuse_a_named_baseline_even_vertically(self):
+        # A named baseline is refused even for a vertical drag.
         with pytest.raises(HandleEditError, match="'other'"):
             _edit(_with(BAND, against="other"), "tube/upper/0", None, 0.8)
         with pytest.raises(HandleEditError, match="'other'"):
             _edit(_with(REL, against="other"), "tube/upper/0", None, 0.6)
+        assert _edit(_with(BAND, against="primary"), "tube/upper/0", 0.5, 0.8)
 
     def test_abs_refuses_a_time_drag_against_a_named_baseline(self):
         leaf = _with(ABS, against="other")
@@ -242,19 +241,6 @@ class TestTube:
         for x in (None, 0.0, 1e-12):
             new = _edit(leaf, "tube/upper/0", x, 2.0)
             assert new["tube_points"][0] == {"time": 0.0, "upper": 2.0, "lower": -0.5}
-
-    def test_a_noise_level_x_on_a_named_baseline_edits_the_width(self):
-        leaf = _with(ABS, against="other", tube_points=[{"time": 0.5, "upper": 1.5}])
-        new = _edit(leaf, "tube/upper/0", 0.5 + 1e-12, 2.0)
-        assert new["tube_points"][0] == {"time": 0.5, "upper": 2.0}
-        with pytest.raises(HandleEditError, match="'other'"):
-            _edit(leaf, "tube/upper/0", 0.5 + 0.1, 2.0)
-
-    def test_a_noise_level_x_is_not_a_time_move(self):
-        leaf = _with(BAND, tube_points=[{"time": 1.0, "upper": 0.1, "lower": 0.1}])
-        new = _edit(leaf, "tube/upper/0", 1.0 + 1e-12, 1.3)
-        assert new["tube_points"][0]["time"] == 1.0
-        assert new["tube_points"][0]["upper"] == pytest.approx(0.3)
 
     def test_a_real_browsers_vertical_drag_is_not_a_time_move(self):
         # Measured on a TRANSFORM baseline (time 0..10, 2000 samples, ~800 px
@@ -296,6 +282,12 @@ class TestTube:
         with pytest.raises(HandleEditError) as err:
             _edit(leaf, "tube/upper/0", 1.0, 1.2)
         assert "clamped" not in str(err.value)
+        assert "control points 0 and 1 share time 1" in str(err.value)
+        # A time drag onto another point's time is refused.
+        with pytest.raises(
+            HandleEditError, match=r"control points 0 and 1 share time 0\.9"
+        ):
+            _edit(BAND, "tube/upper/0", 0.9, 1.0)
 
     def test_a_refusal_prints_numbers_without_float_noise(self):
         # ref(0.75) = 0.75; -0.777 - 0.75 is -1.5270000000000001 as a float.
@@ -318,12 +310,6 @@ class TestTube:
         negative = (REF[0], -REF[1])
         new = _edit(REL, "tube/upper/0", 0.5, -0.4, reference=negative)
         assert new["tube_points"][0]["upper"] == pytest.approx(0.2)
-
-    def test_a_time_drag_onto_another_points_time_refused(self):
-        with pytest.raises(
-            HandleEditError, match=r"control points 0 and 1 share time 0\.9"
-        ):
-            _edit(BAND, "tube/upper/0", 0.9, 1.0)
 
     def test_any_drag_of_a_point_sharing_its_time_refused(self):
         leaf = _with(
@@ -353,11 +339,6 @@ class TestTube:
             _edit(BAND, "tube/upper/0", 0.5, 0.5 - 1e-9)
         assert re.search(r"width -1(\.\d+)?e-09 would be negative", str(err.value))
         assert "-0 " not in str(err.value)
-
-    def test_min_width_is_written_as_dragged(self):
-        leaf = _with(BAND, tube_min_width=0.3)
-        new = _edit(leaf, "tube/upper/0", 0.5, 0.6)
-        assert new["tube_points"][0]["upper"] == pytest.approx(0.1)
 
     @pytest.mark.parametrize(
         "local",
@@ -579,10 +560,7 @@ class TestPoints:
         # And the value a ring is dragged to is not a time: unbounded.
         new = _edit(POINTS, "points/target/1", 0.75, 7.0, span=(0.0, 1.0))
         assert new["points"][1] == {"time": 0.75, "value": 7.0, "tolerance": 0.05}
-
-    def test_a_vertical_drag_keeps_a_time_outside_the_reference_span(self):
-        # The review's case: the ring sends x back at the point's own time.
-        leaf = _with(POINTS, points=[{"time": 1.5, "value": 1.5, "tolerance": 0.1}])
+        # With no span: the ring sends x back at the point's own time.
         new = _edit(leaf, "points/target/0", 1.5, 1.6)
         assert new["points"][0] == {"time": 1.5, "value": 1.6, "tolerance": 0.1}
 
@@ -1000,9 +978,6 @@ class TestScalarSides:
 
     def test_a_horizontal_only_drag_changes_nothing(self):
         assert _side(BASELINE_SCALAR, "scalar/upper", None) == BASELINE_SCALAR
-
-    def test_the_bounds_still_move(self):
-        assert _edit(SCALAR, "scalar/max", None, 1.0)["max_value"] == 1.0
 
 
 # -- a dragged grip back to its side (D147) ------------------------------------
@@ -1607,9 +1582,6 @@ class TestPeakSides:
         with pytest.raises(HandleEditError) as box:
             _grip(linked, "peaks/upper/2", 16.5)
         assert box.value.reason == "the window would reach 0 Hz"
-
-    def test_the_declared_peak_still_moves(self):
-        assert _edit(PEAK_SIDES, "peaks/declared/0", 3.0)["peaks"][0]["freq"] == 3.0
 
     @pytest.mark.parametrize(
         ("tolerance", "refused", "nearest"),

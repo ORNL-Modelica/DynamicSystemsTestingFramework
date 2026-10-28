@@ -297,17 +297,14 @@ class TestAConstantBandsTwoSides:
                 {"tube_width_mode": "band", "tube_abs": {"lower": 0.125, "upper": 0.5}},
                 0.375,
             ),
+            # The sides swapped is the mirror.
+            ({"tube_width_mode": "band", "tube_abs": Sides(0.5, 0.125)}, -0.375),
         ],
-        ids=["band", "rel", "band-from-a-dict"],
+        ids=["band", "rel", "band-from-a-dict", "mirror"],
     )
     def test_it_holds_a_curve_above_and_fails_one_below(self, cfg, off):
         assert self._tube(off, cfg).passed
         assert not self._tube(-off, cfg).passed
-
-    def test_the_sides_swapped_is_the_mirror(self):
-        cfg = {"tube_width_mode": "band", "tube_abs": Sides(0.5, 0.125)}
-        assert self._tube(-0.375, cfg).passed
-        assert not self._tube(0.375, cfg).passed
 
     @pytest.mark.parametrize("at", [2.5, 5.0], ids=["between-samples", "on-a-sample"])
     def test_the_lower_side_is_enforced_between_reference_samples_and_on_them(self, at):

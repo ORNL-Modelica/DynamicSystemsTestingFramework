@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from dstf.backends.common.result_variables import (
     compute_needed_variables,
@@ -119,19 +120,6 @@ class TestExtractVariables:
         variables, _ = extract_variables({"ut.x[1]": _series([1.0])}, test, [])
         assert [v.name for v in variables] == ["ut.x[1]"]
 
-    def test_a_pattern_naming_the_component_variable_is_not_a_second_variable(self):
-        """De-dupe is by result-file name: the pattern resolves to the name
-        the UnitTests pass already emitted."""
-        test = _unit_tests_test(
-            1,
-            model_id="Lib.Examples.Both",
-            x_expressions=["pipe.T[1]"],
-            variable_patterns=["unitTests.x[1]"],
-            source="both",
-        )
-        variables, _ = extract_variables({"unitTests.x[1]": _series([1.0])}, test, [])
-        assert [v.name for v in variables] == ["unitTests.x[1]"]
-
     def test_a_pattern_equal_to_an_expression_is_its_own_variable(self):
         """Two variables of the result file are two variables: the pattern
         names ``pipe.T[1]``, which the component only LABELS ``x[1]`` by."""
@@ -166,18 +154,34 @@ class TestExtractVariables:
         assert set(names) == {"pipe.T[1]", "pipe.T[2]", "tank.level"}
         assert [v.index for v in variables] == [1, 2, 3]
 
-    def test_pattern_variable_already_seen_is_not_duplicated(self):
-        """A UnitTests variable's name re-matched by a glob is emitted once."""
-        test = TestModel(
-            model_id="Lib.Examples.Both",
-            source_file=None,
-            n_vars=1,
-            variable_patterns=["unitTests.x*"],
-            source="both",
-        )
+    @pytest.mark.parametrize(
+        "test",
+        [
+            TestModel(
+                model_id="Lib.Examples.Both",
+                source_file=None,
+                n_vars=1,
+                variable_patterns=["unitTests.x*"],
+                source="both",
+            ),
+            _unit_tests_test(
+                1,
+                model_id="Lib.Examples.Both",
+                x_expressions=["pipe.T[1]"],
+                variable_patterns=["unitTests.x[1]"],
+                source="both",
+            ),
+        ],
+        ids=["glob", "literal"],
+    )
+    def test_pattern_variable_already_seen_is_not_duplicated(self, test):
+        """A UnitTests variable's name re-matched by a glob is emitted once.
+        De-dupe is by result-file name: a literal pattern naming the
+        component variable resolves to the name the UnitTests pass already
+        emitted, and is not a second variable."""
         mat_data = {"unitTests.x[1]": _series([1.0])}
         variables, _ = extract_variables(mat_data, test, [])
-        assert len(variables) == 1
+        assert [v.name for v in variables] == ["unitTests.x[1]"]
 
     def test_diagnostics_split_from_variables(self):
         test = _spec_test(["pipe.T[1]"])

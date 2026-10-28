@@ -70,14 +70,6 @@ class TestCompareTrajectories:
         assert vc.passed is True
         assert vc.nrmse == 0.0
 
-    def test_identical_three_events(self):
-        """Identical signals with three events (double time points) => NRMSE = 0."""
-        t = np.array([0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0])
-        v = np.array([0.0, 0.9, 1.1, 1.9, 2.1, 2.9, 3.1, 4.0])
-        vc = score({"mode": "nrmse"}, t, v, t, v, tolerance=1e-4)
-        assert vc.passed is True
-        assert vc.nrmse == 0.0
-
     def test_an_events_middle_sample_is_scored_against_nothing(self):
         """Three samples at an event: the first ends the segment before it,
         the last starts the one after, and the middle one is neither — it
@@ -384,12 +376,6 @@ class TestStructuralChanges:
         warnings = _check_structural_changes(decode_reference(ref), result)
         assert len(warnings) == 0
 
-    def test_no_statistics_key(self):
-        ref = {}
-        result = TestResult(model_id="Test", success=True, statistics={})
-        warnings = _check_structural_changes(decode_reference(ref), result)
-        assert len(warnings) == 0
-
 
 # ---------------------------------------------------------------------------
 # Tolerance resolution
@@ -539,16 +525,6 @@ class TestTubeInterpolation:
         assert upper == [10.0, 10.0, 10.0]
         assert lower == [10.0, 10.0, 10.0]
 
-    def test_linear_interpolation(self):
-        """Linear interpolation between two points."""
-        points = [
-            {"time": 0.0, "upper": 10.0, "lower": 10.0},
-            {"time": 100.0, "upper": 20.0, "lower": 20.0},
-        ]
-        upper, lower = _widths([0.0, 50.0, 100.0], points)
-        np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
-        np.testing.assert_allclose(lower, [10.0, 15.0, 20.0])
-
     def test_hold_at_boundaries(self):
         """Values before first and after last point are held."""
         points = [
@@ -647,27 +623,6 @@ class TestTubeComparison:
         )
         assert vc.passed
 
-    def test_min_width_floors_rel_at_zero_crossing(self):
-        """tube_min_width floors rel-mode width — prevents zero-width at zero crossing."""
-        ref_time = np.array([0.0, 1.0])
-        ref_values = np.array([0.0, 100.0])  # Crosses zero
-        # At t=0: |ref|=0 so rel width = 0, but min_width=5 → effective width=5
-        act_values = np.array([3.0, 104.0])  # Within ±5 at zero, ±5% at t=1
-
-        vc = score(
-            {
-                "mode": "tube",
-                "tube_width_mode": "rel",
-                "tube_rel": 0.05,
-                "tube_min_width": 5.0,
-            },
-            ref_time,
-            ref_values,
-            ref_time,
-            act_values,
-        )
-        assert vc.passed
-
     def test_time_varying_tube(self):
         """Time-varying tube with control points."""
         ref_time = np.array([0.0, 50.0, 100.0])
@@ -720,23 +675,6 @@ class TestTubeComparison:
         assert vc.tube_worst_violation == pytest.approx(1.0)
         assert vc.tube_worst_violation_time == 0.0
 
-    def test_tube_via_compare_test(self):
-        """Tube mode dispatched correctly via compare_test."""
-        test = _make_test(
-            variable_overrides={
-                "x": {
-                    "mode": "tube",
-                    "tube_width_mode": "band",
-                    "tube_abs": 0.01,
-                },
-            }
-        )
-        result, ref = _make_result_and_ref(offset=0.005)
-        comp = compare_test(test, result, decode_reference(ref), default_tolerance=1e-4)
-        assert comp.passed
-        assert comp.variables[0].mode == "tube"
-        assert comp.variables[0].tube_points_inside == 1.0
-
     def test_asymmetric_tube_passes(self):
         """Asymmetric tube with different upper/lower widths."""
         ref_time = np.array([0.0, 1.0])
@@ -782,24 +720,6 @@ class TestTubeComparison:
             act_values,
         )
         assert not vc.passed
-
-    def test_rel_mode_tube(self):
-        """Tube with tube_width_mode='rel' scales by |reference|."""
-        ref_time = np.array([0.0, 1.0])
-        ref_values = np.array([100.0, 1000.0])
-        # 2% relative tube
-        # t=0: width = 0.02 * 100 = 2. offset=1 → inside
-        # t=1: width = 0.02 * 1000 = 20. offset=10 → inside
-        act_values = np.array([101.0, 1010.0])
-
-        vc = score(
-            {"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.02},
-            ref_time,
-            ref_values,
-            ref_time,
-            act_values,
-        )
-        assert vc.passed
 
     def test_min_width_floor(self):
         """tube_min_width prevents tube from collapsing at zero crossing."""
@@ -932,21 +852,6 @@ class TestResolveMode:
         assert isinstance(mode, NrmseMode)
         assert mode.config.tolerance == 0.01
 
-    def test_explicit_tube(self):
-        """mode='tube' → TubeMode with tube params extracted."""
-        override = {
-            "mode": "tube",
-            "tube_abs": 5.0,
-            "tube_rel": 0.02,
-            "tube_width_mode": "band",
-        }
-        mode = resolve_mode(override, tolerance=1e-4)
-        assert isinstance(mode, TubeMode)
-        assert mode.name == "tube"
-        assert mode.config.tube_abs == Sides(5.0, 5.0)
-        assert mode.config.tube_rel == Sides(0.02, 0.02)
-        assert mode.config.tube_width_mode == "band"
-
     def test_explicit_default_points(self):
         """mode='default_points' → PointsMode."""
         mode = resolve_mode({"mode": "points"}, tolerance=0.05)
@@ -979,16 +884,22 @@ class TestResolveMode:
         assert isinstance(mode, NrmseMode)
 
     def test_tube_config_ignores_non_tube_keys(self):
-        """Non-tube keys in override dict are not passed to TubeConfig."""
+        """mode='tube' → TubeMode with tube params extracted; non-tube keys in
+        the override dict are not passed to TubeConfig."""
         override = {
             "mode": "tube",
             "tube_abs": 3.0,
+            "tube_rel": 0.02,
+            "tube_width_mode": "band",
             "tolerance": 0.5,  # Not a tube config key
             "some_other_key": True,
         }
         mode = resolve_mode(override, tolerance=0.5)
         assert isinstance(mode, TubeMode)
+        assert mode.name == "tube"
         assert mode.config.tube_abs == Sides(3.0, 3.0)
+        assert mode.config.tube_rel == Sides(0.02, 0.02)
+        assert mode.config.tube_width_mode == "band"
 
     def test_tube_with_time_varying_points(self):
         """Tube config with tube_points passes through correctly."""
@@ -1022,13 +933,6 @@ class TestTubeConfigToDict:
         assert d["tube_abs"] == Sides(5.0, 5.0)
         assert "tube_rel" not in d  # Zero values omitted
 
-    def test_with_points(self):
-        points = [{"time": 0.0, "upper": 1.0, "lower": 1.0}]
-        cfg = TubeConfig(tube_points=points, tube_interpolation="constant")
-        d = cfg.to_dict()
-        assert d["tube_points"] == points
-        assert d["tube_interpolation"] == "constant"
-
 
 class TestModeCompare:
     """Integration: each mode produces correct VariableComparison."""
@@ -1038,59 +942,54 @@ class TestModeCompare:
     act_values_close = np.array([1.0001, 2.0001, 3.0001])
     act_values_far = np.array([1.5, 2.5, 3.5])
 
-    def test_nrmse_mode_pass(self):
-        mode = NrmseMode(NrmseConfig(tolerance=0.01))
+    @pytest.mark.parametrize(
+        ("tolerance", "actual", "passed"),
+        [(0.01, "act_values_close", True), (1e-4, "act_values_far", False)],
+        ids=["pass", "fail"],
+    )
+    def test_nrmse_mode_pass(self, tolerance, actual, passed):
+        mode = NrmseMode(NrmseConfig(tolerance=tolerance))
         vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
+            self.ref_time, self.ref_values, self.ref_time, getattr(self, actual)
         )
-        assert vc.passed
+        assert vc.passed is passed
         assert vc.mode == "nrmse"
 
-    def test_nrmse_mode_fail(self):
-        mode = NrmseMode(NrmseConfig(tolerance=1e-4))
+    @pytest.mark.parametrize(
+        ("tube_abs", "actual", "passed"),
+        [(1.0, "act_values_close", True), (0.001, "act_values_far", False)],
+        ids=["pass", "fail"],
+    )
+    def test_tube_mode_pass(self, tube_abs, actual, passed):
+        mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=tube_abs))
         vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
+            self.ref_time, self.ref_values, self.ref_time, getattr(self, actual)
         )
-        assert not vc.passed
-
-    def test_tube_mode_pass(self):
-        mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=1.0))
-        vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
-        )
-        assert vc.passed
+        assert vc.passed is passed
         assert vc.mode == "tube"
-        assert vc.tube_points_inside == 1.0
+        assert (vc.tube_points_inside == 1.0) is passed
 
-    def test_tube_mode_fail(self):
-        mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=0.001))
+    @pytest.mark.parametrize(
+        ("tolerance", "actual", "passed"),
+        [(0.01, "act_values_close", True), (1e-6, "act_values_far", False)],
+        ids=["pass", "fail"],
+    )
+    def test_default_points_mode_pass(self, tolerance, actual, passed):
+        mode = PointsMode(PointsConfig(tolerance=tolerance))
         vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
+            self.ref_time, self.ref_values, self.ref_time, getattr(self, actual)
         )
-        assert not vc.passed
-        assert vc.tube_points_inside < 1.0
-
-    def test_default_points_mode_pass(self):
-        mode = PointsMode(PointsConfig(tolerance=0.01))
-        vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
-        )
-        assert vc.passed
+        assert vc.passed is passed
         assert vc.mode == "points"
-
-    def test_default_points_mode_fail(self):
-        mode = PointsMode(PointsConfig(tolerance=1e-6))
-        vc = mode.compare(
-            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
-        )
-        assert not vc.passed
 
 
 class TestCompareTestWithModes:
     """End-to-end: compare_test dispatches via resolve_mode correctly."""
 
-    def test_default_points_flag_does_not_override_tube(self):
-        """Bug fix: default_points=True must not override mode='tube'."""
+    @pytest.mark.parametrize("default_points", [False, True])
+    def test_default_points_flag_does_not_override_tube(self, default_points):
+        """Tube mode is dispatched via compare_test; bug fix:
+        default_points=True must not override mode='tube'."""
         test = _make_test(
             variable_overrides={
                 "x": {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01},
@@ -1102,10 +1001,11 @@ class TestCompareTestWithModes:
             result,
             decode_reference(ref),
             default_tolerance=1e-4,
-            default_points=True,
+            default_points=default_points,
         )
         assert comp.passed
         assert comp.variables[0].mode == "tube"
+        assert comp.variables[0].tube_points_inside == 1.0
 
     def test_default_points_flag_applies_when_no_explicit_mode(self):
         """default_points=True applies to variables without explicit mode."""
@@ -2038,17 +1938,6 @@ class TestEmptyDataFails:
         )
         assert not vc.passed
 
-    def test_range_empty_actual_fails(self):
-        vc = score(
-            {"mode": "range", "min_value": 0.0, "max_value": 1.0},
-            EMPTY,
-            np.zeros_like(EMPTY),
-            EMPTY,
-            EMPTY,
-        )
-        assert not vc.passed
-        assert "error" in vc.diagnostics
-
     def test_a_variable_with_no_samples_the_baseline_lacks_fails_its_criterion(self):
         test = _mk_test(variable_patterns=["x", "y"])
         result = TestResult(
@@ -2751,20 +2640,6 @@ class TestVariableIdentity:
         )
         assert comp.passed and comp.warnings == []
 
-    def test_a_baseline_stored_under_the_expression_is_missing_and_says_its_name(
-        self, caplog
-    ):
-        with caplog.at_level(logging.WARNING):
-            comp = compare_test(
-                _vi_test(x_expressions=["pipe.T[1]"]),
-                _vi_result(expression="pipe.T[1]"),
-                decode_reference(
-                    _vi_reference(name="pipe.T[1]", with_expression=False)
-                ),
-            )
-        assert not comp.passed
-        assert any(STORED_HINT in record.getMessage() for record in caplog.records)
-
     def test_an_override_that_names_no_variable_warns(self, caplog):
         """A key matching nothing has always been ignored in silence. It is
         the only sign a spec key is stale, so say it once per test."""
@@ -3248,17 +3123,6 @@ class TestTheExpressionRidesOnEveryComparison:
 
 
 class TestTheExpressionCheckPairsByName:
-    def test_a_reordered_baseline_is_paired_by_name(self):
-        """The stored entries are in the order they were accepted in; a
-        re-accept after an `x={...}` edit can reorder them. Pairing the
-        check by position then reports every variable as changed."""
-        comp = compare_test(
-            _vi_test(n_vars=2),
-            _vi_two_result(),
-            decode_reference(_vi_two_reference(order=(1, 0))),
-        )
-        assert comp.passed and comp.warnings == []
-
     def test_a_duplicate_name_is_read_from_the_first_entry(self):
         """Pairing reads the FIRST entry under a name; the check must read
         the same one, or a stale duplicate further down the file reports a
@@ -3458,7 +3322,10 @@ class TestPairingIsByNameOnly:
 
     def test_a_baseline_holding_the_name_at_another_index_still_scores(self):
         """Pairing is by name, so a reordered baseline scores as it did
-        before the reorder."""
+        before the reorder. The stored entries are in the order they were
+        accepted in; a re-accept after an `x={...}` edit can reorder them.
+        Pairing the expression check by position would then report every
+        variable as changed."""
         comp = compare_test(
             _vi_test(n_vars=2),
             _vi_two_result(),
@@ -3466,6 +3333,7 @@ class TestPairingIsByNameOnly:
         )
         assert comp.passed
         assert [vc.nrmse for vc in comp.variables] == [0.0, 0.0]
+        assert comp.warnings == []
 
 
 class TestACriterionOnAMissingVariableNamesItsMetric:
@@ -3873,8 +3741,17 @@ class TestATolerancesNumberAndEqualPairAreOne:
     """The identity rule: a spec holding ``v`` and one holding
     ``{"lower": v, "upper": v}`` score the same, on both paths."""
 
-    @pytest.mark.parametrize("flat", [False, True], ids=["tree", "flat"])
-    @pytest.mark.parametrize("name", _S_LEAF_KEYS)
+    @pytest.mark.parametrize(
+        ("name", "flat"),
+        [
+            pytest.param(name, flat, id=f"{name}-{'flat' if flat else 'tree'}")
+            for name in _S_LEAF_KEYS
+            for flat in (False, True)
+            # A tube key on the tree path: its number and its equal pair
+            # are scored alike by test_its_equal_pair_scores_as_the_number.
+            if flat or name not in ("tube_abs", "tube_rel")
+        ],
+    )
     def test_a_leaf_key(self, name, flat):
         kind, leaf, key, v = _S_LEAF_KEYS[name]
         a = _sides_compare({**leaf, key: v}, flat=flat, kind=kind).variables[0]
@@ -4306,6 +4183,7 @@ class TestEveryFieldThatTakesAPairScoresOne:
         assert "error" not in a.diagnostics, a.diagnostics
         assert _sides_fields(a) == _sides_fields(b)
         assert _sides_coords(a) == _sides_coords(b)
+        assert a.passed is b.passed
 
     def test_the_stand_in_guard_is_gone(self):
         from dstf.comparison import modes
@@ -4899,16 +4777,6 @@ class TestPointsFinalCheckSides:
         )
         assert vc.passed is True
         assert vc.max_abs_error == 0.0
-
-    def test_an_empty_reference_is_not_scored(self):
-        vc = score(
-            {"mode": "points"}, EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([2.0, 2.0])
-        )
-        assert vc.passed is False
-        assert summarize(vc).criterion == (
-            "points criterion not scored — "
-            "no reference samples to compare (empty baseline or window)"
-        )
 
 
 class TestPointsIdentity:

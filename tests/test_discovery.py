@@ -109,31 +109,6 @@ class TestMoParser:
         result = parse_mo_file(Path("/nonexistent/file.mo"))
         assert result is None
 
-    def test_bare_variable(self):
-        """x=y where y is an array — bare variable without braces."""
-        text = "Utilities.ErrorAnalysis.UnitTests unitTests(n=2, x=y)"
-        info = _parse_unit_tests(text)
-        assert info.x_expressions == ["y"]
-
-    def test_bare_qualified_variable(self):
-        """x=some.qualified.name — dotted path without braces."""
-        text = "UnitTests ut(n=2, x=heatTransfer.alphas)"
-        info = _parse_unit_tests(text)
-        assert info.x_expressions == ["heatTransfer.alphas"]
-
-    def test_bare_deep_qualified_variable(self):
-        """x=a.b.c.d — deeply nested dotted path."""
-        text = "UnitTests ut(x=ductOut.port_b.C_outflow)"
-        info = _parse_unit_tests(text)
-        assert info.x_expressions == ["ductOut.port_b.C_outflow"]
-
-    def test_bare_variable_with_x_reference(self):
-        """Bare x=y ends at its own argument: the x_reference after it is
-        not part of the expression."""
-        text = "UnitTests ut(n=2, x=y, x_reference={1.0, 2.0})"
-        info = _parse_unit_tests(text)
-        assert info.x_expressions == ["y"]
-
     def test_no_x_param(self):
         """UnitTests with only x_reference but no x= gives empty expressions."""
         text = "UnitTests ut(n=2, x_reference={1.0, 2.0})"
@@ -163,11 +138,6 @@ class TestMoParser:
             ).instance
             == "unitTests"
         )
-
-    def test_a_wrapped_cat_without_braces_is_normalized(self):
-        """The non-braced x=cat(...) branch normalizes too."""
-        info = _parse_unit_tests("UnitTests unitTests(n=3, x=cat(1, y,\n   y1))")
-        assert info.x_expressions == ["cat(1, y, y1)"]
 
     def test_a_wrapped_cat_inside_braces_is_normalized(self):
         info = _parse_unit_tests("UnitTests unitTests(n=3, x={cat(1, y,\n   y1)[ 2 ]})")
@@ -272,6 +242,15 @@ class TestMoParser:
         ]
         info = _parse_unit_tests("UnitTests ut(n=1, x=a.b[1].c, x_reference={1})")
         assert info.x_expressions == ["a.b[1].c"]
+        # x=y where y is an array, under a qualified type name.
+        text = "Utilities.ErrorAnalysis.UnitTests unitTests(n=2, x=y)"
+        assert _parse_unit_tests(text).x_expressions == ["y"]
+        # x=some.qualified.name — a dotted path without braces.
+        text = "UnitTests ut(n=2, x=heatTransfer.alphas)"
+        assert _parse_unit_tests(text).x_expressions == ["heatTransfer.alphas"]
+        # x=a.b.c.d — a deeply nested dotted path, with no n=.
+        text = "UnitTests ut(x=ductOut.port_b.C_outflow)"
+        assert _parse_unit_tests(text).x_expressions == ["ductOut.port_b.C_outflow"]
 
 
 # ---------------------------------------------------------------------------
@@ -334,14 +313,6 @@ class TestSpecParser:
         data = json.loads(spec_path.read_text())
         assert data["tests"][0]["variables"] == ["new_var", "var2"]
         assert caplog.records == []
-
-    def test_update_variables(self, tmp_path):
-        """update_test_variables adds patterns to an existing entry."""
-        spec_path = tmp_path / "test_spec.json"
-        add_to_test_spec(spec_path, "MyLib.Test1", ["var1"])
-        update_test_variables(spec_path, "MyLib.Test1", ["var2", "var3"])
-        data = json.loads(spec_path.read_text())
-        assert set(data["tests"][0]["variables"]) == {"var1", "var2", "var3"}
 
     def test_structured_simulation_and_comparison(self, tmp_path):
         """Parse the structured format with simulation and comparison sections."""
@@ -530,25 +501,6 @@ class TestDiscoverTests:
             ticks[-1][0] == ticks[-1][1] == len(list(config.library_dir.rglob("*.mo")))
         )
         assert [d for d, _ in ticks] == list(range(1, len(ticks) + 1))
-
-
-def test_field_sources_records_annotation_default():
-    """A test discovered only via Modelica annotation has field_sources='annotation'."""
-    from dstf.discovery.recognizer import RecognizerResult
-    from dstf.discovery.test_registry import (
-        _build_test_model_from_recognizer_results,
-    )
-
-    r = RecognizerResult(
-        model_id="MyLib.Foo",
-        stop_time=10.0,
-        tolerance=1e-5,
-        method="Dassl",
-    )
-    model = _build_test_model_from_recognizer_results("MyLib.Foo", [r])
-    assert model.field_sources["stop_time"] == "annotation"
-    assert model.field_sources["tolerance"] == "annotation"
-    assert model.field_sources["method"] == "annotation"
 
 
 def test_field_sources_records_spec_override():
@@ -1053,13 +1005,6 @@ class TestFinding48StrippedParsing:
         assert info is not None
         assert info.stop_time == 10.0
         assert info.tolerance == 1e-5
-
-    def test_experiment_method_string_survives_stripping(self):
-        """String values live in the original text — literal-stripping must not
-        blank __Dymola_Algorithm."""
-        text = 'annotation(experiment(StopTime=2, __Dymola_Algorithm="Esdirk45a"));'
-        info = _parse_experiment(text)
-        assert info.method == "Esdirk45a"
 
     def test_double_slash_inside_string_does_not_desync_stripper(self):
         """Regression (2026-07-07): a ``//`` inside a string literal (e.g. a

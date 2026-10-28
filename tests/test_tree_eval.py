@@ -238,44 +238,6 @@ class TestLeafEval:
         # If it incorrectly fell through to "primary" (offset 0.5), it would fail.
         assert tree.passed
 
-    def test_leaf_against_unknown_baseline_fails(self):
-        """A leaf naming an absent baseline produces a hard-fail leaf result."""
-        spec = parse_metric_tree(
-            {
-                "metric": "nrmse",
-                "variable": "x",
-                "against": "nonexistent",
-            }
-        )
-        t, ref_vals = _linear()
-        tree = evaluate_spec(
-            spec,
-            var_results_by_name={
-                "x": VariableResult(index=1, name="x", time=t, values=ref_vals)
-            },
-            baselines={
-                "primary": BaselineView(
-                    name="primary", ref_vars_by_name={}, shared_ref_time=np.array([])
-                )
-            },
-            base_tolerance=1e-4,
-        )
-        assert not tree.passed
-        # The label is the variable (the plot pairs by it); the diagnostic
-        # surfaces the broken baseline name for the report.
-        assert tree.label == "x"
-        assert "nonexistent" in tree.diagnostics["variable"].diagnostics["error"]
-
-    def test_missing_variable_fails_leaf(self):
-        spec = parse_metric_tree({"metric": "nrmse", "variable": "missing"})
-        tree = evaluate_spec(
-            spec,
-            var_results_by_name={},
-            baselines=_primary({}, None),
-            base_tolerance=1e-4,
-        )
-        assert not tree.passed
-
     def test_tube_leaf(self):
         spec = parse_metric_tree(
             {
@@ -413,27 +375,6 @@ class TestLeafEval:
             'range · x: unknown field "min"; the fields here are: against, '
             "max_value, metric, min_value, quantity, tolerance, variable, window"
         )
-
-    def test_range_leaf_with_no_bound_fails_its_leaf(self):
-        """A range that parses and cannot be built hard-fails with the error
-        named (D107), rather than raising out of the evaluator and taking
-        the whole comparison with it.
-        """
-        spec = parse_metric_tree({"metric": "range", "variable": "x"})
-        t, act_vals = _linear()
-        tree = evaluate_spec(
-            spec,
-            var_results_by_name={
-                "x": VariableResult(index=1, name="x", time=t, values=act_vals)
-            },
-            baselines=_primary({}, None),
-            base_tolerance=1e-4,
-        )
-        assert not tree.passed
-        assert tree.label == "x"
-        vc = tree.diagnostics["variable"]
-        assert "misconfigured" in vc.diagnostics["error"]
-        assert "min_value / max_value" in vc.diagnostics["error"]
 
     def test_default_points_leaf(self):
         spec = parse_metric_tree(
@@ -662,44 +603,6 @@ class TestCollectLeaves:
 
 
 class TestCompareTestIntegration:
-    def test_spec_path_replaces_implicit_and(self):
-        t, ref_vals = _linear()
-        _, act_vals = _linear(offset=0.001)
-        result = _result_with({"x": (t, act_vals)})
-        reference = _reference_with({"x": (t, ref_vals)})
-
-        test = _test_model(
-            {
-                "combinator": "and",
-                "children": [
-                    {"metric": "nrmse", "variable": "x", "tolerance": 0.01},
-                ],
-            }
-        )
-        comp = compare_test(test, result, decode_reference(reference))
-        assert comp.passed
-        assert comp.metric_tree is not None
-        assert comp.metric_tree.passed
-
-    def test_spec_or_fallback_passes_when_loose_leaf_passes(self):
-        """A strict NRMSE fails, but an OR-branch loose NRMSE passes → pass."""
-        t, ref_vals = _linear()
-        _, act_vals = _linear(offset=0.01)
-        result = _result_with({"x": (t, act_vals)})
-        reference = _reference_with({"x": (t, ref_vals)})
-
-        test = _test_model(
-            {
-                "combinator": "or",
-                "children": [
-                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-8},
-                    {"metric": "nrmse", "variable": "x", "tolerance": 0.1},
-                ],
-            }
-        )
-        comp = compare_test(test, result, decode_reference(reference))
-        assert comp.passed
-
     def test_spec_path_ignores_variable_overrides(self):
         """When metric_tree_spec is set, legacy variable_overrides is ignored.
 

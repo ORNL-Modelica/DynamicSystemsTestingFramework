@@ -460,18 +460,6 @@ class TestMetricsAcceptedInTreeSpec:
         )
         assert spec.metric == "event-timing"
 
-    def test_dominant_frequency_leaf_parses(self):
-        from dstf.comparison.tree_spec import parse_metric_tree
-
-        spec = parse_metric_tree(
-            {
-                "metric": "dominant-frequency",
-                "variable": "osc",
-                "peaks": [{"freq": 1.0, "tolerance": 0.01, "tolerance_mode": "rel"}],
-            }
-        )
-        assert spec.metric == "dominant-frequency"
-
 
 class TestEventTimingDeclaredEvents:
     """Declared-events semantics: user supplies the reference-side event

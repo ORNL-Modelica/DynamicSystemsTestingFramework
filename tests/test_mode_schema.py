@@ -6,7 +6,6 @@ import dataclasses
 import types
 import typing
 from dataclasses import dataclass, field
-from typing import Literal
 
 import pytest
 
@@ -83,17 +82,6 @@ class TestDeriveSchemaPerMode:
         assert by_name["time_tolerance"].default == pytest.approx(1e-3)
         assert by_name["count_must_match"].type == "bool"
         assert by_name["count_must_match"].default is True
-
-    def test_dominant_frequency(self):
-        """Schema reflects the declared-peaks config (D75) — a single
-        ``peaks`` field of passthrough type (list of dicts isn't a
-        scalar)."""
-        s = derive_schema(DominantFrequencyConfig, mode="dominant-frequency")
-        by_name = {f.name: f for f in s.fields}
-        assert "peaks" in by_name
-        # list[dict] shape → passthrough fallback.
-        assert by_name["peaks"].type == "passthrough"
-        assert by_name["peaks"].optional is True
 
 
 def _is_list_of_dicts(hint) -> bool:
@@ -183,15 +171,6 @@ class TestDeriveSchemaEdgeCases:
 
         with pytest.raises(TypeError):
             derive_schema(Plain)
-
-    def test_optional_literal_preserves_choices(self):
-        @dataclass
-        class Cfg:
-            color: Literal["r", "g", "b"] | None = None
-
-        s = derive_schema(Cfg, mode="x")
-        assert s.fields[0].choices == ["r", "g", "b"]
-        assert s.fields[0].optional is True
 
     def test_metadata_label_and_help(self):
         @dataclass

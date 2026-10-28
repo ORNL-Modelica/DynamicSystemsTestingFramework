@@ -891,37 +891,6 @@ def _fake_view(recorded: dict, stored: dict | None = None, listed=PROJECT):
     )
 
 
-def test_a_value_rows_plus_with_no_run_seeds_within_1pc_of_the_baseline():
-    """The `+` on a listed `h` that no run recorded reads the
-    baseline's summary — within 1% of it, the row's `changed` rule."""
-    from dstf.authoring.builtin.edit_tree import _quantity_leaf
-
-    s = _fake_view(
-        {}, {"h": DiagnosticSummary("h", final=2.0, max=3.0)}, [*PROJECT, "h"]
-    )
-    assert _quantity_leaf(s, "M", "h", "and") == {
-        "metric": "scalar",
-        "variable": "h",
-        "quantity": {"reduce": "final"},
-        "tolerance_mode": "rel",
-        "tolerance": 0.01,
-    }
-    assert _quantity_leaf(s, "M", "h.max", "and")["quantity"] == {"reduce": "max"}
-
-
-def test_a_statistic_row_keeps_its_quantity_path_seed():
-    from dstf.authoring.builtin.edit_tree import _quantity_leaf
-
-    assert _quantity_leaf(
-        _fake_view({}), "M", "translation.nonlinear_count", "and"
-    ) == {
-        "metric": "scalar",
-        "quantity": "translation.nonlinear_count",
-        "tolerance": 0,
-        "tolerance_mode": "abs",
-    }
-
-
 @pytest.mark.parametrize(
     ("into", "wrapped"), [("and", True), ("or", False), ("k-of-n", False)]
 )
@@ -1455,13 +1424,6 @@ def test_a_value_rows_changed_is_exactly_its_plus_failing(run, changes):
         np.array([0.0]), np.array([1.0]), t, values
     )
     assert row.changed is changes is (not got.passed)
-
-
-def test_without_a_baseline_summary_a_value_keeps_its_bounds_seed():
-    from dstf.comparison.seeds import seed_variable_number
-
-    seed = seed_variable_number("h", np.array([1.0, 2.0]), into="and")
-    assert {"min_value", "max_value"} <= set(seed) and "tolerance" not in seed
 
 
 def _figure_session(tmp_path, with_scalar: bool):

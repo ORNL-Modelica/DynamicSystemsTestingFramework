@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import sys
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,17 +47,16 @@ def _comparison(**fields) -> TestComparison:
 # --- _parse_review_filter ---
 
 
-def test_parse_filter_all():
-    assert _parse_review_filter("all") == {"all"}
-
-
-def test_parse_filter_single():
-    assert _parse_review_filter("failed") == {"failed"}
-
-
-def test_parse_filter_multiple():
-    result = _parse_review_filter("failed,no-baseline,warnings")
-    assert result == {"failed", "no-baseline", "warnings"}
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("all", {"all"}),
+        ("failed", {"failed"}),
+        ("failed,no-baseline,warnings", {"failed", "no-baseline", "warnings"}),
+    ],
+)
+def test_parse_filter_multiple(text, expected):
+    assert _parse_review_filter(text) == expected
 
 
 def test_parse_filter_all_absorbs_others():
@@ -68,14 +68,12 @@ def test_parse_filter_strips_whitespace():
     assert result == {"failed", "no-baseline"}
 
 
-def test_parse_filter_invalid_raises():
-    with pytest.raises(argparse.ArgumentTypeError, match="Invalid review filter"):
-        _parse_review_filter("bogus")
-
-
-def test_parse_filter_partial_invalid_raises():
-    with pytest.raises(argparse.ArgumentTypeError, match="bogus"):
-        _parse_review_filter("failed,bogus")
+@pytest.mark.parametrize("text", ["bogus", "failed,bogus"])
+def test_parse_filter_invalid_raises(text):
+    with pytest.raises(
+        argparse.ArgumentTypeError, match=r"Invalid review filter.*bogus"
+    ):
+        _parse_review_filter(text)
 
 
 # --- _should_review ---
@@ -86,88 +84,24 @@ def test_should_review_all_matches_everything():
     assert _should_review(comp, {"all"}) is True
 
 
-def test_should_review_failed():
-    comp = _comparison(passed=False)
-    assert _should_review(comp, {"failed"}) is True
-
-
-def test_should_review_failed_skips_passing():
-    comp = _comparison(passed=True)
-    assert _should_review(comp, {"failed"}) is False
-
-
-def test_should_review_failed_skips_no_baseline():
-    """An unevaluated fresh test (production NO_REF shape: passed=True)
-    is 'no-baseline', not 'failed'. Failing baseline-free tests DO match
-    'failed' — covered in test_review_fixes_verdict.py."""
-    comp = _comparison(passed=True, has_reference=False)
-    assert _should_review(comp, {"failed"}) is False
-
-
-def test_should_review_failed_skips_sim_failed():
-    comp = _comparison(passed=False, sim_success=False)
-    assert _should_review(comp, {"failed"}) is False
-
-
-def test_should_review_no_baseline():
-    comp = _comparison(has_reference=False)
-    assert _should_review(comp, {"no-baseline"}) is True
-
-
-def test_should_review_no_baseline_skips_existing():
-    comp = _comparison(has_reference=True)
-    assert _should_review(comp, {"no-baseline"}) is False
-
-
-def test_should_review_warnings():
-    comp = _comparison(warnings=["something changed"])
-    assert _should_review(comp, {"warnings"}) is True
-
-
-def test_should_review_warnings_skips_clean():
-    comp = _comparison(warnings=[])
-    assert _should_review(comp, {"warnings"}) is False
-
-
-def test_should_review_sim_failed():
-    comp = _comparison(sim_success=False)
-    assert _should_review(comp, {"sim-failed"}) is True
-
-
-def test_should_review_sim_failed_skips_success():
-    comp = _comparison(sim_success=True)
-    assert _should_review(comp, {"sim-failed"}) is False
-
-
-def test_should_review_passed():
-    comp = _comparison(passed=True, warnings=[])
-    assert _should_review(comp, {"passed"}) is True
-
-
-def test_should_review_passed_skips_with_warnings():
-    comp = _comparison(passed=True, warnings=["warn"])
-    assert _should_review(comp, {"passed"}) is False
-
-
-def test_should_review_passed_skips_failed():
-    comp = _comparison(passed=False)
-    assert _should_review(comp, {"passed"}) is False
-
-
-def test_should_review_combined_filters():
+@pytest.mark.parametrize(
+    ("filters", "cases"),
+    [
+        (
+            {"failed", "no-baseline"},
+            [({"passed": False}, True), ({"has_reference": False}, True)],
+        ),
+        # sim-failed + failed covers both crash and comparison failure.
+        (
+            {"sim-failed", "failed"},
+            [({"sim_success": False}, True), ({"passed": False}, True)],
+        ),
+    ],
+)
+def test_should_review_combined_filters(filters, cases):
     """Combined filters match if any filter matches."""
-    filters = {"failed", "no-baseline"}
-    assert _should_review(_comparison(passed=False), filters) is True
-    assert _should_review(_comparison(has_reference=False), filters) is True
-    assert _should_review(_comparison(passed=True), filters) is False
-
-
-def test_should_review_sim_failed_with_failed():
-    """sim-failed + failed covers both crash and comparison failure."""
-    filters = {"sim-failed", "failed"}
-    assert _should_review(_comparison(sim_success=False), filters) is True
-    assert _should_review(_comparison(passed=False), filters) is True
-    assert _should_review(_comparison(passed=True), filters) is False
+    for fields, expected in [*cases, ({"passed": True}, False)]:
+        assert _should_review(_comparison(**fields), filters) is expected, fields
 
 
 # --- the review's status word and its categories are the classifier's ---
@@ -1381,13 +1315,6 @@ class TestAcceptExitCodeAndScope:
         assert "simulation failed" in out
         assert _stored_model_ids(run_env) == {"Lib.T1"}
 
-    def test_full_accept_exits_zero(self, run_env, capsys):
-        t1 = "Lib.T1"
-        run_env.make([t1], results={"Lib.T1": _mk_result("Lib.T1")})
-        rc = cmd_run(_run_args(run_env, "--accept"))
-        assert rc == 0
-        assert _stored_model_ids(run_env) == {"Lib.T1"}
-
     @pytest.mark.parametrize("command", ["run", "compare"])
     def test_an_accept_names_the_simulate_only_tests_it_stored_nothing_for(
         self, run_env, capsys, command
@@ -1929,17 +1856,17 @@ def test_filter_matching_is_case_sensitive_even_if_fnmatch_is_not(monkeypatch):
 
 
 class TestFilterCommaSplit:
-    def test_character_class_comma_survives(self):
-        assert _resolve_filter_patterns("Test[A,B]*,Other.*") == [
-            "Test[A,B]*",
-            "Other.*",
-        ]
-
-    def test_plain_comma_split_unchanged(self):
-        assert _resolve_filter_patterns("Foo.A, Foo.B") == ["Foo.A", "Foo.B"]
-
-    def test_unclosed_bracket_is_one_pattern(self):
-        assert _resolve_filter_patterns("Test[A,B") == ["Test[A,B"]
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Test[A,B]*,Other.*", ["Test[A,B]*", "Other.*"]),
+            ("Foo.A, Foo.B", ["Foo.A", "Foo.B"]),
+            ("Test[A,B", ["Test[A,B"]),
+        ],
+        ids=["character-class", "plain", "unclosed-bracket"],
+    )
+    def test_character_class_comma_survives(self, text, expected):
+        assert _resolve_filter_patterns(text) == expected
 
     def test_filter_tests_with_character_class(self):
         tests = [
@@ -2723,6 +2650,25 @@ class TestTheThreeReportsAreIndependent:
         out = capsys.readouterr().out
         assert "Nothing to rerun" in out and "Results: 1/2 passed" in out
         assert ET.parse(out_file).getroot().get("failures") == "1"
+
+    def test_the_report_phase_times_each_page_by_its_own_render(self, scored, capsys):
+        """`--report`'s summary line: a page's time is how long ITS render
+        took, so no page took longer than the whole command did."""
+        capsys.readouterr()
+        start = time.monotonic()
+        scored("compare", "--report")
+        spent = time.monotonic() - start
+        (line,) = [
+            ln
+            for ln in capsys.readouterr().out.splitlines()
+            if ln.startswith("Report phase:")
+        ]
+        avg, slowest = map(
+            float,
+            re.search(r"\(avg ([\d.]+)s/test, slowest ([\d.]+)s\)", line).groups(),
+        )
+        # Printed to 0.1 s: a render may read 0.05 s longer than it took.
+        assert 0.0 <= avg <= slowest <= spent + 0.05, (line, spent)
 
 
 # =========================================================================

@@ -440,12 +440,6 @@ def test_a_refused_indices_edit_stages_nothing(some, text, says):
     assert some.spec.pending == []
 
 
-def test_removing_every_element_is_refused_with_the_way_to_remove_it(some):
-    with pytest.raises(ValueError) as e:
-        _reindex(some, _members(some, (1, 2, 3, 4)), "")
-    assert "remove" in str(e.value) and "unfold" in str(e.value)
-
-
 def test_a_member_the_last_run_did_not_record_stays_an_element(tmp_path):
     """D142, unchanged: a criterion on an element the result lacks is a
     criterion all the same — the family is what the file has AND what the

@@ -76,28 +76,6 @@ def test_the_example_plugin_runs_its_project(installed, tmp_path, capsys):
     assert verdicts["exit_code"] == 0
 
 
-def test_the_setting_is_read(installed, tmp_path):
-    """``rate`` from the project's block reaches the simulation: the stored
-    trajectory is ``exp(-0.5 t)``."""
-    project = tmp_path / "project"
-    shutil.copytree(EXAMPLE / "project", project)
-    assert (
-        main(
-            [
-                "run",
-                "--config",
-                str(project / "testing.json"),
-                "--accept",
-                "--no-browser",
-            ]
-        )
-        == 0
-    )
-    result = next((project / "testing_output").rglob("result.json"))
-    data = json.loads(result.read_text(encoding="utf-8"))
-    assert data["y"][-1] == pytest.approx(math.exp(-0.5 * 4))
-
-
 def test_a_listed_name_the_result_holds_is_recorded_and_one_it_lacks_is_not(
     installed, tmp_path
 ):

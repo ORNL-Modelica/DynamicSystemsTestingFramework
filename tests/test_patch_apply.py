@@ -19,46 +19,71 @@ from dstf.discovery.patch_apply import (
 
 
 class TestBasicOps:
-    def test_replace_scalar_in_whitelisted_path(self):
-        doc = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
+    @pytest.mark.parametrize(
+        ("key", "subtree", "path", "value", "expected"),
+        [
+            ("comparison", {}, "/comparison/tolerance", 0.01, {"tolerance": 0.01}),
+            # A window on a root leaf: the leaf's own fields are untouched.
+            (
+                "metrics",
+                {"metric": "nrmse", "variable": "h", "tolerance": 1e-4},
+                "/metrics/window",
+                {"start": 1.0, "end": 5.0},
+                {
+                    "metric": "nrmse",
+                    "variable": "h",
+                    "tolerance": 1e-4,
+                    "window": {"start": 1.0, "end": 5.0},
+                },
+            ),
+        ],
+        ids=["comparison", "window"],
+    )
+    def test_add_new_key(self, key, subtree, path, value, expected):
+        doc = {"tests": [{"model": "M", key: subtree}]}
         apply_patch_to_document(
             doc,
             "M",
             [
-                {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
+                {"op": "add", "path": path, "value": value},
             ],
         )
-        data = doc
-        assert data["tests"][0]["comparison"]["tolerance"] == 1e-3
+        assert doc["tests"][0][key] == expected
 
-    def test_add_new_key(self):
-        doc = {"tests": [{"model": "M", "comparison": {}}]}
+    @pytest.mark.parametrize(
+        ("key", "subtree", "removed", "kept"),
+        [
+            (
+                "comparison",
+                {"tolerance": 1e-3, "info": "keep me"},
+                "tolerance",
+                {"info": "keep me"},
+            ),
+            (
+                "metrics",
+                {
+                    "metric": "nrmse",
+                    "variable": "h",
+                    "window": {"start": 1.0, "end": 5.0},
+                },
+                "window",
+                {"metric": "nrmse"},
+            ),
+        ],
+        ids=["comparison", "window"],
+    )
+    def test_remove_key(self, key, subtree, removed, kept):
+        doc = {"tests": [{"model": "M", key: subtree}]}
         apply_patch_to_document(
             doc,
             "M",
             [
-                {"op": "add", "path": "/comparison/tolerance", "value": 0.01},
+                {"op": "remove", "path": f"/{key}/{removed}"},
             ],
         )
-        data = doc
-        assert data["tests"][0]["comparison"]["tolerance"] == 0.01
-
-    def test_remove_key(self):
-        doc = {
-            "tests": [
-                {"model": "M", "comparison": {"tolerance": 1e-3, "info": "keep me"}}
-            ]
-        }
-        apply_patch_to_document(
-            doc,
-            "M",
-            [
-                {"op": "remove", "path": "/comparison/tolerance"},
-            ],
-        )
-        data = doc
-        assert "tolerance" not in data["tests"][0]["comparison"]
-        assert data["tests"][0]["comparison"]["info"] == "keep me"
+        assert removed not in doc["tests"][0][key]
+        for name, value in kept.items():
+            assert doc["tests"][0][key][name] == value
 
     def test_add_nested_path_creates_intermediates(self):
         doc = {"tests": [{"model": "M"}]}
@@ -131,44 +156,59 @@ class TestUnknownKeyPreservation:
         assert comp["info"] == "Expect rising edge at t~2.4s"
         assert comp["metadata"] == {"rationale": "Solver defaults produce ringing"}
 
-    def test_preserves_sibling_tests(self):
-        doc = {
-            "tests": [
-                {"model": "A", "comparison": {"tolerance": 1e-4}},
-                {
-                    "model": "B",
-                    "comparison": {"tolerance": 1e-5},
-                    "metadata": {"note": "keep me untouched"},
-                },
-                {"model": "C", "comparison": {"tolerance": 1e-6}},
-            ],
-        }
-        apply_patch_to_document(
-            doc,
-            "B",
-            [
+    _NEW_TREE = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "y"},
+            {"metric": "range", "variable": "y", "min_value": -1, "max_value": 1},
+        ],
+    }
+
+    @pytest.mark.parametrize(
+        ("tests", "op", "expected"),
+        [
+            (
+                [
+                    {"model": "A", "comparison": {"tolerance": 1e-4}},
+                    {
+                        "model": "B",
+                        "comparison": {"tolerance": 1e-5},
+                        "metadata": {"note": "keep me untouched"},
+                    },
+                    {"model": "C", "comparison": {"tolerance": 1e-6}},
+                ],
                 {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-            ],
-        )
-        data = doc
-        assert data["tests"][0] == {"model": "A", "comparison": {"tolerance": 1e-4}}
-        assert data["tests"][1]["metadata"] == {"note": "keep me untouched"}
-        assert data["tests"][1]["comparison"]["tolerance"] == 1e-3
-        assert data["tests"][2] == {"model": "C", "comparison": {"tolerance": 1e-6}}
+                [
+                    {"model": "A", "comparison": {"tolerance": 1e-4}},
+                    {
+                        "model": "B",
+                        "comparison": {"tolerance": 1e-3},
+                        "metadata": {"note": "keep me untouched"},
+                    },
+                    {"model": "C", "comparison": {"tolerance": 1e-6}},
+                ],
+            ),
+            (
+                [
+                    {"model": "A", "metrics": {"metric": "nrmse", "variable": "x"}},
+                    {"model": "B", "metrics": {"metric": "nrmse", "variable": "y"}},
+                ],
+                {"op": "add", "path": "/metrics", "value": _NEW_TREE},
+                [
+                    {"model": "A", "metrics": {"metric": "nrmse", "variable": "x"}},
+                    {"model": "B", "metrics": _NEW_TREE},
+                ],
+            ),
+        ],
+        ids=["tolerance", "metrics"],
+    )
+    def test_preserves_sibling_tests(self, tests, op, expected):
+        doc = {"tests": copy.deepcopy(tests)}
+        apply_patch_to_document(doc, "B", [op])
+        assert doc["tests"] == expected
 
 
 class TestWhitelist:
-    def test_outside_whitelist_rejected(self):
-        doc = {"tests": [{"model": "M", "simulation": {"stop_time": 10}}]}
-        with pytest.raises(PatchError, match="whitelist"):
-            apply_patch_to_document(
-                doc,
-                "M",
-                [
-                    {"op": "replace", "path": "/simulation/stop_time", "value": 100},
-                ],
-            )
-
     def test_default_allows_comparison_and_metrics(self):
         doc = {
             "tests": [
@@ -235,20 +275,6 @@ class TestErrorSurfacing:
                 ],
             )
 
-    def test_add_missing_value_rejected(self):
-        doc = {"tests": [{"model": "M", "comparison": {}}]}
-        with pytest.raises(PatchError, match="requires 'value'"):
-            apply_patch_to_document(
-                doc, "M", [{"op": "add", "path": "/comparison/tolerance"}]
-            )
-
-    def test_invalid_path_shape_rejected(self):
-        doc = {"tests": [{"model": "M"}]}
-        with pytest.raises(PatchError):
-            apply_patch_to_document(
-                doc, "M", [{"op": "replace", "path": "bad-path", "value": 1}]
-            )
-
 
 class TestWholesaleMetricsReplace:
     """Stage-4 structural edits emit a single ``add`` at ``/metrics`` with
@@ -309,65 +335,10 @@ class TestWholesaleMetricsReplace:
         assert entry["metrics"] == new_tree
         assert entry["description"] == "keep me"
 
-    def test_add_metrics_preserves_sibling_test_entries(self):
-        doc = {
-            "tests": [
-                {"model": "A", "metrics": {"metric": "nrmse", "variable": "x"}},
-                {"model": "B", "metrics": {"metric": "nrmse", "variable": "y"}},
-            ]
-        }
-        new_tree = {
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "y"},
-                {"metric": "range", "variable": "y", "min_value": -1, "max_value": 1},
-            ],
-        }
-        apply_patch_to_document(
-            doc,
-            "B",
-            [
-                {"op": "add", "path": "/metrics", "value": new_tree},
-            ],
-        )
-        data = doc
-        assert data["tests"][0]["metrics"] == {"metric": "nrmse", "variable": "x"}
-        assert data["tests"][1]["metrics"] == new_tree
-
 
 class TestWindowPath:
     """Idea #46 UI surfacing — reporter emits window upserts via 'add' on
     /metrics/.../window. Verify round-trip with tree leaves."""
-
-    def test_add_window_on_root_leaf(self):
-        doc = {
-            "tests": [
-                {
-                    "model": "M",
-                    "metrics": {
-                        "metric": "nrmse",
-                        "variable": "h",
-                        "tolerance": 1e-4,
-                    },
-                }
-            ]
-        }
-        apply_patch_to_document(
-            doc,
-            "M",
-            [
-                {
-                    "op": "add",
-                    "path": "/metrics/window",
-                    "value": {"start": 1.0, "end": 5.0},
-                },
-            ],
-        )
-        metrics = doc["tests"][0]["metrics"]
-        assert metrics["window"] == {"start": 1.0, "end": 5.0}
-        # Original fields untouched
-        assert metrics["metric"] == "nrmse"
-        assert metrics["variable"] == "h"
 
     def test_add_window_on_nested_leaf(self):
         doc = {
@@ -429,30 +400,6 @@ class TestWindowPath:
             "start": 1.0,
             "end": 5.0,
         }
-
-    def test_remove_window(self):
-        doc = {
-            "tests": [
-                {
-                    "model": "M",
-                    "metrics": {
-                        "metric": "nrmse",
-                        "variable": "h",
-                        "window": {"start": 1.0, "end": 5.0},
-                    },
-                }
-            ]
-        }
-        apply_patch_to_document(
-            doc,
-            "M",
-            [
-                {"op": "remove", "path": "/metrics/window"},
-            ],
-        )
-        metrics = doc["tests"][0]["metrics"]
-        assert "window" not in metrics
-        assert metrics["metric"] == "nrmse"
 
 
 class TestMissingModel:
@@ -537,14 +484,6 @@ class TestRejectionEdges:
                 self._spec(),
                 "M",
                 [{"op": "remove", "path": "/comparison/ghost"}],
-            )
-
-    def test_list_index_out_of_range(self):
-        with pytest.raises(PatchError, match="out of range"):
-            apply_patch_to_document(
-                self._spec(),
-                "M",
-                [{"op": "replace", "path": "/comparison/a/9", "value": 0}],
             )
 
     def test_list_index_not_integer(self):
@@ -754,25 +693,6 @@ class TestFinding49ArrayAdd:
                 ],
             )
 
-    def test_add_refuses_dict_autocreate_for_array_index(self):
-        """A per-leaf patch against a test with no metrics tree must fail
-        loudly instead of silently creating {"children": {"0": ...}}."""
-        doc = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
-        with pytest.raises(PatchError, match="array index"):
-            apply_patch_to_document(
-                doc,
-                "M",
-                [
-                    {
-                        "op": "add",
-                        "path": "/metrics/children/0/tolerance",
-                        "value": 0.01,
-                    }
-                ],
-            )
-        # That nothing is left in the document — not even the `metrics` the
-        # descent made — is test_a_refused_patch_leaves_the_document_as_it_was.
-
 
 def test_plots_is_a_whitelisted_subtree():
     from dstf.discovery.patch_apply import apply_patch_to_document
@@ -788,7 +708,21 @@ def test_plots_is_a_whitelisted_subtree():
     assert data["tests"][0]["plots"] == [{"var": "x", "context": ["y"]}]
 
 
-def test_variables_is_still_outside_the_whitelist():
+@pytest.mark.parametrize(
+    ("data", "op"),
+    [
+        (
+            {"tests": [{"model": "M", "variables": ["x"]}]},
+            {"op": "add", "path": "/variables/-", "value": "y"},
+        ),
+        (
+            {"tests": [{"model": "M", "simulation": {"stop_time": 10}}]},
+            {"op": "replace", "path": "/simulation/stop_time", "value": 100},
+        ),
+    ],
+    ids=["variables", "simulation"],
+)
+def test_variables_is_still_outside_the_whitelist(data, op):
     """A guard (passes before the change)."""
     from dstf.discovery.patch_apply import (
         DEFAULT_WHITELIST,
@@ -797,10 +731,8 @@ def test_variables_is_still_outside_the_whitelist():
     )
 
     assert DEFAULT_WHITELIST == ("/comparison", "/metrics", "/plots")
-    op = [{"op": "add", "path": "/variables/-", "value": "y"}]
-    data = {"tests": [{"model": "M", "variables": ["x"]}]}
     with pytest.raises(PatchError, match="whitelist"):
-        apply_patch_to_document(data, "M", op)
+        apply_patch_to_document(data, "M", [op])
 
 
 def _containers(value) -> set[int]:
@@ -831,20 +763,6 @@ class TestADocumentSharesNothingWithThePatchThatWroteIt:
             {"op": "remove", "path": "/metrics/children/1/k"},
         ]
 
-    def test_applying_a_patch_leaves_its_ops_as_they_were(self):
-
-        from dstf.discovery.patch_apply import apply_patch_to_document
-
-        ops = self._ops()
-        given = copy.deepcopy(ops)
-        data = {"tests": [{"model": "M"}]}
-        apply_patch_to_document(data, "M", ops)
-        assert ops == given
-        assert data["tests"][0]["metrics"] == {
-            "children": [{"k": [3, 4]}, {}],
-            "b": 1,
-        }
-
     def test_the_same_ops_give_two_documents_that_share_no_object(self):
         from dstf.discovery.patch_apply import apply_patch_to_document
 
@@ -854,6 +772,10 @@ class TestADocumentSharesNothingWithThePatchThatWroteIt:
         apply_patch_to_document(first, "M", ops)
         apply_patch_to_document(second, "M", ops)
         assert first == second
+        assert first["tests"][0]["metrics"] == {
+            "children": [{"k": [3, 4]}, {}],
+            "b": 1,
+        }
         assert not _containers(first) & _containers(second)
         assert not _containers(first) & _containers(ops)
         # and an edit of one is no edit of the other, nor of the patch

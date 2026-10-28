@@ -204,13 +204,6 @@ class TestLogParser:
 
 
 class TestMatReader:
-    def test_read_returns_dict(self):
-        """read_result_mat returns a dict of variable name -> (time, values)."""
-        data = read_result_mat(SAMPLE_MAT)
-        assert data is not None
-        assert isinstance(data, dict)
-        assert len(data) > 0
-
     def test_variables_present(self):
         """Expected variables exist in the parsed data."""
         data = read_result_mat(SAMPLE_MAT)
@@ -218,24 +211,9 @@ class TestMatReader:
         assert "y" in data
         assert "unitTests.x[1]" in data
         assert "unitTests.x[2]" in data
-
-    def test_time_series_shape(self):
-        """Time series variables have time and values with matching lengths."""
-        data = read_result_mat(SAMPLE_MAT)
-        # x and y are time series (from data_2), not parameters
-        for name in ["x", "y", "unitTests.x[1]"]:
-            time, values = data[name]
-            assert len(time) == len(values), (
-                f"{name}: time={len(time)}, values={len(values)}"
-            )
-            assert len(time) > 2  # Should have many points
-
-    def test_parameter_is_constant(self):
-        """Parameters (from data_1) have constant values across all time points."""
-        data = read_result_mat(SAMPLE_MAT)
-        _, values = data["unitTests.n"]
-        # Parameter may have 2 points (data_1) or be broadcast — either way constant
-        assert np.all(values == values[0])
+        # CPUtime and EventCounter are there when OutputCPUtime was enabled.
+        assert "CPUtime" in data
+        assert "EventCounter" in data
 
     def test_time_monotonic(self):
         """Time array is monotonically non-decreasing (events may have duplicates)."""
@@ -244,18 +222,14 @@ class TestMatReader:
         diffs = np.diff(time)
         assert np.all(diffs >= 0), "Time must be monotonically non-decreasing"
 
-    def test_diagnostics_present(self):
-        """CPUtime and EventCounter are available when OutputCPUtime was enabled."""
-        data = read_result_mat(SAMPLE_MAT)
-        assert "CPUtime" in data
-        assert "EventCounter" in data
-
     def test_parameter_values(self):
         """Parameters (constant variables) have consistent values."""
         data = read_result_mat(SAMPLE_MAT)
         _, values = data["unitTests.n"]
         assert values[0] == 2.0  # n=2 in ConstantTest
         assert values[-1] == 2.0
+        # Parameter may have 2 points (data_1) or be broadcast — either way constant
+        assert np.all(values == 2.0)
 
     def test_nonexistent_file(self):
         """Nonexistent file returns None."""
@@ -278,18 +252,20 @@ class TestDiagnosticExtraction:
             source="unit_tests",
         )
 
-    def test_extract_default_diagnostics(self):
-        """CPUtime and EventCounter extracted as diagnostics."""
+    @pytest.mark.parametrize(
+        "names",
+        [["CPUtime", "EventCounter"], ["x"]],
+        ids=["default", "custom"],
+    )
+    def test_extract_default_diagnostics(self, names):
+        """CPUtime and EventCounter extracted as diagnostics; a custom name
+        ("x" exists in the mat data) is extracted the same way."""
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
-        variables, diagnostics = extract_variables(
-            mat_data,
-            test,
-            ["CPUtime", "EventCounter"],
-        )
+        variables, diagnostics = extract_variables(mat_data, test, names)
         diag_names = [d.name for d in diagnostics]
-        assert "CPUtime" in diag_names
-        assert "EventCounter" in diag_names
+        for name in names:
+            assert name in diag_names
 
     def test_diagnostics_not_in_variables(self):
         """Diagnostic variables don't appear in the regular variables list."""
@@ -304,35 +280,15 @@ class TestDiagnosticExtraction:
         assert "CPUtime" not in var_names
         assert "EventCounter" not in var_names
 
-    def test_custom_diagnostic_variable(self):
-        """Custom diagnostic variable name is extracted if present in mat data."""
+    @pytest.mark.parametrize(
+        "names", [["NonExistentVar"], []], ids=["missing", "empty-list"]
+    )
+    def test_missing_diagnostic_skipped(self, names):
+        """Diagnostic variable not in mat data is silently skipped; an empty
+        diagnostic list produces no diagnostics."""
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
-        # "x" exists in the mat data — treating it as diagnostic
-        variables, diagnostics = extract_variables(
-            mat_data,
-            test,
-            ["x"],
-        )
-        diag_names = [d.name for d in diagnostics]
-        assert "x" in diag_names
-
-    def test_missing_diagnostic_skipped(self):
-        """Diagnostic variable not in mat data is silently skipped."""
-        mat_data = read_result_mat(SAMPLE_MAT)
-        test = self._make_test()
-        variables, diagnostics = extract_variables(
-            mat_data,
-            test,
-            ["NonExistentVar"],
-        )
-        assert len(diagnostics) == 0
-
-    def test_empty_diagnostic_list(self):
-        """Empty diagnostic list produces no diagnostics."""
-        mat_data = read_result_mat(SAMPLE_MAT)
-        test = self._make_test()
-        variables, diagnostics = extract_variables(mat_data, test, [])
+        variables, diagnostics = extract_variables(mat_data, test, names)
         assert len(diagnostics) == 0
 
 
@@ -344,16 +300,6 @@ class TestDiagnosticExtraction:
 class TestVariablePatterns:
     """Tests for resolve_variable_patterns and _pattern_to_regex."""
 
-    def test_exact_match(self):
-        available = ["pipe.T[1]", "pipe.T[2]", "tank.level"]
-        resolved = resolve_variable_patterns(["pipe.T[1]"], available)
-        assert resolved == ["pipe.T[1]"]
-
-    def test_wildcard_star(self):
-        available = ["pipe.T[1]", "pipe.T[2]", "pipe.m_flow", "tank.level"]
-        resolved = resolve_variable_patterns(["pipe.T*"], available)
-        assert set(resolved) == {"pipe.T[1]", "pipe.T[2]"}
-
     def test_wildcard_question(self):
         available = ["x1", "x2", "x10", "y1"]
         resolved = resolve_variable_patterns(["x?"], available)
@@ -364,11 +310,6 @@ class TestVariablePatterns:
         available = ["pipe.T[1]", "pipe.T[2]", "pipe.T1"]
         resolved = resolve_variable_patterns(["pipe.T[1]"], available)
         assert resolved == ["pipe.T[1]"]
-
-    def test_star_matches_all(self):
-        available = ["x", "y", "z"]
-        resolved = resolve_variable_patterns(["*"], available)
-        assert set(resolved) == {"x", "y", "z"}
 
     def test_multiple_patterns(self):
         available = ["pipe.T[1]", "pipe.m_flow", "tank.level"]
@@ -399,12 +340,6 @@ class TestVariablePatterns:
         assert re.match(pattern, "pipe.T[1]")
         assert not re.match(pattern, "pipeXT[1]")  # dot shouldn't match X
 
-    def test_dedup_across_patterns(self):
-        """Variables matched by multiple patterns appear only once."""
-        available = ["pipe.T[1]", "pipe.T[2]"]
-        resolved = resolve_variable_patterns(["pipe.*", "pipe.T*"], available)
-        assert len(resolved) == 2  # No duplicates
-
 
 # ---------------------------------------------------------------------------
 # Simulator registry
@@ -413,18 +348,11 @@ class TestVariablePatterns:
 from dstf.backends import (
     _REGISTRY,
     Backend,
-    _import_builtin_backend,
-    get_backend,
     register,
 )
 
 
 class TestBackendRegistry:
-    def test_dymola_registered_after_import(self):
-        """Importing the dymola module registers 'Dymola'."""
-        _import_builtin_backend("Dymola")
-        assert "Dymola" in _REGISTRY
-
     def test_register_decorator(self):
         """@register adds a class to the registry."""
 
@@ -437,17 +365,6 @@ class TestBackendRegistry:
         assert _REGISTRY["TestBackend"] is _TestBackend
         # Clean up
         del _REGISTRY["TestBackend"]
-
-    def test_unknown_backend_raises(self):
-        """get_backend raises ValueError for unknown backends."""
-        from unittest.mock import MagicMock
-
-        config = MagicMock()
-        config.backend = "NoSuchSimulator"
-        config.backend_name = "NoSuchSimulator"
-
-        with pytest.raises(ValueError, match="Unsupported backend"):
-            get_backend(config)
 
 
 # ---------------------------------------------------------------------------

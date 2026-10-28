@@ -362,35 +362,6 @@ def test_the_numbers_read_as_the_dashboard_reads_them():
     assert cells["resolution"] == "mixed" and cells["detail"] == "boom"
 
 
-def test_the_suite_writes_each_sidecar_with_its_tests_verdict(
-    tmp_path, sample_comparison
-):
-    from types import SimpleNamespace
-
-    from dstf.reporting.report_suite import _build_per_test_args, _render_one_test
-
-    args = _build_per_test_args(
-        sample_comparison,
-        results={},
-        test_lookup={},
-        store=SimpleNamespace(
-            get_reference=lambda _m: None,
-            index=SimpleNamespace(get_id=lambda _m: None),
-            ref_dir=tmp_path,
-        ),
-        config=SimpleNamespace(
-            work_dir=tmp_path,
-            max_embedded_samples=1000,
-            theme="default",
-            reference_root=tmp_path,
-        ),
-        manifest_meta_by_model={},
-    )
-    _render_one_test(args, tmp_path / "reports")
-    sidecar = tmp_path / "reports" / args["report_id"] / "comparison_data.json"
-    assert json.loads(sidecar.read_text("utf-8"))["summary"]["status"] == "FAIL"
-
-
 def test_a_summary_with_a_status_outside_the_vocabulary_keeps_the_rows():
     """A sidecar is data: a status no surface has a word for is ignored,
     and the row keeps its own (the page would otherwise KeyError on it)."""

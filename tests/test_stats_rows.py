@@ -332,15 +332,6 @@ def test_the_inputs_are_never_written():
     assert run == RUN and base == BASE
 
 
-def test_changed_reads_the_seeds_tolerance():
-    assert changed("CPUtime", "time", 1.15, 1.0)
-    assert not changed("CPUtime", "time", 1.05, 1.0)
-    assert changed("translation.nonlinear_count", "count", 3, 0)
-    assert not changed("translation.nonlinear_count", "count", 3, 3)
-    assert not changed("CPUtime", "time", None, 1.0)
-    assert not changed("CPUtime", "time", 1.0, None)
-
-
 def test_the_card_rounds_a_value():
     """The card: a time to 3 significant figures KEEPING its zeros
     (`0.800 s`, never `0.8 s`), no bare trailing point, and whole seconds
@@ -425,10 +416,7 @@ def test_a_system_size_list_on_either_side_gives_its_summaries_on_both():
         statistics_rows({"translation": {"state_names": ["a.x"]}}, {}, listing=())
     )
     assert "translation.state_names_count" not in rows
-
-
-def test_a_run_sides_empty_list_gives_its_summaries():
-    """A list on the RUN side alone gives its summaries too ("either side")."""
+    # A list on the RUN side alone gives its summaries too ("either side").
     rows = _by_path(statistics_rows({"translation": {"nonlinear": []}}, {}, listing=()))
     row = rows["translation.nonlinear_count"]
     assert (row.kind, row.run, row.baseline) == ("count", 0, None)
@@ -443,6 +431,14 @@ def test_changed_scores_the_seeds_number_as_a_tolerance():
     assert changed("simulation.wall_time", "time", 1.09, 1.0) is False
     assert changed("simulation.wall_time", "time", 0.91, 1.0) is False
     assert changed("simulation.wall_time", "time", 1.2, 1.0) is True
+    # A variable's number (CPUtime), not only a statistic, reads it too.
+    assert changed("CPUtime", "time", 1.15, 1.0)
+    assert not changed("CPUtime", "time", 1.05, 1.0)
+    assert changed("translation.nonlinear_count", "count", 3, 0)
+    assert not changed("translation.nonlinear_count", "count", 3, 3)
+    # A side with no number is no change.
+    assert not changed("CPUtime", "time", None, 1.0)
+    assert not changed("CPUtime", "time", 1.0, None)
 
 
 def test_a_name_the_test_does_not_list_has_no_row_from_its_old_copy_either():

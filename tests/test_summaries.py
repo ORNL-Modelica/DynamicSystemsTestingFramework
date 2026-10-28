@@ -33,12 +33,18 @@ def test_every_registered_metric_summarizes_a_sentinel_without_raising():
     for desc in metrics():
         s = desc.summarize(_vc(mode=desc.name))
         assert isinstance(s, ScoreSummary) and s.display and s.criterion
+        # Its details are (label, value) string pairs.
+        assert isinstance(s.details, tuple)
+        assert all(isinstance(k, str) and isinstance(v, str) for k, v in s.details), (
+            desc.name
+        )
 
 
 def test_an_error_sentinel_is_mode_agnostic():
     s = summarize(_vc(mode="tube", diagnostics={"error": "empty window"}))
     assert s.display == "not scored"
     assert s.criterion == "tube criterion not scored — empty window"
+    assert s.details == ()
 
 
 def test_tube_summary_reads_the_inside_fraction():
@@ -105,14 +111,6 @@ class TestDetails:
     2026-09-08 ruling: the review loop keeps the old numbers, but only under
     labels that are true for the mode (a range leaf's ``nrmse`` field holds
     its worst violation, so it must never print as "NRMSE")."""
-
-    def test_every_registered_metric_yields_string_pairs(self):
-        for desc in metrics():
-            s = desc.summarize(_vc(mode=desc.name))
-            assert isinstance(s.details, tuple)
-            assert all(
-                isinstance(k, str) and isinstance(v, str) for k, v in s.details
-            ), desc.name
 
     def test_nrmse_details_are_the_old_review_block(self):
         t = np.linspace(0.0, 1.0, 11)
@@ -187,10 +185,6 @@ class TestDetails:
         assert "exceeds limit" in d["t=8"]
         assert "t=2" not in d
 
-    def test_an_error_sentinel_has_no_details(self):
-        s = summarize(_vc(mode="tube", diagnostics={"error": "empty window"}))
-        assert s.details == ()
-
 
 class TestTheToleranceInACriterionSentence:
     """`tolerance_used` is `Sides`: one number when the sides are equal —
@@ -234,19 +228,6 @@ class TestTheToleranceInACriterionSentence:
         assert summarize(_vc(mode="nope", tolerance_used=uneven)).criterion == (
             "NRMSE 1.000e-03 vs tolerance −1.000e-02 / +2.000e-02 → PASS"
         )
-
-
-def test_a_points_criterion_says_both_sides_of_the_leafs_tolerance():
-    from dstf.comparison.modes import resolve_mode
-
-    t = np.linspace(0.0, 10.0, 11)
-    mode = resolve_mode({"mode": "points"}, {"lower": 0.25, "upper": 0.5})
-    vc = mode.compare(t, t, t, t + 0.375)
-    vc.tolerance_used = mode.tolerance  # as both scoring paths stamp it
-    assert vc.passed
-    assert summarize(vc).criterion == (
-        "Final value error +3.750e-01 vs tolerance −2.500e-01 / +5.000e-01 → PASS"
-    )
 
 
 class TestAnUnevenToleranceSaysWhichSide:
@@ -630,12 +611,6 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
                 "−1.250e-01 / +2.500e-01 (relative) → FAIL"
             )
 
-    def test_points_equal_sides_say_what_a_number_said(self):
-        for tolerance in (0.03, {"lower": 0.03, "upper": 0.03}):
-            vc, crit = self._points({5: +0.04, 8: -0.02}, tolerance)
-            assert crit == "Largest point error 4.000e-02 vs tolerance 3.000e-02 → FAIL"
-            assert "worst_signed_delta" not in vc.diagnostics
-
     def test_declared_rows_never_say_final_value(self):
         """The sentence of a leaf with NO rows — the final value alone is
         scored — was said of declared rows whose worst deferred to an equal
@@ -728,38 +703,6 @@ class TestTheSignedNumberIsThePointThatBreaksTheBand:
         )
         _, crit = self._events(-0.008, +0.004, self.BAND, declared)
         assert crit.startswith("Event at t=2: Δt −8.000e-03 vs ")
-
-
-def test_an_event_timing_criterion_says_early_and_late():
-    from dstf.comparison.sides import Sides
-
-    ref = np.array([0.0, 5.0, 5.0, 10.0])
-    act = np.array([0.0, 5.25, 5.25, 10.0])
-    even = summarize(
-        score(
-            {"mode": "event-timing", "time_tolerance": 0.5},
-            ref,
-            np.zeros_like(ref),
-            act,
-            np.zeros_like(act),
-        )
-    )
-    assert even.criterion == (
-        "Max event Δt 2.500e-01 vs 5.000e-01 (1 actual events / 1 reference) → PASS"
-    )
-    uneven = summarize(
-        score(
-            {"mode": "event-timing", "time_tolerance": Sides(0.125, 0.5)},
-            ref,
-            np.zeros_like(ref),
-            act,
-            np.zeros_like(act),
-        )
-    )
-    assert uneven.criterion == (
-        "Max event Δt +2.500e-01 vs −1.250e-01 / +5.000e-01 "
-        "(1 actual events / 1 reference) → PASS"
-    )
 
 
 class TestADeclaredEventNeverFound:
@@ -1269,6 +1212,9 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
             self.T,
             tolerance=Sides(1, 2),
         )
+        assert dict(summarize(vc).details)["checkpoints"] == (
+            "1 of 1 failed, 1 not scored"
+        )
         vc.tolerance_used = Sides(1, 2)
         assert vc.diagnostics["scored_points"] == 0
         assert "worst_sides" not in vc.diagnostics
@@ -1310,21 +1256,6 @@ class TestARowsOwnToleranceIsTheBandTheSentenceNames:
         assert vc.diagnostics["scored_points"] == 2
         assert vc.diagnostics["failed_points"] == len(failing) + len(extra)
         assert dict(summarize(vc).details)["checkpoints"] == said
-
-    def test_with_no_scored_point_the_checkpoints_line_counts_the_unscored(self):
-        from dstf.comparison.sides import Sides
-
-        vc = score(
-            {"mode": "points", "points": [{"time": 5.0, "value": 1.0}]},
-            self.T,
-            self.T,
-            self.T,
-            self.T,
-            tolerance=Sides(1, 2),
-        )
-        assert dict(summarize(vc).details)["checkpoints"] == (
-            "1 of 1 failed, 1 not scored"
-        )
 
     # ---- declared events
 

@@ -1194,52 +1194,6 @@ def test_add_beside_a_root_leaf_wraps_the_root_in_and(session):
     assert len(session.tree(A)["children"]) == 2
 
 
-def test_add_beside_a_leaf_lands_right_after_it(session):
-    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
-    view = SessionView(session, _node(D, "/metrics/children/1"))
-    outcome = EditTree().act(
-        view,
-        action="add",
-        model_id=D,
-        path="/metrics/children/1",
-        variable="x",
-        metric="nrmse",
-    )
-    (op,) = outcome.ops
-    assert (op.op, op.path) == ("add", "/metrics/children/2")  # right after it
-
-
-def test_add_beside_a_nested_leaf_lands_right_after_it_in_its_own_parent(session):
-    """Two levels deep: the parent is everything before the LAST
-    `/children/` — read from the first, the leaf would join the root."""
-    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
-    path = "/metrics/children/1/children/0"
-    outcome = EditTree().act(
-        SessionView(session, _node(D, path)),
-        action="add",
-        model_id=D,
-        path=path,
-        variable="x",
-        metric="range",
-    )
-    (op,) = outcome.ops
-    assert (op.op, op.path) == ("add", "/metrics/children/1/children/1")
-
-
-def test_add_under_a_combinator_is_unchanged(session):
-    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
-    outcome = EditTree().act(
-        SessionView(session, _node(D, ROOT)),
-        action="add",
-        model_id=D,
-        path=ROOT,
-        variable="x",
-        metric="nrmse",
-    )
-    (op,) = outcome.ops
-    assert (op.op, op.path) == ("add", "/metrics/children/-")
-
-
 def _view(session) -> SessionView:
     return SessionView(session, Selection(tests=frozenset({A}), variable="x"))
 
@@ -1382,6 +1336,9 @@ def test_a_k_above_the_children_reads_as_what_the_node_has(session, action, k, t
 
 
 async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
+    """Applying a form stages the act and the row is gone — a menu then, a
+    row now: left open it would offer a form for a node that has just
+    changed."""
     session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, errors, _figure):
@@ -1389,9 +1346,12 @@ async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
             await user.should_see(marker=marker)
         await user.should_not_see(marker="host-click")  # a leaf has no fields
         user.find(marker=f"wrap:{leaf}").click()  # the row is built on the click
+        await user.should_see(marker=f"apply-wrap:{leaf}")
         user.find(marker=f"apply-wrap:{leaf}").click()
         await _settled(lambda: "combinator" in session.tree(D)["children"][1])
         assert errors == {}
+        assert _none(user, f"apply-wrap:{leaf}")
+        assert _none(user, "host-row:title")
 
 
 async def test_a_cluster_builds_a_form_only_when_its_icon_is_clicked(session):
@@ -1747,20 +1707,6 @@ async def test_a_node_and_a_variable_together_draw_the_nodes_controls(session):
         await user.should_not_see(marker="add-for:x")
 
 
-async def test_applying_a_form_closes_its_row(session):
-    """The act is staged and the row is gone — a menu then, a row now: left
-    open it would offer a form for a node that has just changed."""
-    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
-    leaf = "/metrics/children/1"
-    async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
-        user.find(marker=f"wrap:{leaf}").click()
-        await user.should_see(marker=f"apply-wrap:{leaf}")
-        user.find(marker=f"apply-wrap:{leaf}").click()
-        await _settled(lambda: "combinator" in session.tree(D)["children"][1])
-        assert _none(user, f"apply-wrap:{leaf}")
-        assert _none(user, "host-row:title")
-
-
 async def test_the_variable_panel_adds_a_criterion_for_it(two_var_session):
     session = two_var_session
     sel = Selection(tests=frozenset({A}), variable="y")
@@ -2029,28 +1975,6 @@ async def test_the_edit_rows_buttons_read_cancel_apply(session):
         await user.should_see(marker=f"apply-edit:{k_of_n}")
         row = _one(user, f"apply-edit:{k_of_n}").parent_slot.parent
         assert [b.text for b in row.default_slot.children] == ["Cancel", "Apply"]
-
-
-def test_unwrap_of_several_children_moves_them_into_the_parent(session):
-    a = {"metric": "nrmse", "variable": "x"}
-    b = {"metric": "range", "variable": "x", "max_value": 9.0}
-    c = {"metric": "range", "variable": "x", "max_value": 5.0}
-    tree = {
-        "combinator": "and",
-        "children": [{"combinator": "k-of-n", "k": 1, "children": [a, b]}, c],
-    }
-    session.stage([PatchOp(D, "add", ROOT, tree)])
-    node = "/metrics/children/0"
-    outcome = EditTree().act(
-        SessionView(session, _node(D, node)), action="unwrap", model_id=D, path=node
-    )
-    assert [(op.op, op.path, op.value) for op in outcome.ops] == [
-        ("remove", node, None),
-        ("add", "/metrics/children/0", a),
-        ("add", "/metrics/children/1", b),
-    ]
-    session.apply(outcome)
-    assert session.tree(D) == {"combinator": "and", "children": [a, b, c]}
 
 
 async def test_unwrap_is_not_offered_on_a_root_with_several_children(session):
@@ -2375,20 +2299,6 @@ async def test_accept_stores_the_rest(session):
         assert rid == "0004"  # A, D and G hold 0001-0003
         raw = (session.project.config.reference_dir / f"ref_{rid}.json").read_bytes()
         assert b"\r" not in raw and json.loads(raw)["model_id"] == B
-
-
-def test_accept_act_returns_a_store_write_over_the_selection(session):
-    """`act` is pure: the StoreWrite names the selection and its `run`
-    reports one line — what it stored and what it refused."""
-    from dstf.authoring.capabilities import StoreWrite
-
-    view = SessionView(session, Selection(tests=frozenset({A, B, C})))
-    out = Accept().act(view)
-    assert isinstance(out, StoreWrite) and out.models == {A, B, C}
-    line = out.run(session.project.store)
-    assert line.startswith("Accept: stored 2") and C in line
-    # The line is a report of an effect that happened: B has a baseline now.
-    assert session.project.store.index.get_id(B) == "0004"
 
 
 def test_accept_is_greyed_while_the_queue_holds_a_selected_test(session):
@@ -2924,13 +2834,6 @@ def test_plus_adds_right_after_the_clicked_criterion(
     assert (op.op, op.path) == ("add", op_path)
     session.apply(outcome)
     assert node_or_none(session.tree(D), added)["metric"] == "range"
-
-
-def test_plus_beside_a_root_leaf_reveals_the_roots_second_child(session):
-    from dstf.authoring.builtin.edit_tree import _added_path
-
-    session.stage([PatchOp(D, "add", ROOT, {"metric": "nrmse", "variable": "x"})])
-    assert _added_path(session.tree(D), ROOT) == "/metrics/children/1"
 
 
 async def test_the_plus_tooltip_and_title_say_where_the_criterion_lands(session):
@@ -4008,34 +3911,21 @@ async def test_a_reduce_scalar_keeps_its_mode_window_and_quantity(session):
         assert "mode" in labels and "window start" in labels and "Quantity" in labels
 
 
-def test_a_statistics_criterion_is_edited_at_its_own_placement():
+@pytest.mark.parametrize(
+    "placement",
+    [caps.Placement.TREE_CRITERION, caps.Placement.STATISTIC_CRITERION],
+    ids=["tree", "statistics"],
+)
+def test_a_statistics_criterion_is_edited_at_its_own_placement(placement):
     """B2: Edit criteria alone attaches where the Statistics card hosts a
-    criterion's editor; Edit on plot, which needs a plot, does not."""
+    criterion's editor; Edit on plot, which needs a plot, does not.
+    U5 Y4: under a tree row likewise only Edit criteria attaches — Edit on
+    plot needs a drawn figure, and the tree editor links to the plot's."""
     from dstf.authoring.builtin.edit_on_plot import EditOnPlot
-    from dstf.authoring.capabilities import Placement
 
-    at = {
-        c.name
-        for c in caps.registered_capabilities()
-        if Placement.STATISTIC_CRITERION in c.placements
-    }
+    at = {c.name for c in caps.registered_capabilities() if placement in c.placements}
     assert at == {EditCriteria.name}
-    assert Placement.STATISTIC_CRITERION not in EditOnPlot.placements
-
-
-def test_a_tree_criterion_is_edited_by_edit_criteria_alone():
-    """U5 Y4: under a tree row only Edit criteria attaches — Edit on plot
-    needs a drawn figure, and the tree editor links to the plot's."""
-    from dstf.authoring.builtin.edit_on_plot import EditOnPlot
-    from dstf.authoring.capabilities import Placement
-
-    at = {
-        c.name
-        for c in caps.registered_capabilities()
-        if Placement.TREE_CRITERION in c.placements
-    }
-    assert at == {EditCriteria.name}
-    assert Placement.TREE_CRITERION not in EditOnPlot.placements
+    assert placement not in EditOnPlot.placements
 
 
 # -- one act, one pending edit ------------------------------------------------

@@ -119,20 +119,16 @@ class TestBuiltinRegistrations:
             {"and", "or", "k-of-n", "warn", "weighted"}
         )
 
-    @pytest.mark.parametrize(
-        "name,direction",
-        [
-            ("nrmse", "lower"),
-            ("tube", "higher"),
-            ("points", "lower"),
-            ("range", "lower"),
-            ("event-timing", "lower"),
-            ("dominant-frequency", "lower"),
-            ("scalar", "lower"),
-        ],
-    )
-    def test_score_directions(self, name, direction):
-        assert registry.metric(name).score_direction == direction
+    def test_score_directions(self):
+        assert {d.name: d.score_direction for d in registry.metrics()} == {
+            "nrmse": "lower",
+            "tube": "higher",
+            "points": "lower",
+            "range": "lower",
+            "event-timing": "lower",
+            "dominant-frequency": "lower",
+            "scalar": "lower",
+        }
 
     def test_all_builtins_accept_time_series(self):
         for desc in registry.metrics():
@@ -298,6 +294,24 @@ class TestDerivedControls:
         assert "final-slope" in schema["$defs"]["leaf"]["properties"]["metric"]["enum"]
         assert "max_slope" in schema["$defs"]["mode_final_slope"]["properties"]
 
+    def test_a_metric_whose_config_is_no_dataclass_leaves_its_override_open(self):
+        """Nothing says what such a metric reads, and the parser does not
+        check its keys: its override's schema takes any key beside ``mode``,
+        while a builtin's stays closed to its params."""
+        from dstf.reporting.schema_export import build_schema
+
+        class Opaque:
+            pass
+
+        register_metric(
+            MetricDescriptor(name="energy", config_cls=Opaque, build=lambda o, t: None)
+        )
+        defs = build_schema()["$defs"]
+        energy = dict(defs["override_energy"])
+        assert list(energy.pop("properties")) == ["mode"]
+        assert energy == {"type": "object", "title": "energy override"}
+        assert defs["override_nrmse"]["additionalProperties"] is False
+
 
 # ---------------------------------------------------------------------------
 # (e) accepted_datasets gating
@@ -379,11 +393,6 @@ class TestResetForTests:
         assert registry.metric("nrmse") is not None
         assert len(registry.metrics()) == 7
         assert len(registry.combinators()) == 5
-
-    def test_reset_is_idempotent(self):
-        registry._reset_for_tests()
-        registry._reset_for_tests()
-        assert [d.name for d in registry.metrics()][0] == "nrmse"
 
 
 def test_a_metric_says_whether_its_drawing_shows_by_default():
