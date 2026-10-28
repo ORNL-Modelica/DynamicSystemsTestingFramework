@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import urllib.error
+from pathlib import Path
 from types import SimpleNamespace
 
 import psutil
@@ -1060,6 +1061,15 @@ def _spawn_tool(
 _COMPILER = [sys.executable, "-c", _SLEEP, "-o", "dymosim"]
 
 
+def _named_sleeper(exe: Path) -> None:
+    """A program at ``exe`` that sleeps, and whose process carries ``exe``'s
+    name, as the kill guard reads it. A copy of ``sleep`` does not do: where
+    coreutils is one multi-call program (Rust's, on Ubuntu 25.10), it refuses
+    to run under a name it does not know."""
+    exe.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(120)\n")
+    exe.chmod(0o755)
+
+
 def _kill_all(tool, children) -> None:
     for proc in (*children, tool):
         try:
@@ -1084,11 +1094,9 @@ class TestDymolaStop:
         )
 
     def _dymosim(self, tmp_path) -> str:
-        import shutil
-
         exe = tmp_path / "bin" / "dymosim"
         exe.parent.mkdir()
-        shutil.copy(shutil.which("sleep"), exe)
+        _named_sleeper(exe)
         return str(exe)
 
     def test_a_running_dymosim_is_asked_to_stop_in_its_own_directory(self, tmp_path):
@@ -1184,13 +1192,11 @@ class TestDymolaLaunch:
         return _Interface, launched, answered
 
     def _worker(self, tmp_path, interface_cls, bound: float):
-        import shutil
-
         from dstf.backends.dymola.persistent_backend import DymolaWorker
 
         exe = tmp_path / "bin" / "dymola"  # the name the kill guard asks for
         exe.parent.mkdir()
-        shutil.copy(shutil.which("sleep"), exe)
+        _named_sleeper(exe)
         worker = DymolaWorker(
             0,
             SimpleNamespace(
