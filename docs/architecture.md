@@ -804,6 +804,7 @@ Worked example: `backends/openmodelica/persistent_backend.py` has the most compa
 | Call | Does |
 |---|---|
 | `submit(test) -> QueueItem` | Appends. `Refused` when the test is already waiting or running, or the pool is closed or stopped. |
+| `submit_all(tests) -> list[QueueItem \| Refused]` | A Queue click's tests, appended under one hold of the lock: one answer per test, in order, each its item or `submit`'s refusal. One call, because a worker whose start fails stops the pool from its own thread: between two `submit`s it could, and the click's later tests were refused while its earlier ones failed. |
 | `update(item, test) -> bool` | Hands a waiting item the test as it stands now, keeping its place — an item runs with the last test it was given before it started; `False` once it has started. |
 | `remove(item) -> bool` | Takes a waiting item out (`REMOVED`); `False` once it has started. |
 | `cancel(item) -> bool` | Stops a running item (it ends `CANCELLED`); `False` when it is not running; `Refused`, with a sentence, on a backend without `Capability.CANCEL`. |

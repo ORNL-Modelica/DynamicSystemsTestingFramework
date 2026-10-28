@@ -24,7 +24,7 @@ import dataclasses
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol
@@ -168,10 +168,11 @@ class SimulationPool:
 
     ``submit`` appends and returns the item — with the state of the source
     files it is to run against, which a live worker that read them earlier
-    reads again first; ``update`` hands a waiting item its test as it
+    reads again first — and ``submit_all`` appends a Queue click's tests at
+    once; ``update`` hands a waiting item its test as it
     stands now; ``remove`` takes a waiting item back;
     ``cancel`` stops a running one where the backend can
-    (:attr:`Capability.CANCEL`); ``close`` ends everything. All five are
+    (:attr:`Capability.CANCEL`); ``close`` ends everything. All six are
     safe from any thread and return promptly (``close`` waits for the
     threads).
 
@@ -201,7 +202,7 @@ class SimulationPool:
     cannot be restarted leaves. When none is left, every waiting item FAILS
     with the backend's own message (``No OpenModelica worker could start —
     worker 0: ...``), ``stopped`` holds that message and ``submit`` refuses
-    with it: a new pool is the retry.
+    with it (``submit_all``: each test): a new pool is the retry.
     """
 
     def __init__(
@@ -303,30 +304,66 @@ class SimulationPool:
         return tuple(found)
 
     def submit(self, test: TestModel, library: LibraryState | None = None) -> QueueItem:
-        """Append *test*. Raises :class:`Refused` when it is already waiting
-        or running, and when the pool is closed or stopped.
+        """Append *test*: :meth:`submit_all` of one test. Raises its
+        :class:`Refused`."""
+        (got,) = self.submit_all([test], library)
+        if isinstance(got, Refused):
+            raise got
+        return got
+
+    def submit_all(
+        self, tests: Iterable[TestModel], library: LibraryState | None = None
+    ) -> list[QueueItem | Refused]:
+        """Append *tests*, in that order, under ONE hold of the pool's lock:
+        one per test, its item or the :class:`Refused` that says why not —
+        a :class:`Refused` when it is already waiting or running (or
+        named twice), the same sentence for each when the pool is closed or
+        stopped.
+
+        A Queue click's tests go in one call. A worker whose start fails at
+        once stops the pool from its own thread: between two submits it can
+        stop it after the first, and the second is refused with the pool's
+        message while the first FAILS with it — to a caller that says a
+        refusal only when nothing was queued, a test dropped without a
+        word. Within one call no worker can: every test it appends waits
+        until the call is over, and fails with the backend's message with
+        the rest when no worker can start.
 
         *library* is the state of the source files as the caller swept them
-        for this submit (one state per Queue click, shared by its items).
-        Before the item runs, a worker that read the files at an older
-        state reads them again (``ItemRunner.run``); one that read them at
-        this state or a later one does nothing."""
+        for this call (one state per Queue click, shared by its items).
+        Before an item runs, a worker that read the files at an older state
+        reads them again (``ItemRunner.run``); one that read them at this
+        state or a later one does nothing."""
+        got: list[QueueItem | Refused] = []
         with self._cond:
-            if self._closing:
-                raise Refused("the simulation queue is closed")
-            if self._stopped is not None:
-                raise Refused(self._stopped)
-            active = self._active.get(test.model_id)
-            if active is not None:
-                doing = "running" if active.state is ItemState.RUNNING else "queued"
-                raise Refused(f"{test.model_id} is already {doing}")
-            item = QueueItem(test, library)
-            self._note(library)
-            self._active[test.model_id] = item
-            self._waiting.append(item)
-            self._spawn_slots()
-            self._cond.notify()
-        return item
+            appended = 0
+            for test in tests:
+                refusal = self._refusal(test)
+                if refusal is not None:
+                    got.append(refusal)
+                    continue
+                item = QueueItem(test, library)
+                self._note(library)
+                self._active[test.model_id] = item
+                self._waiting.append(item)
+                got.append(item)
+                appended += 1
+            if appended:
+                self._spawn_slots()
+                self._cond.notify(appended)
+        return got
+
+    def _refusal(self, test: TestModel) -> Refused | None:
+        """Under the lock: why *test* cannot be appended now, if it cannot."""
+        if self._closing:
+            return Refused("the simulation queue is closed")
+        if self._stopped is not None:
+            return Refused(self._stopped)
+        active = self._active.get(test.model_id)
+        if active is not None:
+            doing = "running" if active.state is ItemState.RUNNING else "queued"
+            return Refused(f"{test.model_id} is already {doing}")
+        return None
 
     def update(
         self, item: QueueItem, test: TestModel, library: LibraryState | None = None

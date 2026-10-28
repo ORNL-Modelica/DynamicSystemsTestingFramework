@@ -286,6 +286,13 @@ def switch_theme(page, to: str) -> None:
     page_theme(page, to)
 
 
+def _pending_button(page):
+    """The header's pending-edits count, as a locator to wait on."""
+    return page.locator(".dstf-header-row").get_by_role(
+        "button", name=re.compile(r"pending edit")
+    )
+
+
 def test_a_dark_projects_tool_opens_dark_and_its_hover_box_is_dark(
     tmp_path, playwright_browser
 ):
@@ -357,8 +364,10 @@ def test_a_switch_keeps_the_zoom_the_arrows_and_a_staged_edit(
         _drag_arrow(page, "/points/upper/0", 0, -20)
         cell = _table_cell(page, 0, "+ tolerance")
         expect(cell).not_to_have_value("0.05", timeout=15_000)
+        # The header counts it on the event the stage posts, a moment after
+        # the cell: wait for it, as a read at once lost the race on CI.
+        expect(_pending_button(page)).to_have_text("1 pending edit", timeout=15_000)
         staged = cell.input_value()
-        assert _pending(page) == "1 pending edit"
         page.wait_for_timeout(500)  # the redraw that answers the release
         was = plot_drawn_in(page, "default")
         # Two checkpoints, four arrows each.
@@ -372,7 +381,7 @@ def test_a_switch_keeps_the_zoom_the_arrows_and_a_staged_edit(
         assert now["xrange"] == [0.0, 0.6] and now["yrange"] == [0.0, 0.7]
         assert now["template"] and now["ring"] == palette_of("dark").ring
         # The staged edit: in the header, in the editor, nowhere re-typed.
-        assert _pending(page) == "1 pending edit"
+        expect(_pending_button(page)).to_have_text("1 pending edit")
         expect(cell).to_have_value(staged)
         assert page.evaluate(PAGE_THEME)["filled"][1] == rgb(DARK["on-accent"])
 

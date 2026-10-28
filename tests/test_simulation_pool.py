@@ -266,6 +266,27 @@ class TestQueue:
         _wait_until(lambda: _ended(again))
         assert [model for model, _ in backend.ran].count("Lib.A") == 2
 
+    def test_a_click_s_tests_are_each_appended_or_each_refused_in_order(self, stub):
+        """`submit_all`: one answer per test, in order — its item, or the
+        refusal of a test already waiting or running, or named twice."""
+        backend, pool, _ = stub
+        backend.gate("Lib.A")
+        a = pool.submit(_t("A"))
+        _wait_until(lambda: a.state is ItemState.RUNNING)
+
+        got = pool.submit_all([_t("A"), _t("B"), _t("C"), _t("B")])
+        assert [str(g) if isinstance(g, Refused) else g.model_id for g in got] == [
+            "Lib.A is already running",
+            "Lib.B",
+            "Lib.C",
+            "Lib.B is already queued",
+        ]
+        assert pool.waiting == (got[1], got[2])
+
+        backend.gates["Lib.A"].set()
+        _wait_until(lambda: _ended(a, got[1], got[2]))
+        assert [model for model, _ in backend.ran] == ["Lib.A", "Lib.B", "Lib.C"]
+
     def test_a_waiting_item_is_removed_and_never_runs(self, stub):
         backend, pool, events = stub
         backend.gate("Lib.A")
@@ -791,6 +812,46 @@ class TestStartBound:
                 pool.submit(_t("D"))  # the queue has stopped
         finally:
             release.set()
+            pool.close()
+
+    def test_no_test_of_one_submit_all_is_refused_by_a_start_that_fails(self, tmp_path):
+        """A worker whose start raises at once stops the pool from its own
+        thread. The tests are handed over one by one, and the caller pauses
+        between two of them until the pool has stopped (at most 0.3 s) —
+        what a busy runner's scheduler does: none is refused, every one
+        FAILS with the backend's message. (Between single submits the pool
+        stops after the first, and the rest are refused.)"""
+
+        def cannot_start(worker):
+            raise RuntimeError("licence server unreachable")
+
+        backend, pool, events = self._pool(tmp_path, cannot_start)
+
+        def preempted(names):
+            for name in names:
+                yield _t(name)
+                deadline = time.monotonic() + 0.3
+                while pool.stopped is None and time.monotonic() < deadline:
+                    time.sleep(0.005)
+
+        try:
+            items = pool.submit_all(preempted("ABCDE"))
+            assert all(isinstance(item, QueueItem) for item in items), items
+            _wait_until(lambda: _ended(*items))
+
+            message = (
+                "No Stub worker could start — worker 0: licence server unreachable"
+            )
+            assert pool.stopped == message
+            assert [(i.model_id, i.state, i.message) for i in items] == [
+                (f"Lib.{name}", ItemState.FAILED, message) for name in "ABCDE"
+            ]
+            assert all(events.of(item.model_id) == ["end"] for item in items)
+            assert backend.ran == []
+            # Stopped before the call: each test is refused with the message.
+            again = pool.submit_all([_t("F"), _t("G")])
+            assert [(type(r), str(r)) for r in again] == [(Refused, message)] * 2
+        finally:
             pool.close()
 
     def test_a_worker_coming_up_is_listed_with_its_phase_and_seconds(self, tmp_path):
