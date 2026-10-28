@@ -16,8 +16,9 @@ this file says when they do.
   Pythons. 3.13's `Path.resolve()` returns a loop without an error, so the
   run went on and said no Modelica package could be found.
 - In `dstf author`, a Queue click of several tests on a backend that cannot
-  start a worker no longer drops the tests after the first without a word:
-  each one fails, with the backend's message.
+  start a worker could drop the tests after the first without a word, when
+  the failed start came while the click was still queueing; each one now fails,
+  with the backend's message.
 
 ## [1.3.0] - 2026-10-22
 

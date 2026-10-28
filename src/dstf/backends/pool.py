@@ -62,11 +62,6 @@ class Refused(RuntimeError):
     """The pool did not do what was asked; ``str()`` is the sentence why."""
 
 
-class AlreadyQueued(Refused):
-    """A submit of a test that is already waiting or running: it is not
-    queued twice (``Lib.A is already queued``)."""
-
-
 @dataclass(eq=False)
 class QueueItem:
     """One submitted test and what became of it. The pool writes the fields
@@ -310,8 +305,7 @@ class SimulationPool:
 
     def submit(self, test: TestModel, library: LibraryState | None = None) -> QueueItem:
         """Append *test*: :meth:`submit_all` of one test. Raises its
-        :class:`Refused` (an :class:`AlreadyQueued` when it is already
-        waiting or running)."""
+        :class:`Refused`."""
         (got,) = self.submit_all([test], library)
         if isinstance(got, Refused):
             raise got
@@ -322,7 +316,7 @@ class SimulationPool:
     ) -> list[QueueItem | Refused]:
         """Append *tests*, in that order, under ONE hold of the pool's lock:
         one per test, its item or the :class:`Refused` that says why not —
-        an :class:`AlreadyQueued` when it is already waiting or running (or
+        a :class:`Refused` when it is already waiting or running (or
         named twice), the same sentence for each when the pool is closed or
         stopped.
 
@@ -368,7 +362,7 @@ class SimulationPool:
         active = self._active.get(test.model_id)
         if active is not None:
             doing = "running" if active.state is ItemState.RUNNING else "queued"
-            return AlreadyQueued(f"{test.model_id} is already {doing}")
+            return Refused(f"{test.model_id} is already {doing}")
         return None
 
     def update(
@@ -644,7 +638,6 @@ class SimulationPool:
 
 
 __all__ = [
-    "AlreadyQueued",
     "ItemPath",
     "ItemState",
     "QueueItem",

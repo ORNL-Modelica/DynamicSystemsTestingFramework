@@ -32,7 +32,6 @@ from dstf.backends.persistent import (
     Worker,
 )
 from dstf.backends.pool import (
-    AlreadyQueued,
     ItemState,
     QueueItem,
     Refused,
@@ -282,7 +281,6 @@ class TestQueue:
             "Lib.C",
             "Lib.B is already queued",
         ]
-        assert isinstance(got[0], AlreadyQueued) and isinstance(got[3], AlreadyQueued)
         assert pool.waiting == (got[1], got[2])
 
         backend.gates["Lib.A"].set()

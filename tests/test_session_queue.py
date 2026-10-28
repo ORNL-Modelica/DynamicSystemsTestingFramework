@@ -896,8 +896,10 @@ def test_no_worker_can_start_fails_the_waiting_items_with_the_message(
 
     stub.start_script = cannot_start
     before = dict(h.session.project.results)
-    # One click of four: the worker's failed start stops the pool while the
-    # click is queued, and no test of it may be dropped.
+    # One click of four on a worker that cannot start: every test of it
+    # fails with the message, none dropped. (That a start failing between
+    # two of the click's tests drops none is the pool's test:
+    # test_no_test_of_one_submit_all_is_refused_by_a_start_that_fails.)
     items = h.session.enqueue([A, B, C, D])
     h.ended(A, B, C, D)
 

@@ -26,7 +26,6 @@ from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.common.result_variables import tracked_results
 from ..backends.pool import (
-    AlreadyQueued,
     ItemState,
     QueueItem,
     Refused,
@@ -2145,10 +2144,6 @@ class Session:
         pool = self._open_pool()
         added: list[QueueItem] = []
         said = list(read.refused.values())
-        # Said as notices when others were queued: the read's refusals and
-        # the pool's — not a skip, which the button said ("(1 already
-        # queued)").
-        told = list(said)
         self._refusals.update(read.refused)
         tests = []
         for model_id in model_ids:
@@ -2166,9 +2161,10 @@ class Session:
         # the earlier ones fail (`SimulationPool.submit_all`).
         for got in pool.submit_all(tests, library):
             if isinstance(got, Refused):
+                # Already queued (the button said so: "(1 already queued)"),
+                # or every test is: a pool closed or stopped refuses the
+                # whole call, and `said` is then the QueueError below.
                 said.append(str(got))
-                if not isinstance(got, AlreadyQueued):
-                    told.append(str(got))
                 continue
             self._live[got.model_id] = got
             self.queue.append(got)
@@ -2182,7 +2178,7 @@ class Session:
             if said:
                 raise QueueError("; ".join(said))
             return []
-        for sentence in told:
+        for sentence in read.refused.values():
             self._say(sentence)
         self._emit("queue", state="queued", models={i.model_id for i in added})
         return added
