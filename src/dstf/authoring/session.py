@@ -25,7 +25,13 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.common.result_variables import tracked_results
-from ..backends.pool import ItemState, QueueItem, Refused, StartingWorker
+from ..backends.pool import (
+    AlreadyQueued,
+    ItemState,
+    QueueItem,
+    Refused,
+    StartingWorker,
+)
 from ..backends.progress import recorded_backend, refuse_unregistered
 from ..backends.types import (
     DatasetType,
@@ -2139,7 +2145,12 @@ class Session:
         pool = self._open_pool()
         added: list[QueueItem] = []
         said = list(read.refused.values())
+        # Said as notices when others were queued: the read's refusals and
+        # the pool's — not a skip, which the button said ("(1 already
+        # queued)").
+        told = list(said)
         self._refusals.update(read.refused)
+        tests = []
         for model_id in model_ids:
             test = project.test(model_id)
             if model_id in read.refused or test is None:
@@ -2149,14 +2160,19 @@ class Session:
                 # Already queued: while it waits, it runs what THIS click
                 # read, on a worker that has read the library since.
                 pool.update(held, test, library)
-            try:
-                item = pool.submit(test, library)
-            except Refused as e:
-                said.append(str(e))
+            tests.append(test)
+        # One call: between two single submits, a worker that could not
+        # start can stop the pool and refuse the click's later tests while
+        # the earlier ones fail (`SimulationPool.submit_all`).
+        for got in pool.submit_all(tests, library):
+            if isinstance(got, Refused):
+                said.append(str(got))
+                if not isinstance(got, AlreadyQueued):
+                    told.append(str(got))
                 continue
-            self._live[model_id] = item
-            self.queue.append(item)
-            added.append(item)
+            self._live[got.model_id] = got
+            self.queue.append(got)
+            added.append(got)
         # A test that is queued again was read: what an earlier click said
         # of its file — gone, unreadable, no longer holding it — is over,
         # and stood in the panel after the file was back and the test had
@@ -2166,7 +2182,7 @@ class Session:
             if said:
                 raise QueueError("; ".join(said))
             return []
-        for sentence in read.refused.values():
+        for sentence in told:
             self._say(sentence)
         self._emit("queue", state="queued", models={i.model_id for i in added})
         return added

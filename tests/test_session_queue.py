@@ -896,16 +896,20 @@ def test_no_worker_can_start_fails_the_waiting_items_with_the_message(
 
     stub.start_script = cannot_start
     before = dict(h.session.project.results)
-    a, b = h.session.enqueue([A, B])
-    h.ended(A, B)
+    # One click of four: the worker's failed start stops the pool while the
+    # click is queued, and no test of it may be dropped.
+    items = h.session.enqueue([A, B, C, D])
+    h.ended(A, B, C, D)
 
     message = "No Stub worker could start — worker 0: licence server unreachable"
-    assert (a.state, b.state) == (ItemState.FAILED, ItemState.FAILED)
-    assert a.message == b.message == h.session.queue_stopped == message
+    assert [(i.model_id, i.state, i.message) for i in items] == [
+        (m, ItemState.FAILED, message) for m in (A, B, C, D)
+    ]
+    assert h.session.queue_stopped == message
     rows = queue_rows(h.session)
-    assert [(r.status, r.started, r.words) for r in rows] == [
-        (NOT_RUN, False, f"failed: {message}")
-    ] * 2
+    assert [(r.model_id, r.status, r.started, r.words) for r in rows] == [
+        (m, NOT_RUN, False, f"failed: {message}") for m in (A, B, C, D)
+    ]
     assert all(r.message == message for r in rows)
     # nothing ran: every result stands, and nothing is queued forever
     assert h.session.project.results == before
