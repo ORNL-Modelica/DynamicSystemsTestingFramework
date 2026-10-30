@@ -241,8 +241,9 @@ def test_every_shipped_openmodelica_baseline_records_its_state_count():
         counts[data["model_id"].rsplit(".", 1)[-1]] = translation.get(
             "continuous_time_states"
         )
-    assert len(counts) == 12 and None not in counts.values(), counts
+    assert len(counts) == 13 and None not in counts.values(), counts
     assert (counts["SimpleTest"], counts["HeatRodTest"]) == (2, 20)
+    assert counts["ThermostatBuildingTest"] == 4  # the four room temperatures
     assert counts["FrequencyTest"] == 0  # no state: a count all the same
 
 
