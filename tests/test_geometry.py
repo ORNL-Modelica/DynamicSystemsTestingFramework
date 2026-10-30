@@ -476,6 +476,29 @@ class TestScalarGeometry:
         assert lines["scalar/reference"].value == pytest.approx(1.0)
         assert lines["scalar/actual"].passed is True and vc.passed
 
+    @pytest.mark.parametrize(
+        "config",
+        [
+            {"min_value": 0.0, "max_value": 2.0},
+            {"tolerance_mode": "rel"},
+        ],
+        ids=["bounds", "baseline"],
+    )
+    def test_an_integral_draws_no_line_on_the_signals_axis(self, config):
+        # Its value is in the signal's units times seconds: 300 here, under a
+        # signal that never leaves [0, 3].
+        t = np.linspace(0.0, 100.0, 101)
+        vc = score(
+            {"mode": "scalar", "quantity": {"reduce": "integral"}, **config},
+            t,
+            np.full_like(t, 3.0),
+            t,
+            np.full_like(t, 3.0),
+            tolerance=0.05,
+        )
+        assert vc.actual_final == pytest.approx(300.0)
+        assert vc.geometry == ()
+
     @staticmethod
     def _allowed(ref, tol, mode="abs", **bounds):
         t = np.linspace(0.0, 1.0, 11)

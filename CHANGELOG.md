@@ -19,6 +19,11 @@ this file says when they do.
   start a worker could drop the tests after the first without a word, when
   the failed start came while the click was still queueing; each one now fails,
   with the backend's message.
+- A `scalar` criterion with `{"reduce": "integral"}` no longer draws its value
+  as a line on the signal's plot, in the report or in `dstf author`. An
+  integral is in the signal's units times seconds, so the line was no level
+  the signal could reach, and it flattened the signal against zero (a heater's
+  power in W under its energy in J). The numbers stay in the criterion's row.
 
 ## [1.3.0] - 2026-10-22
 

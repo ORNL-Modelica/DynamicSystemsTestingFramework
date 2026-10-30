@@ -1165,6 +1165,7 @@ def _scalar_geometry(
     min_value: float | None,
     max_value: float | None,
     *,
+    reduction: str,
     ref_scalar: float | None,
     passed: bool,
     allowed: tuple[float, float] | None = None,
@@ -1175,7 +1176,15 @@ def _scalar_geometry(
     lines are then the whole figure. ``allowed`` is what the baseline form
     lets the scalar be, ``(lowest, highest)``: drawn, and dragged, as the
     bounds form's bounds are.
+
+    An ``integral`` is drawn as nothing: its units are the signal's times
+    seconds, so a line at its value on the signal's axis is no level the
+    signal could reach, and it stretched that axis until the signal lay flat
+    along zero (a power in W under its energy in J). Its numbers stay in the
+    criterion's row; with no line there is no handle to drag either.
     """
+    if reduction == "integral":
+        return ()
     out: list[Primitive] = [
         HLine(id="scalar/actual", kind="act", value=float(act_scalar), passed=passed)
     ]
@@ -1262,6 +1271,7 @@ def _compare_scalar(
                 act_scalar,
                 min_value,
                 max_value,
+                reduction=reduction,
                 ref_scalar=None,
                 passed=violation <= 0.0,
             ),
@@ -1309,6 +1319,7 @@ def _compare_scalar(
             act_scalar,
             None,
             None,
+            reduction=reduction,
             ref_scalar=ref_scalar,
             passed=passed,
             allowed=(
