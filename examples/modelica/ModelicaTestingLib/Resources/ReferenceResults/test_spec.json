@@ -465,7 +465,7 @@
                 "count_must_match": true,
                 "window": {
                   "start": 9000,
-                  "end": 21600
+                  "end": 21500
                 }
               },
               {
@@ -479,7 +479,7 @@
                 ],
                 "window": {
                   "start": 9000,
-                  "end": 21600
+                  "end": 21500
                 }
               }
             ]
@@ -495,7 +495,7 @@
                 "max_value": 21.0,
                 "window": {
                   "start": 9000,
-                  "end": 21600
+                  "end": 21500
                 }
               },
               {
@@ -505,7 +505,7 @@
                 "max_value": 21.0,
                 "window": {
                   "start": 9000,
-                  "end": 21600
+                  "end": 21500
                 }
               },
               {
@@ -515,7 +515,7 @@
                 "max_value": 21.0,
                 "window": {
                   "start": 9000,
-                  "end": 21600
+                  "end": 21500
                 }
               },
               {
@@ -525,7 +525,7 @@
                 "max_value": 21.0,
                 "window": {
                   "start": 9000,
-                  "end": 21600
+                  "end": 21500
                 }
               }
             ]

@@ -31,6 +31,7 @@ from dstf.storage.reference_store import ReferenceStore
 EXAMPLE = Path(__file__).parent.parent / "examples" / "modelica" / "ModelicaTestingLib"
 REFS = EXAMPLE / "Resources" / "ReferenceResults"
 TREE = "ModelicaTestingLib.Examples.MetricTreeTest"
+SHOWCASE = "ModelicaTestingLib.Examples.ThermostatBuildingTest"
 PARTITIONS = ["Dymola/linux", "Dymola/windows", "OpenModelica/linux"]
 
 
@@ -68,7 +69,7 @@ def test_every_shipped_baseline_passes_its_own_criteria_and_warns_of_nothing(
             continue  # simulate-only, or a model this partition was not run for
         comp = compare_one(test, _as_its_own_run(reference), store)
         said[test.model_id] = (classify(comp), [w.text for w in comp.warnings])
-    assert TREE in said and len(said) >= 12
+    assert TREE in said and SHOWCASE in said and len(said) >= 12
     assert {model: s for model, s in said.items() if s != (PASS, [])} == {}
 
 

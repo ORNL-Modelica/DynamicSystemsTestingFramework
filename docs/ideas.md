@@ -2207,7 +2207,14 @@ T[1] 6–8 h after the setpoint step; `points` T[1] at 6.25 / 6.5 h; `scalar`
 heater energy integral; `weighted` ≥ 0.7 comfort score (`scalar` max T[1],
 `range` T[2], T[4] late); `warn`(`range` T[3] ≥ 12 °C, door open). Next: grill.
 
-Grilled 2026-10-30. Status: settled, ready to plan. Decisions:
+Grilled 2026-10-30. Status: built for Modelica on 2026-10-30 as
+`ModelicaTestingLib.Examples.ThermostatBuildingTest` (the Julia port is still
+open). What changed from the decisions below when it was built: the tube is
+`"band"` with `tube_abs` 0.3; the cycling windows end at 21500 s, so the
+setpoint step's event stays out of the event count; the frequency peak is
+6.35e-4 Hz, the bin the run measured; and the OpenModelica `against` leaf
+covers the whole run, as the simulators agree within 1.3e-4 throughout.
+Decisions:
 - `ModelicaTestingLib.Examples.ThermostatBuildingTest`, beside the 13; its
   Documentation annotation draws the tree, as `MetricTreeTest`'s does.
 - Plain array equations (hysteresis by hand with `pre()`), no MSL blocks: one

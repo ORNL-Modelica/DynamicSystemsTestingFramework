@@ -61,13 +61,13 @@ AND
   NRMSE(T[3], window [0, 7200])
   NRMSE(T[4], window [0, 7200])
   OR                                &lt;-- the thermostats cycle as before, by either reading:
-    EVENT-TIMING(heaterOn[1], window [9000, 21600])        &lt;-- the same switchings, at the same times
-    DOMINANT-FREQUENCY(T[1], 6.35e-4 Hz, window [9000, 21600])  &lt;-- the same cycle period
+    EVENT-TIMING(heaterOn[1], window [9000, 21500])        &lt;-- the same switchings, at the same times
+    DOMINANT-FREQUENCY(T[1], 6.35e-4 Hz, window [9000, 21500])  &lt;-- the same cycle period
   K-OF-N (3 of 4)                   &lt;-- at least three rooms stay in the 19-21 degC comfort band
-    RANGE(T[1], 19..21, window [9000, 21600])
-    RANGE(T[2], 19..21, window [9000, 21600])
-    RANGE(T[3], 19..21, window [9000, 21600])
-    RANGE(T[4], 19..21, window [9000, 21600])
+    RANGE(T[1], 19..21, window [9000, 21500])
+    RANGE(T[2], 19..21, window [9000, 21500])
+    RANGE(T[3], 19..21, window [9000, 21500])
+    RANGE(T[4], 19..21, window [9000, 21500])
   TUBE(T[1], +-0.3 degC, window [21600, 28800])  &lt;-- room 1 climbs to the new setpoint as before
   POINTS(T[1], at 22500 s and 23400 s, +-0.2)    &lt;-- two checkpoints on that climb
   SCALAR(integral of P[1], +-2 %)                &lt;-- the energy heater 1 uses over the run
