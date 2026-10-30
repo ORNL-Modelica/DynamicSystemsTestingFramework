@@ -31,7 +31,9 @@ this file says when they do.
   as a line on the signal's plot, in the report or in `dstf author`. An
   integral is in the signal's units times seconds, so the line was no level
   the signal could reach, and it flattened the signal against zero (a heater's
-  power in W under its energy in J). The numbers stay in the criterion's row.
+  power in W under its energy in J). The numbers stay in the criterion's row,
+  and `dstf author` no longer offers the plot as a place to edit it: its
+  tolerance or bounds are edited in the criterion's fields.
 
 ## [1.3.0] - 2026-10-22
 
