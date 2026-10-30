@@ -8,6 +8,14 @@ this file says when they do.
 
 ## [Unreleased]
 
+### Added
+
+- A showcase test in the Modelica example library,
+  `ModelicaTestingLib.Examples.ThermostatBuildingTest`: four thermostat-heated
+  rooms scored by one tree that uses every metric and every group, with
+  baselines for Dymola and OpenModelica. The criteria guide walks through it,
+  and through what fails when one heater gets 10 % more power.
+
 ### Fixed
 
 - On Python 3.13, a `--source-path`, `--reference-root` or `--config` (or a

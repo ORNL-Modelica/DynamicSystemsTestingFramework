@@ -87,8 +87,9 @@ DynamicSystemsTestingFramework/
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)
 │                                 #      + vendor/plotly.min.js (offline-capable reports)
 ├── examples/
-│   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 13 tests: one per mode and combinator,
-│   │                                  #      an array model — HeatRodTest, `T[20]` — and MetricTreeTest with its `analytic` companion)
+│   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 14 tests: one per mode and combinator,
+│   │                                  #      an array model — HeatRodTest, `T[20]` — MetricTreeTest with its `analytic` companion,
+│   │                                  #      and ThermostatBuildingTest: four rooms scored by one 18-leaf tree that uses every metric and combinator)
 │   ├── fmu/                           # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
 │   ├── julia/JuliaMtkTestingLib/      # Julia/MTK demo library (mirrors ModelicaTestingLib layout)
 │   └── python/PythonTestingLib/       # Python demo library (SimpleRamp via scipy, ConstantCsv data loader)
