@@ -473,7 +473,11 @@
                 "variable": "T[1]",
                 "peaks": [
                   {
-                    "freq": 0.000635,
+                    "freq": 0.00056,
+                    "tolerance": 0.05
+                  },
+                  {
+                    "freq": 0.002381,
                     "tolerance": 0.05
                   }
                 ],
@@ -575,7 +579,7 @@
               {
                 "metric": "range",
                 "variable": "T[1]",
-                "min_value": 21.4,
+                "min_value": 21.45,
                 "max_value": 22.6,
                 "window": {
                   "start": 28800,
@@ -585,7 +589,7 @@
               {
                 "metric": "range",
                 "variable": "T[2]",
-                "min_value": 21.4,
+                "min_value": 21.45,
                 "max_value": 22.6,
                 "window": {
                   "start": 28800,
@@ -595,7 +599,7 @@
               {
                 "metric": "range",
                 "variable": "T[4]",
-                "min_value": 21.4,
+                "min_value": 21.45,
                 "max_value": 22.6,
                 "window": {
                   "start": 28800,
@@ -603,6 +607,16 @@
                 }
               }
             ]
+          },
+          {
+            "metric": "tube",
+            "variable": "T[3]",
+            "tube_width_mode": "band",
+            "tube_abs": 0.3,
+            "window": {
+              "start": 32400,
+              "end": 37800
+            }
           },
           {
             "combinator": "warn",

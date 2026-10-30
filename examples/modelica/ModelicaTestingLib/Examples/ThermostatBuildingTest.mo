@@ -12,17 +12,24 @@ model ThermostatBuildingTest
   parameter Real Gdoor(unit="W/K") = 750 "Extra loss of room 3 while its door is open";
   parameter Real Tout(unit="degC") = 5 "Outdoor temperature";
   parameter Real band(unit="K") = 0.5 "Thermostat half-band around the setpoint";
+  parameter Real fanPeriod(unit="s") = 420 "Room 1's ventilation fan: one on/off cycle";
+  parameter Real fanOnTime(unit="s") = 140 "How long the fan runs in each cycle";
+  parameter Real Gfan(unit="W/K") = 40 "Extra loss of room 1 while its fan runs";
 
   Real T[4](each unit="degC", each start=10, each fixed=true) "Room temperatures";
   Boolean heaterOn[4](each start=true, each fixed=true) "Heater state of each room";
   Real P[4](each unit="W") "Heater power drawn by each room";
   Real Tset(unit="degC") "Setpoint: 20 degC, then 22 degC from 6 h";
   Real Qdoor(unit="W") "Loss through room 3's open door";
+  Boolean fanOn "Room 1's fan is running";
+  Real Qfan(unit="W") "Loss through room 1's fan";
   Real Qc[4](each unit="W") "Heat from the neighbouring rooms";
 
 equation
   Tset = if time < 21600 then 20 else 22;
   Qdoor = if time >= 32400 and time < 34200 then Gdoor*(T[3] - Tout) else 0;
+  fanOn = mod(time, fanPeriod) < fanOnTime;
+  Qfan = if fanOn then Gfan*(T[1] - Tout) else 0;
   for i in 1:4 loop
     heaterOn[i] = T[i] < Tset - band or pre(heaterOn[i]) and not T[i] > Tset + band;
     P[i] = if heaterOn[i] then Pmax[i] else 0;
@@ -32,7 +39,8 @@ equation
   Qc[3] = Gc*(T[2] - T[3]) + Gc*(T[4] - T[3]);
   Qc[4] = Gc*(T[3] - T[4]);
   for i in 1:4 loop
-    C[i]*der(T[i]) = P[i] - G[i]*(T[i] - Tout) + Qc[i] - (if i == 3 then Qdoor else 0);
+    C[i]*der(T[i]) = P[i] - G[i]*(T[i] - Tout) + Qc[i] - (if i == 3 then Qdoor else 0)
+      - (if i == 1 then Qfan else 0);
   end for;
 
   annotation (
@@ -47,8 +55,8 @@ Four rooms in a row, each with its own heater and thermostat, start at
 10&nbsp;degC and exchange heat with their neighbours and with the 5&nbsp;degC
 outdoors. Each thermostat holds its room within &plusmn;0.5&nbsp;degC of a
 setpoint of 20&nbsp;degC, which steps to 22&nbsp;degC at 21600&nbsp;s (6&nbsp;h);
-room 3's door stands open from 32400&nbsp;s to 34200&nbsp;s. The run lasts
-12&nbsp;h.
+room 3's door stands open from 32400&nbsp;s to 34200&nbsp;s, and room 1's
+ventilation fan runs 140&nbsp;s of every 420&nbsp;s. The run lasts 12&nbsp;h.
 </p>
 <p>
 One <b>MetricTree</b> in <code>test_spec.json</code> scores every phase of
@@ -62,7 +70,8 @@ AND
   NRMSE(T[4], window [0, 7200])
   OR                                &lt;-- the thermostats cycle as before, by either reading:
     EVENT-TIMING(heaterOn[1], window [9000, 21500])        &lt;-- the same switchings, at the same times
-    DOMINANT-FREQUENCY(T[1], 6.35e-4 Hz, window [9000, 21500])  &lt;-- the same cycle period
+    DOMINANT-FREQUENCY(T[1], 5.6e-4 Hz and 2.381e-3 Hz, window [9000, 21500])
+                                    &lt;-- the same heating cycle, and the fan's
   K-OF-N (3 of 4)                   &lt;-- at least three rooms stay in the 19-21 degC comfort band
     RANGE(T[1], 19..21, window [9000, 21500])
     RANGE(T[2], 19..21, window [9000, 21500])
@@ -72,19 +81,21 @@ AND
   POINTS(T[1], at 22500 s and 23400 s, +-0.2)    &lt;-- two checkpoints on that climb
   SCALAR(integral of P[1], +-2 %)                &lt;-- the energy heater 1 uses over the run
   WEIGHTED (0.5, 0.3, 0.2; below 0.5)            &lt;-- the late comfort band, room 1 weighing most
-    RANGE(T[1], 21.4..22.6, window [28800, 43200])
-    RANGE(T[2], 21.4..22.6, window [28800, 43200])
-    RANGE(T[4], 21.4..22.6, window [28800, 43200])
+    RANGE(T[1], 21.45..22.6, window [28800, 43200])
+    RANGE(T[2], 21.45..22.6, window [28800, 43200])
+    RANGE(T[4], 21.45..22.6, window [28800, 43200])
+  TUBE(T[3], +-0.3 degC, window [32400, 37800])  &lt;-- the open door: room 3 cools and recovers as before
   WARN
-    RANGE(T[3], min 12, window [32400, 37800])   &lt;-- the open door: advisory only
+    RANGE(T[3], min 12, window [32400, 37800])   &lt;-- and stays above 12 degC: advisory only
   WARN
     NRMSE(T[1], against=openmodelica)            &lt;-- cross-simulator soft_check, advisory
 </pre>
 <p>
 The model has no <code>UnitTests</code> component: every variable a
-criterion names is tracked. Room 2 dips a little under the late band, so
-its range criterion fails inside the weighted node while the node itself
-passes &mdash; the report shows one criterion red under a green test.
+criterion names is tracked. Rooms 2 and 4 dip about 0.05&nbsp;degC under
+the late band, so their range criteria fail inside the weighted node; their
+weighted total, 0.023, is far under 0.5, so the node itself passes &mdash;
+the report shows two criteria red under a green test.
 </p>
 </html>"));
 end ThermostatBuildingTest;
