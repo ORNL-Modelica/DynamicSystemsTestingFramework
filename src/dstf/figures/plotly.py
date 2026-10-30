@@ -73,9 +73,15 @@ ERROR = "#f44336"
 #: family is not here raises rather than being drawn against the wrong unit.
 ERROR_AXES = {"error/signed": "y3", "error/abs": "y3", "error/nrmse": "y4"}
 
-#: Vertical extent of the two panels when a spectrum is present.
-TIME_DOMAIN = (0.45, 1.0)
-SPECTRUM_DOMAIN = (0.0, 0.32)
+#: Vertical extent of the two panels when a spectrum is present. The gap
+#: between them holds the time axis's tick labels and its title: at 0.45 /
+#: 0.32, in the report's 300 px plot and the tool's 320 px one, the title
+#: "Time" was drawn 27 px inside the spectrum panel (Chromium, 2026-10-30).
+TIME_DOMAIN = (0.52, 1.0)
+SPECTRUM_DOMAIN = (0.0, 0.3)
+#: How far below its tick labels the time axis's title sits over a
+#: spectrum panel, in px: close, so it stays in the gap.
+TIME_TITLE_STANDOFF = 2
 
 #: Where the legend sits, on both tiers: above the plot area, one row that
 #: wraps to more when its entries don't fit (a report legend of 8 entries is
@@ -863,6 +869,7 @@ def _layout(
         layout["template"] = {"layout": copy.deepcopy(palette.template)}
     if view.has_spectrum:
         layout["yaxis"]["domain"] = list(TIME_DOMAIN)
+        layout["xaxis"]["title"]["standoff"] = TIME_TITLE_STANDOFF
         layout["xaxis2"] = {
             "title": {"text": "Frequency [Hz]"},
             "anchor": "y2",

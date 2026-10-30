@@ -34,6 +34,9 @@ this file says when they do.
   power in W under its energy in J). The numbers stay in the criterion's row,
   and `dstf author` no longer offers the plot as a place to edit it: its
   tolerance or bounds are edited in the criterion's fields.
+- On a plot with a spectrum panel under it, in the report and in `dstf author`,
+  the time axis's title "Time" was drawn inside the spectrum panel. The gap
+  between the two panels now holds it.
 
 ## [1.3.0] - 2026-10-22
 
