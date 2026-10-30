@@ -28,8 +28,7 @@ equation
 One-dimensional heat conduction along a rod of twenty nodes: the left end is
 held at 100&nbsp;degC, the right end at 20&nbsp;degC, and the rod starts at
 20&nbsp;degC throughout. The node temperatures <code>T[1]</code> &hellip;
-<code>T[20]</code> are one array &mdash; the library's only array variable
-besides <code>unitTests.x</code> &mdash; so this is the model to try a
+<code>T[20]</code> are one array of twenty, so this is the model to try a
 criterion over an <b>array family</b> on.
 </p>
 <p>
