@@ -1,7 +1,6 @@
-"""The shipped Modelica example's array model, `HeatRodTest`: the one test
-of the library whose variable is an array other than `unitTests.x`, so a
-criterion over an array family — Indices in the add form, the folded
-criteria row (D152) — can be tried on what ships.
+"""The shipped Modelica example's array model, `HeatRodTest`: a twenty-node
+array tracked by one pattern, so a criterion over an array family — Indices
+in the add form, the folded criteria row (D152) — can be tried on what ships.
 
 Without a simulator: what the spec entry holds, what its two shipped
 baselines hold, that each baseline passes its own criteria, and that the
@@ -178,7 +177,7 @@ def test_the_windows_dymola_partition_has_no_baseline_of_it_yet():
         json.loads(p.read_text(encoding="utf-8"))["model_id"]
         for p in (REFS / "Dymola" / "windows").glob("ref_*.json")
     }
-    assert ROD not in held and len(held) == 11
+    assert ROD not in held and len(held) == 12
 
 
 # ---------------------------------------------------------------------------

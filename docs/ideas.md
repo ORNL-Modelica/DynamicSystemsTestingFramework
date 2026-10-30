@@ -2171,6 +2171,123 @@ To settle in that session:
 
 Grill before planning.
 
+Discussed 2026-10-30 (two rounds). Status: maturing — not ready to build.
+- **Purpose (owner):** "showcase style use with some verification/testing but
+  not a direct test itself." `MetricTreeTest` shows the tree works; this
+  shows why you want one — one run, several phases, each scored by the check
+  that suits it, in different windows of the simulation.
+- **Settled:** sits beside the single-mode tests and replaces none (it may
+  help improve them). Must be doable in Modelica; Modelica is the shipped
+  showcase, a Python prototype is only for choosing the look, a Julia port
+  comes after. A fault table (faulty copies that must flip exactly their
+  criteria) and a rule test that every option appears in some example were
+  weighed and set aside as not the showcase's job.
+- **Leading candidate:** a thermostat-heated building of 3–4 rooms — warm-up
+  (`nrmse`, windowed), on/off cycling (`dominant-frequency`, `range`), switching
+  (`event-timing`), a setpoint step (`tube` windowed, `points`), a door opened
+  in one room (`range` under `warn`), energy and worst overshoot (`scalar`),
+  the rooms as an array family (`k-of-n`: 3 of 4 in comfort), a comfort score
+  (`weighted`). Rival: a built-up abstract signal (ramp, then sine plus
+  harmonic, then steps).
+- **Risks:** on/off event times move with solver and simulator; ten criteria
+  on one plot crowd it (plots come from the tree, so likely 2–3 plots);
+  baseline size with four rooms and switching.
+- **Next:** render the two candidates side by side for the owner to pick, then
+  grill the chosen one, then plan.
+
+Round 3 (2026-10-30), after a rendered prototype of both: the owner picked
+the thermostat building. Tree size: leans to more criteria rather than fewer
+(the prototype had 14). It includes a cross-simulator `against` under `warn`.
+Plot layout is not a free choice: plots are derived from the tree, one per
+scored variable or array family (`discovery/plots.py`), so the layout follows
+from how the tree names the rooms. Prototype tree: `and` of — `nrmse`
+T[1..4] warm-up 0–2 h; `or`(`event-timing` heater[1], `dominant-frequency`
+T[1]) over the cycling 2.5–6 h; `k-of-n` 3 of 4 rooms in 19–21 °C; `tube`
+T[1] 6–8 h after the setpoint step; `points` T[1] at 6.25 / 6.5 h; `scalar`
+heater energy integral; `weighted` ≥ 0.7 comfort score (`scalar` max T[1],
+`range` T[2], T[4] late); `warn`(`range` T[3] ≥ 12 °C, door open). Next: grill.
+
+Grilled 2026-10-30. Status: built for Modelica on 2026-10-30 as
+`ModelicaTestingLib.Examples.ThermostatBuildingTest` (the Julia port is still
+open). What changed from the decisions below when it was built: the tube is
+`"band"` with `tube_abs` 0.3; the cycling windows end at 21500 s, so the
+setpoint step's event stays out of the event count; the frequency peak is
+6.35e-4 Hz, the bin the run measured; and the OpenModelica `against` leaf
+covers the whole run, as the simulators agree within 1.3e-4 throughout.
+Later the same day room 1 got a ventilation fan (140 s of every 420 s), so
+`dominant-frequency` checks two peaks (the heating cycle at 5.6e-4 Hz and the
+fan at 1/420 Hz), and room 3 a hard tube over the door window, making 19
+leaves. With the fan, rooms 2 and 4 no longer dipped under the late band's
+21.4 °C floor, so the owner raised it to 21.45 °C: both miss it by about
+0.047 °C inside the `weighted` group, which still passes.
+Decisions:
+- `ModelicaTestingLib.Examples.ThermostatBuildingTest`, beside the 13; its
+  Documentation annotation draws the tree, as `MetricTreeTest`'s does.
+- Plain array equations (hysteresis by hand with `pre()`), no MSL blocks: one
+  screen, ports line for line to Julia. Four rooms, each with its own heat
+  capacity, loss and heater power, coupled in a chain 1–2–3–4.
+- Scenario in SI seconds: start at 10 °C, setpoint 20 °C stepping to 22 °C at
+  21600 s, door open in room 3 32400–34200 s, StopTime 43200, Interval 60,
+  Tolerance 1e-6, Dassl.
+- Plain arrays `T[4]`, `heaterOn[4]`, `P[4]` (no UnitTests: a family folds
+  only over plain arrays, as in HeatRodTest); the test tracks only what the
+  tree scores (`test_example_runs_clean.py` allows no warning).
+- The tree, 18 leaves, thresholds re-tuned on the real model:
+  ```
+  and
+  ├ nrmse T[1..4] 0–7200 s, tol 0.001 (4 leaves)
+  ├ or: event-timing heaterOn[1] 9000–21600 s ±1 s, count must match
+  │     (scores the MODEL's events: all variables share one time column)
+  │   · dominant-frequency T[1] 9000–21600 s, peak 1/1620 Hz ±5 %
+  ├ k-of-n 3/4: range T[i] 9000–21600 s, 19–21 °C (4 leaves)
+  ├ tube T[1] 21600–28800 s, ±0.3 °C abs
+  ├ points T[1] at 22500 and 23400 s, ±0.2 °C, values from the baseline
+  ├ scalar integral of P[1] over the run, ±2 % rel
+  ├ weighted < 0.5 °C, a comfort penalty: 0.5/0.3/0.2 · range T[1], T[2],
+  │   T[4] 28800–43200 s, 21.4–22.6 °C (weighted sums raw scores, so every
+  │   child is one unit; a warn child would fail it)
+  ├ warn: range T[3] 32400–37800 s, ≥ 12 °C (the door)
+  └ warn: nrmse T[1] against openmodelica, 0–7200 s, tol 0.01 (before the
+      first switching; after it the simulators' cycles drift apart)
+  ```
+- Plots fall out of the tree: the rooms' family, `heaterOn[1]`, `P[1]`; no
+  `plots` extras.
+- Baselines in Dymola/linux, Dymola/windows (made on the owner's Windows
+  Dymola) and OpenModelica/linux, plus the OpenModelica soft check. Every
+  point kept; measure the size after the first run, cap with
+  `baseline_points` only if needed.
+- Docs: a section in the criteria guide (the run, the tree, one report
+  screenshot, and a "try it": change room 3's heater power by 10 % and rerun);
+  the example library's README points to it as the place to start. No fault
+  variant ships. Julia port and any Python copy are later, separate work.
+- The plan opens with a spike: write the model, run it in Dymola and
+  OpenModelica here, and measure event counts per simulator, warm-up
+  agreement between them, baseline size, and that every leaf passes on its
+  own baseline. A failure there goes back to the owner before the build.
+
+**A badge for a failure its group absorbs (owner, 2026-10-30; from the
+kitchen-sink build; not scheduled).** A plot's variable badges say FAIL when
+any criterion on that variable fails, even when a group above it passes
+anyway: in `ThermostatBuildingTest` rooms 2 and 4 miss their late band by
+about 0.047 °C, the `weighted` group scores 0.023 against 0.5 and passes, and
+the test passes, yet the rooms' plot shows a red "T[2] FAIL" and "T[4] FAIL".
+A newcomer reads that as a broken example. The same holds under `or` and
+`k-of-n`. `warn` already has the softer state this asks for: the report's
+badge leaves an advisory criterion out of its verdict and shows an advisory
+chip, and the tool's pill says WARN (`reporting/context_builder.py`,
+`authoring/shell/tree_card.py` `leaf_status`). Extending that to "failed,
+but its group passes" would change both tiers' badges and the criteria rows.
+A UI question: decide it from rendered options.
+
+**Per-signal event detection (owner, 2026-10-30; from the kitchen-sink grill;
+not scheduled).** `event-timing` finds events only from repeated time stamps,
+and every variable of a result shares one time column, so a leaf on one
+signal scores the whole model's events. A showcase with four thermostats
+cannot say "room 1's heater switched on time". A per-signal mode — threshold
+or level crossings of the leaf's own variable, with a direction — would. Grill
+before planning: what a crossing is on a sampled signal, hysteresis, and how
+it pairs with the baseline's crossings.
+
 **~~CI speed and a test-value audit~~ (owner, 2026-10-18; investigate in depth
 before any work) — DONE (2026-10-21).** All three items below shipped: the
 `_compare_*` calls go through `resolve_mode(...).compare` and test_cli runs a

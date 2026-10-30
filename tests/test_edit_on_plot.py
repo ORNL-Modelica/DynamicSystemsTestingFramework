@@ -601,6 +601,29 @@ def test_available_needs_one_open_criterion_with_handles(session):
 
 
 @pytest.mark.parametrize(
+    ("reduce", "expected"),
+    [("max", True), ("integral", "this criterion draws nothing on its plot to drag")],
+)
+def test_a_scalar_is_edited_on_its_plot_only_where_it_draws_a_line(
+    session, reduce, expected
+):
+    # An integral is in the signal's units times seconds: no line, nothing
+    # to drag, so the tool does not offer the plot as a place to edit it.
+    _root_leaf_on_a(
+        session,
+        {
+            "metric": "scalar",
+            "variable": "x",
+            "quantity": {"reduce": reduce},
+            "tolerance": 0.1,
+            "tolerance_mode": "rel",
+        },
+    )
+    on_a = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics")
+    assert EditOnPlot().available(SessionView(session, on_a)) == expected
+
+
+@pytest.mark.parametrize(
     ("run_holds_v", "reason"),
     [
         (True, "variable 'v' not found in the baseline"),

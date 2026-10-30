@@ -795,6 +795,11 @@ class EditOnPlot:
             return UNSCORED_LEAF.format(reason.rstrip("."))
         if not _has_handles(vc.mode):
             return f"{vc.mode} has no on-plot handles"
+        # By what the leaf DRAWS as well as by its metric: a scalar over an
+        # integral is in other units than its signal and draws nothing on
+        # the plot, so there is no line to drag and no field to place.
+        if not _list_fields(vc.mode) and not any(map(_draggable, vc.geometry)):
+            return "this criterion draws nothing on its plot to drag"
         return True
 
     def panel(self, s: SessionView, ui_panel: Panel) -> None:

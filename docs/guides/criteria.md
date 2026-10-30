@@ -156,6 +156,89 @@ A number is both sides, so `0.02` and `{"lower": 0.02, "upper": 0.02}` score
 the same. `nrmse` has one ceiling, so its tolerance is always one number, and
 so is the base tolerance of a test or a project.
 
+## An example with every metric
+
+`ModelicaTestingLib.Examples.ThermostatBuildingTest`, in the repository's
+Modelica example library, puts every metric and every group into one tree.
+Four rooms in a row start at 10 °C, each with a heater and a thermostat that
+holds it within 0.5 °C of 20 °C. At 6 h the setpoint steps to 22 °C, and from
+9 h to 9.5 h room 3's door stands open. Room 1's ventilation fan runs 140 s
+of every 420 s.
+
+![Four rooms in a row seen from above, each with a radiator and a thermostat: heat crosses the inner walls and leaves through the outer ones, room 1's fan blows air out and room 3's door lets cold air in](../img/thermostat-building-3d.jpg)
+
+The schematic gives the numbers: each room's heater, the heat the rooms
+exchange, the fan's timing and the door's half hour, and, under the 12-hour
+timeline, the criteria that score each part.
+
+![The four rooms with their heater powers, the 150 W/K exchange between neighbours, room 1's fan and room 3's door; below, the run's phases with the setpoint step at 6 h and the criteria in each phase](../img/thermostat-building.png)
+
+The run lasts 12 h, and each part of it has its own criteria:
+
+- the warm-up, 0–7200 s: `nrmse` on each room's temperature, `T[1]` to `T[4]`;
+- the cycling, 9000–21500 s: an `or` of `event-timing` on heater 1's state,
+  `heaterOn[1]`, and `dominant-frequency` on `T[1]`, which declares two
+  peaks: the heating cycle, at 5.6e-4 Hz (about 30 minutes), and the fan, at
+  1/420 Hz; and a `k-of-n` that needs three of the four rooms to stay within
+  19–21 °C (`range`);
+- the step, 21600–28800 s: a `tube` of ±0.3 °C around room 1's climb, and
+  `points` at two moments of it;
+- the whole run: a `scalar`, the energy heater 1 uses (the integral of
+  `P[1]`), within 2 %;
+- the late part, 28800–43200 s: a `weighted` group of three `range`
+  criteria, rooms 1, 2 and 4 within 21.45–22.6 °C, weighted 0.5, 0.3 and 0.2;
+- the open door, 32400–37800 s: a `tube` of ±0.3 °C around room 3, while its
+  door is open and for an hour after;
+- two `warn` groups: room 3 stays above 12 °C over that same window, a floor
+  that only advises, and `T[1]` matches the OpenModelica run, stored as a soft
+  check named `openmodelica`.
+
+The tree is the test's entry in the library's `test_spec.json`. To run it
+with Dymola, from the repository's root (add `--backend OpenModelica` after
+`run` to run it with OpenModelica):
+
+```console
+$ dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --filter ModelicaTestingLib.Examples.ThermostatBuildingTest --report
+```
+
+The rooms' plot on the test's page draws each window, band, tube and
+checkpoint, with room 1's spectrum under it and both of its declared peaks:
+
+![The four rooms' temperatures with the criteria's windows, bands and checkpoints, and the cycle's spectrum below](../img/thermostat-report.png)
+
+`event-timing` scores the model's events, not one variable's: every variable
+of a result shares one time column, so heater 1's plot marks the switchings
+of all four heaters and of the fan, 120 of them between 9000 s and 21500 s.
+The window ends 100 s before the setpoint step, so the step's own event stays
+out of it. `dominant-frequency` finds both its peaks, at 5.60e-4 Hz and
+2.40e-3 Hz. The spectrum is computed in steps of about 8e-5 Hz over this
+window, so the fan's 1/420 Hz shows up at the nearest step, 2.40e-3 Hz.
+
+Rooms 2 and 4 dip about 0.05 °C under their late band, so both their `range`
+criteria fail. A `range` criterion scores how far, in °C, the room went
+outside its band. The `weighted` group adds those up with its weights, 0.5 ×
+0 (room 1) + 0.3 × 0.047 + 0.2 × 0.046 = 0.023 °C, and passes while the total
+stays under its threshold of 0.5 °C. It does. The page says 17 / 19 criteria passed, and the
+test passes.
+
+To try it, copy the library, give room 3's heater 10 % more power (`Pmax`
+from `{3000, 3200, 3500, 2800}` to `{3000, 3200, 3850, 2800}` in
+`Examples/ThermostatBuildingTest.mo`), and run the command above with the
+copy's `testing.json`, so the copy is scored against the baselines it
+carries. With Dymola the test fails, with 11 / 19 criteria passed. The rooms
+share their heat, so all four warm-up `nrmse` criteria fail (room 3's NRMSE
+is 0.053, against a tolerance of 0.001), and so does `event-timing`, which
+counts 124 events where the baseline holds 120. The `or` group still passes,
+because `dominant-frequency` still finds both peaks. Both tubes fail: room 1
+leaves its climb's tube (86.5 % of its samples are inside), and room 3, with more power,
+recovers from the open door faster than its baseline (34.9 % inside). The
+`k-of-n` band, the checkpoints and heater 1's energy (0.014 % off) pass. The
+`weighted` group passes with all three of its criteria now, since room 3's
+extra heat lifts rooms 2 and 4 inside their band. The 12 °C floor holds, and
+the OpenModelica comparison fails at 0.013 against 0.01: it is under a
+`warn`, so it only advises. The run also warns that the model's event count
+moved, from 837 to 885.
+
 ## Editing criteria with dstf author
 
 `dstf author` is a browser tool for writing criteria against the data they
