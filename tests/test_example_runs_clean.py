@@ -22,6 +22,8 @@ import pytest
 
 from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_one
+from dstf.comparison.metric_tree import MetricResult
+from dstf.comparison.tree_eval import flatten_evaluation
 from dstf.config import Config
 from dstf.discovery.test_registry import discover_tests
 from dstf.reporting.status import PASS, classify
@@ -92,3 +94,67 @@ def test_the_tree_scores_every_variable_the_model_tracks():
     tracked = {v.name for v in unit_test_variables(test)}
     assert tracked == {"unitTests.x[1]", "unitTests.x[2]"}
     assert set(collect_variables(test.metric_tree_spec)) == tracked
+
+
+def _leaves(node: MetricResult) -> list[MetricResult]:
+    if not node.children:
+        return [node]
+    return [leaf for child in node.children for leaf in _leaves(child)]
+
+
+@pytest.mark.parametrize("partition", PARTITIONS)
+def test_the_showcase_scores_what_the_criteria_guide_says(partition):
+    """The numbers docs/guides/criteria.md quotes for ThermostatBuildingTest
+    ("An example with every metric"), read from each shipped baseline scored
+    as its own run. A re-baseline or a spec edit that moves one fails here,
+    and the guide's paragraph is the one to rewrite with it."""
+    backend, os_name = partition.split("/")
+    config = Config(
+        config_file=REFS / "testing.json", backend_name=backend, os_name=os_name
+    )
+    store = ReferenceStore(config)
+    (test,) = [t for t in discover_tests(config) if t.model_id == SHOWCASE]
+    comp = compare_one(test, _as_its_own_run(store.get_reference(SHOWCASE)), store)
+    assert (classify(comp), [w.text for w in comp.warnings]) == (PASS, [])
+
+    # "17 / 19 criteria passed"
+    assert (sum(v.passed for v in comp.variables), len(comp.variables)) == (17, 19)
+
+    # Rooms 2 and 4 miss their late band by about 0.047 °C; both criteria
+    # sit in the `weighted` group, which totals 0.023 against 0.5 and passes.
+    spec = json.loads((REFS / "test_spec.json").read_text(encoding="utf-8"))
+    (entry,) = [e for e in spec["tests"] if e["model"] == SHOWCASE]
+    evaluated = flatten_evaluation(comp.metric_tree)
+    failed = {}
+    for leaf in _leaves(comp.metric_tree):
+        if leaf.passed:
+            continue
+        vc = leaf.diagnostics["variable"]
+        group = leaf.diagnostics["leaf_path"].rsplit("/children/", 1)[0]
+        node = entry
+        for step in group.split("/")[1:]:
+            node = node[int(step)] if step.isdigit() else node[step]
+        failed[(vc.mode, vc.name)] = (node.get("combinator"), group, vc.nrmse)
+    assert {k: v[0] for k, v in failed.items()} == {
+        ("range", "T[2]"): "weighted",
+        ("range", "T[4]"): "weighted",
+    }
+    assert failed[("range", "T[2]")][2] == pytest.approx(0.047, abs=1e-3)
+    assert failed[("range", "T[4]")][2] == pytest.approx(0.046, abs=1e-3)
+    weighted = evaluated[failed[("range", "T[2]")][1]]
+    assert weighted["passed"] is True
+    assert weighted["weighted_sum"] == pytest.approx(0.0234, abs=1e-4)
+    assert weighted["threshold"] == 0.5
+
+    by_mode = {v.mode: v for v in comp.variables}
+    # "120 of them between 9000 s and 21500 s"
+    events = by_mode["event-timing"].diagnostics
+    assert (events["ref_event_count"], events["act_event_count"]) == (120, 120)
+    # Two declared peaks, the heating cycle and the fan, both found.
+    peaks = by_mode["dominant-frequency"].diagnostics["paired_peaks"]
+    assert [p["declared_hz"] for p in peaks] == [0.00056, 0.002381]
+    assert all(p["passed"] for p in peaks)
+    assert [p["matched_hz"] for p in peaks] == [
+        pytest.approx(5.60e-4, rel=2e-3),
+        pytest.approx(2.40e-3, rel=2e-3),
+    ]
