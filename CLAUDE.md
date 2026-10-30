@@ -89,7 +89,7 @@ DynamicSystemsTestingFramework/
 ├── examples/
 │   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 14 tests: one per mode and combinator,
 │   │                                  #      an array model — HeatRodTest, `T[20]` — MetricTreeTest with its `analytic` companion,
-│   │                                  #      and ThermostatBuildingTest: four rooms scored by one 18-leaf tree that uses every metric and combinator)
+│   │                                  #      and ThermostatBuildingTest: four rooms scored by one 19-leaf tree that uses every metric and combinator)
 │   ├── fmu/                           # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
 │   ├── julia/JuliaMtkTestingLib/      # Julia/MTK demo library (mirrors ModelicaTestingLib layout)
 │   └── python/PythonTestingLib/       # Python demo library (SimpleRamp via scipy, ConstantCsv data loader)

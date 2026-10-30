@@ -162,24 +162,26 @@ so is the base tolerance of a test or a project.
 Modelica example library, puts every metric and every group into one tree.
 Four rooms in a row start at 10 °C, each with a heater and a thermostat that
 holds it within 0.5 °C of 20 °C. At 6 h the setpoint steps to 22 °C, and from
-9 h to 9.5 h room 3's door stands open. The run lasts 12 h, and each part of
-it has its own criteria:
+9 h to 9.5 h room 3's door stands open. Room 1's ventilation fan runs 140 s
+of every 420 s. The run lasts 12 h, and each part of it has its own criteria:
 
 - the warm-up, 0–7200 s: `nrmse` on each room's temperature, `T[1]` to `T[4]`;
 - the cycling, 9000–21500 s: an `or` of `event-timing` on heater 1's state,
-  `heaterOn[1]`, and `dominant-frequency` on the cycle of `T[1]`; and a
-  `k-of-n` that needs three of the four rooms to stay within 19–21 °C
-  (`range`);
+  `heaterOn[1]`, and `dominant-frequency` on `T[1]`, which declares two
+  peaks: the heating cycle, at 5.6e-4 Hz (about 30 minutes), and the fan, at
+  1/420 Hz; and a `k-of-n` that needs three of the four rooms to stay within
+  19–21 °C (`range`);
 - the step, 21600–28800 s: a `tube` of ±0.3 °C around room 1's climb, and
   `points` at two moments of it;
 - the whole run: a `scalar`, the energy heater 1 uses (the integral of
   `P[1]`), within 2 %;
 - the late part, 28800–43200 s: a `weighted` group of three `range`
-  criteria, rooms 1, 2 and 4 within 21.4–22.6 °C, weighted 0.5, 0.3 and 0.2;
-- two `warn` groups: room 3 stays above 12 °C while its door is open and for
-  an hour after, and
-  `T[1]` matches the OpenModelica run, stored as a soft check named
-  `openmodelica`.
+  criteria, rooms 1, 2 and 4 within 21.45–22.6 °C, weighted 0.5, 0.3 and 0.2;
+- the open door, 32400–37800 s: a `tube` of ±0.3 °C around room 3, while its
+  door is open and for an hour after;
+- two `warn` groups: room 3 stays above 12 °C over that same window, a floor
+  that only advises, and `T[1]` matches the OpenModelica run, stored as a soft
+  check named `openmodelica`.
 
 The tree is the test's entry in the library's `test_spec.json`. To run it
 with Dymola, from the repository's root (add `--backend OpenModelica` after
@@ -196,27 +198,34 @@ checkpoint, with the spectrum of the cycle under it:
 
 `event-timing` scores the model's events, not one variable's: every variable
 of a result shares one time column, so heater 1's plot marks the switchings
-of all four rooms, 62 of them between 9000 s and 21500 s. The window ends
-100 s before the setpoint step, so the step's own event stays out of it.
+of all four heaters and of the fan, 120 of them between 9000 s and 21500 s.
+The window ends 100 s before the setpoint step, so the step's own event stays
+out of it. `dominant-frequency` finds both its peaks, at 5.60e-4 Hz and
+2.40e-3 Hz.
 
-Room 2 dips 0.05 °C under its late band, so its `range` criterion fails. Its
-weight is 0.3, so the `weighted` group scores 0.3 × 0.052 = 0.016, under its
-threshold of 0.5, and passes. The page says 17 / 18 criteria passed, and the
+Rooms 2 and 4 dip about 0.05 °C under their late band, so both their `range`
+criteria fail. The `weighted` group tolerates two misses that small: their
+weighted total, 0.3 × 0.047 + 0.2 × 0.046 = 0.023, is far under its threshold
+of 0.5, and the group passes. The page says 17 / 19 criteria passed, and the
 test passes.
 
 To try it, copy the library, give room 3's heater 10 % more power (`Pmax`
 from `{3000, 3200, 3500, 2800}` to `{3000, 3200, 3850, 2800}` in
 `Examples/ThermostatBuildingTest.mo`), and run the command above with the
 copy's `testing.json`, so the copy is scored against the baselines it
-carries. With Dymola the test fails, with 13 / 18 criteria passed. The
-rooms share their heat, so all four warm-up `nrmse` criteria fail (room 3's
-NRMSE is 0.053, against a tolerance of 0.001), and so does `event-timing`,
-which counts more switchings than the baseline holds. The `or` group still passes, because `dominant-frequency` still finds the
-cycle at its period. The `k-of-n` band, the tube, the checkpoints and heater
-1's energy (0.12 % off) all pass. The `weighted` group passes with all three
-of its criteria now, since room 3's extra heat keeps room 2 inside its band.
-Both `warn` groups pass, the OpenModelica comparison at 0.005 against 0.01.
-The run also warns that the model's event count moved, from 453 to 497.
+carries. With Dymola the test fails, with 11 / 19 criteria passed. The rooms
+share their heat, so all four warm-up `nrmse` criteria fail (room 3's NRMSE
+is 0.053, against a tolerance of 0.001), and so does `event-timing`, which
+counts 124 events where the baseline holds 120. The `or` group still passes,
+because `dominant-frequency` still finds both peaks. Both tubes fail: room 1
+leaves its climb's tube (86.5 % of it inside), and room 3, with more power,
+recovers from the open door faster than its baseline (34.9 % inside). The
+`k-of-n` band, the checkpoints and heater 1's energy (0.014 % off) pass. The
+`weighted` group passes with all three of its criteria now, since room 3's
+extra heat lifts rooms 2 and 4 inside their band. The 12 °C floor holds, and
+the OpenModelica comparison fails at 0.013 against 0.01: it is under a
+`warn`, so it only advises. The run also warns that the model's event count
+moved, from 837 to 885.
 
 ## Editing criteria with dstf author
 
