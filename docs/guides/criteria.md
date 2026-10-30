@@ -163,7 +163,17 @@ Modelica example library, puts every metric and every group into one tree.
 Four rooms in a row start at 10 °C, each with a heater and a thermostat that
 holds it within 0.5 °C of 20 °C. At 6 h the setpoint steps to 22 °C, and from
 9 h to 9.5 h room 3's door stands open. Room 1's ventilation fan runs 140 s
-of every 420 s. The run lasts 12 h, and each part of it has its own criteria:
+of every 420 s.
+
+![Four rooms in a row seen from above, each with a radiator and a thermostat: heat crosses the inner walls and leaves through the outer ones, room 1's fan blows air out and room 3's door lets cold air in](../img/thermostat-building-3d.jpg)
+
+The schematic gives the numbers: each room's heater, the heat the rooms
+exchange, the fan's timing and the door's half hour, and, under the 12-hour
+timeline, the criteria that score each part.
+
+![The four rooms with their heater powers, the 150 W/K exchange between neighbours, room 1's fan and room 3's door; below, the run's phases with the setpoint step at 6 h and the criteria in each phase](../img/thermostat-building.png)
+
+The run lasts 12 h, and each part of it has its own criteria:
 
 - the warm-up, 0–7200 s: `nrmse` on each room's temperature, `T[1]` to `T[4]`;
 - the cycling, 9000–21500 s: an `or` of `event-timing` on heater 1's state,

@@ -59,6 +59,9 @@ room 3's door stands open from 32400&nbsp;s to 34200&nbsp;s, and room 1's
 ventilation fan runs 140&nbsp;s of every 420&nbsp;s. The run lasts 12&nbsp;h.
 </p>
 <p>
+<img src=\"modelica://ModelicaTestingLib/Resources/Images/ThermostatBuildingTest.png\" width=\"840\" alt=\"The four rooms, their heaters, the fan and the door, and the 12-hour run with the criteria that score each part\"/>
+</p>
+<p>
 One <b>MetricTree</b> in <code>test_spec.json</code> scores every phase of
 the run, with every metric and every combinator the framework has:
 </p>
