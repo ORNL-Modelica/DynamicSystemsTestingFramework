@@ -192,7 +192,7 @@ $ dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/
 ```
 
 The rooms' plot on the test's page draws each window, band, tube and
-checkpoint, with the spectrum of the cycle under it:
+checkpoint, with room 1's spectrum under it and both of its declared peaks:
 
 ![The four rooms' temperatures with the criteria's windows, bands and checkpoints, and the cycle's spectrum below](../img/thermostat-report.png)
 
@@ -201,12 +201,14 @@ of a result shares one time column, so heater 1's plot marks the switchings
 of all four heaters and of the fan, 120 of them between 9000 s and 21500 s.
 The window ends 100 s before the setpoint step, so the step's own event stays
 out of it. `dominant-frequency` finds both its peaks, at 5.60e-4 Hz and
-2.40e-3 Hz.
+2.40e-3 Hz. The spectrum is computed in steps of about 8e-5 Hz over this
+window, so the fan's 1/420 Hz shows up at the nearest step, 2.40e-3 Hz.
 
 Rooms 2 and 4 dip about 0.05 °C under their late band, so both their `range`
-criteria fail. The `weighted` group tolerates two misses that small: their
-weighted total, 0.3 × 0.047 + 0.2 × 0.046 = 0.023, is far under its threshold
-of 0.5, and the group passes. The page says 17 / 19 criteria passed, and the
+criteria fail. A `range` criterion scores how far, in °C, the room went
+outside its band. The `weighted` group adds those up with its weights, 0.5 ×
+0 (room 1) + 0.3 × 0.047 + 0.2 × 0.046 = 0.023 °C, and passes while the total
+stays under its threshold of 0.5 °C. It does. The page says 17 / 19 criteria passed, and the
 test passes.
 
 To try it, copy the library, give room 3's heater 10 % more power (`Pmax`
@@ -218,7 +220,7 @@ share their heat, so all four warm-up `nrmse` criteria fail (room 3's NRMSE
 is 0.053, against a tolerance of 0.001), and so does `event-timing`, which
 counts 124 events where the baseline holds 120. The `or` group still passes,
 because `dominant-frequency` still finds both peaks. Both tubes fail: room 1
-leaves its climb's tube (86.5 % of it inside), and room 3, with more power,
+leaves its climb's tube (86.5 % of its samples are inside), and room 3, with more power,
 recovers from the open door faster than its baseline (34.9 % inside). The
 `k-of-n` band, the checkpoints and heater 1's energy (0.014 % off) pass. The
 `weighted` group passes with all three of its criteria now, since room 3's

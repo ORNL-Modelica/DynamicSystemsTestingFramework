@@ -2217,8 +2217,9 @@ covers the whole run, as the simulators agree within 1.3e-4 throughout.
 Later the same day room 1 got a ventilation fan (140 s of every 420 s), so
 `dominant-frequency` checks two peaks (the heating cycle at 5.6e-4 Hz and the
 fan at 1/420 Hz), and room 3 a hard tube over the door window, making 19
-leaves; with the fan the late band's floor rose to 21.45 °C, which rooms 2
-and 4 miss inside the `weighted` group.
+leaves. With the fan, rooms 2 and 4 no longer dipped under the late band's
+21.4 °C floor, so the owner raised it to 21.45 °C: both miss it by about
+0.047 °C inside the `weighted` group, which still passes.
 Decisions:
 - `ModelicaTestingLib.Examples.ThermostatBuildingTest`, beside the 13; its
   Documentation annotation draws the tree, as `MetricTreeTest`'s does.
@@ -2270,9 +2271,13 @@ any criterion on that variable fails, even when a group above it passes
 anyway: in `ThermostatBuildingTest` rooms 2 and 4 miss their late band by
 about 0.047 °C, the `weighted` group scores 0.023 against 0.5 and passes, and
 the test passes, yet the rooms' plot shows a red "T[2] FAIL" and "T[4] FAIL".
-A newcomer reads that as a broken example. The same holds under `or`,
-`k-of-n` and `warn`. A softer state — "failed, but its group passes" — would
-change both tiers' badges and the criteria rows. A UI question: decide it from rendered options.
+A newcomer reads that as a broken example. The same holds under `or` and
+`k-of-n`. `warn` already has the softer state this asks for: the report's
+badge leaves an advisory criterion out of its verdict and shows an advisory
+chip, and the tool's pill says WARN (`reporting/context_builder.py`,
+`authoring/shell/tree_card.py` `leaf_status`). Extending that to "failed,
+but its group passes" would change both tiers' badges and the criteria rows.
+A UI question: decide it from rendered options.
 
 **Per-signal event detection (owner, 2026-10-30; from the kitchen-sink grill;
 not scheduled).** `event-timing` finds events only from repeated time stamps,

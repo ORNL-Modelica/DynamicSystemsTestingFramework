@@ -1,6 +1,6 @@
 within ModelicaTestingLib.Examples;
 model ThermostatBuildingTest
-  "Four thermostat-heated rooms: warm-up, cycling, a setpoint step and an open door, scored by one criteria tree"
+  "Four thermostat-heated rooms: warm-up, cycling with a ventilation fan, a setpoint step and an open door, scored by one criteria tree"
 
   parameter Real C[4](each unit="J/K") = {1.08e6, 1.296e6, 0.972e6, 1.188e6}
     "Heat capacity of each room";
