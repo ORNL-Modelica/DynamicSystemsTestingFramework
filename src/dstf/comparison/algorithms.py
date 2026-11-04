@@ -193,9 +193,10 @@ def _no_data_failure(mode: str, reason: str) -> VariableComparison:
 #: Measured over TRANSFORM's 2,558 stored signals (2026-11-04): rounding
 #: noise on a constant reaches 3.2e-12 of its value (OpenModelica, ~14,000
 #: eps; 100 eps failed OilWater_PCHX on noise of 1,240), and the smallest real
-#: motion is 3e-6 (a Dymola pressure moving 0.4 Pa near 1.3e5). 1e-10 sits
-#: between, two decades from each. A run's relative tolerance (1e-4 there)
-#: would call that 3e-6 motion a constant and loosen it ~300,000-fold.
+#: motion is 3e-6 (a Dymola pressure moving 0.4 Pa near 1.3e5). 1e-10 is
+#: 1.5 decades above that noise and 4.5 below that motion. A run's relative
+#: tolerance (1e-4 there) would call that 3e-6 motion a constant and loosen
+#: it ~300,000-fold.
 CONSTANT_RANGE = 1e-10
 
 

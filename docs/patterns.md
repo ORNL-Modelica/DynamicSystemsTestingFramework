@@ -72,7 +72,7 @@
 - Explicit `mode: "tube"` is never overridden by the `default_points` flag — per-variable mode always wins
 
 ### Constant signal NRMSE: normalize by magnitude
-- When signal range < epsilon (constant signals), NRMSE normalizes by `max(|ref_values|)` instead of signal range
+- When signal range < max(`_EPS`, `CONSTANT_RANGE` (1e-10) × magnitude) (constant signals, rounding noise included; `algorithms.error_scale`), NRMSE normalizes by `max(|ref_values|)` instead of signal range
 - Avoids false failures from float32 quantization on large-magnitude constants (e.g., 512-unit error on 37e9 gives nrmse ≈ 1.4e-8, not 512)
 - Falls back to raw RMSE only when magnitude is also near-zero (true zero constant)
 

@@ -220,11 +220,14 @@ class TestCompareTrajectories:
             # TRANSFORM's smallest real motion: OilWater_PTHX on Dymola
             # (unitTests.x[3]) moves 0.4 Pa near 1.305e5, 3e-6 of its value.
             (130500.0 + np.array([0.0, 0.4, 0.2]), False),
+            # Under 1 the bound is still relative: near 0.5 it is 5e-11, so
+            # a range of 1e-12 is a constant.
+            (0.5 + np.array([0.0, 1e-12, 5e-13]), True),
             # Below _EPS / 1e-10 (2.2e-4) the bound is _EPS itself: a range
             # of 2e-12 varies.
             (np.array([1e-12, 2e-12, 3e-12]), False),
         ],
-        ids=["under-the-bound", "over-the-bound", "real-motion", "small"],
+        ids=["under-the-bound", "over-the-bound", "real-motion", "under-one", "small"],
     )
     def test_a_constant_is_a_range_under_1e10_of_its_size(self, values, constant):
         t = np.arange(len(values), dtype=float)

@@ -24,11 +24,6 @@ this file says when they do.
 
 ### Fixed
 
-- nrmse treats a baseline as constant when its range is under 1e-10 of its
-  value (was 100 machine epsilons), so a constant carrying rounding noise is
-  scored against its value, not against the noise. TRANSFORM's
-  `OilWater_PCHX` on OpenModelica failed on a pressure that wobbles by 5e-8
-  Pa near 184,917 Pa.
 - OpenModelica runs a test whose solver it does not know — Dymola's
   `Esdirk45a`, from a `__Dymola_Algorithm` annotation or `test_spec.json` —
   on dassl, where omc stopped with `unrecognized option -s esdirk45a`; `dstf
@@ -51,9 +46,10 @@ this file says when they do.
   `tube`, `points` and `range` read them alike as a `metrics` leaf and as a
   `variable_overrides` entry. Stored baselines are not changed.
 - `nrmse` treats a constant that carries rounding noise as a constant: a range
-  under about 2e-14 times the value's size (or under 2e-14, for values below 1)
-  is normalised by the value, not by the range. A constant near 821 with noise
-  of 1e-13 failed an actual 4.5e-13 off it. The normalised error drawn on a
+  under 1e-10 of the value (or under 2.2e-14, for values below 2.2e-4) is
+  normalised by the value, not by the range. A constant near 821 with noise
+  of 1e-13 failed an actual 4.5e-13 off it, and TRANSFORM's `OilWater_PCHX`
+  on OpenModelica a pressure near 184,917 Pa that wobbles by 5e-8 Pa. The normalised error drawn on a
   plot, in the report and in `dstf author`, is divided by the same number as
   the score of a criterion with no window.
 - On Python 3.13, a `--source-path`, `--reference-root` or `--config` (or a
