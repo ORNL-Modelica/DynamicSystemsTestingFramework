@@ -504,8 +504,9 @@ def _evaluate_leaf(
         # a window cut between an event's samples keeps it whole. The modes
         # snap again (`actual_on_reference_grid`, event-timing) for callers
         # that do not come through here; that changes nothing: after a snap
-        # every positive gap is at least the threshold, and a window's span
-        # is no larger than the run's, so its threshold is no larger either.
+        # an event's samples all sit at its first time and the next sample at
+        # least its threshold past it, and a window's span is no larger than
+        # the run's, so its threshold is no larger either (`SAME_INSTANT`).
         ref_time = same_instant(ref_time)
         act_time = same_instant(act_time)
 

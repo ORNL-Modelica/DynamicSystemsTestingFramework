@@ -4,9 +4,11 @@ import numpy as np
 import pytest
 
 from dstf.backends.types import TestResult
+from dstf.comparison.algorithms import same_instant
 from dstf.comparison.comparator import _check_structural_changes
 from dstf.comparison.registry import summarize
 from dstf.comparison.sides import Sides
+from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.storage.baseline_codec import decode_reference
 from scoring import score
 
@@ -31,8 +33,12 @@ from scoring import score
         ([0.0, 0.25, 0.25, 0.250000012500095, 0.250000012500095, 1.0], [0.25]),
         # An event pair 1e-14 before a grid sample at 6.0: one event.
         ([0.0, 5.99999999999999, 5.99999999999999, 6.0, 10.0], [5.99999999999999]),
-        # Two pairs 1e-5 of the span apart are two events.
-        ([0.0, 0.25, 0.25, 0.25001, 0.25001, 1.0], [0.25, 0.25001]),
+        # Two pairs 1e-6 of the span apart (ten times the threshold) are two
+        # events.
+        ([0.0, 0.25, 0.25, 0.250001, 0.250001, 1.0], [0.25, 0.250001]),
+        # A lone sample 1e-14 before a grid sample is no event: no time is
+        # written twice.
+        ([0.0, 5.99999999999999, 6.0, 10.0], []),
     ],
     ids=[
         "none",
@@ -45,6 +51,7 @@ from scoring import score
         "near-pair",
         "grid-sample-after",
         "apart",
+        "lone-near-sample",
     ],
 )
 def test_the_events_a_run_holds_are_its_samples_at_one_instant(time, events):
@@ -180,15 +187,22 @@ class TestCompareTrajectories:
         assert vc.nrmse < 1e-14
         assert vc.passed is True
 
-    def test_a_small_signal_that_varies_is_not_constant(self):
-        t = np.array([0.0, 1.0, 2.0])
-        ref_v = np.array([1e-12, 2e-12, 3e-12])
-        act_v = np.array([2e-12, 3e-12, 4e-12])
-        vc = score({"mode": "nrmse"}, t, ref_v, t, act_v, tolerance=1e-4)
-        assert vc.is_constant == False
-        # An error of 1e-12 everywhere over a range of 2e-12.
-        assert vc.nrmse == pytest.approx(0.5)
-        assert vc.passed is False
+    @pytest.mark.parametrize(
+        ("values", "constant"),
+        [
+            # Near 1000 the bound is _EPS * 1000 ≈ 2.2e-11: a range of 1e-11
+            # is a constant, a range of 1e-10 is not.
+            (1000.0 + np.array([0.0, 1e-11, 5e-12]), True),
+            (1000.0 + np.array([0.0, 1e-10, 5e-11]), False),
+            # Below 1 the bound is _EPS itself: a range of 2e-12 varies.
+            (np.array([1e-12, 2e-12, 3e-12]), False),
+        ],
+        ids=["under-the-bound", "over-the-bound", "small"],
+    )
+    def test_a_constant_is_a_range_under_eps_of_its_size(self, values, constant):
+        t = np.arange(len(values), dtype=float)
+        vc = score({"mode": "nrmse"}, t, values, t, values, tolerance=1e-4)
+        assert vc.is_constant == constant
 
     def test_constant_zero_reference(self):
         """Constant zero reference with nonzero actual uses raw RMSE."""
@@ -277,9 +291,10 @@ class TestCompareTrajectories:
 
 
 class TestEventsAtNearlyOneInstant:
-    """Samples closer in time than 1e-7 of the run's span are one instant:
-    an event OpenModelica writes as a pair and a second pair a hair later
-    is scored as the one event another run writes as one exact pair."""
+    """A sample less than 1e-7 of max(span, |t0|) past a recorded event's
+    first time t0 is that event's: an event OpenModelica writes as a pair and
+    a second pair a hair later is scored as the one event another run writes
+    as one exact pair."""
 
     # A step from 0 to 1 at 0.25 on a 0.002 grid over [0, 1].
     BEFORE = np.linspace(0.0, 0.25, 126)[:-1]
@@ -356,6 +371,73 @@ class TestEventsAtNearlyOneInstant:
         assert [p.time for p in vc.geometry if p.id.startswith("events/act/")] == [0.25]
         assert vc.passed is True
 
+    def test_dense_steps_with_no_recorded_event_stay_apart(self):
+        """A run that writes every solver step: 0.05 apart over the first
+        2.45 s of a 1e6 s run, under 1e-7 of the span, but no time is written
+        twice — no event, and an overshoot among the steps is scored."""
+        dense = np.arange(0.0, 2.5, 0.05)
+        tail = np.arange(1000.0, 1e6 + 1, 1000.0)
+        t = np.concatenate([dense, tail])
+        ref_v = np.concatenate([dense / 2.5, np.ones(len(tail))])
+        act_v = ref_v.copy()
+        act_v[25] = 5.0  # at t = 1.25, where the reference is 0.5
+        vc = score({"mode": "nrmse"}, t, ref_v, t, act_v, tolerance=1e-3)
+        assert vc.max_abs_error == pytest.approx(4.5)
+        assert vc.max_abs_error_time == pytest.approx(1.25)
+        assert vc.passed is False
+
+    def test_a_late_start_reads_its_near_pair_as_one_event(self):
+        """OpenModelica's offset grows with the time of the event: a run from
+        100 s to 101 s holds the pair at 100.25 and a second pair 5e-8 of
+        100.25 later — over the run's 1 s span, but one event."""
+        late = 100.25
+        before = np.linspace(100.0, late, 126)[:-1]
+        after = np.linspace(late, 101.0, 376)[1:]
+        near = late + 5e-8 * late
+        ref_t = np.concatenate([before, [late, late, near, near], after])
+        ref_v = np.concatenate([np.zeros(125), [0.0, 0.0, 0.0, 1.0], np.ones(375)])
+        act_t = np.concatenate([before, [late, late], after])
+        act_v = np.concatenate([np.zeros(125), [0.0, 1.0], np.ones(375)])
+        vc = score({"mode": "nrmse"}, ref_t, ref_v, act_t, act_v, tolerance=1e-4)
+        assert vc.nrmse == 0.0
+        ev = score({"mode": "event-timing"}, ref_t, ref_v, act_t, act_v)
+        assert ev.diagnostics["ref_event_count"] == 1
+        assert ev.passed is True
+
+    @pytest.mark.parametrize(
+        "criterion",
+        [
+            {"mode": "points", "points": [{"time": 0.25, "tolerance": 0.01}]},
+            {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01},
+        ],
+        ids=["points", "tube"],
+    )
+    def test_a_criterion_reads_the_near_pair_alike_on_both_paths(self, criterion):
+        """The same criterion as a `variable_overrides` entry and as a
+        `metrics` leaf, on a run that writes the near pair against a baseline
+        that writes the exact one: both pass."""
+        act_t, act_v = self._step(self.NEAR, [0.0, 0.0, 0.0, 1.0])
+        ref_t, ref_v = self._step(self.EXACT, [0.0, 1.0])
+        result = TestResult(
+            model_id="Test.Model",
+            success=True,
+            variables=[VariableResult(index=1, name="x", time=act_t, values=act_v)],
+        )
+        reference = decode_reference(
+            {
+                "test_id": "0001",
+                "time": ref_t.tolist(),
+                "variables": [{"index": 1, "name": "x", "values": ref_v.tolist()}],
+            }
+        )
+        flat = _make_test(variable_overrides={"x": criterion})
+        leaf = {"metric": criterion["mode"], "variable": "x"}
+        leaf.update({k: v for k, v in criterion.items() if k != "mode"})
+        tree = _make_test()
+        tree.metric_tree_spec = parse_metric_tree(leaf)
+        assert compare_test(flat, result, reference, default_tolerance=1e-4).passed
+        assert compare_test(tree, result, reference, default_tolerance=1e-4).passed
+
     def test_an_event_at_the_stop_time_still_fails(self):
         """Owner decision (issue #23): a newer OpenModelica writes the value
         after an event at the stop time where the older one wrote the value
@@ -370,6 +452,24 @@ class TestEventsAtNearlyOneInstant:
         assert vc.max_abs_error == pytest.approx(0.1)
         assert vc.max_abs_error_time == 1.0
         assert vc.passed is False
+
+
+def test_putting_times_on_their_instants_again_moves_nothing():
+    """The scorer snaps a criterion's series over the run, cuts its window,
+    and a mode snaps the window again: that second snap must move nothing,
+    of the whole series or of any window cut from it."""
+    rng = np.random.default_rng(23)
+    steps = [0.0, 1e-9, 3e-8, 9e-8, 1.1e-7, 0.05, 0.3]
+    for _ in range(2000):
+        n = int(rng.integers(3, 12))
+        t = rng.choice([0.0, 1.0, 100.0, -5.0]) + np.concatenate(
+            [[0.0], np.cumsum(rng.choice(steps, size=n - 1))]
+        )
+        snapped = same_instant(t)
+        assert np.array_equal(same_instant(snapped), snapped), t
+        lo, hi = sorted(rng.uniform(t[0], t[-1], 2))
+        window = snapped[(snapped >= lo) & (snapped <= hi)]
+        assert np.array_equal(same_instant(window), window), (t, lo, hi)
 
 
 # ---------------------------------------------------------------------------
@@ -2623,7 +2723,6 @@ class TestCompareOne:
 
 import logging
 
-from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.reporting.status import PASS, classify
 
 _VI_T = np.linspace(0.0, 1.0, 11)

@@ -191,12 +191,11 @@ class TestWindowEvaluation:
         assert result.passed is False
         assert result.score > 0.1
 
-    # A step from 0 to 1 at 0.25 over a 1 s run on a 0.002 grid. The
-    # reference holds the event as OpenModelica can write it: a pair at 0.25
-    # and a second pair 1.25e-8 (of the run's span) later; the actual as one
-    # exact pair.
+    # A step from 0 to 1 at 0.25 over a 100 s run. The reference holds the
+    # event as OpenModelica can write it: a pair at 0.25 and a second pair
+    # 1e-6 later (1e-8 of the run's span); the actual as one exact pair.
     _BEFORE = np.linspace(0.0, 0.25, 126)[:-1]
-    _AFTER = np.linspace(0.25, 1.0, 376)[1:]
+    _AFTER = np.concatenate([np.linspace(0.25, 1.0, 376)[1:], np.arange(2.0, 101.0)])
 
     def _step(self, at, jump):
         t = np.concatenate([self._BEFORE, at, self._AFTER])
@@ -207,7 +206,7 @@ class TestWindowEvaluation:
 
     def _near_pair_against_exact(self, window):
         ref_t, ref_v = self._step(
-            [0.25, 0.25, 0.250000012500095, 0.250000012500095], [0.0, 0.0, 0.0, 1.0]
+            [0.25, 0.25, 0.250001, 0.250001], [0.0, 0.0, 0.0, 1.0]
         )
         act_t, act_v = self._step([0.25, 0.25], [0.0, 1.0])
         tree = parse_metric_tree(
@@ -221,8 +220,8 @@ class TestWindowEvaluation:
         )
 
     def test_a_window_reads_an_event_on_the_runs_instants(self):
-        """1.25e-8 is over 1e-7 of the window's 0.1 s span but under 1e-7 of
-        the run's 1 s: the pair is one event by the run's span."""
+        """1e-6 is over 1e-7 of the window's 0.1 s span (and of the event's
+        time) but under 1e-7 of the run's 100 s: one event by the run."""
         result = self._near_pair_against_exact({"start": 0.2, "end": 0.3})
         assert result.score == 0.0
         assert result.passed is True
@@ -230,7 +229,7 @@ class TestWindowEvaluation:
     def test_a_window_that_ends_inside_an_event_keeps_it_whole(self):
         """The window ends between the event's two pairs: it holds the whole
         event, the value after it as well as before."""
-        result = self._near_pair_against_exact({"start": 0.2, "end": 0.25 + 0.6e-8})
+        result = self._near_pair_against_exact({"start": 0.2, "end": 0.2500005})
         assert result.score == 0.0
         assert result.passed is True
 

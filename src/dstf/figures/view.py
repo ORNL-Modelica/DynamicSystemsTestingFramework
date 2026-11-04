@@ -93,8 +93,9 @@ def error_series(
     """Signed, absolute and normalised error of the actual on the reference
     grid, through the comparator's own event-aware interpolation
     (:func:`~dstf.comparison.algorithms.actual_on_reference_grid`) and its
-    normalisation (:func:`~dstf.comparison.algorithms.error_scale`). The
-    error drawn is the error scored."""
+    normalisation (:func:`~dstf.comparison.algorithms.error_scale`), over
+    the whole series: for a criterion with no window the error drawn is the
+    error scored."""
     if ref_time is None or ref_values is None or act_time is None or act_values is None:
         return ()
     times, ref_on, act_on = actual_on_reference_grid(

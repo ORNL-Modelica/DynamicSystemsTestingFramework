@@ -48,6 +48,7 @@ from .algorithms import (
     _event_times,
     _interpolate_tube_widths,
     _peak_window,
+    same_instant,
 )
 from .geometry import Primitive, Series, VLine
 from .sides import parse_sides
@@ -268,12 +269,13 @@ def _window_ends(edit: HandleEdit, leaf: dict) -> tuple[float | None, float | No
 def _windowed(
     edit: HandleEdit, leaf: dict, reference: tuple[np.ndarray, np.ndarray]
 ) -> tuple[np.ndarray, np.ndarray]:
-    """``reference`` as the SCORER receives it: the evaluator slices it to
-    the samples inside the leaf's ``window`` (inclusive) first, so whatever
-    a mode reads off the reference itself — its final value, its events —
-    it reads off this. Refused where the window holds no sample."""
+    """``reference`` as the SCORER receives it: the evaluator puts it on its
+    instants over the whole run (`same_instant`), then slices it to the
+    samples inside the leaf's ``window`` (inclusive), so whatever a mode
+    reads off the reference itself — its final value, its events — it reads
+    off this. Refused where the window holds no sample."""
     start, end = _window_ends(edit, leaf)
-    ref_time = np.asarray(reference[0], dtype=float)
+    ref_time = same_instant(np.asarray(reference[0], dtype=float))
     mask = np.ones(len(ref_time), dtype=bool)
     if start is not None:
         mask &= ref_time >= start

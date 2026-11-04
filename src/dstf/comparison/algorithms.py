@@ -17,20 +17,38 @@ from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
 from .sides import Sides, as_written, parse_number, parse_sides
 from .types import _EPS, VariableComparison
 
-#: Samples closer in time than this fraction of the series' span (its last
-#: time minus its first) are one instant (`same_instant`); a criterion's
-#: series are snapped over the whole run before a window is cut from them
-#: (`tree_eval._evaluate_leaf`), so the span is the run's. Why 1e-7: an
-#: OpenModelica run can write an event as a pair at t and a second pair a hair
-#: later, and over TRANSFORM's 956 stored baselines (measured 2026-11-04) that
-#: offset reaches ~2.25e-8 of the run's span; 3e-8 was the smallest fraction
-#: that scored all seven affected tests alike, 1e-8 was not. OpenModelica has
-#: no constant for the offset to read instead: its zero-crossing hysteresis
+#: How close to a recorded event a sample is that event's instant: within
+#: ``SAME_INSTANT * max(span, |t0|)`` of the time ``t0`` the event is first
+#: written at (`same_instant`; span is the series' last time minus its first,
+#: and a criterion's series are snapped over the whole run before a window is
+#: cut, so it is the run's). Why 1e-7: an OpenModelica run can write an event
+#: as a pair at t and a second pair a hair later, and over TRANSFORM's 956
+#: stored baselines (measured 2026-11-04) that offset reaches ~2.25e-8 of the
+#: run's span; 3e-8 was the smallest fraction that scored all seven affected
+#: tests alike, 1e-8 was not. The offset grows with t, not with the span: in
+#: this repo's OpenModelica baselines it is 2e-10 * t at every near pair
+#: (Modelica ref_0002 at t = 2, 5, 8; ref_0013 at t = 21600, 32400, 34200), and
+#: the issue's is 5e-8 * t at 0.25 — so a run that starts late scales by |t0|.
+#: OpenModelica has no constant to read instead: its zero-crossing hysteresis
 #: (`TOL_HYSTERESIS_ZEROCROSSINGS = 1e-4` in `simulation/solver/epsilon.h`) is a
 #: band on the crossing function's VALUE, so the time it costs follows the
-#: signal's slope. Wrong when a model's offset exceeds 1e-7 of its span (its
-#: events split again), and for events genuinely closer than that, which merge
-#: into one — as do solver steps that close, if a backend writes them.
+#: signal's slope.
+#:
+#: Only a recorded event gathers samples — a time written twice, at the
+#: instant's FIRST sample — and the distance is measured from that sample,
+#: never chained sample to sample: a run that saves every solver step (dense,
+#: no time written twice) was collapsed onto its first time by a chained rule,
+#: and a lone stray sample made an event. The duplicate must be at t0 itself:
+#: with a duplicate anywhere in reach, a stray grid sample 9e-8 before the
+#: issue's pair at 0.25 claimed that pair and left the late pair a second
+#: event, and a second snap moved samples a first had kept apart. With it at
+#: t0 a snap is idempotent, and so is a snap of a window cut from a snapped
+#: series (a later sample sits at t0 or at least the threshold past it, and a
+#: window's threshold is no larger).
+#:
+#: Wrong when an offset exceeds 1e-7 of max(span, |t|) (the event splits
+#: again), when a run writes the near pair without an exact one first, and for
+#: two recorded events genuinely closer than that, which merge into one.
 SAME_INSTANT = 1e-7
 
 
@@ -38,18 +56,38 @@ def same_instant(time: np.ndarray) -> np.ndarray:
     """The times with each sample moved onto its instant: THE rule of what
     one instant is, which every event the comparison finds goes through.
 
-    A sample whose gap to the previous sample is under `SAME_INSTANT` of
-    the series' span (or zero) belongs to that sample's instant and takes
-    its time, so a run of such samples all take the first one's. The
-    samples, their order and their values are untouched."""
+    An instant starts at a time ``t0`` written two or more times (a recorded
+    event); every later sample less than ``SAME_INSTANT * max(span, |t0|)``
+    past ``t0`` takes the time ``t0``. Any other sample is its own instant
+    (exactly equal times are one instant as written). A series with a
+    non-finite time, or one whose time goes backwards, is returned as it is:
+    exact equality only. The samples, their order and their values are
+    untouched."""
     time = np.asarray(time, dtype=float)
-    if len(time) < 2:
+    if len(time) < 3:
         return time
     gaps = np.diff(time)
+    if not np.all(np.isfinite(time)) or np.any(gaps < 0):
+        return time
+    # Runs of exactly equal times: where each starts, and where it ends.
+    starts = np.flatnonzero(np.concatenate(([True], gaps != 0)))
+    ends = np.append(starts[1:], len(time))
+    events = np.flatnonzero(ends - starts >= 2)
+    if len(events) == 0:
+        return time
     span = float(time[-1] - time[0])
-    same = (gaps == 0) | ((gaps > 0) & (gaps < SAME_INSTANT * span))
-    starts = np.concatenate(([True], ~same))
-    return time[np.flatnonzero(starts)][np.cumsum(starts) - 1]
+    out = time.copy()
+    reached = 0
+    for g in events:
+        first = int(starts[g])
+        if first < reached:
+            continue  # gathered into an earlier event's instant
+        t0 = time[first]
+        reach = t0 + SAME_INSTANT * max(span, abs(t0))
+        last = max(int(np.searchsorted(time, reach, side="left")), int(ends[g]))
+        out[first:last] = t0
+        reached = last
+    return out
 
 
 def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
@@ -147,7 +185,8 @@ def _no_data_failure(mode: str, reason: str) -> VariableComparison:
 def error_scale(ref_values: np.ndarray) -> tuple[float, bool]:
     """What an nrmse error is divided by, for a reference: ``(scale,
     is_constant)``. The score divides its RMSE by it and the figure layer
-    its drawn error, so the error drawn is the error scored.
+    its drawn error, so for a criterion with no window the error drawn is
+    the error scored (a windowed one is scored over the window's samples).
 
     The scale is the reference's range; for a constant reference — a range
     under ``_EPS`` of its magnitude (at least ``_EPS``), so a constant near
@@ -178,8 +217,8 @@ def actual_on_reference_grid(
     reference. Both series' samples are first put on their instants
     (`same_instant`), so ``times`` is the reference's times on its
     instants. This is THE interpolation the nrmse score uses; the figure
-    layer's error series reads the same function, so the error drawn is
-    the error scored (an event never shows as a spike the verdict lacks).
+    layer's error series reads the same function, so an event never shows as
+    an error spike the verdict lacks.
     """
     ref_time = same_instant(ref_time)
     act_time = same_instant(act_time)
@@ -1518,7 +1557,7 @@ def _compare_event_timing(
     act_events = _event_times(act_time)
 
     if declared_events is None:
-        # Legacy auto-detect path — unchanged behavior.
+        # Auto-detected: the reference's events, paired with the run's by index.
         ref_events = _event_times(ref_time)
 
         n = min(len(ref_events), len(act_events))

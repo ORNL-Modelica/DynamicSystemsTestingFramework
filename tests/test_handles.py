@@ -1392,6 +1392,18 @@ class TestEventSides:
         with pytest.raises(HandleEditError, match="there is no event 1"):
             _grip(windowed, "events/late/1", 1.0, reference=EVENTS_REF)
 
+    def test_a_windowed_events_index_is_read_on_the_runs_instants(self):
+        """The scorer puts the baseline on its instants over the whole 100 s
+        run, then cuts the window: the near pair at 0.25 (a second pair 1e-6
+        later — over 1e-7 of the window's 0.1 s span, under 1e-7 of the run's)
+        is ONE event, and event 1 is the pair at 0.28."""
+        grid = np.round(np.linspace(0.0, 100.0, 50001), 12)
+        near = [0.25, 0.25, 0.250001, 0.250001]
+        t = np.concatenate([grid[:125], near, grid[126:140], [0.28, 0.28], grid[141:]])
+        windowed = _with(AUTO, window={"start": 0.2, "end": 0.3})
+        new = _grip(windowed, "events/late/1", 0.285, reference=(t, np.zeros_like(t)))
+        assert new["time_tolerance"] == 0.005
+
     def test_refusals(self):
         with pytest.raises(HandleEditError) as box:
             _grip(DECLARED, "events/late/0", 0.25)
