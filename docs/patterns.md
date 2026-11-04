@@ -19,7 +19,7 @@
 
 ### Event boundary handling in time series
 - Samples at one instant = Modelica events (pre-event and post-event values at same instant)
-- One instant is `same_instant`'s rule: an instant starts at a time t0 written two or more times (a recorded event), and every later sample less than `SAME_INSTANT` (1e-7) × max(span, |t0|) past t0 takes the time t0 — measured from t0, never chained sample to sample; any other sample is its own instant. Both scoring paths (`tree_eval` before a window is cut, the flat `variable_overrides` path) and `handles._windowed` snap the whole series first. OpenModelica can write an event as a pair at t and a second pair a little later; Dymola may write 2 or 3 samples at one exact time
+- One instant is `same_instant`'s rule: each recorded event — a time Te written two or more times — in time order gathers every sample not yet gathered less than `SAME_INSTANT` (1e-7) × max(span, |Te|) from Te, on either side, and those take the time Te — measured from Te, never chained sample to sample; any other sample keeps its time. Value order is untouched, so an instant's first sample is the pre-event value and its last the post-event value. Both scoring paths (`tree_eval` before a window is cut, the flat `variable_overrides` path) and `handles._windowed` snap the whole series first. OpenModelica can write an event as a pair at t and a second pair a little later; Dymola may write 2 or 3 samples at one exact time
 - `_find_event_boundaries` groups consecutive equal (snapped) times into `(first_dup, last_dup)` tuples; `_event_times` is an event-timing / handle event list
 - `_dedup_time_series(keep="first")` gives pre-event values; `keep="last"` gives post-event
 - First segment: interpolate with pre-event dedup (correct at end boundary)

@@ -20,11 +20,12 @@ this file says when they do.
 
 - `nrmse` and `event-timing` no longer fail two runs that hold the same event
   written a hair apart. OpenModelica can write an event as a pair at t and a
-  second pair a little later (5e-8 of t in one TRANSFORM test), or a pair 1e-14
-  before a grid sample. A sample now belongs to a recorded event — a time
-  written twice — when it is less than 1e-7 of the larger of the run's span and
-  |t| past the event's first sample, so such an event scores as the one event
-  another run writes as an exact pair, and counts as one event. Samples with no
+  second pair a little later (5e-8 of t in one TRANSFORM test), a pair 1e-14
+  before a grid sample, or the grid sample and then the pair 2e-7 later. A
+  sample now belongs to a recorded event — a time written twice — when it is
+  less than 1e-7 of the larger of the run's span and |t| from the event's time,
+  before or after it, so such an event scores as the one event another run
+  writes as an exact pair, and counts as one event. Samples with no
   time written twice are never gathered: a run that saves every solver step
   keeps every step, and a lone stray sample is no event. Every criterion reads
   events this way, inside a window too (as the whole run reads it), and

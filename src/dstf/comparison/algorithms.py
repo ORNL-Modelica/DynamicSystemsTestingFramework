@@ -18,37 +18,41 @@ from .sides import Sides, as_written, parse_number, parse_sides
 from .types import _EPS, VariableComparison
 
 #: How close to a recorded event a sample is that event's instant: within
-#: ``SAME_INSTANT * max(span, |t0|)`` of the time ``t0`` the event is first
-#: written at (`same_instant`; span is the series' last time minus its first,
-#: and a criterion's series are snapped over the whole run before a window is
-#: cut, so it is the run's). Why 1e-7: an OpenModelica run can write an event
-#: as a pair at t and a second pair a hair later, and over TRANSFORM's 956
-#: stored baselines (measured 2026-11-04) that offset reaches ~2.25e-8 of the
-#: run's span; 3e-8 was the smallest fraction that scored all seven affected
-#: tests alike, 1e-8 was not. The offset grows with t, not with the span: in
-#: this repo's OpenModelica baselines it is 2e-10 * t at every near pair
-#: (Modelica ref_0002 at t = 2, 5, 8; ref_0013 at t = 21600, 32400, 34200), and
-#: the issue's is 5e-8 * t at 0.25 — so a run that starts late scales by |t0|.
+#: ``SAME_INSTANT * max(span, |Te|)`` of the event's time ``Te``, on either side
+#: (`same_instant`; span is the series' last time minus its first, and a
+#: criterion's series are snapped over the whole run before a window is cut,
+#: so it is the run's). Why 1e-7: an OpenModelica run can write an event as a
+#: pair at t and a second pair a hair later, and over TRANSFORM's 956 stored
+#: baselines (measured 2026-11-04) that offset reaches ~2.25e-8 of the run's
+#: span; 3e-8 was the smallest fraction that scored all seven affected tests
+#: alike, 1e-8 was not. The offset grows with t, not with the span: in this
+#: repo's OpenModelica baselines it is 2e-10 * t at every near pair (Modelica
+#: ref_0002 at t = 2, 5, 8; ref_0013 at t = 21600, 32400, 34200), and the
+#: issue's is 5e-8 * t at 0.25 — so a run that starts late scales by |Te|.
 #: OpenModelica has no constant to read instead: its zero-crossing hysteresis
 #: (`TOL_HYSTERESIS_ZEROCROSSINGS = 1e-4` in `simulation/solver/epsilon.h`) is a
 #: band on the crossing function's VALUE, so the time it costs follows the
 #: signal's slope.
 #:
-#: Only a recorded event gathers samples — a time written twice, at the
-#: instant's FIRST sample — and the distance is measured from that sample,
-#: never chained sample to sample: a run that saves every solver step (dense,
-#: no time written twice) was collapsed onto its first time by a chained rule,
-#: and a lone stray sample made an event. The duplicate must be at t0 itself:
-#: with a duplicate anywhere in reach, a stray grid sample 9e-8 before the
-#: issue's pair at 0.25 claimed that pair and left the late pair a second
-#: event, and a second snap moved samples a first had kept apart. With it at
-#: t0 a snap is idempotent, and so is a snap of a window cut from a snapped
-#: series (a later sample sits at t0 or at least the threshold past it, and a
-#: window's threshold is no larger).
+#: Only a recorded event — a time written twice — gathers samples, and the
+#: distance is measured from its time, never chained sample to sample: a run
+#: that saves every solver step (dense, no time written twice) was collapsed
+#: onto its first time by a chained rule, and a lone stray sample made an
+#: event. It gathers on BOTH sides because OpenModelica also writes the grid
+#: sample first and the event's pair a hair later (TRANSFORM's PlotMap_Test:
+#: 10 (0.5), then 10.0000002000001 twice (0.5, 1), where Dymola writes 10
+#: twice): gathered only forward, the grid sample stayed a sample after
+#: Dymola's event and scored 0.5 off. An earlier event gathers first, so a
+#: snap is idempotent, and so is a snap of a window cut from a snapped series:
+#: every sample no event gathered is at least the threshold from every
+#: event's time, an event is at least the earlier event's threshold past it
+#: (and finds the earlier one's samples already gathered), and a window's
+#: threshold is no larger.
 #:
 #: Wrong when an offset exceeds 1e-7 of max(span, |t|) (the event splits
-#: again), when a run writes the near pair without an exact one first, and for
-#: two recorded events genuinely closer than that, which merge into one.
+#: again), when a run writes the near pair without a time written twice, and
+#: for samples genuinely that close to an event (and events that close to
+#: each other), which merge into it.
 SAME_INSTANT = 1e-7
 
 
@@ -56,13 +60,15 @@ def same_instant(time: np.ndarray) -> np.ndarray:
     """The times with each sample moved onto its instant: THE rule of what
     one instant is, which every event the comparison finds goes through.
 
-    An instant starts at a time ``t0`` written two or more times (a recorded
-    event); every later sample less than ``SAME_INSTANT * max(span, |t0|)``
-    past ``t0`` takes the time ``t0``. Any other sample is its own instant
-    (exactly equal times are one instant as written). A series with a
-    non-finite time, or one whose time goes backwards, is returned as it is:
-    exact equality only. The samples, their order and their values are
-    untouched."""
+    A recorded event is a time ``Te`` written two or more times. In time
+    order, each event gathers every sample not yet gathered that is less
+    than ``SAME_INSTANT * max(span, |Te|)`` from ``Te``, before or after it
+    (a later event's samples too), and those samples take the time ``Te``.
+    Any other sample keeps its time. A series with a non-finite time, or one
+    whose time goes backwards, is returned as it is: exact equality only.
+    The samples, their order and their values are untouched — the first
+    sample of an instant is still the value before its event, the last the
+    value after."""
     time = np.asarray(time, dtype=float)
     if len(time) < 3:
         return time
@@ -77,16 +83,16 @@ def same_instant(time: np.ndarray) -> np.ndarray:
         return time
     span = float(time[-1] - time[0])
     out = time.copy()
-    reached = 0
+    gathered = 0  # every sample before this index is an earlier event's
     for g in events:
-        first = int(starts[g])
-        if first < reached:
-            continue  # gathered into an earlier event's instant
-        t0 = time[first]
-        reach = t0 + SAME_INSTANT * max(span, abs(t0))
-        last = max(int(np.searchsorted(time, reach, side="left")), int(ends[g]))
-        out[first:last] = t0
-        reached = last
+        if starts[g] < gathered:
+            continue  # gathered by an earlier event
+        te = time[starts[g]]
+        reach = SAME_INSTANT * max(span, abs(te))
+        first = max(int(np.searchsorted(time, te - reach, side="right")), gathered)
+        last = max(int(np.searchsorted(time, te + reach, side="left")), int(ends[g]))
+        out[first:last] = te
+        gathered = last
     return out
 
 

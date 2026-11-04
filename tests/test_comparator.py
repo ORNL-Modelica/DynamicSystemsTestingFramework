@@ -39,6 +39,13 @@ from scoring import score
         # A lone sample 1e-14 before a grid sample is no event: no time is
         # written twice.
         ([0.0, 5.99999999999999, 6.0, 10.0], []),
+        # A stray grid sample 9e-8 before the near pair at 0.25: one event.
+        (
+            [0.0, 0.24999991, 0.25, 0.25, 0.250000012500095, 0.250000012500095, 1.0],
+            [0.25],
+        ),
+        # The grid sample at 10, then the pair 2e-7 later: one event.
+        ([0.0, 10.0, 10.0000002000001, 10.0000002000001, 100.0], [10.0000002000001]),
     ],
     ids=[
         "none",
@@ -52,6 +59,8 @@ from scoring import score
         "grid-sample-after",
         "apart",
         "lone-near-sample",
+        "stray-sample-before",
+        "grid-sample-before",
     ],
 )
 def test_the_events_a_run_holds_are_its_samples_at_one_instant(time, events):
@@ -437,6 +446,26 @@ class TestEventsAtNearlyOneInstant:
         tree.metric_tree_spec = parse_metric_tree(leaf)
         assert compare_test(flat, result, reference, default_tolerance=1e-4).passed
         assert compare_test(tree, result, reference, default_tolerance=1e-4).passed
+
+    def test_a_grid_sample_just_before_a_pair_is_that_events(self):
+        """A newer OpenModelica writes the grid sample at 10 and then the
+        event's pair 2e-7 later (over 100 s); Dymola writes the pair at 10.
+        The grid sample is the value before the event, not a sample after
+        it: both runs hold one event, a hair apart."""
+        before = np.round(np.linspace(0.0, 9.9, 100), 12)
+        after = np.round(np.linspace(10.1, 100.0, 900), 12)
+        late = 10.0000002000001
+        ref_t = np.concatenate([before, [10.0, 10.0], after])
+        act_t = np.concatenate([before, [10.0, late, late], after])
+        ref_v = np.concatenate([np.full(100, 0.5), [0.5, 1.0], np.ones(900)])
+        act_v = np.concatenate([np.full(100, 0.5), [0.5, 0.5, 1.0], np.ones(900)])
+        vc = score({"mode": "nrmse"}, ref_t, ref_v, act_t, act_v, tolerance=1e-4)
+        # The actual read 2e-7 before its own event, on its 0.1 s ramp up.
+        assert vc.max_abs_error < 1e-5
+        assert vc.passed is True
+        ev = score({"mode": "event-timing"}, ref_t, ref_v, act_t, act_v)
+        assert ev.diagnostics["act_event_count"] == 1
+        assert ev.passed is True
 
     def test_an_event_at_the_stop_time_still_fails(self):
         """Owner decision (issue #23): a newer OpenModelica writes the value
