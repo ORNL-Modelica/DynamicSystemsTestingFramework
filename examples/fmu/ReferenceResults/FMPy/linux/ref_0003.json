@@ -7,7 +7,7 @@
   "simulation": {
     "stop_time": 20.0,
     "tolerance": 1e-06,
-    "method": "Dassl",
+    "method": "CVode",
     "number_of_intervals": 1000,
     "output_interval": null
   },

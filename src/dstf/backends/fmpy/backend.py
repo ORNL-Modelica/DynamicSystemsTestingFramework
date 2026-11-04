@@ -60,6 +60,7 @@ from ..locate import SEARCH, Found, Located, Rule
 from ..types import (
     Capability,
     DatasetType,
+    Solver,
     TestResult,
     TestRunResult,
     VariableResult,
@@ -70,13 +71,18 @@ from ..types import (
 logger = logging.getLogger(__name__)
 
 
-# FMPy solver names. Dymola's default ``Dassl`` maps to FMPy's ``CVode``
-# (both BDF-family; closest semantic match). ``Euler`` is also available.
-_SOLVER_MAP = {
-    "Dassl": "CVode",
-    "Cvode": "CVode",
-    "CVode": "CVode",
-    "Euler": "Euler",
+#: The solver FMPy runs for a name it has no solver of its own for.
+DEFAULT_SOLVER = "CVode"
+
+#: A test's ``method``, lower-cased, to the FMPy solver it runs as. Dymola's
+#: default ``Dassl`` is FMPy's ``CVode`` (both BDF-family; the closest match):
+#: a translation, said on no test. FMPy has two solvers, ``CVode`` and
+#: ``Euler``; any other name runs on :data:`DEFAULT_SOLVER`
+#: (:meth:`FmpyBackend.solver`).
+SOLVERS = {
+    "dassl": "CVode",
+    "cvode": "CVode",
+    "euler": "Euler",
 }
 
 
@@ -169,6 +175,18 @@ class FmpyBackend(Backend):
                 ),
             )
         )
+
+    @classmethod
+    def solver(cls, test: TestModel) -> Solver:
+        """A name in :data:`SOLVERS`, whatever its case, runs as the FMPy
+        solver it translates to; any other runs on CVode, and says what
+        the test asked for. No name, or ``""``, runs CVode."""
+        if not test.method:
+            return Solver(DEFAULT_SOLVER, None)
+        name = SOLVERS.get(test.method.lower())
+        if name is None:
+            return Solver(DEFAULT_SOLVER, test.method)
+        return Solver(name, None)
 
     @classmethod
     def diagnose(
@@ -281,7 +299,7 @@ class FmpyBackend(Backend):
                 else requested
             )
 
-            solver = _SOLVER_MAP.get(test.method, "CVode")
+            solver = self.solver(test).name
             sim_kwargs = {
                 "filename": str(fmu_path),
                 "validate": False,  # trust Reference-FMUs; validate adds startup cost

@@ -13,7 +13,7 @@ import logging
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +34,7 @@ from ..storage.batch_manifest import (
 from ..storage.run_stats import read_run_stats
 from .common.result_variables import merge_timing_stats, run_timing
 from .locate import Located, find_executable
-from .types import Capability, DatasetType, TestResult, TestRunResult
+from .types import Capability, DatasetType, Solver, TestResult, TestRunResult
 
 if TYPE_CHECKING:
     from ..discovery.library_state import LibraryState
@@ -110,6 +110,7 @@ def _print_run_header(
     *,
     timeout_per_test: bool = False,
     metadata: dict | None = None,
+    notes: Sequence[str] = (),
     quiet: bool = False,
 ) -> None:
     """Print the standard "Running N tests..." header + dashboard URL.
@@ -124,6 +125,9 @@ def _print_run_header(
     batch loop applies one timeout per test, while batch Dymola and the
     persistent template apply it per worker-test, so both prefer the
     ``s/test`` rendering.
+
+    *notes* are lines the run says before it starts, after the backend's
+    (:func:`solver_fallbacks`).
 
     *quiet* (``Backend.quiet``) drops the whole header: a run driven from a
     UI process narrates a console nobody is reading.
@@ -149,9 +153,30 @@ def _print_run_header(
         if metadata.get("dstf_version"):
             bits.append(f"DSTF {metadata['dstf_version']}")
         print(f"Backend: {' · '.join(bits)}", file=sys.stderr)
+    for note in notes:
+        print(note, file=sys.stderr)
     if work_dir is not None:
         dashboard = work_dir / "dashboard.html"
         print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
+
+
+def solver_fallbacks(label: str, solvers: Iterable[Solver]) -> list[str]:
+    """What a run says of the solver names its backend does not know: one
+    line per name, with how many tests asked for it and what runs instead —
+    ``OpenModelica does not know solver Esdirk45a (14 tests): runs dassl
+    instead`` — in the order the names are first asked for. Said before the
+    run starts. Nothing when every test runs the solver it asks for
+    (:attr:`Solver.asked` is None)."""
+    counts: dict[tuple[str, str | None], int] = {}
+    for solver in solvers:
+        if solver.asked is not None:
+            key = (solver.asked, solver.name)
+            counts[key] = counts.get(key, 0) + 1
+    return [
+        f"{label} does not know solver {asked} "
+        f"({n} test{'' if n == 1 else 's'}): runs {name} instead"
+        for (asked, name), n in counts.items()
+    ]
 
 
 def _print_progress(
@@ -353,6 +378,9 @@ class RunSetup:
     #: ``(test, test_key)`` in the caller's test order.
     keyed_tests: list[tuple[TestModel, str]]
     manifest: BatchManifest
+    #: The run header's lines on solvers the backend does not know
+    #: (:func:`solver_fallbacks`).
+    solver_notes: tuple[str, ...] = ()
 
 
 class ItemRunner:
@@ -718,6 +746,28 @@ class Backend(ABC):
         return Diagnosis(tuple(located.lines(entry)), located.complete)
 
     @classmethod
+    def solver(cls, test: TestModel) -> Solver:
+        """The solver this backend runs *test* with: the one rule every
+        statement of "which solver" asks — the simulator's call, the
+        baseline an accept writes, the report's Method row, ``dstf
+        discover``'s row and the run's header.
+
+        The default runs the test's ``method`` as it is named — None as
+        None. Override it on a backend that knows only some solvers by
+        name: a name it does not know runs on its default solver, and says
+        so; an empty name is no name, and runs the default too.
+
+        Args:
+            test: The test, its ``method`` resolved.
+
+        Returns:
+            The solver's name as the backend runs it, and — only when the
+            backend does not know the test's name and runs another — the
+            name the test asked for.
+        """
+        return Solver(test.method, None)
+
+    @classmethod
     def persistent_backend_cls(cls) -> type["Backend"] | None:
         """The variant of this backend that keeps its simulator open between tests.
 
@@ -1012,6 +1062,9 @@ class Backend(ABC):
             progress=progress,
             keyed_tests=keyed_tests,
             manifest=manifest,
+            solver_notes=tuple(
+                solver_fallbacks(self.label, (self.solver(t) for t in tests))
+            ),
         )
 
     def key_tests(
@@ -1103,6 +1156,7 @@ class Backend(ABC):
             self.config.timeout,
             self.config.work_dir,
             metadata=setup.run_metadata,
+            notes=setup.solver_notes,
             quiet=self.quiet,
         )
 

@@ -404,6 +404,23 @@ class TestReferenceStore:
             pytest.approx(np.sin(0.1))
         )
 
+    def test_a_test_that_names_no_solver_records_none(
+        self, sample_models_dir, tmp_path
+    ):
+        """A test built with no ``method`` (discovery always gives one):
+        the baseline says none ran by name — null, not the text "None"."""
+        store = ReferenceStore(
+            Config(
+                source_path=sample_models_dir,
+                reference_root=tmp_path / "refs",
+                backend_name="Dymola",
+            )
+        )
+        test = self._make_test_model()
+        assert test.method is None
+        store.store_reference(test, self._make_test_result(), provenance=PROVENANCE)
+        assert _file(store, test.model_id)["simulation"]["method"] is None
+
     def test_a_successful_result_with_no_variables_is_not_stored(
         self, sample_models_dir, tmp_path
     ):

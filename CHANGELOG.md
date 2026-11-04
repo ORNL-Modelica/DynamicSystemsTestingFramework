@@ -16,8 +16,22 @@ this file says when they do.
   baselines for Dymola and OpenModelica. The criteria guide walks through it,
   and through what fails when one heater gets 10 % more power.
 
+### Changed
+
+- A baseline records the solver that ran, as the backend names it, not the
+  name the test asked for: an FMPy baseline records `CVode` where it recorded
+  `Dassl`, and an OpenModelica one `dassl`.
+
 ### Fixed
 
+- OpenModelica runs a test whose solver it does not know — Dymola's
+  `Esdirk45a`, from a `__Dymola_Algorithm` annotation or `test_spec.json` —
+  on dassl, where omc stopped with `unrecognized option -s esdirk45a`; `dstf
+  run` says so before it starts (`OpenModelica does not know solver Esdirk45a
+  (14 tests): runs dassl instead`), and `dstf discover` shows `Esdirk45a →
+  dassl`. FMPy already ran such a name on CVode without a word: `dstf run`
+  now says so too, and FMPy matches a name whatever its case (`euler` runs
+  Euler; it ran CVode).
 - On Python 3.13, a `--source-path`, `--reference-root` or `--config` (or a
   `testing.json` path) that is a symbolic-link loop is refused with
   `Config error: <path>: … Too many levels of symbolic links`, as on earlier

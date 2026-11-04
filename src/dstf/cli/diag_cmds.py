@@ -4,6 +4,7 @@
 import argparse
 from pathlib import Path
 
+from ..backends import get_backend_class
 from ..config import Config, ConfigError, NoProject
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
@@ -32,10 +33,15 @@ def _method_text(test: TestModel, config: Config) -> str:
     """The solver the test names, or `—` where it names none and the
     framework's default would not be true: ``Dassl`` is what a Modelica tool
     is handed, while FMPy maps it to its own solver and a Julia or Python
-    source has no solver setting at all."""
+    source has no solver setting at all. A name the backend does not know
+    reads with the solver that runs instead (`Backend.solver`):
+    ``Esdirk45a → dassl``."""
     defaulted = test.field_sources.get("method") == "default"
     if defaulted and config.source_type != "modelica":
         return "—"
+    solver = get_backend_class(config).solver(test)
+    if solver.asked is not None:
+        return f"{solver.asked} → {solver.name}"
     return str(test.method)
 
 
@@ -50,16 +56,21 @@ def cmd_discover(args: argparse.Namespace) -> int:
         return 1
 
     # Print summary table. Every cell is something true before any run:
-    # see `_vars_text` and `_method_text`.
-    print(
-        f"{'Model ID':<90} {'Vars':>16}  {'StopTime':>10}  {'Method':<10}  {'Source':<10}"
+    # see `_vars_text` and `_method_text`. The Method column is as wide as
+    # its longest cell: `Esdirk45a → dassl` pushed Source out of line.
+    methods = [_method_text(t, config) for t in tests]
+    width = max(10, *(len(m) for m in methods))
+    header = (
+        f"{'Model ID':<90} {'Vars':>16}  {'StopTime':>10}  "
+        f"{'Method':<{width}}  {'Source':<10}"
     )
-    print("-" * 142)
-    for t in tests:
+    print(header)
+    print("-" * len(header))
+    for t, method in zip(tests, methods, strict=True):
         stop = f"{t.stop_time:g}"
         print(
             f"{t.model_id:<90} {_vars_text(t):>16}  {stop:>10}  "
-            f"{_method_text(t, config):<10}  {t.source:<10}"
+            f"{method:<{width}}  {t.source:<10}"
         )
 
     print(f"\nTotal: {len(tests)} tests")

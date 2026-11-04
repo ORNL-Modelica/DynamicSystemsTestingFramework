@@ -929,6 +929,36 @@ class TestCLISelectionWiring:
             backend.run_tests([_make_test()])
 
 
+def test_the_persistent_run_says_which_solver_runs_instead(
+    tmp_path, monkeypatch, capsys
+):
+    """The persistent lane prints its own header: it says, before the
+    workers start, what runs for a solver name OpenModelica does not know."""
+    from dstf.backends.openmodelica.persistent_backend import (
+        PersistentOpenModelicaBackend,
+    )
+
+    # A worker's start sets it from the configured omc: restored after.
+    monkeypatch.setenv("OPENMODELICAHOME", str(tmp_path / "omc-home"))
+    monkeypatch.setattr(
+        "dstf.backends.openmodelica.persistent_backend.load_omc_session",
+        lambda: FakeSession,
+    )
+    backend = PersistentOpenModelicaBackend(
+        _make_config(tmp_path, backend_path=_omc(tmp_path))
+    )
+    backend.run_tests(
+        [
+            _make_test(model_id="Lib.A", method="Esdirk45a"),
+            _make_test(model_id="Lib.B", method="Dassl"),
+        ]
+    )
+    said = [ln for ln in capsys.readouterr().err.splitlines() if "does not know" in ln]
+    assert said == [
+        "OpenModelica does not know solver Esdirk45a (1 test): runs dassl instead"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Integration tests (real omc + real OMPython)
 # ---------------------------------------------------------------------------

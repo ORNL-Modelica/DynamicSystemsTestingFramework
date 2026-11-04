@@ -481,6 +481,9 @@ def generate_comparison_plots(
     run_metadata: dict | None = None,
     plots=None,
     extra_series=None,
+    # The project's backend class: the Method row's current value is the
+    # solver it runs the test with (`Backend.solver`). None: the test's own.
+    backend_cls=None,
     *,
     # The names the test lists (`diagnostic_names`). A number read from
     # one's summary is in the metric tree, never on a plot.
@@ -536,6 +539,7 @@ def generate_comparison_plots(
         # names included, as the tool's `Session.variable_texts` includes
         # them: the plot still names them ("Not in this result: z").
         plot_series=[n for p in plots for n in p.series],
+        backend_cls=backend_cls,
         diagnostics=diagnostics,
     )
 
@@ -868,6 +872,7 @@ def _build_per_test_args(
         "comp_variables": comp.variables,
         "metric_tree": comp.metric_tree,
         "artifact_files": artifact_files,
+        "backend_cls": backend_cls,
         "max_embedded_samples": config.max_embedded_samples,
         "theme": config.theme,
         "overlays": overlays,
@@ -896,6 +901,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         last_run_at=args["last_run_at"],
         metric_tree=args.get("metric_tree"),
         artifact_files=args.get("artifact_files", ()),
+        backend_cls=args.get("backend_cls"),
         max_embedded_samples=args["max_embedded_samples"],
         theme=args["theme"],
         overlays=args.get("overlays"),

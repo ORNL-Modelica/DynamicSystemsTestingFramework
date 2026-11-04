@@ -21,7 +21,7 @@ it writes, such as `verdicts.json`, not from Python objects.
 
 ```{eval-rst}
 .. autoclass:: dstf.backends.base.Backend
-   :members: __init__, locate, settings_of, executable_of, diagnose, run_single_test, read_result, run_tests, persistent_backend_cls, preflight, describe_tool_version, export_fmu, cancel_test, live_result_path, result_names, result_series, label
+   :members: __init__, locate, settings_of, executable_of, diagnose, solver, run_single_test, read_result, run_tests, persistent_backend_cls, preflight, describe_tool_version, export_fmu, cancel_test, live_result_path, result_names, result_series, label
 ```
 
 ```{eval-rst}
@@ -85,6 +85,10 @@ install is looked for:
 
 ```{eval-rst}
 .. autoclass:: dstf.backends.base.Diagnosis
+```
+
+```{eval-rst}
+.. autoclass:: dstf.backends.types.Solver
 ```
 
 ```{eval-rst}

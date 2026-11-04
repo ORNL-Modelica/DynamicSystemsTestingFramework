@@ -265,6 +265,7 @@ class DymolaBackend(Backend):
             self.config.work_dir,
             timeout_per_test=True,
             metadata=setup.run_metadata,
+            notes=setup.solver_notes,
             quiet=self.quiet,
         )
 
@@ -813,7 +814,7 @@ def _generate_test_mos(
     elif test.output_interval is not None:
         parts.append(f"outputInterval={test.output_interval}")
 
-    parts.append(f'method="{test.method}"')
+    parts.append(f'method="{DymolaBackend.solver(test).name}"')
     parts.append(f"tolerance={test.tolerance}")
     parts.append('resultFile="dsres"')
 
