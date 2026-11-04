@@ -196,19 +196,40 @@ class TestCompareTrajectories:
         assert vc.nrmse < 1e-14
         assert vc.passed is True
 
+    def test_a_pressure_with_rounding_noise_of_1240_eps_is_constant(self):
+        """TRANSFORM's OilWater_PCHX on OpenModelica (ref_0270, unitTests.x[2]):
+        a pressure that runs 184916.82551825..184916.82551830 — a range of
+        5.1e-8, 2.8e-13 of its value — and a run 2.6e-8 off it at most. It is
+        the same constant; divided by its noise range it scored 0.0697 and
+        failed a 0.05 tolerance."""
+        t = np.linspace(0.0, 1000.0, 201)
+        ref_v = 184916.82551825 + np.tile([0.0, 5.1e-8, 2.5e-8, 1e-8], 51)[:201]
+        act_v = ref_v + np.tile([2.55e-8, -2e-8, 0.0], 67)[:201]
+        vc = score({"mode": "nrmse"}, t, ref_v, t, act_v, tolerance=0.05)
+        assert vc.is_constant == True
+        assert vc.nrmse < 1e-12
+        assert vc.passed is True
+
     @pytest.mark.parametrize(
         ("values", "constant"),
         [
-            # Near 1000 the bound is _EPS * 1000 ≈ 2.2e-11: a range of 1e-11
-            # is a constant, a range of 1e-10 is not.
-            (1000.0 + np.array([0.0, 1e-11, 5e-12]), True),
-            (1000.0 + np.array([0.0, 1e-10, 5e-11]), False),
-            # Below 1 the bound is _EPS itself: a range of 2e-12 varies.
+            # Near 1000 the bound is 1e-10 * 1000 = 1e-7: a range of 5e-8
+            # is a constant, a range of 2e-7 is not.
+            (1000.0 + np.array([0.0, 5e-8, 2e-8]), True),
+            (1000.0 + np.array([0.0, 2e-7, 1e-7]), False),
+            # TRANSFORM's smallest real motion: OilWater_PTHX on Dymola
+            # (unitTests.x[3]) moves 0.4 Pa near 1.305e5, 3e-6 of its value.
+            (130500.0 + np.array([0.0, 0.4, 0.2]), False),
+            # Under 1 the bound is still relative: near 0.5 it is 5e-11, so
+            # a range of 1e-12 is a constant.
+            (0.5 + np.array([0.0, 1e-12, 5e-13]), True),
+            # Below _EPS / 1e-10 (2.2e-4) the bound is _EPS itself: a range
+            # of 2e-12 varies.
             (np.array([1e-12, 2e-12, 3e-12]), False),
         ],
-        ids=["under-the-bound", "over-the-bound", "small"],
+        ids=["under-the-bound", "over-the-bound", "real-motion", "under-one", "small"],
     )
-    def test_a_constant_is_a_range_under_eps_of_its_size(self, values, constant):
+    def test_a_constant_is_a_range_under_1e10_of_its_size(self, values, constant):
         t = np.arange(len(values), dtype=float)
         vc = score({"mode": "nrmse"}, t, values, t, values, tolerance=1e-4)
         assert vc.is_constant == constant

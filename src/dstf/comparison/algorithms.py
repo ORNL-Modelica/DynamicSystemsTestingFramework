@@ -188,6 +188,18 @@ def _no_data_failure(mode: str, reason: str) -> VariableComparison:
     )
 
 
+#: A reference whose range is under this fraction of its magnitude is a
+#: constant, and nrmse divides its error by the magnitude, not by the range.
+#: Measured over TRANSFORM's 2,558 stored signals (2026-11-04): rounding
+#: noise on a constant reaches 3.2e-12 of its value (OpenModelica, ~14,000
+#: eps; 100 eps failed OilWater_PCHX on noise of 1,240), and the smallest real
+#: motion is 3e-6 (a Dymola pressure moving 0.4 Pa near 1.3e5). 1e-10 is
+#: 1.5 decades above that noise and 4.5 below that motion. A run's relative
+#: tolerance (1e-4 there) would call that 3e-6 motion a constant and loosen
+#: it ~300,000-fold.
+CONSTANT_RANGE = 1e-10
+
+
 def error_scale(ref_values: np.ndarray) -> tuple[float, bool]:
     """What an nrmse error is divided by, for a reference: ``(scale,
     is_constant)``. The score divides its RMSE by it and the figure layer
@@ -195,14 +207,14 @@ def error_scale(ref_values: np.ndarray) -> tuple[float, bool]:
     the error scored (a windowed one is scored over the window's samples).
 
     The scale is the reference's range; for a constant reference — a range
-    under ``_EPS`` of its magnitude (at least ``_EPS``), so a constant near
-    821 that carries rounding noise of ~1e-13 is one — its magnitude, and
-    1.0 when that magnitude is under ``_EPS`` too. For a large constant
-    (37e9, say) the raw error is misleading: float32 quantization alone
-    makes errors of hundreds, so it is read relative to the magnitude."""
+    under ``CONSTANT_RANGE`` of its magnitude (at least ``_EPS``), so a
+    pressure near 184917 that carries rounding noise of 5e-8 is one — its
+    magnitude, and 1.0 when that magnitude is under ``_EPS`` too. For a large
+    constant (37e9, say) the raw error is misleading: float32 quantization
+    alone makes errors of hundreds, so it is read relative to the magnitude."""
     signal_range = float(np.max(ref_values) - np.min(ref_values))
     magnitude = float(np.max(np.abs(ref_values)))
-    if signal_range < _EPS * max(1.0, magnitude):
+    if signal_range < max(_EPS, CONSTANT_RANGE * magnitude):
         return (magnitude if magnitude > _EPS else 1.0), True
     return signal_range, False
 

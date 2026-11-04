@@ -23,8 +23,9 @@ if TYPE_CHECKING:
 
 DEFAULT_TOLERANCE = 1e-4
 
-# Machine-epsilon guard — signals with range below this are treated as
-# constant by the NRMSE path.
+# Machine-epsilon guard: a magnitude under this is zero, and the absolute
+# floor of nrmse's constant test (`algorithms.CONSTANT_RANGE` is its
+# relative part).
 _EPS = 100 * np.finfo(np.float64).eps
 
 
