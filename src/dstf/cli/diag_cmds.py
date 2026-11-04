@@ -4,6 +4,7 @@
 import argparse
 from pathlib import Path
 
+from ..backends import get_backend_class
 from ..config import Config, ConfigError, NoProject
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
@@ -32,10 +33,15 @@ def _method_text(test: TestModel, config: Config) -> str:
     """The solver the test names, or `—` where it names none and the
     framework's default would not be true: ``Dassl`` is what a Modelica tool
     is handed, while FMPy maps it to its own solver and a Julia or Python
-    source has no solver setting at all."""
+    source has no solver setting at all. A name the backend does not know
+    reads with the solver that runs instead (`Backend.solver`):
+    ``Esdirk45a → dassl``."""
     defaulted = test.field_sources.get("method") == "default"
     if defaulted and config.source_type != "modelica":
         return "—"
+    solver = get_backend_class(config).solver(test)
+    if solver.asked is not None:
+        return f"{solver.asked} → {solver.name}"
     return str(test.method)
 
 

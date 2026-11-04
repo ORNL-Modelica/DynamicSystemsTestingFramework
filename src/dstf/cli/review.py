@@ -348,6 +348,7 @@ def _generate_and_open_plots(
         comparison=comp,
         metric_tree=comp.metric_tree,
         artifact_files=artifact_files,
+        backend_cls=backend_cls,
         max_embedded_samples=config.max_embedded_samples,
         theme=config.theme,
         plots=plots,

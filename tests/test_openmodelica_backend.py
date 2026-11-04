@@ -353,6 +353,155 @@ def test_a_timed_out_run_reads_back_as_timed_out_whatever_its_file_holds(
 
 
 # ---------------------------------------------------------------------------
+# A solver OpenModelica does not know: the run says so, the baseline says
+# what ran (no omc needed)
+# ---------------------------------------------------------------------------
+
+
+class TestASolverOpenModelicaDoesNotKnow:
+    """``Esdirk45a`` (Dymola's, from a ``__Dymola_Algorithm`` annotation)
+    runs on dassl. The run's header says so once per name, with how many
+    tests asked for it; the baseline an accept writes records dassl — the
+    solver that ran, not the one asked for."""
+
+    #: omc's echo of a simulate() that finished.
+    STDOUT = (
+        "record SimulationResult\n"
+        '    resultFile = "result_res.mat",\n'
+        '    simulationOptions = "...",\n'
+        '    messages = "The simulation finished successfully.",\n'
+        "    timeFrontend = 0.1,\n"
+        "    timeBackend = 0.05,\n"
+        "    timeSimCode = 0.01,\n"
+        "    timeTemplates = 0.02,\n"
+        "    timeCompile = 0.9,\n"
+        "    timeSimulation = 0.03,\n"
+        "    timeTotal = 1.11\n"
+        "end SimulationResult;\n"
+    )
+
+    def _backend(self, tmp_path, monkeypatch):
+        """An OpenModelica backend over a scratch project whose omc is
+        faked: each run leaves the fixture's result (inertia1.phi, 0 to 1 s)
+        and the echo of a finished simulate()."""
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        omc = tmp_path / "omc"
+        omc.write_text("#!/bin/sh\n")
+        omc.chmod(0o755)
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            backend_name="OpenModelica",
+            backend_path=str(omc),
+            work_dir=tmp_path / "work",
+        )
+
+        def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
+            shutil.copy(
+                FIXTURES / "pid_controller_res.mat", Path(cwd) / "result_res.mat"
+            )
+            return CompletedProcess(
+                args=cmd, returncode=0, stdout=self.STDOUT, stderr=""
+            )
+
+        monkeypatch.setattr(
+            "dstf.backends.openmodelica.backend.subprocess.run", fake_run
+        )
+        return OpenModelicaBackend(cfg)
+
+    @staticmethod
+    def _test(model_id: str, method: str) -> TestModel:
+        from conftest import make_test_model
+
+        return make_test_model(
+            model_id, method=method, variable_patterns=["inertia1.phi"]
+        )
+
+    def test_the_header_says_once_per_name_how_many_tests_ran_dassl(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        backend = self._backend(tmp_path, monkeypatch)
+        backend.run_tests(
+            [
+                self._test("Lib.A", "Esdirk45a"),
+                self._test("Lib.B", "Esdirk45a"),
+                self._test("Lib.C", "Rkfix4"),
+                self._test("Lib.D", "Dassl"),
+            ]
+        )
+        said = [
+            line
+            for line in capsys.readouterr().err.splitlines()
+            if "does not know" in line
+        ]
+        assert said == [
+            "OpenModelica does not know solver Esdirk45a (2 tests): ran dassl",
+            "OpenModelica does not know solver Rkfix4 (1 test): ran dassl",
+        ]
+
+    def test_a_run_of_solvers_it_knows_says_nothing_of_solvers(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        backend = self._backend(tmp_path, monkeypatch)
+        backend.run_tests([self._test("Lib.A", "Dassl"), self._test("Lib.B", "Cvode")])
+        err = capsys.readouterr().err
+        assert "Running 2 tests" in err
+        assert "does not know" not in err
+
+    def test_the_baseline_records_the_solver_that_ran(self, tmp_path, monkeypatch):
+        import json
+
+        from dstf.storage.accept import accept_run_results
+        from dstf.storage.reference_store import ReferenceStore
+
+        backend = self._backend(tmp_path, monkeypatch)
+        backend.quiet = True
+        tests = [self._test("Lib.A", "Esdirk45a")]
+        backend.run_tests(tests)
+        results = backend.read_last_results(tests)
+        stored, skipped, _, _ = accept_run_results(
+            ReferenceStore(backend.config), tests, results, backend.config.work_dir
+        )
+        assert (stored, skipped) == (1, [])
+
+        (ref_file,) = (tmp_path / "refs" / "OpenModelica").glob("*/ref_0001.json")
+        written = json.loads(ref_file.read_text(encoding="utf-8"))
+        assert written["simulation"]["method"] == "dassl"
+
+    def test_the_report_compares_the_solver_that_ran_with_the_baselines(
+        self, tmp_path, monkeypatch
+    ):
+        """The report's Simulation Parameters: the test asks for Esdirk45a,
+        dassl ran and the baseline ran dassl — the Method row is unchanged,
+        not marked as a drift."""
+        import re
+
+        from dstf.comparison.comparator import compare_all
+        from dstf.reporting.report_suite import generate_report_suite
+        from dstf.storage.accept import accept_run_results
+        from dstf.storage.reference_store import ReferenceStore
+
+        backend = self._backend(tmp_path, monkeypatch)
+        backend.quiet = True
+        tests = [self._test("Lib.A", "Esdirk45a")]
+        backend.run_tests(tests)
+        results = backend.read_last_results(tests)
+        store = ReferenceStore(backend.config)
+        accept_run_results(store, tests, results, backend.config.work_dir)
+        comparisons = compare_all(tests, results, store)
+        generate_report_suite(comparisons, results, tests, store, backend.config)
+
+        page = (
+            backend.config.work_dir / "reports" / "ref_0001" / "interactive.html"
+        ).read_text(encoding="utf-8")
+        assert re.findall(r"<tr[^>]*><td>Method</td>.*?</tr>", page) == [
+            "<tr><td>Method</td><td>dassl</td><td>dassl</td></tr>"
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Integration tests (real omc; skipped if not installed)
 # ---------------------------------------------------------------------------
 

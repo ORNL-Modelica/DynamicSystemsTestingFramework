@@ -365,6 +365,53 @@ class TestFmpyBackendFixes:
 
 
 # ---------------------------------------------------------------------------
+# The solver FMPy runs: a Dymola name it translates, or CVode
+# ---------------------------------------------------------------------------
+
+
+class TestFmpySolver:
+    """``Dassl`` -> ``CVode`` is FMPy's own translation, said on no test; a
+    name it has no solver for runs on CVode and says what was asked."""
+
+    def test_dassl_is_translated_not_a_fallback(self):
+        from dstf.backends.fmpy.backend import FmpyBackend
+        from dstf.backends.types import Solver
+
+        assert FmpyBackend.solver(_tm("M", method="Dassl")) == Solver("CVode", None)
+
+    def test_a_name_it_does_not_know_runs_cvode_and_says_what_was_asked(self):
+        from dstf.backends.fmpy.backend import FmpyBackend
+        from dstf.backends.types import Solver
+
+        assert FmpyBackend.solver(_tm("M", method="Esdirk45a")) == Solver(
+            "CVode", "Esdirk45a"
+        )
+
+    def test_the_run_hands_fmpy_the_solver_the_rule_names(self, tmp_path, monkeypatch):
+        """A name is matched whatever its case: ``euler`` is FMPy's Euler,
+        not a CVode run."""
+        handed: list[str] = []
+        _install_fake_fmpy(monkeypatch, lambda **kw: handed.append(kw["solver"]))
+        from dstf.backends.fmpy.backend import FmpyBackend
+
+        backend = FmpyBackend(
+            SimpleNamespace(
+                work_dir=tmp_path / "work",
+                source_type="fmu",
+                backend_name="FMPy",
+                parallel=1,
+                timeout=60,
+                diagnostic_variables=[],
+            )
+        )
+        fmu = tmp_path / "Model.fmu"
+        fmu.write_bytes(b"fake fmu")
+        test = _tm("Model", source_file=fmu, variable_patterns=["h"], method="euler")
+        backend.run_single_test(test, "test_0001", 1, 1)
+        assert handed == ["Euler"]
+
+
+# ---------------------------------------------------------------------------
 # The missing-dependency signal is the Backend contract's RuntimeError
 # ---------------------------------------------------------------------------
 

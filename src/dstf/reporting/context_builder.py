@@ -308,10 +308,15 @@ def _build_ref_info(
     return ref_info
 
 
-def _build_sim_params(test_model, ref_sim: dict) -> list:
+def _build_sim_params(test_model, ref_sim: dict, backend_cls=None) -> list:
     """Build the current-vs-reference simulation-parameter table (stop_time,
     tolerance, method, ...). Each row carries a ``changed`` flag the
     template uses to highlight drift.
+
+    The current method is the solver *backend_cls* runs the test with
+    (``Backend.solver``), as a baseline records it: a test asking for
+    ``Esdirk45a`` that OpenModelica runs on dassl, against a baseline that
+    ran dassl, has not changed. Without a backend class, the test's own name.
     """
     sim_params = []
     sim_fields = [
@@ -324,6 +329,8 @@ def _build_sim_params(test_model, ref_sim: dict) -> list:
     for key, label in sim_fields:
         ref_val = ref_sim.get(key)
         cur_val = getattr(test_model, key, None) if test_model else None
+        if key == "method" and test_model is not None and backend_cls is not None:
+            cur_val = backend_cls.solver(test_model).name
         ref_str = _format_value(ref_val) if ref_val is not None else ""
         cur_str = _format_value(cur_val) if cur_val is not None else ""
         if ref_str or cur_str:
@@ -878,6 +885,7 @@ def _build_template_context(
     overlays: list | None = None,
     run_metadata: dict | None = None,
     plot_series: Iterable[str] = (),
+    backend_cls=None,
     *,
     diagnostics: Sequence[str],
 ) -> dict:
@@ -900,7 +908,7 @@ def _build_template_context(
     ref_sim = ref_data.baseline.simulation if ref_data else {}
 
     ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
-    sim_params = _build_sim_params(test_model, ref_sim)
+    sim_params = _build_sim_params(test_model, ref_sim, backend_cls)
     run_diagnostics = (result.diagnostics or []) if result is not None else []
     # The baseline's side of the listed names' rows: its summaries, at the
     # precision its file was recorded with.

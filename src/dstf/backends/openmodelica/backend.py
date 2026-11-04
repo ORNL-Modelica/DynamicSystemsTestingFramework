@@ -46,6 +46,7 @@ from ..locate import Located, find_executable
 from ..types import (
     Capability,
     DatasetType,
+    Solver,
     TestResult,
     TestRunResult,
     timeout_message,
@@ -53,6 +54,7 @@ from ..types import (
 from .init_xml import with_system_size
 from .log_parser import parse_omc_stdout
 from .mos_generator import build_simulate_mos
+from .solvers import solver as om_solver
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +193,12 @@ class OpenModelicaBackend(Backend):
         return Diagnosis(
             tuple(lines), located.found and bool(info["import_ok"]), tuple(fixes)
         )
+
+    @classmethod
+    def solver(cls, test: TestModel) -> Solver:
+        """A name OpenModelica knows, as it spells it; any other runs on
+        dassl (:func:`.solvers.solver`)."""
+        return om_solver(test)
 
     @classmethod
     def persistent_backend_cls(cls):

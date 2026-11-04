@@ -95,3 +95,25 @@ def test_unit_tests_variables_and_patterns_on_one_test_are_both_shown(tmp_path, 
     (refs / "test_spec.json").write_text(json.dumps(spec), encoding="utf-8")
     rows, _ = _discover(capsys, refs / "testing.json")
     assert rows["SimpleTest"][0] == "2 + 2 patterns"
+
+
+def test_a_solver_the_backend_does_not_know_shows_the_one_that_runs(tmp_path, capsys):
+    """OpenModelica has no `Esdirk45a`: the test runs on dassl, and the row
+    says both — what the test asks for, and what runs."""
+    import shutil
+
+    lib = tmp_path / "ModelicaTestingLib"
+    shutil.copytree(MODELICA.parents[2], lib)
+    refs = lib / "Resources" / "ReferenceResults"
+    testing = json.loads((refs / "testing.json").read_text(encoding="utf-8"))
+    testing["backend"] = "OpenModelica"
+    (refs / "testing.json").write_text(json.dumps(testing), encoding="utf-8")
+    spec = json.loads((refs / "test_spec.json").read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"].endswith(".NoUnitTest"):
+            entry["simulation"]["method"] = "Esdirk45a"
+    (refs / "test_spec.json").write_text(json.dumps(spec), encoding="utf-8")
+    rows, _ = _discover(capsys, refs / "testing.json")
+    assert rows["NoUnitTest"][2] == "Esdirk45a → dassl"
+    # A name OpenModelica knows is shown as the test names it.
+    assert rows["SimpleTest"][2] == "Dassl"
