@@ -24,6 +24,11 @@ this file says when they do.
 
 ### Fixed
 
+- nrmse treats a baseline as constant when its range is under 1e-10 of its
+  value (was 100 machine epsilons), so a constant carrying rounding noise is
+  scored against its value, not against the noise. TRANSFORM's
+  `OilWater_PCHX` on OpenModelica failed on a pressure that wobbles by 5e-8
+  Pa near 184,917 Pa.
 - OpenModelica runs a test whose solver it does not know — Dymola's
   `Esdirk45a`, from a `__Dymola_Algorithm` annotation or `test_spec.json` —
   on dassl, where omc stopped with `unrecognized option -s esdirk45a`; `dstf
