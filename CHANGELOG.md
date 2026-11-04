@@ -16,8 +16,22 @@ this file says when they do.
   baselines for Dymola and OpenModelica. The criteria guide walks through it,
   and through what fails when one heater gets 10 % more power.
 
+### Changed
+
+- A baseline records the solver that ran, as the backend names it, not the
+  name the test asked for: an FMPy baseline records `CVode` where it recorded
+  `Dassl`, and an OpenModelica one `dassl`.
+
 ### Fixed
 
+- OpenModelica runs a test whose solver it does not know — Dymola's
+  `Esdirk45a`, from a `__Dymola_Algorithm` annotation or `test_spec.json` —
+  on dassl, where omc stopped with `unrecognized option -s esdirk45a`; `dstf
+  run` says so before it starts (`OpenModelica does not know solver Esdirk45a
+  (14 tests): runs dassl instead`), and `dstf discover` shows `Esdirk45a →
+  dassl`. FMPy already ran such a name on CVode without a word: `dstf run`
+  now says so too, and FMPy matches a name whatever its case (`euler` runs
+  Euler; it ran CVode).
 - `nrmse` and `event-timing` no longer fail two runs that hold the same event
   written a hair apart. OpenModelica can write an event as a pair at t and a
   second pair a little later (5e-8 of t in one TRANSFORM test), a pair 1e-14

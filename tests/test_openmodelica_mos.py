@@ -155,6 +155,59 @@ class TestBuildSimulateArgs:
         assert not pat.fullmatch("unitTests.x[1]")
 
 
+class TestTheSolverOpenModelicaRuns:
+    """OpenModelica 1.27.1 stops before simulating on a solver name it does
+    not know (``unrecognized option -s esdirk45a``): Dymola's ``Esdirk45a``
+    from a ``__Dymola_Algorithm`` annotation failed 14 TRANSFORM tests. A
+    name it knows is passed as OpenModelica spells it; any other runs on
+    its default, dassl, and says what was asked."""
+
+    @pytest.mark.parametrize(
+        ("asked", "ran"),
+        [
+            ("Esdirk45a", "dassl"),
+            ("Cvode", "cvode"),
+            ("gbode", "gbode"),
+            # In OpenModelica's table, but runs only on a model translated
+            # with the --symSolver compiler flag.
+            ("symSolver", "dassl"),
+        ],
+    )
+    def test_the_simulate_call_names_the_solver_that_runs(self, asked, ran):
+        args = build_simulate_args(_make_test(method=asked), [])
+        assert [a for a in args if a.startswith("method=")] == [f'method="{ran}"']
+
+    @pytest.mark.parametrize(
+        "name", ["dassl", "ida", "cvode", "gbode", "euler", "rungekutta", "qss"]
+    )
+    def test_a_name_it_knows_is_no_fallback(self, name):
+        """Every simulation solver of OpenModelica 1.27.1's table, named in
+        another case (Dymola's ``Cvode``), runs as OpenModelica spells it."""
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+        from dstf.backends.types import Solver
+
+        test = _make_test(method=name.capitalize())
+        assert OpenModelicaBackend.solver(test) == Solver(name, None)
+
+    def test_an_empty_name_is_no_name(self):
+        """``"method": ""`` asks for no solver: the default runs, and nothing
+        was asked that OpenModelica does not know."""
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+        from dstf.backends.types import Solver
+
+        assert OpenModelicaBackend.solver(_make_test(method="")) == Solver(
+            "dassl", None
+        )
+
+    def test_a_name_it_does_not_know_runs_dassl_and_says_what_was_asked(self):
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+        from dstf.backends.types import Solver
+
+        assert OpenModelicaBackend.solver(_make_test(method="Esdirk45a")) == Solver(
+            "dassl", "Esdirk45a"
+        )
+
+
 class TestBuildSimulateMos:
     def test_includes_std_version_option(self):
         mos = build_simulate_mos(

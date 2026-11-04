@@ -23,7 +23,7 @@ from typing import Any
 
 import numpy as np
 
-from ..backends import TestResult
+from ..backends import TestResult, get_backend_class
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from .baseline import (
@@ -205,7 +205,10 @@ class ReferenceStore(_RolesMixin):
         simulation = {
             "stop_time": test.stop_time,
             "tolerance": test.tolerance,
-            "method": test.method,
+            # The solver that ran, as the store's backend names it — not the
+            # test's name for it: OpenModelica runs dassl for a name it does
+            # not know, and FMPy runs Dassl as CVode (`Backend.solver`).
+            "method": get_backend_class(self.config).solver(test).name,
             "number_of_intervals": n_intervals,
             "output_interval": out_interval,
         }

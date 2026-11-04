@@ -25,6 +25,7 @@ from ...discovery.test_registry import TestModel
 from ...discovery.unit_tests import unit_test_variables
 from ..common.result_variables import criterion_variables
 from ..types import _pattern_to_regex
+from .solvers import solver
 
 
 def classify_dependency(entry: str) -> tuple[str, str]:
@@ -132,8 +133,9 @@ def build_simulate_args(
     OM's ``simulate()`` has ``numberOfIntervals`` but not ``outputInterval``
     (Dymola's ``simulateModel`` has the latter), so we convert
     ``output_interval`` → ``numberOfIntervals`` when that's what the test
-    specified. Solver names are lowercased here so a framework-wide
-    Dymola-style ``"Dassl"`` survives the crossing.
+    specified. The solver is the one OpenModelica runs the test with
+    (:func:`.solvers.solver`): a framework-wide Dymola-style ``"Dassl"`` is
+    ``dassl``, and a name OpenModelica does not know is dassl too.
 
     ``mat_sync`` adds ``simflags="-mat_sync=1"``: the simulation executable
     then writes each output row to the result file as it is produced, where
@@ -152,7 +154,7 @@ def build_simulate_args(
         )
         args.append(f"numberOfIntervals={n_intervals}")
     args.append(f"tolerance={float(test.tolerance)!r}")
-    args.append(_format_sim_kwarg("method", (test.method or "dassl").lower()))
+    args.append(_format_sim_kwarg("method", solver(test).name))
     args.append('outputFormat="mat"')
     args.append('fileNamePrefix="result"')
     var_filter = build_variable_filter(

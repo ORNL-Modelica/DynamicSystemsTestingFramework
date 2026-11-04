@@ -9,6 +9,7 @@ this module touches Jinja, the filesystem, or the decimation pass.
 import logging
 import math
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from ..backends.types import VariableText, display_label, variable_texts
@@ -308,10 +309,20 @@ def _build_ref_info(
     return ref_info
 
 
-def _build_sim_params(test_model, ref_sim: dict) -> list:
+def _build_sim_params(test_model, ref_sim: dict, backend_cls=None) -> list:
     """Build the current-vs-reference simulation-parameter table (stop_time,
     tolerance, method, ...). Each row carries a ``changed`` flag the
     template uses to highlight drift.
+
+    The current method is the solver *backend_cls* runs the test with
+    (``Backend.solver``), as a baseline records it: a test asking for
+    ``Esdirk45a`` that OpenModelica runs on dassl, against a baseline that
+    ran dassl, has not changed. Without a backend class, the test's own name.
+    A baseline stored before baselines recorded the solver that ran says the
+    name the test asked for (``Dassl``). Its name is put through the same
+    rule before the two are compared, whatever their case: OpenModelica's
+    ``Dassl`` is ``dassl`` and FMPy's is ``CVode`` — the same solver, not a
+    change; a stored ``cvode`` where dassl runs now is one.
     """
     sim_params = []
     sim_fields = [
@@ -324,15 +335,25 @@ def _build_sim_params(test_model, ref_sim: dict) -> list:
     for key, label in sim_fields:
         ref_val = ref_sim.get(key)
         cur_val = getattr(test_model, key, None) if test_model else None
+        if key == "method" and test_model is not None and backend_cls is not None:
+            cur_val = backend_cls.solver(test_model).name
         ref_str = _format_value(ref_val) if ref_val is not None else ""
         cur_str = _format_value(cur_val) if cur_val is not None else ""
+        if key == "method":
+            ran = ref_str
+            if ref_val is not None and test_model is not None and backend_cls:
+                stored = replace(test_model, method=str(ref_val))
+                ran = _format_value(backend_cls.solver(stored).name)
+            same = cur_str.casefold() == ran.casefold()
+        else:
+            same = cur_str == ref_str
         if ref_str or cur_str:
             sim_params.append(
                 {
                     "label": label,
                     "current": cur_str,
                     "reference": ref_str,
-                    "changed": cur_str != "" and ref_str != "" and cur_str != ref_str,
+                    "changed": cur_str != "" and ref_str != "" and not same,
                 }
             )
     return sim_params
@@ -878,6 +899,7 @@ def _build_template_context(
     overlays: list | None = None,
     run_metadata: dict | None = None,
     plot_series: Iterable[str] = (),
+    backend_cls=None,
     *,
     diagnostics: Sequence[str],
 ) -> dict:
@@ -900,7 +922,7 @@ def _build_template_context(
     ref_sim = ref_data.baseline.simulation if ref_data else {}
 
     ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
-    sim_params = _build_sim_params(test_model, ref_sim)
+    sim_params = _build_sim_params(test_model, ref_sim, backend_cls)
     run_diagnostics = (result.diagnostics or []) if result is not None else []
     # The baseline's side of the listed names' rows: its summaries, at the
     # precision its file was recorded with.

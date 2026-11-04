@@ -95,3 +95,45 @@ def test_unit_tests_variables_and_patterns_on_one_test_are_both_shown(tmp_path, 
     (refs / "test_spec.json").write_text(json.dumps(spec), encoding="utf-8")
     rows, _ = _discover(capsys, refs / "testing.json")
     assert rows["SimpleTest"][0] == "2 + 2 patterns"
+
+
+def _esdirk_on_openmodelica(tmp_path) -> Path:
+    """A copy of the Modelica example run with OpenModelica, whose
+    NoUnitTest asks for Esdirk45a: its testing.json."""
+    import shutil
+
+    lib = tmp_path / "ModelicaTestingLib"
+    shutil.copytree(MODELICA.parents[2], lib)
+    refs = lib / "Resources" / "ReferenceResults"
+    testing = json.loads((refs / "testing.json").read_text(encoding="utf-8"))
+    testing["backend"] = "OpenModelica"
+    (refs / "testing.json").write_text(json.dumps(testing), encoding="utf-8")
+    spec = json.loads((refs / "test_spec.json").read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"].endswith(".NoUnitTest"):
+            entry["simulation"]["method"] = "Esdirk45a"
+    (refs / "test_spec.json").write_text(json.dumps(spec), encoding="utf-8")
+    return refs / "testing.json"
+
+
+def test_a_solver_the_backend_does_not_know_shows_the_one_that_runs(tmp_path, capsys):
+    """OpenModelica has no `Esdirk45a`: the test runs on dassl, and the row
+    says both — what the test asks for, and what runs."""
+    rows, _ = _discover(capsys, _esdirk_on_openmodelica(tmp_path))
+    assert rows["NoUnitTest"][2] == "Esdirk45a → dassl"
+    # A name OpenModelica knows is shown as the test names it.
+    assert rows["SimpleTest"][2] == "Dassl"
+
+
+def test_the_method_column_is_as_wide_as_its_longest_value(tmp_path, capsys):
+    """`Esdirk45a → dassl` is wider than the column was: every row's Source
+    still starts under the header's, and the rule under the header is as
+    long as it."""
+    config = _esdirk_on_openmodelica(tmp_path)
+    capsys.readouterr()
+    assert main(["--config", str(config), "discover"]) == 0
+    header, rule, *rows = capsys.readouterr().out.partition("\nTotal: ")[0].splitlines()
+    column = header.index("Source")
+    assert {row[column:].split()[0] for row in rows} == {"both", "spec", "unit_tests"}
+    assert {row[column - 2 : column] for row in rows} == {"  "}
+    assert rule == "-" * len(header)

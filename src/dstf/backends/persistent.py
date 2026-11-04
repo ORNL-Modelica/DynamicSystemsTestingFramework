@@ -1592,6 +1592,7 @@ class PersistentBackendBase(Backend):
             self.config.work_dir,
             timeout_per_test=True,
             metadata=setup.run_metadata,
+            notes=setup.solver_notes,
             quiet=self.quiet,
         )
 

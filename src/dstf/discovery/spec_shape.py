@@ -76,8 +76,12 @@ SIMULATION: dict[str, Setting] = {
         "The solver, by the name the simulator knows it by "
         '("Dassl", "Cvode", "Esdirk45a"). Without this key the model\'s '
         "experiment annotation gives it (__Dymola_Algorithm); without that, "
-        "the default applies. FMPy maps it to one of its own solvers; "
-        "Julia and Python tests do not read it.",
+        "the default applies. OpenModelica and FMPy match a name whatever "
+        "its case. A name OpenModelica does not list runs on dassl; FMPy "
+        "runs Dassl and Cvode as CVode, Euler as Euler and any other name on "
+        "CVode. dstf run says, before it starts, which names ran on a "
+        'default instead; "" names no solver. A baseline records the solver '
+        "that ran. Julia and Python tests do not read it.",
     ),
     "number_of_intervals": Setting(
         {"type": "integer"},
