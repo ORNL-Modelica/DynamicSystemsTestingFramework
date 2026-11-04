@@ -470,12 +470,12 @@ class TestASolverOpenModelicaDoesNotKnow:
         written = json.loads(ref_file.read_text(encoding="utf-8"))
         assert written["simulation"]["method"] == "dassl"
 
-    def test_the_report_compares_the_solver_that_ran_with_the_baselines(
-        self, tmp_path, monkeypatch
-    ):
-        """The report's Simulation Parameters: the test asks for Esdirk45a,
-        dassl ran and the baseline ran dassl — the Method row is unchanged,
-        not marked as a drift."""
+    def _method_row(self, tmp_path, monkeypatch, method, stored=None) -> str:
+        """The report's Method row for a test asking for *method*, after a
+        run, an accept and a compare. *stored*: the method the baseline
+        records instead of the one the accept wrote — a baseline stored by
+        an earlier dstf, which recorded the name the test asked for."""
+        import json
         import re
 
         from dstf.comparison.comparator import compare_all
@@ -485,20 +485,55 @@ class TestASolverOpenModelicaDoesNotKnow:
 
         backend = self._backend(tmp_path, monkeypatch)
         backend.quiet = True
-        tests = [self._test("Lib.A", "Esdirk45a")]
+        tests = [self._test("Lib.A", method)]
         backend.run_tests(tests)
         results = backend.read_last_results(tests)
         store = ReferenceStore(backend.config)
         accept_run_results(store, tests, results, backend.config.work_dir)
+        if stored is not None:
+            (ref_file,) = (tmp_path / "refs" / "OpenModelica").glob("*/ref_0001.json")
+            written = json.loads(ref_file.read_text(encoding="utf-8"))
+            written["simulation"]["method"] = stored
+            ref_file.write_text(json.dumps(written), encoding="utf-8")
+            store = ReferenceStore(backend.config)
         comparisons = compare_all(tests, results, store)
         generate_report_suite(comparisons, results, tests, store, backend.config)
 
         page = (
             backend.config.work_dir / "reports" / "ref_0001" / "interactive.html"
         ).read_text(encoding="utf-8")
-        assert re.findall(r"<tr[^>]*><td>Method</td>.*?</tr>", page) == [
+        (row,) = re.findall(r"<tr[^>]*><td>Method</td>.*?</tr>", page)
+        return row
+
+    def test_the_report_compares_the_solver_that_ran_with_the_baselines(
+        self, tmp_path, monkeypatch
+    ):
+        """The report's Simulation Parameters: the test asks for Esdirk45a,
+        dassl ran and the baseline ran dassl — the Method row is unchanged,
+        not marked as a drift."""
+        assert self._method_row(tmp_path, monkeypatch, "Esdirk45a") == (
             "<tr><td>Method</td><td>dassl</td><td>dassl</td></tr>"
-        ]
+        )
+
+    def test_a_baseline_that_spells_the_solver_otherwise_is_unchanged(
+        self, tmp_path, monkeypatch
+    ):
+        """An OpenModelica baseline stored before this rule records the
+        test's ``Dassl``; dassl runs. OpenModelica's names are the same in
+        any case: the same solver, not a drift."""
+        row = self._method_row(tmp_path, monkeypatch, "Dassl", stored="Dassl")
+        assert row == "<tr><td>Method</td><td>dassl</td><td>Dassl</td></tr>"
+
+    def test_a_baseline_of_another_solver_is_marked_changed(
+        self, tmp_path, monkeypatch
+    ):
+        """A baseline stored before this rule records ``Esdirk45a``, which
+        never ran; dassl runs now. Another name: marked."""
+        row = self._method_row(tmp_path, monkeypatch, "Dassl", stored="Esdirk45a")
+        assert row == (
+            '<tr style="background: var(--dstf-warn-tint)"><td>Method</td>'
+            "<td>dassl</td><td>Esdirk45a</td></tr>"
+        )
 
 
 # ---------------------------------------------------------------------------

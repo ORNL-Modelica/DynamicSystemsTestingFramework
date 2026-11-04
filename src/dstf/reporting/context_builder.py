@@ -317,6 +317,9 @@ def _build_sim_params(test_model, ref_sim: dict, backend_cls=None) -> list:
     (``Backend.solver``), as a baseline records it: a test asking for
     ``Esdirk45a`` that OpenModelica runs on dassl, against a baseline that
     ran dassl, has not changed. Without a backend class, the test's own name.
+    A method is compared whatever its case: a baseline stored before a
+    baseline recorded the solver that ran says the test's ``Dassl``, and
+    OpenModelica's ``dassl`` is the same solver.
     """
     sim_params = []
     sim_fields = [
@@ -333,13 +336,17 @@ def _build_sim_params(test_model, ref_sim: dict, backend_cls=None) -> list:
             cur_val = backend_cls.solver(test_model).name
         ref_str = _format_value(ref_val) if ref_val is not None else ""
         cur_str = _format_value(cur_val) if cur_val is not None else ""
+        if key == "method":
+            same = cur_str.casefold() == ref_str.casefold()
+        else:
+            same = cur_str == ref_str
         if ref_str or cur_str:
             sim_params.append(
                 {
                     "label": label,
                     "current": cur_str,
                     "reference": ref_str,
-                    "changed": cur_str != "" and ref_str != "" and cur_str != ref_str,
+                    "changed": cur_str != "" and ref_str != "" and not same,
                 }
             )
     return sim_params
