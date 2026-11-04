@@ -357,8 +357,8 @@ class EventTimingConfig:
     """Configuration for event-timing comparison (4.C.1).
 
     When ``events`` is None (default), both reference and actual event
-    instants are auto-detected from duplicate-time samples (Modelica
-    convention) and paired by index. When ``events`` is provided, the
+    instants are auto-detected from samples at one instant (Modelica
+    convention; ``algorithms._same_instant``) and paired by index. When ``events`` is provided, the
     declared list becomes the authoritative reference-side event set —
     the actual signal is still auto-detected, and declared events claim
     distinct actual events by optimal interval matching (windows sorted
@@ -655,7 +655,7 @@ class PointsMode(ComparisonMode):
 
 
 class EventTimingMode(ComparisonMode):
-    """Compare event instants (duplicate-time markers) between signals."""
+    """Compare event instants (samples at one instant) between signals."""
 
     def __init__(self, config: EventTimingConfig):
         self.config = config

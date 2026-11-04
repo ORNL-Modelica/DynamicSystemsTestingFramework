@@ -17,14 +17,50 @@ from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
 from .sides import Sides, as_written, parse_number, parse_sides
 from .types import _EPS, VariableComparison
 
+#: Samples closer in time than this fraction of the series' span (its last
+#: time minus its first) are one instant (`_same_instant`). Why 1e-7: an
+#: OpenModelica run can write an event as a pair at t and a second pair a hair
+#: later, and over TRANSFORM's 956 stored baselines (measured 2026-11-04) that
+#: offset reaches ~2.25e-8 of the run's span; 3e-8 was the smallest fraction
+#: that scored all seven affected tests alike, 1e-8 was not. OpenModelica has
+#: no constant for the offset to read instead: its zero-crossing hysteresis
+#: (`TOL_HYSTERESIS_ZEROCROSSINGS = 1e-4` in `simulation/solver/epsilon.h`) is a
+#: band on the crossing function's VALUE, so the time it costs follows the
+#: signal's slope. Wrong when a model's offset exceeds 1e-7 of its span (its
+#: events split again), and for events genuinely closer than that, which merge
+#: into one — as do solver steps that close, if a backend writes them.
+SAME_INSTANT = 1e-7
+
+
+def _same_instant(time: np.ndarray) -> np.ndarray:
+    """The times with each sample moved onto its instant: THE rule of what
+    one instant is, which every event the comparison finds goes through.
+
+    A sample whose gap to the previous sample is under `SAME_INSTANT` of
+    the series' span (or zero) belongs to that sample's instant and takes
+    its time, so a run of such samples all take the first one's. The
+    samples, their order and their values are untouched."""
+    time = np.asarray(time, dtype=float)
+    if len(time) < 2:
+        return time
+    gaps = np.diff(time)
+    span = float(time[-1] - time[0])
+    same = (gaps == 0) | ((gaps > 0) & (gaps < SAME_INSTANT * span))
+    starts = np.concatenate(([True], ~same))
+    return time[np.flatnonzero(starts)][np.cumsum(starts) - 1]
+
 
 def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
-    """Find event boundaries where duplicate time values occur.
+    """Find events: runs of two or more samples at one time.
 
-    Dymola may produce 2 or 3 duplicate time points per event. This function
-    groups consecutive duplicates and returns (first_dup, last_dup) pairs.
-    The segment before the event ends at first_dup (inclusive, pre-event value).
-    The segment after starts at last_dup (inclusive, post-event value).
+    An event is written as two or more samples at one instant — the value
+    before it, then the value after it (Dymola sometimes writes a third
+    between them; an OpenModelica run may write a second pair a hair later).
+    ``time`` has been through `_same_instant`, so each event is a run of
+    equal times. This function returns each run's (first_dup, last_dup)
+    pair — the index of its second sample and of its last. The segment
+    before the event ends at first_dup - 1 (the pre-event value), the
+    segment after starts at last_dup (the post-event value).
     """
     boundaries = []
     i = 1
@@ -38,6 +74,12 @@ def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
         else:
             i += 1
     return boundaries
+
+
+def _event_times(time: np.ndarray) -> list[float]:
+    """The instants of a series' events, in order (`_same_instant`)."""
+    instants = _same_instant(time)
+    return [float(instants[b[0]]) for b in _find_event_boundaries(instants)]
 
 
 def _split_segments(
@@ -113,10 +155,14 @@ def actual_on_reference_grid(
     the actual is deduplicated per segment — first value at a duplicate
     time for a segment ending at an event, last value for one starting at
     an event — so the pre-event actual is never paired with the post-event
-    reference. This is THE interpolation the nrmse score uses; the figure
+    reference. Both series' samples are first put on their instants
+    (`_same_instant`), so ``times`` is the reference's times on its
+    instants. This is THE interpolation the nrmse score uses; the figure
     layer's error series reads the same function, so the error drawn is
     the error scored (an event never shows as a spike the verdict lacks).
     """
+    ref_time = _same_instant(ref_time)
+    act_time = _same_instant(act_time)
     boundaries = _find_event_boundaries(ref_time)
     segments = _split_segments(ref_time, ref_values, boundaries)
 
@@ -216,9 +262,12 @@ def _compare_trajectories(
     # For constants with large magnitude (e.g., 37e9), raw RMSE is misleading
     # because float32 quantization alone can produce errors of hundreds.
     # Normalizing by magnitude gives a meaningful relative metric.
-    is_constant = signal_range < _EPS
+    # "Constant" is a range under _EPS of the magnitude (at least _EPS): a
+    # constant near 821 carries rounding noise of ~1e-13, and a range that
+    # small is no signal to normalise by.
+    ref_magnitude = float(np.max(np.abs(ref_values)))
+    is_constant = signal_range < _EPS * max(1.0, ref_magnitude)
     if is_constant:
-        ref_magnitude = float(np.max(np.abs(ref_values)))
         nrmse = rmse / ref_magnitude if ref_magnitude > _EPS else rmse
     else:
         nrmse = rmse / signal_range
@@ -1427,9 +1476,9 @@ def _compare_event_timing(
     Two paths:
 
     * ``declared_events is None`` (default): events are auto-detected
-      from duplicate-time samples in BOTH arrays, then paired by index.
-      Pass when ``count_must_match`` is satisfied and every pair's
-      ``d = actual − reference`` lies in ``[−lower, upper]`` of
+      from samples at one instant (`_same_instant`) in BOTH arrays, then
+      paired by index. Pass when ``count_must_match`` is satisfied and
+      every pair's ``d = actual − reference`` lies in ``[−lower, upper]`` of
       ``time_tolerance`` (a number is both sides; ``lower`` is how much
       earlier, ``upper`` how much later).
 
@@ -1458,13 +1507,11 @@ def _compare_event_timing(
             "event-timing",
             "no reference samples to compare (empty baseline or window)",
         )
-    act_boundaries = _find_event_boundaries(act_time)
-    act_events = [float(act_time[b[0]]) for b in act_boundaries]
+    act_events = _event_times(act_time)
 
     if declared_events is None:
         # Legacy auto-detect path — unchanged behavior.
-        ref_boundaries = _find_event_boundaries(ref_time)
-        ref_events = [float(ref_time[b[0]]) for b in ref_boundaries]
+        ref_events = _event_times(ref_time)
 
         n = min(len(ref_events), len(act_events))
         max_delta = 0.0

@@ -30,6 +30,8 @@
 
 - **Triple time points at events**: Dymola sometimes produces 3 duplicate time points per event (pre-event, intermediate, post-event) rather than the expected 2. The comparator groups consecutive duplicates and uses the first as the segment end and the last as the next segment start, skipping intermediates.
 
+- **Near-coincident event samples (OpenModelica)**: OpenModelica can write an event as a pair at t and a second pair a hair later (up to ~2.25e-8 of the run's span over TRANSFORM's baselines), or a pair 1e-14 before a grid sample. The comparator treats samples less than 1e-7 of the span apart as one instant (`algorithms.SAME_INSTANT`), so these score as the one event another run writes as an exact pair.
+
 - **Numeric results are platform-dependent**: The same model with the same solver settings produces different floating-point results on Windows vs Linux, and between Dymola vs OpenModelica. References must be partitioned by backend + OS.
 
 - **Translation log capture requires Dymola 2025x+**: `Advanced.UI.TranslationInCommandLog := true;` is the correct flag for Dymola 2025x and newer. Older versions may use `Advanced.TranslationInCommandLog` (without `UI`). The framework hardcodes the 2025x+ syntax.

@@ -11,7 +11,7 @@ from dstf.storage.baseline_codec import decode_reference
 from scoring import score
 
 # ---------------------------------------------------------------------------
-# Event detection: an event is two or more samples at one time
+# Event detection: an event is two or more samples at one instant
 # ---------------------------------------------------------------------------
 
 
@@ -26,10 +26,28 @@ from scoring import score
         ([0.0, 0.0, 1.0, 2.0], [0.0]),
         ([0.0, 1.0, 2.0, 2.0], [2.0]),
         ([1.0], []),
+        # OpenModelica writes an event as a pair at 0.25 and a second pair
+        # 1.25e-8 later (1.25e-8 of the run's span): one event.
+        ([0.0, 0.25, 0.25, 0.250000012500095, 0.250000012500095, 1.0], [0.25]),
+        # An event pair 1e-14 before a grid sample at 6.0: one event.
+        ([0.0, 5.99999999999999, 5.99999999999999, 6.0, 10.0], [5.99999999999999]),
+        # Two pairs 1e-5 of the span apart are two events.
+        ([0.0, 0.25, 0.25, 0.25001, 0.25001, 1.0], [0.25, 0.25001]),
     ],
-    ids=["none", "double", "triple", "two", "at-start", "at-end", "one-sample"],
+    ids=[
+        "none",
+        "double",
+        "triple",
+        "two",
+        "at-start",
+        "at-end",
+        "one-sample",
+        "near-pair",
+        "grid-sample-after",
+        "apart",
+    ],
 )
-def test_the_events_a_run_holds_are_its_repeated_times(time, events):
+def test_the_events_a_run_holds_are_its_samples_at_one_instant(time, events):
     t = np.array(time)
     vc = score({"mode": "event-timing"}, t, np.zeros_like(t), t, np.zeros_like(t))
     drawn = [p.time for p in vc.geometry if p.id.startswith("events/act/")]
@@ -151,6 +169,27 @@ class TestCompareTrajectories:
         assert vc.nrmse < 1e-4
         assert vc.passed
 
+    def test_a_large_constant_with_rounding_noise_is_constant(self):
+        """A constant near 821 carries rounding noise of a few 1e-13; an
+        actual 4.5e-13 off it is the same signal."""
+        t = np.linspace(0.0, 1.0, 101)
+        ref_v = 821.3 + np.tile([0.0, 1.02e-12, 5e-13, 2e-13], 26)[:101]
+        act_v = ref_v + 4.5e-13
+        vc = score({"mode": "nrmse"}, t, ref_v, t, act_v, tolerance=1e-4)
+        assert vc.is_constant == True
+        assert vc.nrmse < 1e-14
+        assert vc.passed is True
+
+    def test_a_small_signal_that_varies_is_not_constant(self):
+        t = np.array([0.0, 1.0, 2.0])
+        ref_v = np.array([1e-12, 2e-12, 3e-12])
+        act_v = np.array([2e-12, 3e-12, 4e-12])
+        vc = score({"mode": "nrmse"}, t, ref_v, t, act_v, tolerance=1e-4)
+        assert vc.is_constant == False
+        # An error of 1e-12 everywhere over a range of 2e-12.
+        assert vc.nrmse == pytest.approx(0.5)
+        assert vc.passed is False
+
     def test_constant_zero_reference(self):
         """Constant zero reference with nonzero actual uses raw RMSE."""
         t = np.array([0.0, 1.0])
@@ -235,6 +274,102 @@ class TestCompareTrajectories:
         assert vc.passed is True
         assert vc.nrmse == 0.0
         assert vc.reference_final == 2.0
+
+
+class TestEventsAtNearlyOneInstant:
+    """Samples closer in time than 1e-7 of the run's span are one instant:
+    an event OpenModelica writes as a pair and a second pair a hair later
+    is scored as the one event another run writes as one exact pair."""
+
+    # A step from 0 to 1 at 0.25 on a 0.002 grid over [0, 1].
+    BEFORE = np.linspace(0.0, 0.25, 126)[:-1]
+    AFTER = np.linspace(0.25, 1.0, 376)[1:]
+    NEAR = np.array([0.25, 0.25, 0.250000012500095, 0.250000012500095])
+    EXACT = np.array([0.25, 0.25])
+
+    def _step(self, at, jump):
+        t = np.concatenate([self.BEFORE, at, self.AFTER])
+        v = np.concatenate([np.zeros(len(self.BEFORE)), jump, np.ones(len(self.AFTER))])
+        return t, v
+
+    def test_a_reference_near_pair_scores_an_exact_pair_as_equal(self):
+        ref_t, ref_v = self._step(self.NEAR, [0.0, 0.0, 0.0, 1.0])
+        act_t, act_v = self._step(self.EXACT, [0.0, 1.0])
+        vc = score({"mode": "nrmse"}, ref_t, ref_v, act_t, act_v, tolerance=1e-4)
+        assert vc.nrmse == 0.0
+        assert vc.passed is True
+
+    def test_an_actual_near_pair_scores_against_an_exact_pair_as_equal(self):
+        ref_t, ref_v = self._step(self.EXACT, [0.0, 1.0])
+        act_t, act_v = self._step(self.NEAR, [0.0, 0.0, 0.0, 1.0])
+        vc = score({"mode": "nrmse"}, ref_t, ref_v, act_t, act_v, tolerance=1e-4)
+        assert vc.nrmse == 0.0
+        assert vc.passed is True
+
+    def test_an_event_pair_just_before_a_grid_sample_is_one_event(self):
+        """A square wave up at 6 and down at 8 on a 0.1 grid over [0, 10].
+        The reference writes the rise as a pair 1e-14 before 6.0 and then
+        the grid sample at 6.0; the actual writes an exact pair at 6.0."""
+        grid = np.round(np.linspace(0.0, 10.0, 101), 12)
+        level = ((grid > 6.0) & (grid < 8.0)).astype(float)
+        i6, i8 = 60, 80
+        act_t = np.concatenate(
+            [grid[:i6], [6.0, 6.0], grid[i6 + 1 : i8], [8.0, 8.0], grid[i8 + 1 :]]
+        )
+        act_v = np.concatenate(
+            [level[:i6], [0.0, 1.0], level[i6 + 1 : i8], [1.0, 0.0], level[i8 + 1 :]]
+        )
+        ref_t = np.concatenate(
+            [
+                grid[:i6],
+                [5.99999999999999, 5.99999999999999, 6.0],
+                grid[i6 + 1 : i8],
+                [8.0, 8.0],
+                grid[i8 + 1 :],
+            ]
+        )
+        ref_v = np.concatenate(
+            [
+                level[:i6],
+                [0.0, 1.0, 1.0],
+                level[i6 + 1 : i8],
+                [1.0, 0.0],
+                level[i8 + 1 :],
+            ]
+        )
+        vc = score({"mode": "nrmse"}, ref_t, ref_v, act_t, act_v, tolerance=1e-4)
+        # The actual read 1e-14 before its own rise: 1e-13 below 1.
+        assert vc.max_abs_error < 1e-12
+        assert vc.passed is True
+
+    def test_a_near_pair_is_one_event_that_meets_the_baselines_one(self):
+        ref_t, _ = self._step(self.EXACT, [0.0, 1.0])
+        act_t, _ = self._step(self.NEAR, [0.0, 0.0, 0.0, 1.0])
+        vc = score(
+            {"mode": "event-timing", "count_must_match": True},
+            ref_t,
+            np.zeros_like(ref_t),
+            act_t,
+            np.zeros_like(act_t),
+        )
+        assert vc.diagnostics["act_event_count"] == 1
+        assert [p.time for p in vc.geometry if p.id.startswith("events/act/")] == [0.25]
+        assert vc.passed is True
+
+    def test_an_event_at_the_stop_time_still_fails(self):
+        """Owner decision (issue #23): a newer OpenModelica writes the value
+        after an event at the stop time where the older one wrote the value
+        before it twice. That is a change in what the run outputs, and it
+        fails."""
+        grid = np.linspace(0.0, 1.0, 101)
+        ramp = 0.9 * grid
+        ref_t = np.append(grid, 1.0)
+        ref_v = np.append(ramp, 0.9)
+        act_v = np.append(ramp, 1.0)
+        vc = score({"mode": "nrmse"}, ref_t, ref_v, ref_t, act_v, tolerance=1e-4)
+        assert vc.max_abs_error == pytest.approx(0.1)
+        assert vc.max_abs_error_time == 1.0
+        assert vc.passed is False
 
 
 # ---------------------------------------------------------------------------

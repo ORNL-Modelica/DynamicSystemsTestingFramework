@@ -45,7 +45,7 @@ import numpy as np
 
 from .algorithms import (
     _PEAK_MIN_REL_AMPLITUDE,
-    _find_event_boundaries,
+    _event_times,
     _interpolate_tube_widths,
     _peak_window,
 )
@@ -818,7 +818,7 @@ def edit_events_handle(edit: HandleEdit) -> dict:
     A DECLARED event (the leaf holds ``events``): its time is its row's,
     and the holder its row's ``tolerance`` where the row has one, else the
     criterion's ``time_tolerance``. AUTO-DETECTED events (no ``events``):
-    event ``i`` is the ``i``-th duplicated time of the reference as the
+    event ``i`` is the ``i``-th event instant of the reference as the
     scorer receives it — windowed — found by the scorer's own detection;
     the holder is the criterion's ``time_tolerance``, so every window
     moves. Refused on a leaf scored against another baseline, and with no
@@ -839,7 +839,7 @@ def edit_events_handle(edit: HandleEdit) -> dict:
             holder, key = event, "tolerance"
     else:
         ref_time, _ = _measured_reference(edit, leaf, "an event's window")
-        events = [float(ref_time[b[0]]) for b in _find_event_boundaries(ref_time)]
+        events = _event_times(ref_time)
         if not (segment.isascii() and segment.isdigit()):
             raise _unnamed(edit)
         i = int(segment)
