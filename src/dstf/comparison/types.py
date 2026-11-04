@@ -64,7 +64,7 @@ class VariableComparison:
     max_abs_error_time: float = 0.0  # Time at which it occurs
     reference_final: float = float("nan")
     actual_final: float = float("nan")
-    is_constant: bool = False  # True if reference signal has zero range
+    is_constant: bool = False  # True if the reference's range is noise (error_scale)
     # The tolerance applied for this variable, per side (a number is both).
     tolerance_used: Sides = Sides(0.0, 0.0)
     #: The metric this criterion was scored by — or, a config-error

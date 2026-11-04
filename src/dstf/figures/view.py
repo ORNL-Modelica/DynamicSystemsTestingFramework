@@ -14,10 +14,10 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from ..comparison.algorithms import actual_on_reference_grid
+from ..comparison.algorithms import actual_on_reference_grid, error_scale
 from ..comparison.geometry import Band, Primitive, Series
 from ..comparison.registry import summarize
-from ..comparison.types import _EPS, ScoreSummary, VariableComparison
+from ..comparison.types import ScoreSummary, VariableComparison
 from .decimate import decimate_band, lttb
 
 
@@ -93,8 +93,9 @@ def error_series(
     """Signed, absolute and normalised error of the actual on the reference
     grid, through the comparator's own event-aware interpolation
     (:func:`~dstf.comparison.algorithms.actual_on_reference_grid`) and its
-    normalisation: the reference range, or its magnitude for a constant
-    reference. The error drawn is the error scored."""
+    normalisation (:func:`~dstf.comparison.algorithms.error_scale`), over
+    the whole series: for a criterion with no window the error drawn is the
+    error scored."""
     if ref_time is None or ref_values is None or act_time is None or act_values is None:
         return ()
     times, ref_on, act_on = actual_on_reference_grid(
@@ -104,12 +105,7 @@ def error_series(
         return ()
     signed = act_on - ref_on
     absolute = np.abs(signed)
-    span = float(np.max(ref_values) - np.min(ref_values))
-    if span < _EPS:
-        magnitude = float(np.max(np.abs(ref_values)))
-        scale = magnitude if magnitude > _EPS else 1.0
-    else:
-        scale = span
+    scale, _ = error_scale(ref_values)
     return (
         Series(id="error/signed", kind="error", x=times, y=signed),
         Series(id="error/abs", kind="error", x=times, y=absolute),

@@ -36,6 +36,7 @@ from ..storage.baseline import (
     StoredVariable,
 )
 from ..storage.reference_store import ReferenceStore
+from .algorithms import same_instant
 from .registry import metric as registry_metric
 from .sides import base_tolerance_refused, is_base_tolerance, parse_sides
 from .types import (
@@ -810,7 +811,9 @@ def compare_test(
             if mode.is_baseline_free():
                 empty = np.array([])
                 try:
-                    vc = mode.compare(empty, empty, var_result.time, var_result.values)
+                    vc = mode.compare(
+                        empty, empty, same_instant(var_result.time), var_result.values
+                    )
                 except ValueError as exc:
                     comparisons.append(
                         _config_error_comparison(var_result, exc, metric_name)
@@ -837,11 +840,16 @@ def compare_test(
             comparisons.append(vc)
             continue
 
-        ref_time = shared_ref_time
+        # Both series on their instants, as the tree path's leaf reads them
+        # (`tree_eval._evaluate_leaf`): a criterion reads events the same
+        # way on either path.
+        ref_time = same_instant(shared_ref_time)
         ref_values = np.array(ref_var.values)
 
         try:
-            vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
+            vc = mode.compare(
+                ref_time, ref_values, same_instant(var_result.time), var_result.values
+            )
         except ValueError as exc:
             comparisons.append(_config_error_comparison(var_result, exc, metric_name))
             # A criterion whose config is an error read nothing, whenever

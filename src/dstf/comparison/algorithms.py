@@ -17,14 +17,96 @@ from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
 from .sides import Sides, as_written, parse_number, parse_sides
 from .types import _EPS, VariableComparison
 
+#: How close to a recorded event a sample is that event's instant: within
+#: ``SAME_INSTANT * max(span, |Te|)`` of the event's time ``Te``, on either side
+#: (`same_instant`; span is the series' last time minus its first, and a
+#: criterion's series are snapped over the whole run before a window is cut,
+#: so it is the run's). Why 1e-7: an OpenModelica run can write an event as a
+#: pair at t and a second pair a hair later, and over TRANSFORM's 956 stored
+#: baselines (measured 2026-11-04) that offset reaches ~2.25e-8 of the run's
+#: span; 3e-8 was the smallest fraction that scored all seven affected tests
+#: alike, 1e-8 was not. The offset grows with t, not with the span: in this
+#: repo's OpenModelica baselines it is 2e-10 * t at every near pair (Modelica
+#: ref_0002 at t = 2, 5, 8; ref_0013 at t = 21600, 32400, 34200), and the
+#: issue's is 5e-8 * t at 0.25 — so a run that starts late scales by |Te|.
+#: OpenModelica has no constant to read instead: its zero-crossing hysteresis
+#: (`TOL_HYSTERESIS_ZEROCROSSINGS = 1e-4` in `simulation/solver/epsilon.h`) is a
+#: band on the crossing function's VALUE, so the time it costs follows the
+#: signal's slope.
+#:
+#: Only a recorded event — a time written twice — gathers samples, and the
+#: distance is measured from its time, never chained sample to sample: a run
+#: that saves every solver step (dense, no time written twice) was collapsed
+#: onto its first time by a chained rule, and a lone stray sample made an
+#: event. It gathers on BOTH sides because OpenModelica also writes the grid
+#: sample first and the event's pair a hair later (TRANSFORM's PlotMap_Test:
+#: 10 (0.5), then 10.0000002000001 twice (0.5, 1), where Dymola writes 10
+#: twice): gathered only forward, the grid sample stayed a sample after
+#: Dymola's event and scored 0.5 off. An earlier event gathers first, so a
+#: snap is idempotent, and so is a snap of a window cut from a snapped series:
+#: every sample no event gathered is at least the threshold from every
+#: event's time, an event is at least the earlier event's threshold past it
+#: (and finds the earlier one's samples already gathered), and a window's
+#: threshold is no larger.
+#:
+#: Wrong when an offset exceeds 1e-7 of max(span, |t|) (the event splits
+#: again), when a run writes the near pair without a time written twice, and
+#: for samples genuinely that close to an event (and events that close to
+#: each other), which merge into it.
+SAME_INSTANT = 1e-7
+
+
+def same_instant(time: np.ndarray) -> np.ndarray:
+    """The times with each sample moved onto its instant: THE rule of what
+    one instant is, which every event the comparison finds goes through.
+
+    A recorded event is a time ``Te`` written two or more times. In time
+    order, each event gathers every sample not yet gathered that is less
+    than ``SAME_INSTANT * max(span, |Te|)`` from ``Te``, before or after it
+    (a later event's samples too), and those samples take the time ``Te``.
+    Any other sample keeps its time. A series with a non-finite time, or one
+    whose time goes backwards, is returned as it is: exact equality only.
+    The samples, their order and their values are untouched — the first
+    sample of an instant is still the value before its event, the last the
+    value after."""
+    time = np.asarray(time, dtype=float)
+    if len(time) < 3:
+        return time
+    gaps = np.diff(time)
+    if not np.all(np.isfinite(time)) or np.any(gaps < 0):
+        return time
+    # Runs of exactly equal times: where each starts, and where it ends.
+    starts = np.flatnonzero(np.concatenate(([True], gaps != 0)))
+    ends = np.append(starts[1:], len(time))
+    events = np.flatnonzero(ends - starts >= 2)
+    if len(events) == 0:
+        return time
+    span = float(time[-1] - time[0])
+    out = time.copy()
+    gathered = 0  # every sample before this index is an earlier event's
+    for g in events:
+        if starts[g] < gathered:
+            continue  # gathered by an earlier event
+        te = time[starts[g]]
+        reach = SAME_INSTANT * max(span, abs(te))
+        first = max(int(np.searchsorted(time, te - reach, side="right")), gathered)
+        last = max(int(np.searchsorted(time, te + reach, side="left")), int(ends[g]))
+        out[first:last] = te
+        gathered = last
+    return out
+
 
 def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
-    """Find event boundaries where duplicate time values occur.
+    """Find events: runs of two or more samples at one time.
 
-    Dymola may produce 2 or 3 duplicate time points per event. This function
-    groups consecutive duplicates and returns (first_dup, last_dup) pairs.
-    The segment before the event ends at first_dup (inclusive, pre-event value).
-    The segment after starts at last_dup (inclusive, post-event value).
+    An event is written as two or more samples at one instant — the value
+    before it, then the value after it (Dymola sometimes writes a third
+    between them; an OpenModelica run may write a second pair a hair later).
+    ``time`` has been through `same_instant`, so each event is a run of
+    equal times. This function returns each run's (first_dup, last_dup)
+    pair — the index of its second sample and of its last. The segment
+    before the event ends at first_dup - 1 (the pre-event value), the
+    segment after starts at last_dup (the post-event value).
     """
     boundaries = []
     i = 1
@@ -38,6 +120,12 @@ def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
         else:
             i += 1
     return boundaries
+
+
+def _event_times(time: np.ndarray) -> list[float]:
+    """The instants of a series' events, in order (`same_instant`)."""
+    instants = same_instant(time)
+    return [float(instants[b[0]]) for b in _find_event_boundaries(instants)]
 
 
 def _split_segments(
@@ -100,6 +188,25 @@ def _no_data_failure(mode: str, reason: str) -> VariableComparison:
     )
 
 
+def error_scale(ref_values: np.ndarray) -> tuple[float, bool]:
+    """What an nrmse error is divided by, for a reference: ``(scale,
+    is_constant)``. The score divides its RMSE by it and the figure layer
+    its drawn error, so for a criterion with no window the error drawn is
+    the error scored (a windowed one is scored over the window's samples).
+
+    The scale is the reference's range; for a constant reference — a range
+    under ``_EPS`` of its magnitude (at least ``_EPS``), so a constant near
+    821 that carries rounding noise of ~1e-13 is one — its magnitude, and
+    1.0 when that magnitude is under ``_EPS`` too. For a large constant
+    (37e9, say) the raw error is misleading: float32 quantization alone
+    makes errors of hundreds, so it is read relative to the magnitude."""
+    signal_range = float(np.max(ref_values) - np.min(ref_values))
+    magnitude = float(np.max(np.abs(ref_values)))
+    if signal_range < _EPS * max(1.0, magnitude):
+        return (magnitude if magnitude > _EPS else 1.0), True
+    return signal_range, False
+
+
 def actual_on_reference_grid(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -113,10 +220,14 @@ def actual_on_reference_grid(
     the actual is deduplicated per segment — first value at a duplicate
     time for a segment ending at an event, last value for one starting at
     an event — so the pre-event actual is never paired with the post-event
-    reference. This is THE interpolation the nrmse score uses; the figure
-    layer's error series reads the same function, so the error drawn is
-    the error scored (an event never shows as a spike the verdict lacks).
+    reference. Both series' samples are first put on their instants
+    (`same_instant`), so ``times`` is the reference's times on its
+    instants. This is THE interpolation the nrmse score uses; the figure
+    layer's error series reads the same function, so an event never shows as
+    an error spike the verdict lacks.
     """
+    ref_time = same_instant(ref_time)
+    act_time = same_instant(act_time)
     boundaries = _find_event_boundaries(ref_time)
     segments = _split_segments(ref_time, ref_values, boundaries)
 
@@ -176,7 +287,7 @@ def _compare_trajectories(
 
     Pass/fail metric:
     - NRMSE = RMSE / (max(ref) - min(ref)) for varying signals
-    - RMSE directly for constant signals (range ~ 0)
+    - RMSE / magnitude for constant signals (`error_scale`)
     - Pass if NRMSE < tolerance
     """
     if len(ref_time) == 0:
@@ -207,21 +318,12 @@ def _compare_trajectories(
     max_abs_error = float(abs_error[max_abs_idx])
     max_abs_error_time = float(error_times[max_abs_idx])
 
-    # Signal range for normalization (across entire reference, including jumps)
-    ref_min = float(np.min(ref_values))
-    ref_max = float(np.max(ref_values))
-    signal_range = ref_max - ref_min
+    # The reference's range (all of it, jumps included), reported for context.
+    signal_range = float(np.max(ref_values) - np.min(ref_values))
 
     # NRMSE: normalize by range, or by magnitude for constant signals.
-    # For constants with large magnitude (e.g., 37e9), raw RMSE is misleading
-    # because float32 quantization alone can produce errors of hundreds.
-    # Normalizing by magnitude gives a meaningful relative metric.
-    is_constant = signal_range < _EPS
-    if is_constant:
-        ref_magnitude = float(np.max(np.abs(ref_values)))
-        nrmse = rmse / ref_magnitude if ref_magnitude > _EPS else rmse
-    else:
-        nrmse = rmse / signal_range
+    scale, is_constant = error_scale(ref_values)
+    nrmse = rmse / scale
 
     passed = nrmse < tolerance
 
@@ -1427,9 +1529,9 @@ def _compare_event_timing(
     Two paths:
 
     * ``declared_events is None`` (default): events are auto-detected
-      from duplicate-time samples in BOTH arrays, then paired by index.
-      Pass when ``count_must_match`` is satisfied and every pair's
-      ``d = actual − reference`` lies in ``[−lower, upper]`` of
+      from samples at one instant (`same_instant`) in BOTH arrays, then
+      paired by index. Pass when ``count_must_match`` is satisfied and
+      every pair's ``d = actual − reference`` lies in ``[−lower, upper]`` of
       ``time_tolerance`` (a number is both sides; ``lower`` is how much
       earlier, ``upper`` how much later).
 
@@ -1458,13 +1560,11 @@ def _compare_event_timing(
             "event-timing",
             "no reference samples to compare (empty baseline or window)",
         )
-    act_boundaries = _find_event_boundaries(act_time)
-    act_events = [float(act_time[b[0]]) for b in act_boundaries]
+    act_events = _event_times(act_time)
 
     if declared_events is None:
-        # Legacy auto-detect path — unchanged behavior.
-        ref_boundaries = _find_event_boundaries(ref_time)
-        ref_events = [float(ref_time[b[0]]) for b in ref_boundaries]
+        # Auto-detected: the reference's events, paired with the run's by index.
+        ref_events = _event_times(ref_time)
 
         n = min(len(ref_events), len(act_events))
         max_delta = 0.0

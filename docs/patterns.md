@@ -18,8 +18,9 @@
 - Standard `fnmatch` breaks on Modelica variable names — don't use it for variable matching
 
 ### Event boundary handling in time series
-- Duplicate time values = Modelica events (pre-event and post-event values at same instant)
-- Dymola may produce 2 or 3 duplicate time points per event — `_find_event_boundaries` groups consecutive duplicates into `(first_dup, last_dup)` tuples
+- Samples at one instant = Modelica events (pre-event and post-event values at same instant)
+- One instant is `same_instant`'s rule: each recorded event — a time Te written two or more times — in time order gathers every sample not yet gathered less than `SAME_INSTANT` (1e-7) × max(span, |Te|) from Te, on either side, and those take the time Te — measured from Te, never chained sample to sample; any other sample keeps its time. Value order is untouched, so an instant's first sample is the pre-event value and its last the post-event value. Both scoring paths (`tree_eval` before a window is cut, the flat `variable_overrides` path) and `handles._windowed` snap the whole series first. OpenModelica can write an event as a pair at t and a second pair a little later; Dymola may write 2 or 3 samples at one exact time
+- `_find_event_boundaries` groups consecutive equal (snapped) times into `(first_dup, last_dup)` tuples; `_event_times` is an event-timing / handle event list
 - `_dedup_time_series(keep="first")` gives pre-event values; `keep="last"` gives post-event
 - First segment: interpolate with pre-event dedup (correct at end boundary)
 - Last segment: interpolate with post-event dedup (correct at start boundary)

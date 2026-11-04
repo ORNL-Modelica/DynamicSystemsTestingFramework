@@ -13,7 +13,7 @@ from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
 from dstf.comparison.types import VariableComparison
 from dstf.figures.decimate import decimate_band
 from dstf.figures.plotly import PLOT_CONFIG, RING_PATH, variable_figure
-from dstf.figures.view import OverlayView, build_view, decimate_view
+from dstf.figures.view import OverlayView, build_view, decimate_view, error_series
 from scoring import score
 
 
@@ -146,6 +146,21 @@ class TestErrorSeriesFollowTheComparator:
         vc = score({"mode": "nrmse"}, t, ref, t, act, tolerance=1.0)
         # Every per-point value equals the scored NRMSE for a constant offset.
         np.testing.assert_allclose(per_point.y, vc.nrmse)
+
+    def test_a_constant_with_rounding_noise_draws_the_error_it_scores(self):
+        """A constant near 821 with noise of ~1e-13: the drawn normalised
+        error is divided by what the score divides by (its magnitude), not by
+        its 1e-12 range."""
+        t = np.linspace(0.0, 1.0, 101)
+        ref = 821.3 + np.tile([0.0, 1.02e-12, 5e-13, 2e-13], 26)[:101]
+        act = ref + 4.5e-13
+        per_point = next(
+            s for s in error_series(t, ref, t, act) if s.id == "error/nrmse"
+        )
+        vc = score({"mode": "nrmse"}, t, ref, t, act, tolerance=1e-4)
+        # Every value is the same offset (4 ulps of 821) over 821.3.
+        np.testing.assert_allclose(per_point.y, vc.nrmse, rtol=1e-9)
+        assert per_point.y.max() < 1e-14
 
 
 class TestViewInputs:

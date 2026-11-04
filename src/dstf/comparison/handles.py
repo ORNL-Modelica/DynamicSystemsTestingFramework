@@ -45,9 +45,10 @@ import numpy as np
 
 from .algorithms import (
     _PEAK_MIN_REL_AMPLITUDE,
-    _find_event_boundaries,
+    _event_times,
     _interpolate_tube_widths,
     _peak_window,
+    same_instant,
 )
 from .geometry import Primitive, Series, VLine
 from .sides import parse_sides
@@ -268,12 +269,13 @@ def _window_ends(edit: HandleEdit, leaf: dict) -> tuple[float | None, float | No
 def _windowed(
     edit: HandleEdit, leaf: dict, reference: tuple[np.ndarray, np.ndarray]
 ) -> tuple[np.ndarray, np.ndarray]:
-    """``reference`` as the SCORER receives it: the evaluator slices it to
-    the samples inside the leaf's ``window`` (inclusive) first, so whatever
-    a mode reads off the reference itself — its final value, its events —
-    it reads off this. Refused where the window holds no sample."""
+    """``reference`` as the SCORER receives it: the evaluator puts it on its
+    instants over the whole run (`same_instant`), then slices it to the
+    samples inside the leaf's ``window`` (inclusive), so whatever a mode
+    reads off the reference itself — its final value, its events — it reads
+    off this. Refused where the window holds no sample."""
     start, end = _window_ends(edit, leaf)
-    ref_time = np.asarray(reference[0], dtype=float)
+    ref_time = same_instant(np.asarray(reference[0], dtype=float))
     mask = np.ones(len(ref_time), dtype=bool)
     if start is not None:
         mask &= ref_time >= start
@@ -818,7 +820,7 @@ def edit_events_handle(edit: HandleEdit) -> dict:
     A DECLARED event (the leaf holds ``events``): its time is its row's,
     and the holder its row's ``tolerance`` where the row has one, else the
     criterion's ``time_tolerance``. AUTO-DETECTED events (no ``events``):
-    event ``i`` is the ``i``-th duplicated time of the reference as the
+    event ``i`` is the ``i``-th event instant of the reference as the
     scorer receives it — windowed — found by the scorer's own detection;
     the holder is the criterion's ``time_tolerance``, so every window
     moves. Refused on a leaf scored against another baseline, and with no
@@ -839,7 +841,7 @@ def edit_events_handle(edit: HandleEdit) -> dict:
             holder, key = event, "tolerance"
     else:
         ref_time, _ = _measured_reference(edit, leaf, "an event's window")
-        events = [float(ref_time[b[0]]) for b in _find_event_boundaries(ref_time)]
+        events = _event_times(ref_time)
         if not (segment.isascii() and segment.isdigit()):
             raise _unnamed(edit)
         i = int(segment)
