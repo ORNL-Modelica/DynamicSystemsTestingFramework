@@ -26,10 +26,12 @@ this file says when they do.
 
 - OpenModelica runs a test whose solver it does not know — Dymola's
   `Esdirk45a`, from a `__Dymola_Algorithm` annotation or `test_spec.json` —
-  on dassl, where omc stopped with `unrecognized option -s esdirk45a`; the run
-  says so before it starts (`OpenModelica does not know solver Esdirk45a (14
-  tests): ran dassl`), and `dstf discover` shows `Esdirk45a → dassl`. FMPy
-  does the same with CVode.
+  on dassl, where omc stopped with `unrecognized option -s esdirk45a`; `dstf
+  run` says so before it starts (`OpenModelica does not know solver Esdirk45a
+  (14 tests): runs dassl instead`), and `dstf discover` shows `Esdirk45a →
+  dassl`. FMPy already ran such a name on CVode without a word: `dstf run`
+  now says so too, and FMPy matches a name whatever its case (`euler` runs
+  Euler; it ran CVode).
 - On Python 3.13, a `--source-path`, `--reference-root` or `--config` (or a
   `testing.json` path) that is a symbolic-link loop is refused with
   `Config error: <path>: … Too many levels of symbolic links`, as on earlier
