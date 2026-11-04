@@ -180,8 +180,8 @@ class FmpyBackend(Backend):
     def solver(cls, test: TestModel) -> Solver:
         """A name in :data:`SOLVERS`, whatever its case, runs as the FMPy
         solver it translates to; any other runs on CVode, and says what
-        the test asked for."""
-        if test.method is None:
+        the test asked for. No name, or ``""``, runs CVode."""
+        if not test.method:
             return Solver(DEFAULT_SOLVER, None)
         name = SOLVERS.get(test.method.lower())
         if name is None:

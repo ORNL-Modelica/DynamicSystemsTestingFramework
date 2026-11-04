@@ -162,18 +162,19 @@ def _print_run_header(
 
 def solver_fallbacks(label: str, solvers: Iterable[Solver]) -> list[str]:
     """What a run says of the solver names its backend does not know: one
-    line per name, with how many tests asked for it and what ran instead —
-    ``OpenModelica does not know solver Esdirk45a (14 tests): ran dassl`` —
-    in the order the names are first asked for. Nothing when every test runs
-    the solver it asks for (:attr:`Solver.asked` is None)."""
-    counts: dict[tuple[str, str], int] = {}
+    line per name, with how many tests asked for it and what runs instead —
+    ``OpenModelica does not know solver Esdirk45a (14 tests): runs dassl
+    instead`` — in the order the names are first asked for. Said before the
+    run starts. Nothing when every test runs the solver it asks for
+    (:attr:`Solver.asked` is None)."""
+    counts: dict[tuple[str, str | None], int] = {}
     for solver in solvers:
         if solver.asked is not None:
             key = (solver.asked, solver.name)
             counts[key] = counts.get(key, 0) + 1
     return [
         f"{label} does not know solver {asked} "
-        f"({n} test{'' if n == 1 else 's'}): ran {name}"
+        f"({n} test{'' if n == 1 else 's'}): runs {name} instead"
         for (asked, name), n in counts.items()
     ]
 
@@ -751,9 +752,10 @@ class Backend(ABC):
         baseline an accept writes, the report's Method row, ``dstf
         discover``'s row and the run's header.
 
-        The default runs the test's ``method`` as it is named. Override it
-        on a backend that knows only some solvers by name: a name it does
-        not know runs on its default solver, and says so.
+        The default runs the test's ``method`` as it is named — None as
+        None. Override it on a backend that knows only some solvers by
+        name: a name it does not know runs on its default solver, and says
+        so; an empty name is no name, and runs the default too.
 
         Args:
             test: The test, its ``method`` resolved.
@@ -763,7 +765,7 @@ class Backend(ABC):
             backend does not know the test's name and runs another — the
             name the test asked for.
         """
-        return Solver(str(test.method), None)
+        return Solver(test.method, None)
 
     @classmethod
     def persistent_backend_cls(cls) -> type["Backend"] | None:

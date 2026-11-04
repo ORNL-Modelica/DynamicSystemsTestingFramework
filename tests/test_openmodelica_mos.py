@@ -177,12 +177,26 @@ class TestTheSolverOpenModelicaRuns:
         args = build_simulate_args(_make_test(method=asked), [])
         assert [a for a in args if a.startswith("method=")] == [f'method="{ran}"']
 
-    def test_a_name_it_knows_is_no_fallback(self):
+    @pytest.mark.parametrize(
+        "name", ["dassl", "ida", "cvode", "gbode", "euler", "rungekutta", "qss"]
+    )
+    def test_a_name_it_knows_is_no_fallback(self, name):
+        """Every simulation solver of OpenModelica 1.27.1's table, named in
+        another case (Dymola's ``Cvode``), runs as OpenModelica spells it."""
         from dstf.backends.openmodelica.backend import OpenModelicaBackend
         from dstf.backends.types import Solver
 
-        assert OpenModelicaBackend.solver(_make_test(method="Cvode")) == Solver(
-            "cvode", None
+        test = _make_test(method=name.capitalize())
+        assert OpenModelicaBackend.solver(test) == Solver(name, None)
+
+    def test_an_empty_name_is_no_name(self):
+        """``"method": ""`` asks for no solver: the default runs, and nothing
+        was asked that OpenModelica does not know."""
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+        from dstf.backends.types import Solver
+
+        assert OpenModelicaBackend.solver(_make_test(method="")) == Solver(
+            "dassl", None
         )
 
     def test_a_name_it_does_not_know_runs_dassl_and_says_what_was_asked(self):

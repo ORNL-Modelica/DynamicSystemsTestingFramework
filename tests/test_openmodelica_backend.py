@@ -437,8 +437,8 @@ class TestASolverOpenModelicaDoesNotKnow:
             if "does not know" in line
         ]
         assert said == [
-            "OpenModelica does not know solver Esdirk45a (2 tests): ran dassl",
-            "OpenModelica does not know solver Rkfix4 (1 test): ran dassl",
+            "OpenModelica does not know solver Esdirk45a (2 tests): runs dassl instead",
+            "OpenModelica does not know solver Rkfix4 (1 test): runs dassl instead",
         ]
 
     def test_a_run_of_solvers_it_knows_says_nothing_of_solvers(
@@ -527,12 +527,11 @@ class TestASolverOpenModelicaDoesNotKnow:
     def test_a_baseline_of_another_solver_is_marked_changed(
         self, tmp_path, monkeypatch
     ):
-        """A baseline stored before this rule records ``Esdirk45a``, which
-        never ran; dassl runs now. Another name: marked."""
-        row = self._method_row(tmp_path, monkeypatch, "Dassl", stored="Esdirk45a")
+        """The baseline ran cvode; dassl runs now. Another solver: marked."""
+        row = self._method_row(tmp_path, monkeypatch, "Dassl", stored="cvode")
         assert row == (
             '<tr style="background: var(--dstf-warn-tint)"><td>Method</td>'
-            "<td>dassl</td><td>Esdirk45a</td></tr>"
+            "<td>dassl</td><td>cvode</td></tr>"
         )
 
 

@@ -15,14 +15,21 @@ from ..types import Solver
 #: does not know.
 DEFAULT = "dassl"
 
-#: The names ``simulate(method=...)`` runs, as OpenModelica spells them.
-#: OpenModelica 1.27.1's own table: ``SOLVER_METHOD_NAME`` in
+#: The names ``simulate(method=...)`` is handed, as OpenModelica spells them.
+#: From OpenModelica 1.27.1's own table: ``SOLVER_METHOD_NAME`` in
 #: ``/usr/include/omc/c/util/simulation_options.c`` (line 1258 of that
-#: release). Left out of it: ``symSolver`` and ``symSolverSsc``, which run
-#: only on a model translated with the ``--symSolver`` compiler flag, and
-#: ``optimization``, a solver for dynamic optimization, not simulation. A
-#: name not here makes omc stop before simulating (1.27.1: ``unrecognized
-#: option -s esdirk45a``).
+#: release). Left out of it:
+#:
+#: - ``unknown`` (``S_UNKNOWN``): the table's placeholder, not a solver;
+#: - ``symSolver`` and ``symSolverSsc``: OpenModelica's own description says
+#:   they need the ``--symSolver`` compiler flag, which dstf never passes
+#:   (on 1.27.1, a model built without it ran ``-s symSolverSsc`` to the
+#:   end, and failed under ``-s symSolver`` with "Integrator failed");
+#: - ``optimization``: a solver for dynamic optimization, not simulation
+#:   (on 1.27.1 it stopped a plain model on an assertion).
+#:
+#: A name that is in no row of the table stops omc before simulating
+#: (1.27.1: ``unrecognized option -s esdirk45a``).
 KNOWN = ("dassl", "ida", "cvode", "gbode", "euler", "rungekutta", "qss")
 
 
@@ -31,8 +38,9 @@ def solver(test: TestModel) -> Solver:
     OpenModelica knows it, whatever its case (Dymola's ``Dassl`` is
     ``dassl``); else :data:`DEFAULT`, with the name the test asked for. One
     rule wherever the name came from — a ``__Dymola_Algorithm`` annotation or
-    ``test_spec.json``. A test that names none runs the default."""
-    if test.method is None:
+    ``test_spec.json``. A test that names none — or names ``""`` — runs the
+    default."""
+    if not test.method:
         return Solver(DEFAULT, None)
     name = test.method.lower()
     if name in KNOWN:

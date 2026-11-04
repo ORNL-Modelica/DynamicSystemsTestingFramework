@@ -478,7 +478,7 @@ class DymolaWorker(Worker):
             if progress is not None:
                 progress.on_phase(test_key, "simulating")
             call_kwargs: dict = {
-                "method": test.method,
+                "method": DymolaBackend.solver(test).name,
                 "tolerance": test.tolerance,
                 "resultFile": "dsres",
             }

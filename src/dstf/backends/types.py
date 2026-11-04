@@ -91,13 +91,16 @@ class Solver:
 
     Attributes:
         name: The solver the backend runs, by the backend's own name for it:
-            what the simulator is handed and what a baseline records.
+            what the simulator is handed and what a baseline records. None
+            only from a backend that runs a test's ``method`` as it is, for a
+            test that has none (discovery always gives one).
         asked: The test's ``method`` when the backend does not know it and
             runs ``name`` instead; None when it runs what the test asks for
-            (or translates it to its own name for that solver).
+            (or translates it to its own name for that solver), and when the
+            test names none (an empty name is none).
     """
 
-    name: str
+    name: str | None
     asked: str | None = None
 
 
