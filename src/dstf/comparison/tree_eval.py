@@ -23,6 +23,7 @@ from ..backends import VariableResult
 from ..backends.common.statistics import read_summary
 from ..backends.types import DatasetType
 from ..storage.baseline import DiagnosticSummary, StoredVariable
+from .algorithms import same_instant
 from .comparator import migration_hint
 from .geometry import Window
 from .metric_tree import (
@@ -497,6 +498,16 @@ def _evaluate_leaf(
         act_time = var_result.time
         act_values = var_result.values
         index = var_result.index
+
+        # Both series on their instants by the RUN's span, before a window
+        # is cut, so every mode sees one event where the run holds one and
+        # a window cut between an event's samples keeps it whole. The modes
+        # snap again (`actual_on_reference_grid`, event-timing) for callers
+        # that do not come through here; that changes nothing: after a snap
+        # every positive gap is at least the threshold, and a window's span
+        # is no larger than the run's, so its threshold is no larger either.
+        ref_time = same_instant(ref_time)
+        act_time = same_instant(act_time)
 
         # Apply the leaf window (idea #46) — slice both sides uniformly before
         # handing to mode.compare. Mode configs stay untouched; slicing is a

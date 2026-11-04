@@ -18,7 +18,9 @@ from .sides import Sides, as_written, parse_number, parse_sides
 from .types import _EPS, VariableComparison
 
 #: Samples closer in time than this fraction of the series' span (its last
-#: time minus its first) are one instant (`_same_instant`). Why 1e-7: an
+#: time minus its first) are one instant (`same_instant`); a criterion's
+#: series are snapped over the whole run before a window is cut from them
+#: (`tree_eval._evaluate_leaf`), so the span is the run's. Why 1e-7: an
 #: OpenModelica run can write an event as a pair at t and a second pair a hair
 #: later, and over TRANSFORM's 956 stored baselines (measured 2026-11-04) that
 #: offset reaches ~2.25e-8 of the run's span; 3e-8 was the smallest fraction
@@ -32,7 +34,7 @@ from .types import _EPS, VariableComparison
 SAME_INSTANT = 1e-7
 
 
-def _same_instant(time: np.ndarray) -> np.ndarray:
+def same_instant(time: np.ndarray) -> np.ndarray:
     """The times with each sample moved onto its instant: THE rule of what
     one instant is, which every event the comparison finds goes through.
 
@@ -56,7 +58,7 @@ def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
     An event is written as two or more samples at one instant — the value
     before it, then the value after it (Dymola sometimes writes a third
     between them; an OpenModelica run may write a second pair a hair later).
-    ``time`` has been through `_same_instant`, so each event is a run of
+    ``time`` has been through `same_instant`, so each event is a run of
     equal times. This function returns each run's (first_dup, last_dup)
     pair — the index of its second sample and of its last. The segment
     before the event ends at first_dup - 1 (the pre-event value), the
@@ -77,8 +79,8 @@ def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
 
 
 def _event_times(time: np.ndarray) -> list[float]:
-    """The instants of a series' events, in order (`_same_instant`)."""
-    instants = _same_instant(time)
+    """The instants of a series' events, in order (`same_instant`)."""
+    instants = same_instant(time)
     return [float(instants[b[0]]) for b in _find_event_boundaries(instants)]
 
 
@@ -142,6 +144,24 @@ def _no_data_failure(mode: str, reason: str) -> VariableComparison:
     )
 
 
+def error_scale(ref_values: np.ndarray) -> tuple[float, bool]:
+    """What an nrmse error is divided by, for a reference: ``(scale,
+    is_constant)``. The score divides its RMSE by it and the figure layer
+    its drawn error, so the error drawn is the error scored.
+
+    The scale is the reference's range; for a constant reference — a range
+    under ``_EPS`` of its magnitude (at least ``_EPS``), so a constant near
+    821 that carries rounding noise of ~1e-13 is one — its magnitude, and
+    1.0 when that magnitude is under ``_EPS`` too. For a large constant
+    (37e9, say) the raw error is misleading: float32 quantization alone
+    makes errors of hundreds, so it is read relative to the magnitude."""
+    signal_range = float(np.max(ref_values) - np.min(ref_values))
+    magnitude = float(np.max(np.abs(ref_values)))
+    if signal_range < _EPS * max(1.0, magnitude):
+        return (magnitude if magnitude > _EPS else 1.0), True
+    return signal_range, False
+
+
 def actual_on_reference_grid(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -156,13 +176,13 @@ def actual_on_reference_grid(
     time for a segment ending at an event, last value for one starting at
     an event — so the pre-event actual is never paired with the post-event
     reference. Both series' samples are first put on their instants
-    (`_same_instant`), so ``times`` is the reference's times on its
+    (`same_instant`), so ``times`` is the reference's times on its
     instants. This is THE interpolation the nrmse score uses; the figure
     layer's error series reads the same function, so the error drawn is
     the error scored (an event never shows as a spike the verdict lacks).
     """
-    ref_time = _same_instant(ref_time)
-    act_time = _same_instant(act_time)
+    ref_time = same_instant(ref_time)
+    act_time = same_instant(act_time)
     boundaries = _find_event_boundaries(ref_time)
     segments = _split_segments(ref_time, ref_values, boundaries)
 
@@ -222,7 +242,7 @@ def _compare_trajectories(
 
     Pass/fail metric:
     - NRMSE = RMSE / (max(ref) - min(ref)) for varying signals
-    - RMSE directly for constant signals (range ~ 0)
+    - RMSE / magnitude for constant signals (`error_scale`)
     - Pass if NRMSE < tolerance
     """
     if len(ref_time) == 0:
@@ -253,24 +273,12 @@ def _compare_trajectories(
     max_abs_error = float(abs_error[max_abs_idx])
     max_abs_error_time = float(error_times[max_abs_idx])
 
-    # Signal range for normalization (across entire reference, including jumps)
-    ref_min = float(np.min(ref_values))
-    ref_max = float(np.max(ref_values))
-    signal_range = ref_max - ref_min
+    # The reference's range (all of it, jumps included), reported for context.
+    signal_range = float(np.max(ref_values) - np.min(ref_values))
 
     # NRMSE: normalize by range, or by magnitude for constant signals.
-    # For constants with large magnitude (e.g., 37e9), raw RMSE is misleading
-    # because float32 quantization alone can produce errors of hundreds.
-    # Normalizing by magnitude gives a meaningful relative metric.
-    # "Constant" is a range under _EPS of the magnitude (at least _EPS): a
-    # constant near 821 carries rounding noise of ~1e-13, and a range that
-    # small is no signal to normalise by.
-    ref_magnitude = float(np.max(np.abs(ref_values)))
-    is_constant = signal_range < _EPS * max(1.0, ref_magnitude)
-    if is_constant:
-        nrmse = rmse / ref_magnitude if ref_magnitude > _EPS else rmse
-    else:
-        nrmse = rmse / signal_range
+    scale, is_constant = error_scale(ref_values)
+    nrmse = rmse / scale
 
     passed = nrmse < tolerance
 
@@ -1476,7 +1484,7 @@ def _compare_event_timing(
     Two paths:
 
     * ``declared_events is None`` (default): events are auto-detected
-      from samples at one instant (`_same_instant`) in BOTH arrays, then
+      from samples at one instant (`same_instant`) in BOTH arrays, then
       paired by index. Pass when ``count_must_match`` is satisfied and
       every pair's ``d = actual − reference`` lies in ``[−lower, upper]`` of
       ``time_tolerance`` (a number is both sides; ``lower`` is how much

@@ -23,11 +23,13 @@ this file says when they do.
   second pair about 1e-8 of the run's span later, or a pair 1e-14 before a grid
   sample; samples less than 1e-7 of the span apart are now one instant, so such
   an event scores as the one event another run writes as an exact pair, and
-  counts as one event. Stored baselines are not changed.
+  counts as one event — inside a criterion's window too, as the whole run
+  reads it. Stored baselines are not changed.
 - `nrmse` treats a constant that carries rounding noise as a constant: a range
   under about 2e-14 times the value's size (or under 2e-14, for values below 1)
-  is normalised by the value, not by the range. A constant near 821 with noise of 1e-13 failed
-  an actual 4.5e-13 off it.
+  is normalised by the value, not by the range. A constant near 821 with noise
+  of 1e-13 failed an actual 4.5e-13 off it. The normalised error drawn on a
+  plot, in the report and in `dstf author`, is divided by the same number.
 - On Python 3.13, a `--source-path`, `--reference-root` or `--config` (or a
   `testing.json` path) that is a symbolic-link loop is refused with
   `Config error: <path>: … Too many levels of symbolic links`, as on earlier

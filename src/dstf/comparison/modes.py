@@ -358,7 +358,7 @@ class EventTimingConfig:
 
     When ``events`` is None (default), both reference and actual event
     instants are auto-detected from samples at one instant (Modelica
-    convention; ``algorithms._same_instant``) and paired by index. When ``events`` is provided, the
+    convention; ``algorithms.same_instant``) and paired by index. When ``events`` is provided, the
     declared list becomes the authoritative reference-side event set —
     the actual signal is still auto-detected, and declared events claim
     distinct actual events by optimal interval matching (windows sorted
