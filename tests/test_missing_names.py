@@ -32,7 +32,7 @@ EMPTY_GLOB = "variables: pattern 'q*' matches no variable in the result"
 
 def _lacks(names: str) -> str:
     return (
-        f"the result does not hold {names} — a name \"variables\" lists must be "
+        f'the result does not hold {names} — a name "variables" lists must be '
         "in the result; nothing was scored"
     )
 

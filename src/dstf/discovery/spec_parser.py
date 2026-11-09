@@ -173,9 +173,9 @@ def spell_entry_names(entry: object) -> None:
         if isinstance(names, list):
             entry[key] = [variable_name(n) if isinstance(n, str) else n for n in names]
     comparison = entry.get("comparison")
-    overrides = (
-        comparison.get("variable_overrides") if isinstance(comparison, dict) else None
-    )
+    if not isinstance(comparison, dict):
+        comparison = {}
+    overrides = comparison.get("variable_overrides")
     if isinstance(overrides, dict):
         spelled: dict = {}
         for key, value in overrides.items():

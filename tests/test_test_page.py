@@ -7818,12 +7818,14 @@ class TestLayoutControls:
 ROW_X, ROW_Y = "0/Tracked/x", "0/Tracked/y"
 ROW_Z, ROW_A0 = "2/(top level)/z", "2/(top level)/a0"
 ROW_PIPE = "1/pipe/pipe.T[]"
-ROW_PORT = "1/port/port[2, 1].C[]"
+#: The result FILE writes the port families as Dymola does (`port[2, 1]`);
+#: the drawer lists them in the one spelling of a name (`port[2,1]`, #28).
+ROW_PORT = "1/port/port[2,1].C[]"
 PIPE = ["pipe.T[1]", "pipe.T[2]", "pipe.T[3]"]
 PORT = ["port[2, 1].C[1]", "port[2, 1].C[2]", "port[2, 1].C[3]"]
 #: A second port family whose id holds the first's words and more (the
 #: marker test's own copy of the fixture adds it).
-ROW_PORT3 = "1/port/port[2, 3, 1].C[]"
+ROW_PORT3 = "1/port/port[2,3,1].C[]"
 PORT3 = ["port[2, 3, 1].C[1]", "port[2, 3, 1].C[2]"]
 
 
@@ -7941,7 +7943,7 @@ class TestVariablesDrawer:
             assert "pipe.T[1:3]" in _labels_in(
                 _one(user, var_marker("var-row", ROW_PIPE))
             )
-            assert "port[2, 1].C[1:3]" in _labels_in(
+            assert "port[2,1].C[1:3]" in _labels_in(
                 _one(user, var_marker("var-row", ROW_PORT))
             )
             # x is plot 1's subject: its check is on, and grey.
@@ -8613,8 +8615,8 @@ class TestVariablesDrawer:
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             for row, label in (
-                (ROW_PORT, "port[2, 1].C[1:3]"),
-                (ROW_PORT3, "port[2, 3, 1].C[1:2]"),
+                (ROW_PORT, "port[2,1].C[1:3]"),
+                (ROW_PORT3, "port[2,3,1].C[1:2]"),
             ):
                 assert (
                     len(user.find(marker=var_marker("var-check", row)).elements) == 1
