@@ -26,7 +26,7 @@ import numpy as np
 from ..backends import TestResult
 from ..backends.common.result_variables import tracked_results, tracks
 from ..backends.common.statistics import diagnostic_final
-from ..backends.types import DatasetType, VariableResult
+from ..backends.types import DatasetType, VariableResult, variable_name
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
 from ..storage.baseline import (
@@ -501,10 +501,12 @@ def _warn_about_overrides_that_name_nothing(
     unknown = [key for key in {**ref_overrides, **spec_overrides} if key not in names]
     if not unknown:
         return
+    # Keyed by the expression in the one spelling of a name (#28): the
+    # model wrote `pipe.T[1, 1]`, the key was read as `pipe.T[1,1]`.
     by_expression: dict[str, list[str]] = {}
     for v in result.variables:
         if v.expression and v.name:
-            by_expression.setdefault(v.expression, []).append(v.name)
+            by_expression.setdefault(variable_name(v.expression), []).append(v.name)
     parts = []
     for key in unknown:
         tiers = [
