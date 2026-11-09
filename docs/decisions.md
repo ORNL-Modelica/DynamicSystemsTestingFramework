@@ -9416,8 +9416,12 @@ baselines (`withWall`, `Winding_12D_variableArea`) lack an exact name
    `diagnostic_variables`, a stored baseline (its names, diagnostics and
    override keys), a companion's record and CSV headers, `companion add
    --map` and the review prompt. A saved spec writes the one spelling. A
-   file that names one variable both ways is not read; two override keys
-   that are one variable are refused, both named.
+   result file (`.mat`, a JSON driver's, `.npz`, an FMU's model
+   description) or a CSV companion that names one variable both ways is
+   not read, and two spec override keys that are one variable are refused,
+   both named. A stored baseline and a companion's recorded mapping are not
+   checked: DSTF writes them in the one spelling itself, and one holding
+   both spellings reads as two entries of one name, the later winning.
 2. Readers accept both spellings for good — people will type `[1, 1]`.
    An expression stays as the model wrote it (it is a label); where one is
    used to FIND a name (a companion by expression, the override warning)
@@ -9435,6 +9439,7 @@ baselines (`withWall`, `Winding_12D_variableArea`) lack an exact name
 both. Every present and future lookup would have to remember to, and one
 that forgets is #28 again.
 
-**TRANSFORM.** Its files are converted to the one spelling (the 6 Dymola
-baselines' `name` fields and the 3 spec strings); its unconverted files
-read the same meanwhile (rule 2).
+**TRANSFORM.** Its files (the 6 Dymola baselines' `name` fields and the 3
+spec strings) are converted by the TRANSFORM project with a one-off script,
+outside this change; until then its unconverted files read the same
+(rule 2).

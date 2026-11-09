@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import pytest
 
 from conftest import make_test_model
 from dstf.backends.types import TestResult, VariableResult
@@ -38,13 +39,20 @@ def test_a_companion_named_like_the_expression_draws_on_it():
     assert [o["values"] for o in trajectories[0]["overlays"]] == [[4, 5]]
 
 
-def test_a_companion_whose_expression_is_spelled_otherwise_draws_on_it():
+@pytest.mark.parametrize(
+    "expression",
+    # As `normalize_expression` keeps it (the common case), and the other way.
+    ["pipe.T[1, 1]", "pipe.T[1,1]"],
+)
+def test_a_companion_whose_expression_names_the_variable_draws_on_it(expression):
+    """Both sides' expressions are compared in the one spelling: the
+    trajectory's and the companion variable's."""
     trajectories = [{"name": "unitTests.x[1]", "expression": "pipe.T[1, 1]"}]
     overlays = [
         _overlay(
             **{
                 "ut.x[3]": OverlayVariable(
-                    time=[0, 1], values=[6, 7], expression="pipe.T[1,1]"
+                    time=[0, 1], values=[6, 7], expression=expression
                 )
             }
         )
