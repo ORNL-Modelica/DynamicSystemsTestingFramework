@@ -4333,6 +4333,9 @@ with the Tests and Variables drawers, and array folding (3c); the running state
 
 ## D132 — A tracked variable has one identity: the name its result file gives it (2026-09-21)
 
+*Amended by D164: that name is written in one spelling — no whitespace inside
+an index's brackets (`a[1,1]`).*
+
 **What.** A tracked variable is keyed everywhere by the name its result file
 gives it, and the text a model wrote for it is a separate, recorded
 *expression* that is only ever a label. For a variable of the Modelica
@@ -9380,3 +9383,58 @@ offers no drag and no Ctrl+click, and keeps the window's ⌖ where the card
 draws a plot.
 
 TRANSFORM is unaffected: every TRANSFORM criterion is nrmse.
+
+## D164 — One spelling of an array index; a listed name the result lacks fails (2026-11-09)
+
+Amends D132: a variable's identity is the name its result file gives it,
+**written in one spelling** — no whitespace inside an index's brackets.
+
+**Context (#28).** OpenModelica writes a 2-D element `T[1,2]`, Dymola
+`T[1, 2]`. Measured 2026-11-09: OpenModelica 1.27.2 writes `T[1,2]`, and a
+`variableFilter` spelled `T\[2, 3\]` dropped the variable (a scratch run
+under omc); TRANSFORM's Dymola baselines hold `[1, 1]`. How Dymola spells a
+name in an FMU's modelDescription is not known; the reader rule below
+handles either. In TRANSFORM, stored names with a multi-index: Dymola/linux
+3 files, Dymola/windows 3, OpenModelica/linux 0; its test_spec.json tracks 3
+such names. A name typed one way never met a result written the other: the
+OM filter dropped it, the flat path scored nothing about it, and the test
+read PASS. Of TRANSFORM's 13 entries with exact `variables`, only two OM
+baselines (`withWall`, `Winding_12D_variableArea`) lack an exact name
+(baseline-held names standing in for result names).
+
+**Decision.**
+1. `backends/types.py::variable_name` deletes every whitespace character
+   between a `[` and its `]` — `a.b[1, 1].c` is `a.b[1,1].c` — and nothing
+   else. It is applied where a name ENTERS the program, so nothing after
+   compares two spellings: every result reader (`.mat` finished and live,
+   a JSON driver's result, `.npz`, an FMU's model description —
+   `raw_by_name` maps the one spelling to the file's own, and fmpy is still
+   handed the FMU's names), the spec decoder and a patch's entry
+   (`spec_parser.spell_entry_names`: `variables`, `diagnostic_variables`,
+   override keys, each criterion's `variable`, `plots`' `var` and
+   `context`; a scalar's `quantity` is a path and stays), testing.json's
+   `diagnostic_variables`, a stored baseline (its names, diagnostics and
+   override keys), a companion's record and CSV headers, `companion add
+   --map` and the review prompt. A saved spec writes the one spelling. A
+   file that names one variable both ways is not read; two override keys
+   that are one variable are refused, both named.
+2. Readers accept both spellings for good — people will type `[1, 1]`.
+   An expression stays as the model wrote it (it is a label); where one is
+   used to FIND a name (a companion by expression, the override warning)
+   it is compared in the one spelling.
+3. An exact name `variables` lists (no `*` or `?`) that a completed result
+   lacks fails the test, tree or no tree — `comparator.missing_names`,
+   `the result does not hold y — a name "variables" lists must be in the
+   result; nothing was scored` — a refusal, and an accept skips it. A glob
+   that matches nothing is a warning beside the verdict (`variables:
+   pattern 'q*' matches no variable in the result`), not a failure. A
+   variable a glob or a UnitTests variable tracks that the run lost is
+   still the lost criterion it was.
+
+**Rejected.** Each backend keeps its own spelling and every lookup matches
+both. Every present and future lookup would have to remember to, and one
+that forgets is #28 again.
+
+**TRANSFORM.** Its files are converted to the one spelling (the 6 Dymola
+baselines' `name` fields and the 3 spec strings); its unconverted files
+read the same meanwhile (rule 2).
