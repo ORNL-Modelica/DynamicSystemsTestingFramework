@@ -31,6 +31,7 @@ from ..types import (
     TestResult,
     TestRunResult,
     VariableResult,
+    raw_by_name,
     resolve_variable_patterns,
     timeout_message,
 )
@@ -367,7 +368,19 @@ class JsonDriverBackend(Backend):
             )
 
         # Read once: a payload without the key is a run with no variables.
+        # Keyed by the one spelling of each name (``types.variable_name``):
+        # a driver may write ``T[1, 2]``, the test names ``T[1,2]``.
         columns = payload.get("variables") or {}
+        try:
+            spelled = raw_by_name(columns)
+        except ValueError as exc:
+            return TestResult(
+                model_id=test.model_id,
+                success=False,
+                error_message=f"{result_path.name} cannot be read: {exc}",
+                statistics=stats,
+            )
+        columns = {name: columns[raw] for name, raw in spelled.items()}
         available = list(columns.keys())
         requested = resolve_variable_patterns(test.variable_patterns, available)
         if not requested:

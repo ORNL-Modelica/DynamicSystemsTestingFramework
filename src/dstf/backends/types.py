@@ -8,6 +8,7 @@ backends, and a backend module can import them before the registry in
 """
 
 import logging
+import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -138,6 +139,9 @@ class VariableResult:
     expression: str = ""
 
 
+_WHITESPACE = re.compile(r"\s")
+
+
 def variable_name(text: str) -> str:
     """``text`` in the ONE spelling of a variable name: every whitespace
     character between a ``[`` and its ``]`` deleted (``a.b[1, 1].c`` is
@@ -149,8 +153,8 @@ def variable_name(text: str) -> str:
     rule is applied where a name ENTERS the program — a result file's names,
     the spec, testing.json, a stored baseline, a companion — and nothing
     after that compares two spellings. A person may type either."""
-    if "[" not in text:
-        return text
+    if "[" not in text or not _WHITESPACE.search(text):
+        return text  # a result file's 20,000 names: almost all of them
     out: list[str] = []
     depth = 0
     for ch in text:

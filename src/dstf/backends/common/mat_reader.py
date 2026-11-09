@@ -36,6 +36,8 @@ from typing import NamedTuple
 
 import numpy as np
 
+from ..types import raw_by_name
+
 logger = logging.getLogger(__name__)
 
 # MAT4 data type codes (P field from mopt)
@@ -189,7 +191,7 @@ def list_result_mat_variables(mat_path: Path) -> list[str] | None:
             # Dymola stores names as (max_name_len, n_vars) — transpose to
             # get (n_vars, max_name_len) so each row is one variable name.
             name_matrix = _read_mat4_block(f, blocks["name"]).T
-            return _parse_name_matrix(name_matrix)
+            return _variable_names(name_matrix)
     except Exception as e:
         logger.error("Failed to read %s: %s", mat_path, e)
         return None
@@ -227,7 +229,7 @@ def _read_tables(f, blocks, mat_path: Path):
     ):
         data_info = data_info.T
 
-    return _parse_name_matrix(name_matrix), data_info, data_1
+    return _variable_names(name_matrix), data_info, data_1
 
 
 def _variable_sources(
@@ -571,6 +573,16 @@ def _as_bytes(codes: np.ndarray) -> np.ndarray | None:
     if codes.min() < 0 or codes.max() > 255:
         return None
     return np.ascontiguousarray(codes, dtype=np.uint8)
+
+
+def _variable_names(name_matrix: np.ndarray) -> list[str]:
+    """The file's names in the one spelling (``types.variable_name``:
+    Dymola's ``T[1, 2]`` is OpenModelica's ``T[1,2]``), in its order. The
+    readers find a variable's data by its place in this list, so a name in
+    the file's own spelling is never needed after this. A file naming one
+    variable both ways is refused (``ValueError``, both names), and the
+    callers' handlers say so as the file's read error."""
+    return list(raw_by_name(_parse_name_matrix(name_matrix)))
 
 
 def _parse_name_matrix(name_matrix: np.ndarray) -> list[str]:
