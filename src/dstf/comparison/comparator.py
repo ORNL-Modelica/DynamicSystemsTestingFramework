@@ -26,7 +26,13 @@ import numpy as np
 from ..backends import TestResult
 from ..backends.common.result_variables import tracked_results, tracks
 from ..backends.common.statistics import diagnostic_final
-from ..backends.types import DatasetType, VariableResult, variable_name
+from ..backends.types import (
+    DatasetType,
+    VariableResult,
+    _pattern_to_regex,
+    is_glob_pattern,
+    variable_name,
+)
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
 from ..storage.baseline import (
@@ -150,6 +156,60 @@ def nothing_scored(test: TestModel, result: TestResult) -> str | None:
         "the result holds none of the variables this test tracks "
         f"({_named_few(tracked)}) — nothing was scored"
     )
+
+
+def missing_names(test: TestModel, result: TestResult) -> str | None:
+    """Why a test fails over a name it LISTS, or ``None``: the exact names
+    of its ``variables`` (no ``*`` or ``?``) that a completed *result* does
+    not hold. Tree or no tree: a listed name is a promise that the result
+    has that variable, and one the result lacks was never scored — a name
+    typed ``a[1, 1]`` against a result that wrote ``a[1,1]`` read PASS
+    (#28). Asked after :func:`nothing_scored`, which says it first when the
+    result holds none of them, and never of a simulate-only test or a
+    failed run (the run's own reason stands).
+
+    THE one decision, as :func:`nothing_scored` is: the comparison fails
+    the test with this sentence (``reporting.status.refusal``) and an
+    accept skips it with the same one. A glob that matches nothing is not
+    this: it is the warning :func:`_globs_that_match_nothing` gives."""
+    if test.is_simulate_only or not result.success:
+        return None
+    if nothing_scored(test, result) is not None:
+        return None
+    held = {v.name for v in result.variables}
+    lacked = [
+        name
+        for name in dict.fromkeys(test.variable_patterns)
+        if not is_glob_pattern(name) and name not in held
+    ]
+    if not lacked:
+        return None
+    return (
+        f"the result does not hold {_named_few(lacked)} — a name "
+        '"variables" lists must be in the result; nothing was scored'
+    )
+
+
+def _globs_that_match_nothing(
+    test: TestModel, result: TestResult
+) -> list[StructuralWarning]:
+    """One warning per glob of the test's ``variables`` that matches no
+    variable of *result*: tracked, recorded and scored is nothing it
+    names, which the backend's log line alone did not show beside the
+    verdict. A warning, not a failure — a glob is written to match what
+    there is, and an exact name that is missing fails (:func:`missing_names`).
+    The result holds every variable a glob matched in its file, so a glob
+    that matches none of its variables matched none there."""
+    names = [v.name for v in result.variables]
+    return [
+        StructuralWarning(
+            field="variables",
+            statement=f"pattern {pattern!r} matches no variable in the result",
+        )
+        for pattern in dict.fromkeys(test.variable_patterns)
+        if is_glob_pattern(pattern)
+        and not any(_pattern_to_regex(pattern).fullmatch(n) for n in names)
+    ]
 
 
 def broken_roles(test: TestModel) -> str | None:
@@ -631,7 +691,7 @@ def compare_test(
             simulate_only=True,
         )
 
-    nothing = nothing_scored(test, result)
+    nothing = nothing_scored(test, result) or missing_names(test, result)
     if nothing is not None:
         # Not a PASS: no criterion was scored, so there is no verdict about
         # the model at all. FAIL, the status a tree's leaf gives a variable
@@ -644,9 +704,11 @@ def compare_test(
             error_message=nothing,
         )
 
-    structural_warnings = _check_structural_changes(
-        reference, result
-    ) + _check_expressions(reference.baseline.variables, result)
+    structural_warnings = (
+        _check_structural_changes(reference, result)
+        + _check_expressions(reference.baseline.variables, result)
+        + _globs_that_match_nothing(test, result)
+    )
 
     # Pairing is by name. Pairing by numeric index silently scored variables
     # against the wrong baseline trajectory after any spec reorder (review
@@ -917,9 +979,10 @@ def _lost_variable_comparisons(
     tree fails — and an accept then wrote a baseline without ``y``.
 
     Only what the BASELINE holds: it is what says the variable was there.
-    A pattern that matches nothing on either side stays the backend's log
-    line, and a baseline variable the test no longer tracks is not asked
-    about. The sentinel carries what its criterion would have: the
+    A glob that matches nothing on either side is a warning beside the
+    verdict (:func:`_globs_that_match_nothing`), an exact name the result
+    lacks never gets here (:func:`missing_names` refuses the test), and a
+    baseline variable the test no longer tracks is not asked about. The sentinel carries what its criterion would have: the
     override's metric and tolerance, the baseline's expression (the run
     has none to give) and the baseline it would have read."""
     from .modes import override_metric, resolve_mode
@@ -1147,8 +1210,9 @@ def compare_one(
     if refused is not None:
         return refused
     # Nor is it NO_REF — "accept it" — when its result holds nothing it
-    # tracks: no accept can give such a test a criterion.
-    nothing = nothing_scored(test, result)
+    # tracks, or lacks a name it lists: no accept can give such a test a
+    # criterion.
+    nothing = nothing_scored(test, result) or missing_names(test, result)
     if nothing is not None:
         return TestComparison(
             model_id=test.model_id,
