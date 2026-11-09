@@ -4,6 +4,7 @@ one handler per action."""
 import argparse
 from pathlib import Path
 
+from ..backends.types import variable_name
 from .common import _build_config
 
 #: What `soft-check add` records as a soft_check's origin when its source
@@ -30,7 +31,9 @@ def _parse_variable_map(raw: list[str] | None) -> dict[str, str]:
                 f"--map {item!r} is not TEST_VAR=COMPANION_VAR — one test "
                 f"variable name, '=', one companion variable name"
             )
-        test_var, companion_var = test_var.strip(), companion_var.strip()
+        # Both in the one spelling of a name (#28): `a[1, 1]` is `a[1,1]`.
+        test_var = variable_name(test_var.strip())
+        companion_var = variable_name(companion_var.strip())
         if test_var in mapping:
             raise _MapError(
                 f"--map names the test variable {test_var!r} twice "

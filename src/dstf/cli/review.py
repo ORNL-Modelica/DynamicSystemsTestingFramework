@@ -18,6 +18,25 @@ from ..storage.accept import accept_run_results
 from .common import _exit_code, _parse_review_filter, _should_review
 
 
+def split_patterns(raw: str) -> list[str]:
+    """The patterns of a comma-separated line, each in the one spelling
+    of a name (``types.variable_name``): a comma inside an index's
+    brackets separates nothing, so ``a[1, 1], b`` is two patterns."""
+    from ..backends.types import variable_name
+
+    parts, depth, start = [], 0, 0
+    for i, ch in enumerate(raw):
+        if ch == "[":
+            depth += 1
+        elif ch == "]" and depth:
+            depth -= 1
+        elif ch == "," and not depth:
+            parts.append(raw[start:i])
+            start = i + 1
+    parts.append(raw[start:])
+    return [variable_name(p.strip()) for p in parts if p.strip()]
+
+
 def _interactive_review(
     tests: list[TestModel],
     results: dict,
@@ -219,7 +238,7 @@ def _interactive_review(
                     print("\nAborted.")
                     return 1
                 if raw:
-                    new_patterns = [p.strip() for p in raw.split(",") if p.strip()]
+                    new_patterns = split_patterns(raw)
                     added_patterns.extend(new_patterns)
                     # Save to test_spec.json
                     if spec_path:

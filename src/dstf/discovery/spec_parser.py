@@ -5,6 +5,7 @@ import logging
 from collections.abc import Iterable
 from pathlib import Path
 
+from ..backends.types import variable_name
 from ..config import ConfigError, baseline_points_refused, json_from_bytes
 from ..json_types import HOLDS, SAID, is_whole
 from ..storage.ref_index import _atomic_write_text
@@ -150,6 +151,67 @@ def check_root_keys(data: object, label: str) -> list:
     return tests
 
 
+def spell_entry_names(entry: object) -> None:
+    """Write every variable name of a spec entry in the one spelling
+    (``types.variable_name``: ``a[1, 1]`` is ``a[1,1]``), in place: its
+    ``variables`` and ``diagnostic_variables``, its
+    ``comparison.variable_overrides`` keys, each ``metrics`` criterion's
+    ``variable`` and each ``plots`` entry's ``var`` and ``context``. A
+    scalar's ``quantity`` is a path, not a name, and stays as written.
+
+    Run where a spec enters the program — the decoder
+    (:func:`spec_document_from_bytes`) and a patch's entry
+    (``patch_apply.apply_patch_to_document``) — so a saved spec writes the
+    one spelling, and nothing after compares two (#28, D164). What is not
+    of the type its key takes is left for the strict checks to refuse. Two
+    override keys that are one variable raise ``ValueError`` naming both,
+    led by where they are (``comparison.variable_overrides``)."""
+    if not isinstance(entry, dict):
+        return
+    for key in ("variables", "diagnostic_variables"):
+        names = entry.get(key)
+        if isinstance(names, list):
+            entry[key] = [variable_name(n) if isinstance(n, str) else n for n in names]
+    comparison = entry.get("comparison")
+    overrides = (
+        comparison.get("variable_overrides") if isinstance(comparison, dict) else None
+    )
+    if isinstance(overrides, dict):
+        spelled: dict = {}
+        for key, value in overrides.items():
+            name = variable_name(key)
+            if name in spelled:
+                raise ValueError(
+                    f"comparison.variable_overrides: {spelled[name][0]!r} and "
+                    f"{key!r} are the same variable"
+                )
+            spelled[name] = (key, value)
+        comparison["variable_overrides"] = {k: v for k, (_, v) in spelled.items()}
+    _spell_tree_names(entry.get("metrics"))
+    plots = entry.get("plots")
+    for plot in plots if isinstance(plots, list) else ():
+        if not isinstance(plot, dict):
+            continue
+        if isinstance(plot.get("var"), str):
+            plot["var"] = variable_name(plot["var"])
+        context = plot.get("context")
+        if isinstance(context, list):
+            plot["context"] = [
+                variable_name(n) if isinstance(n, str) else n for n in context
+            ]
+
+
+def _spell_tree_names(node: object) -> None:
+    """Every criterion's ``variable`` under ``node``, in the one spelling."""
+    if not isinstance(node, dict):
+        return
+    if isinstance(node.get("variable"), str):
+        node["variable"] = variable_name(node["variable"])
+    children = node.get("children")
+    for child in children if isinstance(children, list) else ():
+        _spell_tree_names(child)
+
+
 def spec_document_from_bytes(raw: bytes, label: str) -> dict:
     """The spec document a file's bytes hold — its root object, ``tests``
     there (empty when the file names none) — or :class:`ConfigError` naming
@@ -169,6 +231,14 @@ def spec_document_from_bytes(raw: bytes, label: str) -> dict:
     tests = check_root_keys(data, label)
     assert isinstance(data, dict)  # check_root_keys
     data.setdefault("tests", tests)
+    # Every name in the one spelling, from here on (`spell_entry_names`).
+    for i, entry in enumerate(tests):
+        try:
+            spell_entry_names(entry)
+        except ValueError as e:
+            model = entry.get("model") if isinstance(entry, dict) else None
+            where = f"tests[{model}]" if isinstance(model, str) else f"tests[{i}]"
+            raise ConfigError(f"{label}: {where}.{e}") from None
     return data
 
 
@@ -202,7 +272,10 @@ def _load_spec_for_edit(spec_path: Path) -> dict:
 
 def _write_spec(spec_path: Path, data: dict) -> None:
     """Persist an edited spec atomically — an interrupted write must not
-    leave the user's spec truncated."""
+    leave the user's spec truncated. Every name in the one spelling
+    (:func:`spell_entry_names`): the edit helpers add names as typed."""
+    for entry in _entries(data):
+        spell_entry_names(entry)
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
 

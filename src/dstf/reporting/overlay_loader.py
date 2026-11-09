@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
+from ..backends.types import raw_by_name
 from ..storage.baseline import Baseline, ReferenceFile
 from ..storage.baseline_codec import read_reference, read_series
 
@@ -453,7 +454,9 @@ def _load_csv(path: Path) -> dict[str, OverlayVariable]:
             return {}
         if len(header) < 2:
             return {}
-        var_names = [h.strip() for h in header[1:]]
+        # Each header in the one spelling of a name (#28); two that are one
+        # variable are an unreadable file (`raw_by_name`).
+        var_names = list(raw_by_name(h.strip() for h in header[1:]))
         times: list[float] = []
         cols: list[list[float]] = [[] for _ in var_names]
         for row in reader:

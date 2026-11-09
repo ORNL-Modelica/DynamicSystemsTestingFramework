@@ -813,6 +813,14 @@ class Config:
         # Diagnostic variables
         if "diagnostic_variables" in file_config:
             self.diagnostic_variables = file_config["diagnostic_variables"]
+        # In the one spelling of a name (`types.variable_name`, #28): a
+        # listed `a[1, 1]` is the result's `a[1,1]`.
+        from .backends.types import variable_name
+
+        self.diagnostic_variables = [
+            variable_name(n) if isinstance(n, str) else n
+            for n in self.diagnostic_variables
+        ]
 
         # Global comparison tolerance (review 2026-07-06 finding 12: the
         # documented testing.json `tolerance` key was never read). Precedence:
