@@ -629,6 +629,67 @@ class TestOpenModelicaIntegration:
         # aliases, parameters). With the filter, should be tens at most.
         assert len(names) < 200, f"variableFilter under-effective: {len(names)} vars"
 
+    def test_a_2d_element_the_spec_spells_with_a_space_is_in_the_result(self, tmp_path):
+        """omc writes ``T[1,2]``; a spec naming ``T[1, 2]`` gets it filtered,
+        extracted and read under that one spelling (#28). Before, the
+        filter spelled ``T\\[1,\\ 2\\]`` and the result held no such
+        variable."""
+        import json
+
+        import numpy as np
+
+        from dstf.backends.common.mat_reader import list_result_mat_variables
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+        from dstf.discovery.spec_parser import (
+            spec_document_from_bytes,
+            spec_models_from_document,
+        )
+
+        lib = tmp_path / "Lib"  # omc loads a package from a folder of its name
+        lib.mkdir()
+        (lib / "package.mo").write_text(
+            "package Lib\n"
+            "  model Grid\n"
+            "    Real T[2, 3](each start = 1, each fixed = true);\n"
+            "  equation\n"
+            "    for i in 1:2, j in 1:3 loop\n"
+            "      der(T[i, j]) = -i * j * T[i, j];\n"
+            "    end for;\n"
+            "  end Grid;\n"
+            "end Lib;\n"
+        )
+        cfg = Config(
+            source_path=lib,
+            reference_root=tmp_path / "refs",
+            backend_name="OpenModelica",
+            work_dir=tmp_path / "work",
+            dependencies=[],
+            timeout=120,
+        )
+        raw = json.dumps(
+            {"tests": [{"model": "Lib.Grid", "variables": ["T[1, 2]"]}]}
+        ).encode()
+        (test,) = spec_models_from_document(
+            spec_document_from_bytes(raw, "test_spec.json"),
+            base_dir=tmp_path,
+            label="test_spec.json",
+        )
+        test = dataclasses.replace(
+            test, stop_time=1.0, tolerance=1e-6, method="dassl", number_of_intervals=10
+        )
+        backend = OpenModelicaBackend(cfg)
+        rr = backend.run_single_test(test, test_key="t", index=1, total=1)
+        assert rr.success is True, rr.error_message
+
+        mat = cfg.work_dir / "t" / OpenModelicaBackend.RESULT_MAT_FILENAME
+        assert "T[1,2]" in list_result_mat_variables(mat)
+        result = backend.read_result(test, "t", rr)
+        assert result.success, result.error_message
+        (variable,) = result.variables
+        assert variable.name == "T[1,2]"
+        # T[1,2] decays as exp(-2 t).
+        assert variable.values[-1] == pytest.approx(np.exp(-2.0), rel=1e-3)
+
     def test_missing_model_surfaces_clear_error(self, tmp_path):
         from dstf.backends.openmodelica.backend import (
             OpenModelicaBackend,
