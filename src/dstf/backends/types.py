@@ -138,6 +138,47 @@ class VariableResult:
     expression: str = ""
 
 
+def variable_name(text: str) -> str:
+    """``text`` in the ONE spelling of a variable name: every whitespace
+    character between a ``[`` and its ``]`` deleted (``a.b[1, 1].c`` is
+    ``a.b[1,1].c``), nothing outside the brackets changed. Idempotent.
+
+    OpenModelica writes a 2-D element ``T[1,2]``, Dymola ``T[1, 2]``; a
+    variableFilter spelled the second way dropped the variable, and a name
+    typed one way never met a result written the other (#28, D164). So the
+    rule is applied where a name ENTERS the program — a result file's names,
+    the spec, testing.json, a stored baseline, a companion — and nothing
+    after that compares two spellings. A person may type either."""
+    if "[" not in text:
+        return text
+    out: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == "[":
+            depth += 1
+        elif ch == "]" and depth:
+            depth -= 1
+        elif depth and ch.isspace():
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def raw_by_name(raw_names: Iterable[str]) -> dict[str, str]:
+    """A file's names as ``{one spelling: the file's own}``, in the file's
+    order: what a reader lists, and how it finds the name to read a
+    variable by. Two of the file's names that are one variable in the one
+    spelling raise ``ValueError`` naming both — which of the two is meant
+    is no guess to make."""
+    out: dict[str, str] = {}
+    for raw in raw_names:
+        name = variable_name(raw)
+        if name in out:
+            raise ValueError(f"{out[name]!r} and {raw!r} are the same variable")
+        out[name] = raw
+    return out
+
+
 def display_label(name: str, expression: str) -> str:
     """What a person reads for a variable: the expression the model wrote
     for it, or its name when it wrote none.
