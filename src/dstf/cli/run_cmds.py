@@ -41,7 +41,7 @@ def _notify_orphans(config, all_tests: list) -> None:
     if orphans:
         print(
             f"Note: {len(orphans)} orphan manifest entries (models no longer in "
-            f"discovery). Run 'manifest cleanup --orphans' to list/prune."
+            f"discovery). Run 'manifest cleanup' to list/prune."
         )
 
 

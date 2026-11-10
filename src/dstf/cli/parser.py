@@ -1036,7 +1036,7 @@ READS: dict[str, tuple[str, ...]] = {
     "companion list": (*_STORE, "backend"),
     "companion freeze": (*_STORE, "backend"),
     "companion remove": (*_STORE, "backend"),
-    "manifest show": (*_STORE, "show_obsolete", "backend"),
+    "manifest show": (*_STORE, "backend"),
     "manifest dump": (*_STORE, "backend", "work_dir"),
     "manifest cleanup": (*_ALL, "orphans", "apply", "backend", "work_dir"),
 }
@@ -1653,7 +1653,7 @@ def _add_soft_check(tree: _Tree, top) -> None:
             is reported, and never fails the test.
             """,
         examples=(
-            "dstf soft-check add MyLib.Examples.Rod openmodelica refs/OpenModelica/linux/ref_0003.json --config testing.json",
+            "dstf soft-check add MyLib.Examples.Rod openmodelica refs/OpenModelica/linux/ref_3540c8355a8a.json --config testing.json",
             "dstf soft-check list --config testing.json",
         ),
     )
@@ -1665,13 +1665,13 @@ def _add_soft_check(tree: _Tree, top) -> None:
         description="""
             Store a reference file as a soft check of a test, under a name
             the test's criteria can score against. The source is a
-            reference JSON as this tool writes them (a ref_NNNN.json): its
+            reference JSON as this tool writes them (a ref_<code>.json): its
             time points and variables are copied into the test's
             soft_checks directory, with where they came from. The test
             needs a stored baseline of its own first.
             """,
         examples=(
-            "dstf soft-check add MyLib.Examples.Rod openmodelica refs/OpenModelica/linux/ref_0003.json --config testing.json",
+            "dstf soft-check add MyLib.Examples.Rod openmodelica refs/OpenModelica/linux/ref_3540c8355a8a.json --config testing.json",
         ),
         creates=True,
     )
@@ -1683,7 +1683,7 @@ def _add_soft_check(tree: _Tree, top) -> None:
     )
     node.add_argument(
         "source",
-        help="The reference JSON to store: a ref_NNNN.json of another "
+        help="The reference JSON to store: a ref_<code>.json of another "
         "partition or another system (it needs `time` and `variables`).",
     )
     _offer(node, "backend")
@@ -1861,11 +1861,12 @@ def _add_manifest(tree: _Tree, top) -> None:
     group, sub = tree.group(
         top,
         "manifest",
-        summary="The stored references by id: show, dump, clean up",
+        summary="The stored references by name: show, dump, clean up",
         description="""
-            Every stored baseline is a ref_NNNN.json whose number is never
-            reused; the model it belongs to is written inside it. These
-            commands list that mapping and remove what is no longer used.
+            Every stored baseline is a ref_<code>.json, the code computed
+            from the model id it holds (the first 12 hex digits of its
+            sha256). These commands list that mapping and remove what is no
+            longer used.
             """,
         examples=(
             "dstf manifest show --config testing.json",
@@ -1878,29 +1879,24 @@ def _add_manifest(tree: _Tree, top) -> None:
         "manifest show",
         summary="List the stored references and the status of each",
         description="""
-            List the references of the partition: each one's id, status
-            and model, with the counts of active, skipped and obsolete
-            ones. Nothing is written.
+            List the references of the partition, in model-id order: each
+            one's file, status and model, with the counts of active and
+            skipped ones. Nothing is written.
             """,
         examples=(
             "dstf manifest show --config testing.json",
-            "dstf manifest show --config testing.json --show-obsolete --backend OpenModelica",
+            "dstf manifest show --config testing.json --backend OpenModelica",
         ),
-    )
-    node.add_argument(
-        "--show-obsolete",
-        action="store_true",
-        help="List the obsolete references too (they are only counted otherwise).",
     )
     _offer(node, "backend")
 
     node = tree.command(
         sub,
         "manifest dump",
-        summary="Write the reference id to model id mapping as JSON",
+        summary="Write the reference name to model id mapping as JSON",
         description="""
             Write reference_manifest.json to the work directory: the
-            active references of the partition, ref_NNNN to model id. (A
+            references of the partition, ref_<code> to model id. (A
             run writes the same file.)
             """,
         examples=("dstf manifest dump --config testing.json --work-dir out",),

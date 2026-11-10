@@ -246,6 +246,23 @@ def test_every_header_counts_the_tests_under_review(monkeypatch, tmp_path, capsy
     ]
 
 
+def test_a_header_starts_with_the_model_id(monkeypatch, tmp_path, capsys):
+    """No `[<code>]` before a test with a baseline, no `[new]` before one
+    without: the model id is the name a person reads (owner, 2026-11-10)."""
+    comps = [
+        TestComparison("L.A", passed=False, test_id="0da1bdf4cf2f"),
+        TestComparison("L.B", passed=False, has_reference=False),
+    ]
+    config, store = _review_env(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+    _interactive_review([], {}, comps, store, config)
+    out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
+    assert re.findall(r"^\[\d+/\d+\] .*$", out, flags=re.M) == [
+        "[1/2] L.A",
+        "[2/2] L.B",
+    ]
+
+
 def _scored_by(tree: dict) -> TestComparison:
     """A real comparison of one variable, `x`, off its baseline by 0.005
     (nrmse 2.5e-3), scored by `tree`."""
@@ -2535,13 +2552,9 @@ class TestTheThreeReportsAreIndependent:
 
         # the verdict table, always
         lines = out.splitlines()
-        # The tag is each baseline's code, until the tag goes.
-        assert [ln for ln in lines if ln.endswith(_T1)] == [
-            f"  PASS  [0da1bdf4cf2f] {_T1}"
-        ]
-        assert [ln for ln in lines if ln.endswith(_T2)][0] == (
-            f"  FAIL  [7ee251fd36d9] {_T2}"
-        )
+        # A verdict line starts with the model id: no tag before it.
+        assert [ln for ln in lines if ln.endswith(_T1)] == [f"  PASS  {_T1}"]
+        assert [ln for ln in lines if ln.endswith(_T2)][0] == f"  FAIL  {_T2}"
         assert "Results: 1/2 passed" in lines
         assert "Failure Details:" in lines
 
@@ -2828,8 +2841,38 @@ def test_compare_reads_backend_path_for_a_backend_built_from_its_executable(
 
 _ORPHAN_NOTE = (
     "Note: 1 orphan manifest entries (models no longer in discovery). "
-    "Run 'manifest cleanup --orphans' to list/prune."
+    "Run 'manifest cleanup' to list/prune."
 )
+
+
+def test_manifest_show_lists_each_file_in_model_id_order(run_env, capsys):
+    """Each baseline by its file, status and model, sorted by model id (the
+    files' own order is by code); no id column, no obsolete count."""
+    ref_dir = run_env.ref_root / FAKE / detect_os()
+    ref_dir.mkdir(parents=True)
+    for name, model, status in [
+        ("ref_2fea06fb17ef.json", "Lib.Cherry", "active"),
+        ("ref_882df898287f.json", "Lib.Apple", "active"),
+        ("ref_e33c83ca7b0e.json", "Lib.Banana", "skip"),
+    ]:
+        (ref_dir / name).write_text(
+            json.dumps({"model_id": model, "status": status}), encoding="utf-8"
+        )
+    capsys.readouterr()
+    assert main(["--config", str(run_env.config_dir), "manifest", "show"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        f"References: {ref_dir}",
+        "Active: 2  Skip: 1",
+        "",
+        "File                   Status      Model ID",
+        "-" * 90,
+        "ref_882df898287f.json  active      Lib.Apple",
+        "ref_e33c83ca7b0e.json  skip        Lib.Banana",
+        "ref_2fea06fb17ef.json  active      Lib.Cherry",
+        "",
+        "Skipped:",
+        "ref_e33c83ca7b0e.json  Lib.Banana",
+    ]
 
 
 def _with_an_orphan(env):

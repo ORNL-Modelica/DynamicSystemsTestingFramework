@@ -863,8 +863,7 @@ def _handler_reads(fn, seen=None) -> set[str]:
 @pytest.mark.parametrize("command", COMMANDS)
 def test_the_handler_reads_every_flag_the_command_offers(command):
     """A flag offered and not read is the silent drop this tree exists to
-    refuse: `author` passing `backend=None` on, `manifest show` listing the
-    obsolete references without asking `--show-obsolete`."""
+    refuse: `author` passing `backend=None` on."""
     from dstf.cli.main import _COMMANDS
     from dstf.cli.parser import READS as CODE
 
@@ -1197,7 +1196,8 @@ def test_an_old_command_name_is_an_invalid_choice_and_nothing_more(line, capsys)
         # --orphans / --apply are cleanup's
         ["manifest", "show", "--orphans"],
         ["manifest", "dump", "--apply"],
-        ["manifest", "cleanup", "--show-obsolete"],
+        # obsolete is gone: no status, no flag to list it
+        ["manifest", "show", "--show-obsolete"],
         # --map and --format are `companion add`'s
         ["companion", "list", "--map", "x=y"],
         ["companion", "freeze", "Lib.M", "rig", "--map", "x=y"],

@@ -9,6 +9,7 @@ from ..config import Config, ConfigError, NoProject
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
 from ..pipeline import write_id_mapping
+from ..storage.names import baseline_file
 from .common import (
     _build_config,
     _filter_tests,
@@ -129,35 +130,32 @@ def cmd_baseline_export(args: argparse.Namespace) -> int:
 
 
 def cmd_manifest_show(args: argparse.Namespace) -> int:
-    """List the partition's references and the status of each."""
+    """List the partition's baselines — each one's file, status and model,
+    in model-id order — with the counts of active and skipped ones."""
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-    all_tests = store.index.all_tests()
-    active = {tid: e for tid, e in all_tests.items() if e["status"] != "obsolete"}
-    obsolete = {tid: e for tid, e in all_tests.items() if e["status"] == "obsolete"}
-    skipped = {tid: e for tid, e in all_tests.items() if e["status"] == "skip"}
+    entries = sorted(
+        (e["model_id"], baseline_file(e["model_id"]), e["status"])
+        for e in store.index.all_tests().values()
+    )
+    skipped = [(model, file) for model, file, status in entries if status == "skip"]
+    n_active = sum(status == "active" for _, _, status in entries)
 
     print(f"References: {config.reference_dir}")
-    print(f"Active: {len(active)}  Skip: {len(skipped)}  Obsolete: {len(obsolete)}\n")
+    print(f"Active: {n_active}  Skip: {len(skipped)}\n")
 
-    if active:
-        print(f"{'ID':>6}  {'Status':<10}  {'Model ID'}")
+    if entries:
+        print(f"{'File':<21}  {'Status':<10}  {'Model ID'}")
         print("-" * 90)
-        for tid in sorted(active):
-            entry = active[tid]
-            print(f"{tid:>6}  {entry['status']:<10}  {entry['model_id']}")
+        for model, file, status in entries:
+            print(f"{file:<21}  {status:<10}  {model}")
 
     if skipped:
         print("\nSkipped:")
-        for tid in sorted(skipped):
-            print(f"{tid:>6}  {skipped[tid]['model_id']}")
-
-    if obsolete and args.show_obsolete:
-        print("\nObsolete:")
-        for tid in sorted(obsolete):
-            print(f"{tid:>6}  {obsolete[tid]['model_id']}")
+        for model, file in skipped:
+            print(f"{file:<21}  {model}")
 
     return 0
 

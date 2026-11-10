@@ -135,16 +135,17 @@ class TestClassify:
 
 # ---------------------------------------------------------------------------
 # Byte-identity pins (the summary and the JUnit file as before the status
-# unification; a failure block as the console labels it since)
+# unification; a failure block as the console labels it since; a verdict
+# line starts with the model id, no `[<code>]` or `[new]` before it)
 # ---------------------------------------------------------------------------
 
 _CONSOLE_GOLDEN = """\
-  PASS  [0001] Lib.Ex.Pass
-  FAIL  [0002] Lib.Ex.Fail
-  SIM_FAIL  [0003] Lib.Ex.SimFail
-  NO_REF  [new] Lib.Ex.NoRef
-  PASS  [0005] Lib.Ex.WarnOnly [WARN]
-  FAIL  [new] Lib.Ex.BaselineFreeFail
+  PASS  Lib.Ex.Pass
+  FAIL  Lib.Ex.Fail
+  SIM_FAIL  Lib.Ex.SimFail
+  NO_REF  Lib.Ex.NoRef
+  PASS  Lib.Ex.WarnOnly [WARN]
+  FAIL  Lib.Ex.BaselineFreeFail
 
 Results: 2/6 passed
   Failed: 2
@@ -155,7 +156,7 @@ Results: 2/6 passed
 Failure Details:
 --------------------------------------------------------------------------------
 
-  [0002] Lib.Ex.Fail
+  Lib.Ex.Fail
     h: nrmse
       NRMSE 5.000e-01 vs tolerance 0.000e+00 → FAIL
       RMSE:               4.000000e-01 (range 2.0000e+00)
