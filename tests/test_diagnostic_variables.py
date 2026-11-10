@@ -597,7 +597,6 @@ def _with_events(ev):
 
     return ReferenceFile(
         model_id="M",
-        test_id="0001",
         status="active",
         date_added=None,
         last_updated=None,

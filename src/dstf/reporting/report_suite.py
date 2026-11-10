@@ -21,6 +21,7 @@ from ..comparison.types import TestComparison, VariableComparison
 from ..config_shape import default
 from ..discovery.test_registry import diagnostic_names
 from ..storage.baseline import ReferenceFile
+from ..storage.names import baseline_stem
 from .context_builder import _build_template_context
 from .rows import summary_fields
 from .status import classify_with_class, refusal
@@ -837,7 +838,7 @@ def _build_per_test_args(
     ref_file = store.reference_file(model_id)
 
     if comp.test_id:
-        report_id = f"ref_{comp.test_id}"
+        report_id = baseline_stem(model_id)
     elif test_key:
         report_id = test_key
     else:
@@ -861,7 +862,7 @@ def _build_per_test_args(
         "test_key": test_key,
         "status_text": status_text,
         "status_class": status_class,
-        "ref_id": f"ref_{comp.test_id}" if comp.test_id else stored,
+        "ref_id": baseline_stem(model_id) if comp.test_id else stored,
         "last_run_at": last_run_at,
         "comparison": comp,
         "comp_variables": comp.variables,

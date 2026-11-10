@@ -2535,8 +2535,13 @@ class TestTheThreeReportsAreIndependent:
 
         # the verdict table, always
         lines = out.splitlines()
-        assert [ln for ln in lines if ln.endswith(_T1)] == [f"  PASS  [0001] {_T1}"]
-        assert [ln for ln in lines if ln.endswith(_T2)][0] == f"  FAIL  [0002] {_T2}"
+        # The tag is each baseline's code, until the tag goes.
+        assert [ln for ln in lines if ln.endswith(_T1)] == [
+            f"  PASS  [0da1bdf4cf2f] {_T1}"
+        ]
+        assert [ln for ln in lines if ln.endswith(_T2)][0] == (
+            f"  FAIL  [7ee251fd36d9] {_T2}"
+        )
         assert "Results: 1/2 passed" in lines
         assert "Failure Details:" in lines
 

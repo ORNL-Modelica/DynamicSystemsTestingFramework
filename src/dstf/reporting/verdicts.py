@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ..comparison.types import TestComparison
+from ..storage.names import baseline_stem
 from ..storage.ref_index import _atomic_write_text
 from .context_builder import build_tree_view, test_texts
 from .status import STATUS_LABELS, STATUS_ORDER, classify, count_by_status, exit_code
@@ -37,13 +38,15 @@ def status_word(comp: TestComparison) -> str:
 
 
 def test_verdict(comp: TestComparison, test: Any, result: Any) -> dict:
-    """One test of the file: its model id, its status word, what the
+    """One test of the file: its model id, the baseline it was scored
+    against (``ref_<code>``, or null), its status word, what the
     comparison said where there is no tree to say it (a failed simulation's
     error, a refusal, "No reference baseline stored"), its warnings, and
     its criteria ``tree`` — None for a test nothing was compared for."""
     return {
         "model_id": comp.model_id,
-        "test_id": comp.test_id,
+        # The baseline it was scored against, by its name: ``ref_<code>``.
+        "ref_id": baseline_stem(comp.model_id) if comp.test_id else None,
         "status": status_word(comp),
         "message": comp.error_message or None,
         "warnings": [w.text for w in comp.warnings],

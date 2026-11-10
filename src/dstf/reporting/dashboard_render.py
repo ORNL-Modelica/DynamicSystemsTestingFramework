@@ -38,6 +38,7 @@ from ..backends.common.result_variables import run_timing
 from ..backends.progress import read_status
 from ..backends.types import TestResult
 from ..comparison.types import TestComparison
+from ..storage.names import baseline_stem
 from .rows import (
     COLUMNS,
     FILTER_HINTS,
@@ -344,8 +345,15 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     summary = summary_fields(comp)
     ref_id, ref_file = row.ref_id, row.ref_file
     if comp.test_id:
-        ref_id = f"ref_{comp.test_id}"
-        if ref_id != row.ref_id:
+        ref_id = baseline_stem(comp.model_id)
+        # The row's link survives only when it IS the file this comparison
+        # read, by path: a model's baseline has one name in every backend
+        # folder, so after `compare --backend <other>` the names agree and
+        # a name check kept a link to the other backend's file.
+        if (
+            comp.baseline_path is None
+            or Path(comp.baseline_path).as_uri() != row.ref_file
+        ):
             ref_file = None
     return replace(
         row,
@@ -472,7 +480,9 @@ def build_dashboard_context(
         # its test key — a failed simulation's too. The name its RUN gave
         # it is a guess made before either was known: a test accepted
         # since has a baseline its run did not name.
-        compared = f"ref_{comp.test_id}" if comp is not None and comp.test_id else None
+        compared = (
+            baseline_stem(comp.model_id) if comp is not None and comp.test_id else None
+        )
         places = dict.fromkeys(d for d in (compared, row.report_dir, row.test_key) if d)
         for place in places if mode == "final" else ():
             sidecar = _read_comparison_sidecar(work_dir, place)

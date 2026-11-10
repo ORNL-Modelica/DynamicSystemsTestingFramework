@@ -260,13 +260,12 @@ def _build_ref_info(
     ref_file: Path | None,
 ) -> list:
     """Build the test-metadata rows shown in the report's "Reference Info"
-    section: test_id / status / dates / reference-file link / test-dir link
+    section: status / dates / reference-file link / test-dir link
     / how many criteria scored the run / how many variables the baseline
     stores.
     """
     ref_info = []
     meta_fields = [
-        ("Test ID", ref_data.test_id if ref_data else None),
         ("Status", ref_data.active_status if ref_data else None),
         ("Date Added", ref_data.date_added if ref_data else None),
         ("Last Updated", ref_data.last_updated if ref_data else None),

@@ -290,7 +290,6 @@ class ReferenceStore(_RolesMixin):
 
         ref = ReferenceFile(
             model_id=test.model_id,
-            test_id=None,
             status="active",
             date_added=date_added,
             last_updated=now,

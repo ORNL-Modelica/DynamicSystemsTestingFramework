@@ -4581,7 +4581,6 @@ class TestABaseToleranceIsANumber:
         assert comp.error_message == _said(where, bad)
         assert not comp.passed
         assert comp.sim_success and comp.variables == []
-        assert comp.test_id == "0001"
         assert classify(comp) == "FAIL"
 
     @staticmethod

@@ -2,9 +2,9 @@
 code reads it. Only :mod:`dstf.storage.baseline_codec` turns a file's JSON into
 these and back; nothing else indexes the parsed dict.
 
-A primary reference file (``ref_NNNN.json``) is a :class:`ReferenceFile`: its
+A primary reference file (``ref_<code>.json``) is a :class:`ReferenceFile`: its
 own fields plus one :class:`Baseline` named ``"primary"``. A soft check
-(``soft_checks/ref_NNNN/<name>.json``, D66) and a JSON companion's data file
+(``soft_checks/ref_<code>/<name>.json``, D66) and a JSON companion's data file
 are a :class:`Baseline` alone.
 """
 
@@ -85,10 +85,11 @@ class Baseline:
 class ReferenceFile:
     """A primary reference file: its own fields and its ``"primary"``
     baseline. ``status``, ``date_added`` and ``last_updated`` are ``None`` only
-    in files written before they existed (old data)."""
+    in files written before they existed (old data). The model id is the
+    file's identity: its name is computed from it (`storage.names`), and no
+    field holds a number."""
 
     model_id: str
-    test_id: str | None
     status: str | None
     date_added: str | None
     last_updated: str | None
