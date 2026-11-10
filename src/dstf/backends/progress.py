@@ -46,7 +46,7 @@ class TestStatus:
     detail: str | None = None
     worker_id: int | None = None
     report_dir: str | None = (
-        None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
+        None  # "ref_<code>" or e.g. "test_0005" — matches generate_report_suite naming
     )
     #: Where a RUNNING test is: "translating" / "simulating" / ... — and
     #: ``DONE_PHASE`` once it has ended, however it ended. None before it

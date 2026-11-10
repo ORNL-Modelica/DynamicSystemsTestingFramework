@@ -109,7 +109,7 @@ def wipe_stale_state_for_scope(
 
     1. Per-test report dir at ``<work_dir>/reports/<report_dir>/``. Holds
        the ``comparison_data.json`` sidecar (read by the dashboard's
-       enricher) and ``interactive.html``. ``report_dir`` is ``ref_NNNN``
+       enricher) and ``interactive.html``. ``report_dir`` is ``ref_<code>``
        when a baseline exists for the model, else ``test_NNNN``.
 
     2. Per-test sim work dir at ``<work_dir>/<test_key>/``. Holds the
@@ -118,7 +118,7 @@ def wipe_stale_state_for_scope(
        prior sims and must not erase them.
 
     ``ref_id_map`` is the *backend's* map (a plain dict of model_id →
-    ``"ref_NNNN"``), pre-populated by the caller; not the store's index.
+    ``"ref_<code>"``), pre-populated by the caller; not the store's index.
 
     test_key for an in-scope test is read from the persistent
     ``batch_manifest.json``. Tests not yet in the manifest (first-time

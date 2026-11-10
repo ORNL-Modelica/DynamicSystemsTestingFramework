@@ -9,7 +9,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 1 | ~~Filtered interactive review~~ | L | High | **DONE** — `-i [FILTER]` with categories: `failed`, `no-baseline`, `warnings`, `sim-failed`, `passed`, `all` |
 | 2 | ~~Link to simulation artifacts from HTML~~ | L | High | **DONE** — `file://` links to dslog, translation_log, dsin, dsfinal, simulate.mos, dsres.mat; prominent for failed tests, collapsible for passing |
 | 3 | ~~Full reference data in HTML reports~~ | L | Medium | **DONE** — added `status`, `date_added` to metadata table; diagnostic finals (CPUtime, EventCounter) were already in simulation stats table; fixed column header |
-| 4 | Manifest compaction / ID reset | L | Low | Niche — only needed after major restructuring |
+| 4 | ~~Manifest compaction / ID reset~~ | L | Low | **CLOSED** by D165 — baselines are named from their model id, so there is nothing to renumber |
 | 5 | ~~Condensed HTML with progressive disclosure~~ | M | High | **DONE** — key stats cards at top, condensed variable table, full details/stats/params/diagnostics in collapsible sections. Jinja2 templates + `comparison_data.json` sidecar |
 | 6 | ~~Auto-generate HTML report suite~~ | M | High | **DONE** — `--report` generates index page + per-test reports with plots; JS filter buttons; opens in browser |
 | 7 | Configurable variable ordering | M | Medium | Config plumbing + sort logic in reports and references |
@@ -69,8 +69,8 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 61 | ~~Points editor — draggable plot markers (Full scope)~~ | M | Low | **DONE** — wired to the shared createPointPlotEditor factory. Shift+click on plot adds a point at (clicked_x, clicked_y) with explicit value; shift+drag on a diamond marker moves time + value (promoting ref-relative points to explicit-value); shift+right-click on a marker removes it. Same abstraction tube + dom-frequency use. |
 | 62 | CLI subcommand parity + standardization | L | Medium | Subcommands grew organically and have inconsistent flag coverage. Concrete known gap: `dstf compare` has no `--parallel`, so the read-and-compare phase always runs serially even when the user has cores available; on a 100-test suite this is the dominant time cost when re-comparing without re-simulating. Other gaps probably exist (audit needed): `--work-dir` / `--timeout` / `--merge` / `--rerun` / `--accept` / `-i` / `--report` are scattered unevenly across `run` vs `compare` vs `manifest`. **Hard constraint from user: no code expansion — same or reduction in LOC**. Right approach is argparse parent parsers (`parents=[...]`) — define groups once (FilterGroup, ParallelismGroup, ReportGroup, etc.), each subcommand opts in to the groups it needs. Flag declarations dedupe across subcommands, the inevitable next subcommand inherits the canonical flag set. Extend `test_argparse_subcommands_match_dispatch_table` to also assert each subcommand declares the flags from its declared groups. ~½ day; net-negative LOC. |
 | 63 | Failure-cluster summary in run report | L | Medium | Today the dashboard / per-test report shows each failure individually with its `error_message`. When the same root cause hits many tests (e.g. the TRANSFORM Dymola Linux run had 84 failures all with the new `"Translation failed: license tier too small for this model"` classification), users have to skim each row to notice the pattern. Idea: after the run, group failures by their classified `error_message`, and surface the top-N clusters in the index page header — e.g., `"242 passed, 84 failed (84 / 84 = 'license tier too small' — likely a Dymola license-tier issue, not test bugs)"`. Builds on the `_classify_translation_error` helper added in 790ddde; same dispatch could classify simulation failures too once we have their patterns. Discovered while running TRANSFORM on Dymola Linux 2026-04-29 — would have saved minutes of digging through individual translation_log.txt files to confirm the failures were all-the-same-cause. ~10 LOC in the report-suite generator. |
-| 64 | Header-only ref scan on index build | L | Low | `ReferenceStore._scan` reads and `json.loads` every `ref_NNNN.json` in full just to pull `model_id` + `status` off the top. On a suite the size of TRANSFORM (~326 baselines, each carrying full trajectories) that is tens of MB parsed on every CLI invocation that touches the store. Options: a tiny sidecar index written on accept, or a streaming/partial parse that stops after the metadata keys (`json` has no partial-parse entry point, so this means a hand-rolled scan or `ijson`). Noticed during the D-7 docstring sweep (Phase C-ii) — the comment there claimed a first-few-KB read that the code never did. |
-| 65 | Baseline-history overlay (before/after across commits) | M | High | Owner, 2026-10-30, from TRANSFORM PR #118: one plot per variable overlaying a test's baseline as it was at several git revisions of the reference root (e.g. unfixed → after each fix commit → final). It made a multi-commit model fix reviewable at a glance, and the overlay surfaced a t=0 value (DRACS riser flow −502 kg/s, a start-up transient gone within 5 ms) that the per-commit pass/fail runs had not. Done that day by hand: a ~50-line matplotlib script reading `git show <rev>:ReferenceResults/.../ref_NNNN.json`, plus a `compare --reference-root <copy with old refs>`. Fits DSTF rather than a skill: the overlay loader (#50, #51) already renders companions and sibling-backend refs, so git revisions are one more overlay source. Sketch: `--overlay-rev REV[,REV...]` on `compare --report` / `author` (label = commit subject), and a `dstf plot --rev ...` that needs no run. Open: static PNG export for viewing away from the machine (per-test reports load Plotly from `reports/`). |
+| 64 | Header-only ref scan on index build | L | Low | `RefIndex` reads and `json.loads` a whole `ref_<code>.json` just to pull `model_id` + `status` off the top: one file per lookup, every file of the folder for a listing (`list_models`, which every run's `reference_manifest.json` calls). On a suite the size of TRANSFORM (~326 baselines, each carrying full trajectories) that is tens of MB parsed on every CLI invocation that touches the store. Options: a tiny sidecar index written on accept, or a streaming/partial parse that stops after the metadata keys (`json` has no partial-parse entry point, so this means a hand-rolled scan or `ijson`). Noticed during the D-7 docstring sweep (Phase C-ii) — the comment there claimed a first-few-KB read that the code never did. |
+| 65 | Baseline-history overlay (before/after across commits) | M | High | Owner, 2026-10-30, from TRANSFORM PR #118: one plot per variable overlaying a test's baseline as it was at several git revisions of the reference root (e.g. unfixed → after each fix commit → final). It made a multi-commit model fix reviewable at a glance, and the overlay surfaced a t=0 value (DRACS riser flow −502 kg/s, a start-up transient gone within 5 ms) that the per-commit pass/fail runs had not. Done that day by hand: a ~50-line matplotlib script reading `git show <rev>:ReferenceResults/.../ref_NNNN.json` (a revision before D165 names the file by that number; after, by `ref_<code>.json`), plus a `compare --reference-root <copy with old refs>`. Fits DSTF rather than a skill: the overlay loader (#50, #51) already renders companions and sibling-backend refs, so git revisions are one more overlay source. Sketch: `--overlay-rev REV[,REV...]` on `compare --report` / `author` (label = commit subject), and a `dstf plot --rev ...` that needs no run. Open: static PNG export for viewing away from the machine (per-test reports load Plotly from `reports/`). |
 
 **Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
 
@@ -141,12 +141,10 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - Cross-package dependencies add complexity
   - Some test models may not have clean dependency relationships
 
-## Manifest compaction / ID reset
+## ~~Manifest compaction / ID reset~~ — CLOSED by D165
 
-- Over time, obsolete test IDs accumulate in the manifest (marked obsolete but never reused)
-- A "compact" operation would: remove all obsolete entries, renumber active tests starting from 0001, rename reference files to match, and rewrite the manifest
-- Useful when a library has undergone major restructuring and the manifest has significant gaps
-- Should be a deliberate, manual operation (not automatic) since it rewrites all reference files
+- Baselines are no longer numbered: a file's name is computed from its model
+  id, so there are no gaps to compact and no IDs to reset.
 
 ## Configurable variable ordering in references and reports
 
@@ -225,7 +223,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 ## Link to reference JSON file from HTML report
 
-- Artifacts section links to simulation files (dslog.txt, dsin.txt, dsres.mat, etc.) but not to the reference JSON file (e.g., `ref_0042.json`)
+- Artifacts section links to simulation files (dslog.txt, dsin.txt, dsres.mat, etc.) but not to the reference JSON file (e.g., `ref_9bbf24e6f8aa.json`)
 - The reference filename is already shown as text in the "Reference Information" table via `ref_info` (see `context_builder.py`, `_build_ref_info`) but it's not a clickable link
 - Need to resolve the full path to the reference file and add a `file://` URI link, either as an artifact entry or as a clickable link in the ref_info table
 - Requires passing the resolved reference file path through to `_build_template_context()`
@@ -387,11 +385,11 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 ## Batch actions from HTML report
 
 - Add checkboxes next to each test in the index page for multi-select
-- Action buttons: "Rerun selected", "Accept selected", "Mark obsolete", "Disable"
+- Action buttons: "Rerun selected", "Accept selected", "Disable"
 - Output: generate a ready-to-paste CLI command (e.g., `dstf run --filter Model1,Model2,Model3`) or a JSON payload
 - Lighter than the full server approach (#29) — purely client-side JS that builds command strings
 - Could also generate a filter file compatible with `--filter @tests.txt` (#35)
-- "Mark obsolete/disable" would need a status field in test_spec or reference JSON — design this carefully to avoid scope creep
+- "Disable" would need a status field in test_spec or reference JSON (a baseline's `status` is `active` or `skip`, and only `manifest show` reads `skip`) — design this carefully to avoid scope creep
 
 ## NRMSE panel annotations + metric clarity
 
@@ -997,40 +995,12 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   thinnest test coverage — which is the reason this audit is worth doing before
   the public 1.0 push rather than after.
 
-- **Review whether `.id_high_water.json` is necessary, or derivable from what
-  is already on disk** (2026-09-03, owner: "it smells like a workaround for
-  something"): the file exists (D99) because the ID index is built by scanning
-  — design principle 3 — so a ref file IS the only durable record that its ID
-  was ever allocated. `cleanup_obsolete` (`storage/reference_store.py:445`)
-  `unlink()`s obsolete ref files, and that unlink is the single event that
-  destroys the record; the dot-file exists to remember what the unlink forgot.
-  It is the only ref-file deleter in the codebase, and `manifest cleanup` is
-  dry-run by default, so the whole hazard flows through one narrow path.
-  The owner's instinct is worth testing against that: **make the deletion
-  non-destructive of the ID instead of adding a second store.** Candidate —
-  have `cleanup_obsolete` rewrite the ref file in place as a stub (model_id,
-  `status: "obsolete"`, no trajectory payload) rather than unlinking it.
-  Cleanup's real job is reclaiming trajectory bulk, not directory entries, and
-  a scan then yields the true high-water forever.
-  What that would buy, beyond deleting one file kind: the whole race
-  mitigation in `_bump_high_water` (`storage/ref_index.py:167`) goes with it —
-  a bump currently folds in a FRESH disk scan because a read-check-write mark
-  is last-writer-wins and can *regress* under two racing `--accept` processes
-  (an adversarial-review finding in D99, and write-then-verify does not close
-  it). No second store, no race to mitigate.
-  Also worth noticing while in there: `cleanup_obsolete` still deletes each
-  deleted ref's `soft_checks/` and `companions/` dirs justified by "a later
-  reuse of this ID must not inherit another model's role data" (review
-  2026-07-06, finding 32) — i.e. the code carries *two* mitigations for ID
-  reuse, one assuming reuse happens and one preventing it. Whichever design
-  wins, that comment should stop contradicting it.
-  Arguments for leaving it alone, to weigh honestly: it is two lines of JSON,
-  reviewed and tested; absent or corrupt it degrades to scan-only, so it never
-  fails an accept; and neither design survives a user's manual `rm` of a ref
-  file. Check before changing: what else assumes a cleaned-up ref is gone from
-  disk (`list_obsolete`'s contract, the manifest CLI's reporting,
-  `tests/test_storage.py`'s high-water tests), and whether a stub file would
-  confuse `RefIndex` scanning or any downstream reader of the partition.
+- **~~Review whether `.id_high_water.json` is necessary~~ — CLOSED by D165**
+  (2026-09-03, owner: "it smells like a workaround for something"). It was:
+  a baseline's name is now a code computed from its model id, so nothing is
+  allocated and nothing needs remembering. The file, the claim loop,
+  `status: "obsolete"` and `cleanup_obsolete` are gone; removing a baseline
+  is deleting its file.
 
 - **A merged cross-backend report** (2026-09-03, owner, from a review of how
   simulators are selected): today one `dstf run` is one backend, and
@@ -1048,11 +1018,10 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   "these four tests pass on Dymola and fail on OpenModelica". That view is
   what this idea is.
   Design constraints, so the work starts from the real ones:
-  * **Join on the model ID, never on `ref_NNNN`.** Numeric IDs are allocated
-    per partition (`RefIndex` is per `ref_dir`, and so is the high-water
-    mark), so `ref_0007` under `Dymola/linux` and under `OpenModelica/linux`
-    are unrelated. The model ID stored inside each ref file is the only
-    cross-backend identity.
+  * **Join on the model ID.** Since D165 a baseline's name `ref_<code>` is
+    computed from the model id, so one model has one name under
+    `Dymola/linux` and under `OpenModelica/linux`; still, the model ID stored
+    inside each ref file is the identity, and the name only its code.
   * Not the same thing as cross-backend *scoring*, which already exists: a
     `soft_check` imports another backend's primary so cross-simulator
     disagreement is scored inside one run (the demo's `MetricTreeTest`). This
@@ -1168,12 +1137,9 @@ planning.
   alongside it. Verify on both platforms before claiming it fixed.
 
 - **Two leftovers from the D122 review, both small** (2026-09-03, from the
-  adversarial review of the line-ending fix): (1) `ref_index.py`'s ID-claim
-  stub writes its JSON with `json.dump` and no trailing newline, so a crash
-  between `register()` and `store_reference()` leaves a ref file that git
-  flags `\ No newline at end of file` for as long as it survives. Pre-dates
-  D122 and is orthogonal to line endings; one `+ "\n"` if it is worth
-  touching at all. (2) JUnit XML is the one text output DSTF writes that
+  adversarial review of the line-ending fix): (1) ~~`ref_index.py`'s ID-claim
+  stub wrote its JSON with no trailing newline~~ — gone with the claim
+  stub itself (D165). (2) JUnit XML is the one text output DSTF writes that
   still takes the platform newline — `ElementTree.write`'s filename branch
   opens without `newline=`, so fixing it means passing a file object rather
   than a kwarg. Excluded from D122 deliberately (CI artifact, regenerated
@@ -1998,7 +1964,8 @@ planning.
     error. The fix is row validation where the mode is built.
   - A stored baseline whose `comparison` is `null`, or a soft check of the
     wrong shape, is a traceback after the simulations ran; a baseline file
-    cut short reads as no baseline (`PASS [new]`). `run`'s check before it
+    cut short reads as no baseline (`PASS [new]` then; the console's
+    `[new]` tag is gone since D165). `run`'s check before it
     simulates covers an override nothing reads, not these.
   - `run --parallel N` over FMUs can fail tests with `XMLSchemaParseError`:
     FMPy's model-description reader is not safe across threads. Sequential

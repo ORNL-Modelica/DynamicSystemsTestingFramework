@@ -2,7 +2,7 @@
 
 ## Platform
 
-- **Windows MAX_PATH (260 chars)**: Modelica model paths are deeply nested. Reference filenames derived from model paths easily exceed this limit. Solved with numeric IDs (`ref_0001.json`), but `testing_output/` work directories can still hit this with deep library names + long backend names.
+- **Windows MAX_PATH (260 chars)**: Modelica model paths are deeply nested. Reference filenames derived from model paths easily exceed this limit. Solved with a fixed-length name computed from the model id (`ref_<12 hex digits>.json`, D165): a report's tail `reports/ref_<code>/comparison_data.json` is 45 characters whatever the model. `testing_output/` work directories can still hit the limit with deep library names + long backend names.
 
 - **Dymola working directory behavior**: `openModel()` changes Dymola's cwd to the model's directory. Every `.mos` script that writes output must explicitly `cd()` to the desired output directory after any `openModel()` call.
 

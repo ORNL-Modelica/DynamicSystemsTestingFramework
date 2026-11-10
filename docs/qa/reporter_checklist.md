@@ -28,7 +28,7 @@ those cannot judge — visual quality and feel on a real report.
 ```bash
 uv run dstf --config examples/fmu/testing.json run --report
 # Open the report in your browser:
-# testing_output/fmu/FMPy/linux/reports/ref_0001/interactive.html
+# testing_output/fmu/FMPy/linux/reports/ref_deaebe093a26/interactive.html
 ```
 
 The FMU example (BouncingBall) exercises: NRMSE leaf, range leaf, nested

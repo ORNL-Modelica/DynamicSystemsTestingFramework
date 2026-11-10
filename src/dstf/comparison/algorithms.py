@@ -27,8 +27,9 @@ from .types import _EPS, VariableComparison
 #: span; 3e-8 was the smallest fraction that scored all seven affected tests
 #: alike, 1e-8 was not. The offset grows with t, not with the span: in this
 #: repo's OpenModelica baselines it is 2e-10 * t at every near pair (Modelica
-#: ref_0002 at t = 2, 5, 8; ref_0013 at t = 21600, 32400, 34200), and the
-#: issue's is 5e-8 * t at 0.25 — so a run that starts late scales by |Te|.
+#: EventTest at t = 2, 5, 8; ThermostatBuildingTest at t = 21600, 32400,
+#: 34200), and the issue's is 5e-8 * t at 0.25 — so a run that starts late
+#: scales by |Te|.
 #: OpenModelica has no constant to read instead: its zero-crossing hysteresis
 #: (`TOL_HYSTERESIS_ZEROCROSSINGS = 1e-4` in `simulation/solver/epsilon.h`) is a
 #: band on the crossing function's VALUE, so the time it costs follows the

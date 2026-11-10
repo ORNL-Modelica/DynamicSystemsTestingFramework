@@ -6,8 +6,8 @@
 - `startup.mos`: `cd()`, load dependencies, load main library, framework settings (`OutputCPUtime`, `Advanced.UI.TranslationInCommandLog`), user setup commands
 - `simulate.mos`: `cd()` to test subdir, `clearlog()`, `simulateModel(...)`, `savelog("translation_log.txt")` — result saved as `dsres.mat` (Dymola default)
 - `shutdown.mos`: `Modelica.Utilities.System.exit()`
-- `batch_manifest.json`: written before simulation, maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}`; each in-scope entry is stamped `last_run_status: "pending"` when a run starts and records passed / failed / timed_out / cancelled as that test's result lands — the verdict compare trusts (status.json is the cross-check for an entry still pending)
-- `reference_manifest.json`: written before simulation, maps ref IDs to model names
+- `batch_manifest.json`: written before simulation, maps `test_key -> {"model_id": "...", "ref_id": "ref_<code>"}` (`ref_id` null for a model with no baseline); each in-scope entry is stamped `last_run_status: "pending"` when a run starts and records passed / failed / timed_out / cancelled as that test's result lands — the verdict compare trusts (status.json is the cross-check for an entry still pending)
+- `reference_manifest.json`: written before simulation, maps each baseline's `ref_<code>` to its model id
 - `batch.mos`: `RunScript()` calls chaining startup + all tests + shutdown
 - Each test gets its own subdirectory to prevent file conflicts (`dsin.txt`, `dslog.txt`, `dsfinal.txt`, `dsres.mat`, `translation_log.txt` are per-simulation)
 - Two log files per test: `dslog.txt` (simulation runtime) and `translation_log.txt` (translation/structural stats) — merged into one `statistics` dict
@@ -28,7 +28,7 @@
 - Downsampling must preserve both pre- and post-event points at duplicate times
 
 ### Reference JSON field ordering
-- Metadata fields first (`model_id`, `test_id`, `last_updated`, `simulation`, `statistics`)
+- Metadata fields first (`model_id`, `status`, `date_added`, `last_updated`, `simulation`, `statistics`)
 - Data fields last (`n_vars`, `time`, `variables`)
 - Makes files human-readable when opened — you see context before scrolling through numbers
 
@@ -111,10 +111,10 @@
 - `test_spec.json` is permanent, not temporary — it defines what to test; references define what to expect
 
 ### Ref files are the source of truth, not a manifest
-- Each `ref_NNNN.json` contains `model_id`, `test_id`, `status`, `date_added`, `last_updated`
-- The in-memory `RefIndex` is rebuilt by scanning ref files at startup — no persistent manifest to maintain or sync
+- A model's file is `ref_<code>.json`, the code computed from its model id (`storage/names.py`, D165); it contains `model_id`, `status`, `date_added`, `last_updated`
+- `RefIndex` opens a model's file by that computed name and lists the folder only for commands that walk every baseline — no number to allocate, no manifest to maintain or sync
 - `date_added` is set once on first store, preserved on updates; `last_updated` changes every store
-- `status` field: `active` (normal), `skip` (temporarily excluded from runs), `obsolete` (pending deletion via `manifest cleanup`)
+- `status` field: `active` or `skip` (`manifest show` counts it apart; nothing else reads it). Any other status refuses the test by name; a baseline is removed by deleting its file
 - The listed names are `diagnostic_variables` in `testing.json` (default: `["CPUtime", "EventCounter"]`) plus a test entry's own (`diagnostic_names`)
 
 ### Reference JSON values use precision-aware rounding
@@ -173,8 +173,8 @@
 - `ProgressReporter` (`backends/progress.py`) holds in-memory `TestStatus` per test (`queued` / `running` / `passed` / `failed` / `timed_out` / `cancelled`) plus elapsed/detail/worker_id
 - Writes `status.json` (structured, for tooling) + `dashboard.html` (auto-refreshes via `<meta http-equiv="refresh" content="5">`) to `work_dir` on every state change — no server needed, works over `file://`
 - Atomic write pattern: unique tmp filenames (`status.json.{pid}.{uuid}.tmp`) + a dedicated `_write_lock` serializing the write+replace. Both are required on Windows where `replace` fails when another thread holds the file
-- `register(test_key, model_id, report_dir)` accepts a per-test report dir name (`"ref_NNNN"` or `"test_NNNN"`): the name a page would have — matches `generate_report_suite` naming. It is a guess made before the run, so it is not a link: a row's model name links to `reports/{dir}/interactive.html` only where the final page's writer read that test's sidecar (`TestRow.report_page`), which only `--report` writes; a live page links none
-- `backend.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by `run_pipeline` before `run_tests` (from `ReferenceStore.index`); the backend consults it at registration time
+- `register(test_key, model_id, report_dir)` accepts a per-test report dir name (`"ref_<code>"` or `"test_NNNN"`): the name a page would have — matches `generate_report_suite` naming. It is a guess made before the run, so it is not a link: a row's model name links to `reports/{dir}/interactive.html` only where the final page's writer read that test's sidecar (`TestRow.report_page`), which only `--report` writes; a live page links none
+- `backend.ref_id_map: dict[model_id, "ref_<code>"]` is populated by `run_pipeline` before `run_tests` (from `ReferenceStore.index`); the backend consults it at registration time
 - `finalize()` writes the last snapshot and leaves the page LIVE: the compare phase has not scored anything yet, and a static page there is where a watching browser stops. The command that ends the run (`run`, `run -i`, `run --accept`, `compare`, an aborted run, the tool's queue once it has drained) renders the static final page
 
 ### Per-phase timing on the persistent backend
@@ -208,7 +208,7 @@
 - Per-test work directories are `rmtree`'d only for tests being run *this invocation* (`for test, test_key in test_items`), not for everything in the manifest
 - Both `base.Backend.run_tests` and `DymolaBackend.run_tests` go through the same helper to keep behavior consistent across backends
 - Manifest entry shape: `{model_id, ref_id, last_run_at, last_run_status}`. Legacy plain-string-value format still loadable via `BatchManifest.load()`
-- Orphan handling: `run` and `compare` notify (one line) when the manifest contains entries for models no longer discovered. `manifest cleanup --orphans` lists them with their on-disk dirs (work + report); `--apply` removes entries and dirs. Never auto-prunes — discovery is too fragile (transient parse errors, missing deps) to trust as a delete trigger
+- Orphan handling: `run` and `compare` notify (one line) when the manifest contains entries for models no longer discovered. `manifest cleanup` lists them with their on-disk dirs (work + report), and every report dir under a test's name (`ref_<code>`, `test_NNNN`, an old `ref_NNNN`) that no declared test is reported under; `--apply` removes entries and dirs. Never auto-prunes — discovery is too fragile (transient parse errors, missing deps) to trust as a delete trigger
 
 ### Index-page batch actions feed the CLI filter
 - Index template (`reporting/templates/dashboard.html`) has a checkbox column + a selection footer. All selection state lives client-side in the DOM

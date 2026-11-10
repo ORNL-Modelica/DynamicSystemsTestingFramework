@@ -373,7 +373,7 @@ def _manifest_rows(work_dir: Path) -> dict[str, tuple[TestRow, float | None]]:
     """``{model_id: (row, last_run_at)}`` for every test
     ``batch_manifest.json`` keys, in its order: the work-dir key and the
     baseline the run named, and the report dir a run gives such a row
-    (``ref_NNNN``, else the key); beside it the wall clock that test's last
+    (``ref_<code>``, else the key); beside it the wall clock that test's last
     run started at (``assign_test_keys`` stamps ``last_run_at`` then, with
     the clock a sidecar's ``written_at`` uses), ``None`` when the entry
     holds no number. Read as data — never quarantined, as
@@ -476,7 +476,7 @@ def build_dashboard_context(
         before = row
         comp = by_model.get(row.model_id)
         # Where this test's report page may be. The suite writes it under
-        # the baseline it was compared against (``ref_NNNN``), else under
+        # the baseline it was compared against (``ref_<code>``), else under
         # its test key — a failed simulation's too. The name its RUN gave
         # it is a guess made before either was known: a test accepted
         # since has a baseline its run did not name.

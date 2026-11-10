@@ -304,7 +304,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
       carries figure dicts and server-rendered markup only (tree, summary, pills,
       decimation banner); axes.js keeps a secondary axis visible exactly while a
       trace on it is; report.js paints the figures and toggles trace visibility
-    → per-test report directories named ref_NNNN (has reference) or test_NNNN (no baseline)
+    → per-test report directories named ref_<code> (has reference) or test_NNNN (no baseline)
     → the sidecar keeps its shape (full trajectory data) for downstream tooling
 ```
 
@@ -318,12 +318,15 @@ reporters render TestComparison → console / JUnit / HTML / plots
 | `VariableResult` | `backends/types.py` | One variable's time series (time + values arrays), its result-file `name` and its optional `expression` label (D132) |
 | `TestComparison` | `comparison/types.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
 | `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via RefIndex |
-| `RefIndex` | `storage/ref_index.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
+| `RefIndex` | `storage/ref_index.py` | Opens a model's `ref_<code>.json` by its computed name (`storage/names.py`); lists the folder for commands that walk every baseline (D165) |
 | `BatchManifest` | `storage/batch_manifest.py` | Maps test keys to `{"model_id", "ref_id", "last_run_status"}` within a batch run |
 
 ## Reference File Structure
 
-`<reference_root>/<Backend>/<os>/ref_0001.json` — per backend+OS, self-contained.
+`<reference_root>/<Backend>/<os>/ref_<code>.json` — per backend+OS, self-contained.
+The code is the first 12 hex digits of the SHA-256 of the model id
+(`storage/names.py`, D165), so a model's file has the same name in every
+backend folder.
 Every baseline file — a primary, a soft check, a JSON companion's data — is
 read and written by ONE module, `storage/baseline_codec.py`; the rest of the
 code sees the `storage/baseline.py` types (`ReferenceFile`, `Baseline`,
@@ -332,7 +335,7 @@ Decode -> encode of an unchanged file is byte-identical. The keys, in the
 order the codec writes them (optional ones only when present):
 ```json
 {
-  "model_id": "...", "test_id": "0001",
+  "model_id": "...",
   "status": "active",
   "date_added": "2026-01-15T...", "last_updated": "2026-04-08T...",
   "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl", "number_of_intervals": 500, "output_interval": null},
@@ -392,19 +395,26 @@ structural warning, not a failure.
 
 The `comparison` section is optional. When present, it stores the comparison tolerances that were active when the baseline was accepted, so tolerances travel with the reference data. `variable_overrides` maps variable names to per-variable settings including `tolerance` and optional tube comparison parameters (`mode`, `tube_width_mode`, `tube_abs`/`tube_rel`, `tube_points`, `tube_interpolation`).
 
-No persistent manifest file for the index. The in-memory `RefIndex` is built by scanning ref files at startup.
-Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).
+No manifest file beside the baselines: a model's file name is computed from
+its model id, so `RefIndex` opens that one file to look a model up and reads
+the whole folder only for a listing. Valid statuses: `active` and `skip`
+(counted apart by `manifest show`; nothing else reads it). Any other status
+— an old `obsolete` — refuses the test, by name; a baseline is removed by
+deleting its file. A file named for a model that holds another fails that
+test; a file whose name is not its model's code is warned of and left out;
+a folder that still holds numbered files (`ref_0001.json`) is refused whole
+(D165).
 
 ### Multiple named baselines (D66)
 
 A reference file carries exactly one baseline — the ``"primary"``, stored as
 flat top-level fields. Additional named baselines are separate files in the
-role subdirs beside it: ``soft_checks/ref_NNNN/<name>.json`` (scorable,
-warn-wrapped) and ``companions/ref_NNNN/<name>.{json,csv}`` (plot-only).
+role subdirs beside it: ``soft_checks/ref_<code>/<name>.json`` (scorable,
+warn-wrapped) and ``companions/ref_<code>/<name>.{json,csv}`` (plot-only).
 
 ```json
 {
-  "model_id": "...", "test_id": "0001", "status": "active",
+  "model_id": "...", "status": "active",
   "date_added": "2026-01-15T12:34:56Z",
   "last_updated": "2026-02-20T10:00:00Z",
 
@@ -465,8 +475,8 @@ the reporter renders per-leaf `against=` provenance — both shipped in Phase 4 
 D66.
 
 Two manifest files are written to the work directory before simulation starts:
-- `batch_manifest.json` — maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN", "last_run_status": "..."}` for all tests in the batch
-- `reference_manifest.json` — maps ref IDs to model names; also available via `manifest dump` CLI command
+- `batch_manifest.json` — maps `test_key -> {"model_id": "...", "ref_id": "ref_<code>", "last_run_status": "..."}` for all tests in the batch (`ref_id` is null for a model with no baseline)
+- `reference_manifest.json` — maps each baseline's `ref_<code>` to its model id, in model-id order; also written by `manifest dump`
 
 ## Backend Abstraction
 

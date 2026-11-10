@@ -728,7 +728,7 @@ def compare_test(
 
         var_results_by_name = {v.name: v for v in result.variables if v.name}
         # Load primary from the flat ref file; merge in soft_checks from the
-        # `soft_checks/ref_NNNN/` subdir when a store is supplied (D66). Leaves
+        # `soft_checks/ref_<code>/` subdir when a store is supplied (D66). Leaves
         # pick which baseline to score against via `leaf.against` (defaults
         # to primary). With no store there are no named baselines, so an
         # `against: <name>` leaf gets the missing-baseline sentinel.

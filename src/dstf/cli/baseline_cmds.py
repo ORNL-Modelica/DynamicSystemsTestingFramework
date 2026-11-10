@@ -248,7 +248,7 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     """Store another regression system's primary as a soft_check (D66).
 
     Reads a reference-shape JSON from ``source`` (same schema a
-    ``ref_NNNN.json`` file uses at its top level) and stores it under
+    ``ref_<code>.json`` file uses at its top level) and stores it under
     the local model's soft_checks with the given name.
     """
     import dataclasses

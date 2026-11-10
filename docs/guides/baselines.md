@@ -69,8 +69,8 @@ ReferenceResults/
 ├── test_spec.json
 ├── Dymola/
 │   ├── linux/
-│   │   ├── ref_0001.json
-│   │   └── ref_0002.json
+│   │   ├── ref_4063cea37417.json
+│   │   └── ref_ac8d62fff049.json
 │   └── windows/
 │       └── ...
 └── OpenModelica/
@@ -82,8 +82,14 @@ Two simulators, or one simulator on two systems, give slightly different
 numbers, so each keeps its own baselines. A first run on a system that has no
 folder yet reports every test `NO_REF` until its results are accepted there.
 
-A test's number never changes and is never reused. Each `ref_NNNN.json` holds
-its model's name, the simulation settings and statistics of the run, the time
+A baseline's file name is computed from its model's name: `ref_`, then the
+first 12 hex digits of the SHA-256 of the model id. `MyLib.HeatExchanger`'s
+baseline is `ref_ac8d62fff049.json`, in every backend folder. Nothing is
+numbered or counted, so nothing beside the files needs to be kept. A renamed
+model has no baseline under its new name until one is accepted; delete the
+old file.
+
+Each baseline file holds its model's name, the simulation settings and statistics of the run, the time
 points and each tracked variable's values, each listed name's summary (its
 final, min and max — `diagnostic_variables`), and the comparison settings that
 were in effect when it was accepted, so its tolerances travel with it. Its
@@ -93,10 +99,25 @@ whose result was accepted (a baseline accepted before this was recorded gains
 it at its next accept). `run_started` is when that run began: a `dstf run`'s
 start, or, for a test run on its own from `dstf author`'s queue, that test's
 own start. Its
-`status` is `active`, `skip` (left out of comparison for now) or `obsolete`
-(to be removed). `dstf manifest show` lists the tests and their numbers, and
-`dstf manifest cleanup` lists the obsolete files, removing them with
-`--apply`.
+`status` is `active` or `skip`. `dstf manifest show` lists the baselines —
+each one's file, status and model — and counts the skipped ones apart;
+nothing else reads `skip`, so a skipped baseline is still compared. To
+remove a baseline, delete its file.
+
+dstf checks each file it reads against its name:
+
+- A folder that still holds numbered files from before (`ref_0001.json`) is
+  refused whole; convert it first, as the [changelog](../changelog.md)'s
+  "How to convert your baseline names" says.
+- A file whose name is not its model's code is warned of and left out: its
+  model reads `NO_REF`.
+- A file named for a model that holds another model's baseline, or whose
+  `status` is neither `active` nor `skip`, fails that test with a sentence
+  that names the file, and an accept skips the test.
+
+`dstf manifest cleanup` lists what the work directory holds that no test
+uses — result folders and report pages of tests the project no longer
+declares — and removes it with `--apply`.
 
 How many points a baseline keeps of its run is the
 {ref}`baseline_points <key-testing-baseline-points>` setting; a test is
@@ -110,7 +131,7 @@ added from a reference file this tool wrote, and the test must have its own
 baseline first:
 
 ```console
-$ dstf --config testing.json soft-check add MyLib.HeatExchanger openmodelica ../OpenModelica/linux/ref_0003.json
+$ dstf --config testing.json soft-check add MyLib.HeatExchanger openmodelica ../OpenModelica/linux/ref_ac8d62fff049.json
 $ dstf --config testing.json soft-check list MyLib.HeatExchanger
 ```
 
