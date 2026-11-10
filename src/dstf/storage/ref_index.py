@@ -130,7 +130,12 @@ class RefIndex:
             )
 
     def _read(self, name: str) -> tuple[str, str] | None:
-        """``(model_id, status)`` of the file ``name``, or None."""
+        """``(model_id, status)`` of the file ``name``, or None: not there,
+        or not a readable baseline — warned of, by name.
+
+        A ``model_id`` that is no non-empty string is unreadable too: a
+        listing computes each file's name from it, so a number there raised
+        out of every command that lists the folder."""
         # Imported here: the codec imports `_atomic_write_text` from this
         # module, so a module-level import would be a cycle.
         from .baseline_codec import read_reference_header
@@ -141,13 +146,22 @@ class RefIndex:
         try:
             # Whole-file read + parse (a header-only read is idea #64).
             model_id, status = read_reference_header(path)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Skipping unreadable ref file %s: %s", name, e)
-            return None
-        if not model_id:
-            logger.warning("Ref file %s has no model_id — skipping", name)
-            return None
-        return model_id, status
+        except json.JSONDecodeError as e:
+            why = f"not JSON at line {e.lineno}, column {e.colno}"
+        except UnicodeDecodeError:
+            why = "not UTF-8 text"
+        except OSError as e:
+            why = e.strerror or str(e)
+        else:
+            if isinstance(model_id, str) and model_id:
+                return model_id, status
+            why = (
+                "no model_id"
+                if model_id is None
+                else f"model_id {json.dumps(model_id)} is not a string"
+            )
+        logger.warning("%s cannot be read (%s) — fix or delete it", name, why)
+        return None
 
     def _held(self, model_id: str) -> tuple[str, str] | None:
         """What the file named for ``model_id`` holds, read once."""

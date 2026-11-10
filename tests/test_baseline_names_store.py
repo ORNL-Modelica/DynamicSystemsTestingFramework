@@ -208,6 +208,74 @@ def test_a_misnamed_file_leaves_its_test_without_a_baseline_or_a_page(tmp_path):
     assert "ref_000000000000" not in pages
 
 
+def test_a_file_whose_model_id_is_no_name_is_warned_and_left_out(
+    sample_models_dir, tmp_path, caplog
+):
+    """A file of the folder whose ``model_id`` is a number: no name can be
+    computed from it, so it is warned of and listed by nothing — and the
+    folder's good baseline is still found."""
+    store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
+    _hand_written(store.ref_dir / A_FILE, A)
+    (store.ref_dir / "ref_aaaaaaaaaaaa.json").write_text(
+        '{"model_id": 5, "status": "active"}', encoding="utf-8"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="dstf.storage.ref_index"):
+        listed = store.list_models()
+
+    assert listed == [A]
+    assert store.reference_file(A) == store.ref_dir / A_FILE
+    assert [r.getMessage() for r in caplog.records] == [
+        "ref_aaaaaaaaaaaa.json cannot be read (model_id 5 is not a string) — "
+        "fix or delete it"
+    ]
+
+
+def test_a_run_over_a_file_whose_model_id_is_no_name_scores_every_test(
+    tmp_path, caplog
+):
+    """Over the Python example, one more file whose ``model_id`` is 5: the
+    run scores its three tests against their baselines as before."""
+    lib = tmp_path / "lib"
+    shutil.copytree(
+        PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
+        lib,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    folder = lib / "Resources" / "ReferenceResults" / "Python" / "linux"
+    (folder / "ref_aaaaaaaaaaaa.json").write_text(
+        '{"model_id": 5, "status": "active"}', encoding="utf-8"
+    )
+    work = tmp_path / "work"
+    with (
+        redirect_stdout(io.StringIO()),
+        redirect_stderr(io.StringIO()),
+        caplog.at_level(logging.WARNING, logger="dstf.storage.ref_index"),
+    ):
+        code = main(
+            [
+                "--config",
+                str(lib / "Resources" / "ReferenceResults" / "testing.json"),
+                "run",
+                "--no-browser",
+                "--work-dir",
+                str(work),
+            ]
+        )
+
+    assert code == 0
+    verdicts = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
+    assert sorted((t["model_id"], t["status"]) for t in verdicts["tests"]) == [
+        ("PythonTestingLib.Examples.ConstantCsv", "PASS"),
+        ("PythonTestingLib.Examples.PointsCheck", "PASS"),
+        (RAMP, "PASS"),
+    ]
+    assert {r.getMessage() for r in caplog.records} == {
+        "ref_aaaaaaaaaaaa.json cannot be read (model_id 5 is not a string) — "
+        "fix or delete it"
+    }
+
+
 def test_a_folder_of_numbered_names_is_refused_with_the_way_to_convert_it(
     sample_models_dir, tmp_path
 ):
