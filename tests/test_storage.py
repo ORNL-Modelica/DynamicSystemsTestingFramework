@@ -75,9 +75,8 @@ class TestRefIndex:
         self._write_ref(tmp_path, T1)
         index = RefIndex(tmp_path)
         assert index.file(T1) == tmp_path / "ref_772e48f118ed.json"
-        assert index.code(T1) == "772e48f118ed"
         assert index.stem(T1) == "ref_772e48f118ed"
-        assert (index.file(T2), index.code(T2), index.stem(T2)) == (None, None, None)
+        assert (index.file(T2), index.stem(T2)) == (None, None)
 
     def test_obsolete_excluded_from_active(self, tmp_path):
         """A status that is none is listed by all_tests, read by no lookup."""
@@ -106,7 +105,7 @@ class TestRefIndex:
         )
         index = RefIndex(tmp_path)
         assert index.active_tests() == {"c90c603220d1": "MyLib.Old"}
-        assert index.code("MyLib.Old") == "c90c603220d1"
+        assert index.stem("MyLib.Old") == "ref_c90c603220d1"
 
     def test_an_index_is_read_once_over_a_missing_directory_too(self, tmp_path):
         """Read on first use, as over a directory that exists: a file

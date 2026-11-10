@@ -35,7 +35,9 @@ this file says when they do.
   in `ref_id` (`ref_<code>`, or null) where it held `test_id`; `dstf baseline
   export --format csv` writes a `file` column where it wrote `test_id`; a
   test's page loses its Test ID row; `dstf manifest show` lists each baseline's
-  file, status and model in model-id order, without `--show-obsolete`; and
+  file, status and model in model-id order, without `--show-obsolete`, and its
+  `Active` count counts `active` baselines only (it counted the skipped ones
+  too); and
   `dstf manifest cleanup` does one job, the work directory's — what
   `--orphans` did, plus the report pages no test is reported under — and
   `--orphans` is gone. For a plug-in, `ReferenceFile.test_id` is gone and
@@ -134,10 +136,12 @@ rewrites a companion's path to another library's baseline, and deletes
    committed tree, so the renames show in `git status`. A second run says
    `nothing to do`.
 5. In each work directory, once, remove the report pages kept under the old
-   names:
+   names. `--work-dir` names the directory; it can be left out only for the
+   default, `testing_output/<library>/<backend>/<os>/` under the current
+   directory:
 
    ```console
-   $ dstf --config testing.json manifest cleanup --backend <backend> --apply
+   $ dstf --config testing.json manifest cleanup --backend <backend> --work-dir <work_dir> --apply
    ```
 
 ### How to convert a library to the one spelling

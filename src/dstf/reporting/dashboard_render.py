@@ -332,9 +332,11 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     The ref_id is the comparison's when it names one — ``compare --backend
     <other>`` on another backend's work dir scores against a baseline the
     report_dir and the sidecar do not name. The sidecar's reference link
-    survives only when its ref_id is the comparison's: otherwise it opens
-    the other baseline. A comparison with no stored baseline names none,
-    and the row keeps whatever it had.
+    survives only when it is the very FILE the comparison read, compared by
+    path: a model's baseline has one name in every backend folder, so a
+    matching ref_id can still open the other backend's baseline. A
+    comparison with no stored baseline names none, and the row keeps
+    whatever it had.
 
     The Message is the run's (status.json's ``detail``) — but for a test
     the comparison refused, whose reason is the one thing to read of it.

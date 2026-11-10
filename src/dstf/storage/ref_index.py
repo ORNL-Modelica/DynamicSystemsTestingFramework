@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 from ..config import ConfigError
-from .names import baseline_code, baseline_file, baseline_stem
+from .names import baseline_file, baseline_stem
 
 logger = logging.getLogger(__name__)
 
@@ -244,13 +244,6 @@ class RefIndex:
         if self._held(model_id) is None or self.refusal(model_id) is not None:
             return None
         return self.path_for(model_id)
-
-    def code(self, model_id: str) -> str | None:
-        """The code of a model that has a baseline here, else None: the ONE
-        source of every name a baseline's model is shown by (its file, its
-        report dir, a row's Reference). A model with none keeps its
-        ``test_NNNN`` key."""
-        return baseline_code(model_id) if self.file(model_id) is not None else None
 
     def stem(self, model_id: str) -> str | None:
         """``ref_<code>`` of a model that has a baseline here, else None."""
