@@ -349,9 +349,3 @@ def encode_soft_check(b: Baseline) -> str:
 def write_soft_check(path: Path, b: Baseline) -> None:
     """Write a soft check's file atomically."""
     _atomic_write_text(path, encode_soft_check(b))
-
-
-def claim_stub(model_id: str, test_id: str) -> str:
-    """The text ``RefIndex.register`` creates a new ID's file with
-    (exclusively), before ``store_reference`` replaces it whole."""
-    return json.dumps({"model_id": model_id, "test_id": test_id, "status": "active"})

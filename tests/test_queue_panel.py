@@ -566,7 +566,7 @@ async def test_an_accept_from_the_strip_or_a_queue_row_over_a_changed_spec_is_sa
         await user.should_see(marker="panel:accept", retries=20)
         user.find(marker="accept-submit").click()
         await user.should_see(marker="stale-spec", retries=20)
-        assert session.project.store.index.get_id(B) is None
+        assert session.project.store.index.file(B) is None
 
         await _open(user, "/")
         _end(shell, _hold(shell, B, ItemState.RUNNING), ItemState.FINISHED)
@@ -574,7 +574,7 @@ async def test_an_accept_from_the_strip_or_a_queue_row_over_a_changed_spec_is_sa
         await user.should_see(marker="panel:accept", retries=20)
         user.find(marker="accept-submit").click()
         await user.should_see(marker="stale-spec", retries=20)
-        assert session.project.store.index.get_id(B) is None
+        assert session.project.store.index.file(B) is None
         user.find("Reload").click()
         await _settled(lambda: not session.spec.on_disk_changed())
 

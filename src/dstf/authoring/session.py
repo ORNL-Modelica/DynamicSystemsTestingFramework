@@ -107,7 +107,7 @@ if TYPE_CHECKING:
     from ..pipeline import ItemRun
     from ..reporting.stats_rows import StatRow
 
-Event = Literal["spec", "results", "queue", "notice", "loading", "known", "overlays"]
+Event = Literal["spec", "results", "queue", "notice", "loading", "known"]
 Listener = Callable[[dict[str, Any]], None]
 
 logger = logging.getLogger(__name__)
@@ -147,11 +147,6 @@ class Project:
     tests: list[TestModel]
     results: dict[str, TestResult]
     dataset_kind: DatasetType
-    #: Set once this project's sibling-backend overlay index is built (or
-    #: its build failed): the project's, so a read asks the flag of the
-    #: project it reads — a reopen has no window where a read of the new
-    #: project sees the old one's set flag.
-    overlays_ready: threading.Event = field(default_factory=threading.Event)
 
     def test(self, model_id: str) -> TestModel | None:
         return next((t for t in self.tests if t.model_id == model_id), None)
@@ -226,10 +221,6 @@ class _ModelReads:
     series: dict[str, tuple[np.ndarray, np.ndarray] | None] = field(
         default_factory=dict
     )
-    #: Whether the overlays include the sibling-backend ones: False for a
-    #: read taken before the project's sibling index was ready; the first
-    #: read after it reloads the overlays (`_reads_for`).
-    siblings: bool = True
 
 
 def _scored_key(comp: TestComparison | None) -> tuple[tuple[str | None, int], ...]:
@@ -604,9 +595,8 @@ class Session:
             # known rows, before the commit point: a page reads it as soon
             # as `project` is set (its baseline's name), and over TRANSFORM
             # the lazy scan (every ref file read whole) held the loop ~4 s
-            # from that first read — with the sibling-index wait
-            # (`_reads_for`), past the browser's ping budget: the socket
-            # dropped and the reconnect left the page stale.
+            # from that first read, past the browser's ping budget: the
+            # socket dropped and the reconnect left the page stale.
             store.index.ensure_loaded()
             cached = load_scan(config)
             if cached is not None:
@@ -647,21 +637,6 @@ class Session:
             # notice, so the queue panel shows it.
             self.notices = [warning] if warning else []
             self.artifacts = []
-            # Started at the commit point, not after the reload: the warm reads the
-            # SIBLING backends' reference trees and the reload reads this one's, so
-            # neither waits on the other and the warm gets its head start inside
-            # the reload's window (15.6 s over TRANSFORM) instead of after it. How
-            # much of that window it converts is NOT measured and is less than all
-            # of it — both sides are json.loads, whose C scanner holds the GIL, so
-            # they overlap on file IO and contend on parsing. Not earlier than this:
-            # everything above can still raise, and an open that fails must leave
-            # the live session's state as it was.
-            threading.Thread(
-                target=self._warm_overlay_index,
-                args=(self.project,),
-                name="dstf-overlay-index",
-                daemon=True,
-            ).start()
             self._emit_spec({t.model_id for t in tests})
             done_event = threading.Event()
             self.rescan_done = done_event
@@ -687,42 +662,6 @@ class Session:
             # open project's rows (or none) again.
             self._emit("known", models=[])
             raise
-
-    @property
-    def overlay_index_ready(self) -> threading.Event:
-        """The open project's `Project.overlays_ready`; with none open, an
-        Event nothing sets."""
-        project = self.project
-        return project.overlays_ready if project is not None else threading.Event()
-
-    def _warm_overlay_index(self, project: Project) -> None:
-        from ..reporting.overlay_loader import warm_sibling_backend_index
-
-        ready = project.overlays_ready
-        try:
-            warm_sibling_backend_index(project.config)
-        except Exception:  # a broken sibling file must not kill the thread silently
-            logger.exception("warming the sibling-backend overlay index failed")
-            ready.set()
-            return
-        ready.set()
-        try:
-            self._post(lambda: self._overlays_ready(project))
-        except Exception:  # the UI loop is gone (a shutdown): no page to redraw
-            logger.debug("the sibling index is ready and the UI loop is gone")
-
-    def _overlays_ready(self, project: Project) -> None:
-        """The sibling index is built: name the models read without it
-        (`_reads_for`) in ONE ``overlays`` event, so a page redraws them
-        and their next read gains the sibling-backend overlays. The reads
-        are kept, not dropped: they hold what was read from the result file,
-        which a running model cannot read again until its run ends.
-        Nothing for a project no longer open."""
-        if self.project is not project:
-            return
-        stale = {m for m, reads in self._reads.items() if not reads.siblings}
-        if stale:
-            self._emit("overlays", models=stale)
 
     def _rescan(
         self, project: Project, cached: dict[str, TestModel], done: threading.Event
@@ -1023,32 +962,13 @@ class Session:
 
         project = self._require_project()
         reads = self._reads.get(model_id)
-        if reads is not None and not reads.siblings and project.overlays_ready.is_set():
-            # Read before the index was ready: the overlays again, now with
-            # the sibling-backend ones; the decimated bases carry the
-            # overlays and go with them. What came from the result file stays.
-            reads.overlays = load_overlays(
-                project.store, model_id, config=project.config
-            )
-            reads.siblings = True
-            reads.bases.clear()
-            reads.references.clear()
         if reads is None:
-            # Never wait on the sibling-backend index: while the open's warm
-            # thread builds it, it holds the index's lock, and a read on the
-            # UI loop waited as long (over TRANSFORM, with the reference
-            # index's scan, past the browser's ping budget). Until it is
-            # ready the read has no sibling overlays; `_overlays_ready`
-            # names the model then, and its `overlays` event redraws the page.
-            siblings = project.overlays_ready.is_set()
+            # The sibling-backend overlays with the rest: each is one file,
+            # opened by the model's name in each other backend's folder, so
+            # there is no folder scan to warm off the UI loop.
             reads = _ModelReads(
                 ref=project.store.get_reference(model_id),
-                overlays=load_overlays(
-                    project.store,
-                    model_id,
-                    config=project.config if siblings else None,
-                ),
-                siblings=siblings,
+                overlays=load_overlays(project.store, model_id, config=project.config),
             )
             self._reads[model_id] = reads
         return reads

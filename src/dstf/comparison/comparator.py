@@ -1190,6 +1190,19 @@ def compare_one(
             error_message=result.error_message or "Simulation failed",
         )
 
+    # The file named for this model is not its baseline: it holds another
+    # model (two ids share a code, or a hand copy) or a status that is none.
+    # The test is REFUSED with the sentence — the lookup says it and never
+    # raises, so a bad file fails its own test, not the run around it.
+    bad_file = store.refusal(test.model_id)
+    if bad_file is not None:
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            has_reference=False,
+            error_message=bad_file,
+        )
+
     reference = store.get_reference(test.model_id)
     if reference is not None:
         # A stored override nothing reads: this test is refused, with the

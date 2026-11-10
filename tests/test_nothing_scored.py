@@ -61,6 +61,12 @@ class _Store:
     def get_reference(self, model_id):
         return self.reference
 
+    def refusal(self, model_id):
+        return None
+
+    def reference_file(self, model_id):
+        return None
+
     folder = "Stub/linux"
 
     def get_soft_checks(self, model_id):

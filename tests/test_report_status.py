@@ -313,7 +313,8 @@ class TestSimulateOnlyClassification:
             test_lookup={},
             store=SimpleNamespace(
                 get_reference=lambda _m: None,
-                index=SimpleNamespace(get_id=lambda _m: None),
+                index=SimpleNamespace(stem=lambda _m: None),
+                reference_file=lambda _m: None,
                 ref_dir=tmp_path,
             ),
             config=SimpleNamespace(
@@ -347,7 +348,8 @@ class TestSimulateOnlyClassification:
             results={},
             store=SimpleNamespace(
                 get_reference=lambda _m: None,
-                index=SimpleNamespace(get_id=lambda _m: None),
+                index=SimpleNamespace(stem=lambda _m: None),
+                reference_file=lambda _m: None,
                 ref_dir=Path("."),
             ),
             config=SimpleNamespace(

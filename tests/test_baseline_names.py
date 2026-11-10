@@ -6,7 +6,7 @@ converted baselines carry these exact names — so a test that recomputed it
 the way the code does would follow any change to the rule.
 """
 
-from dstf.storage.names import baseline_code, baseline_file
+from dstf.storage.names import baseline_code, baseline_file, baseline_stem
 
 #: Real TRANSFORM model ids and the codes their converted files carry.
 KNOWN = {
@@ -49,3 +49,8 @@ def test_distinct_ids_distinct_names_including_whitespace_and_case():
 
 def test_non_ascii_id_is_hashed_as_utf8():
     assert baseline_code("Bibliothek.Wärmeübertrager_Test") == "5f9e96781b58"
+
+
+def test_stem_names_the_role_folders_and_the_report_dir():
+    hexe = "TRANSFORM.Media.IdealGases.Examples.HeXeAlternate"
+    assert baseline_stem(hexe) == "ref_121677875640"

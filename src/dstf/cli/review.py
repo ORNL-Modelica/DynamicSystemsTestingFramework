@@ -330,12 +330,7 @@ def _generate_and_open_plots(
     test_dir = config.work_dir / test_key if test_key else None
 
     # Resolve reference file path for clickable link in report
-    ref_file = None
-    test_id = store.index.get_id(model_id)
-    if test_id:
-        from ..storage.ref_index import RefIndex
-
-        ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
+    ref_file = store.reference_file(model_id)
 
     from ..backends import get_backend_class
 

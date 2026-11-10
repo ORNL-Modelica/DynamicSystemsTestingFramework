@@ -147,7 +147,7 @@ class _FakeBackend(PersistentBackendBase):
             self.gates[model_id] = threading.Event()
 
 
-_STORE = SimpleNamespace(index=SimpleNamespace(get_id=lambda model_id: None))
+_STORE = SimpleNamespace(index=SimpleNamespace(stem=lambda model_id: None))
 
 
 def _config(tmp_path, **kw):
@@ -1671,8 +1671,8 @@ def test_a_pool_run_of_a_test_with_a_baseline_equals_run_pipeline_s(tmp_path):
     # Fast2 first: Fast1's test key (test_0002) is then not its ref id.
     order = ("Fast2", "Fast1")
     config, tests, backend, store = project("pool")
-    assert store.index.get_id("QueueLib.Fast1") == "0001"
-    stale = config.work_dir / "reports" / "ref_0001" / "comparison_data.json"
+    assert store.index.stem("QueueLib.Fast1") == "ref_6a0b5e87d8ef"
+    stale = config.work_dir / "reports" / "ref_6a0b5e87d8ef" / "comparison_data.json"
     stale.parent.mkdir(parents=True)
     stale.write_text("an earlier run's verdict")
     pool = open_pool(config, backend=backend, store=store, workers=1)
@@ -1706,10 +1706,10 @@ def test_a_pool_run_of_a_test_with_a_baseline_equals_run_pipeline_s(tmp_path):
     assert on_disk(config) == on_disk(cli_config)
     assert on_disk(config)["report dirs"] == {
         "QueueLib.Fast2": "test_0001",
-        "QueueLib.Fast1": "ref_0001",
+        "QueueLib.Fast1": "ref_6a0b5e87d8ef",
     }
     assert backend.ref_id_map == cli_backend.ref_id_map
-    assert backend.ref_id_map == {"QueueLib.Fast1": "ref_0001"}
+    assert backend.ref_id_map == {"QueueLib.Fast1": "ref_6a0b5e87d8ef"}
     for item in items:
         assert item.state is ItemState.FINISHED
         expected = outcome.results[item.model_id]

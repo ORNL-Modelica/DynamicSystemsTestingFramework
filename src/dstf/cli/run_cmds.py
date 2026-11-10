@@ -456,13 +456,13 @@ def cmd_compare(args: argparse.Namespace) -> int:
     write_id_mapping(store, config)
 
     # Pre-compute ref_id_map so the wipe + downstream report rendering can
-    # find each test's `ref_NNNN/` report dir. Compare reads prior sim
+    # find each test's `ref_<code>/` report dir. Compare reads prior sim
     # outputs from disk, so the sim work dirs must NOT be wiped here —
     # only the (now-stale) per-test report sidecars + HTML.
     for test in tests:
-        ref_id = store.index.get_id(test.model_id)
-        if ref_id:
-            backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
+        stem = store.index.stem(test.model_id)
+        if stem:
+            backend.ref_id_map[test.model_id] = stem
     config.work_dir.mkdir(parents=True, exist_ok=True)
     pages_removed = wipe_stale_state_for_scope(
         config,

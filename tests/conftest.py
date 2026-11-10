@@ -207,16 +207,13 @@ def playwright_browser():
 
 
 #: Background threads the authoring Session starts per open. They outlive the
-#: test that opened the Session unless joined, and the overlay-index one
-#: reads the process-wide ``_sibling_backend_index`` cache — a late thread
-#: from an earlier test turns a later test's ``cache_info()`` counts into a
-#: flake (reproduced with a slowed index build). The rescan thread a cached
+#: test that opened the Session unless joined. The rescan thread a cached
 #: open starts re-merges into its Session and emits on it; one left running
 #: from an earlier test must not act while a later test runs. The shell's
 #: open thread is here for the same reason: it outlives a test that fails
 #: mid-open, and ``_scan_cache_home``'s redirect must not be undone while
 #: its ``store_scan`` still runs on it.
-_SESSION_THREADS = ("dstf-overlay-index", "dstf-rescan", "dstf-open")
+_SESSION_THREADS = ("dstf-rescan", "dstf-open")
 
 
 @pytest.fixture(autouse=True)
@@ -281,7 +278,7 @@ def _scan_cache_home(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def _join_session_threads(_scan_cache_home):
     """Join every Session background thread a test left running — the
-    overlay-index warm and the background rescan (``_SESSION_THREADS``).
+    background rescan and the shell's open (``_SESSION_THREADS``).
     Depends on ``_scan_cache_home`` so it tears down FIRST: a rescan still
     running when the redirect is undone would store its scan under the real
     ``XDG_CACHE_HOME``."""

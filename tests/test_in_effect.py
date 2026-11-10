@@ -30,7 +30,7 @@ def _session(tmp_path, *, test_tol=None, metrics=None, ref_tol=None, cfg_tol=Non
         doc["tolerance"] = cfg_tol
     cfg.write_text(json.dumps(doc), encoding="utf-8")
     if ref_tol is not None:
-        for ref in (cfg.parent).rglob("ref_0001.json"):
+        for ref in (cfg.parent).rglob("ref_72dff21d8a3c.json"):  # A's baseline
             data = json.loads(ref.read_text(encoding="utf-8"))
             data["comparison"] = {"tolerance": ref_tol}
             ref.write_text(json.dumps(data), encoding="utf-8")

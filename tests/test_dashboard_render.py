@@ -1916,7 +1916,7 @@ def test_a_failed_simulation_s_row_keeps_its_reference(tmp_path, monkeypatch):
     config, tests = python_example_copy(tmp_path)
     work = config.work_dir
     ramp = next(t.model_id for t in tests if t.model_id.endswith("SimpleRamp"))
-    ref_id = f"ref_{ReferenceStore(config).index.get_id(ramp)}"
+    ref_id = ReferenceStore(config).index.stem(ramp)
     (tmp_path / "lib" / "Examples" / "SimpleRamp.py").write_text(
         "def simulate(stop_time, tolerance):\n    raise RuntimeError('boom')\n",
         encoding="utf-8",

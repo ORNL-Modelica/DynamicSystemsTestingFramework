@@ -33,7 +33,6 @@ from ...reporting.status import (
     refusal,
 )
 from ...reporting.tree_rows import leaves_of
-from ...storage.ref_index import RefIndex
 from ..capabilities import Outcome, plural
 from ..errors import user_text
 from ..family_rows import is_fold, leaf_of
@@ -1135,12 +1134,9 @@ class TestPage:
         project = session.project
         if project is None:
             return
-        # The index's id alone: `get_reference` reads the whole baseline off
-        # disk, and this runs on every Session event to print one file name.
-        ref_id = project.store.index.get_id(self.model_id)
-        ref = (
-            None if ref_id is None else RefIndex.ref_filename(ref_id).rsplit(".", 1)[0]
-        )
+        # The index's name alone: `get_reference` reads the whole baseline
+        # off disk, and this runs on every Session event to print one name.
+        ref = project.store.index.stem(self.model_id)
         self.meta.set_text(f"{project.config.backend_name} · {ref or 'no baseline'}")
         if self.strip is not None:
             # `_gone` blanked the strip and hid its bar; this brings both
@@ -1341,8 +1337,7 @@ class TestPage:
             # A notice with a message is a store write's: it reloaded
             # every result.
             syncs = (kind == "notice" and "message" in event) or (
-                kind in ("results", "spec", "loading", "opened", "overlays")
-                and self._mine(event)
+                kind in ("results", "spec", "loading", "opened") and self._mine(event)
             )
         if self.actions is not None and known and not syncs:
             # A sync's paint refreshes the bar; an event that does not sync
@@ -1365,11 +1360,6 @@ class TestPage:
             # one that ended brought new ones — no leaf's signature sees
             # either. The other states move the strip and re-send no figure.
             self.sync(force=event.get("state") in ("started", "ended"))
-        elif syncs and event["event"] == "overlays":
-            # The sibling-backend overlays arrived after the plots were
-            # drawn without them (`Session._overlays_ready`); no leaf's
-            # signature sees an overlay, so the drawn plots are re-sent.
-            self.sync(force=True)
         elif syncs:
             if event["event"] == "spec" and (
                 self.move_revision is None or event["revision"] > self.move_revision

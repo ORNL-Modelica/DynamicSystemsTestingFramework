@@ -1762,7 +1762,7 @@ class TestInteractiveReviewExitCode:
         assert "  Simulate-only, nothing to store: Lib.S\n" in out
         assert "Not accepted" not in out
         assert "Done. Accepted 0, skipped 1." in out
-        assert store.index.get_id("Lib.S") is None
+        assert store.index.file("Lib.S") is None
         assert rc == 0
 
 
@@ -2208,68 +2208,6 @@ def test_malformed_metrics_block_is_a_config_error(tmp_path, capsys):
 # --- 3. dry-run is the universal destructive default ---------------------
 
 
-def _obsolete_ref(tmp_path):
-    """A reference root holding one obsolete ref_NNNN.json."""
-    from dstf.config import detect_os as _detect_os
-
-    ref_dir = tmp_path / "refs" / "Dymola" / _detect_os()
-    ref_dir.mkdir(parents=True)
-    (ref_dir / "ref_0001.json").write_text(
-        json.dumps(
-            {
-                "test_id": 1,
-                "model_id": "FakeLib.Gone",
-                "status": "obsolete",
-                "time": [0.0, 1.0],
-                "variables": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    return ref_dir / "ref_0001.json"
-
-
-def test_manifest_cleanup_is_a_dry_run_by_default(tmp_path, capsys):
-    """`manifest cleanup` deleted obsolete reference files on sight while
-    `--orphans` dry-ran. Unified: nothing is removed without --apply."""
-    lib = _fake_library(tmp_path)
-    ref_file = _obsolete_ref(tmp_path)
-    rc = main(
-        [
-            "--source-path",
-            str(lib),
-            "--reference-root",
-            str(tmp_path / "refs"),
-            "manifest",
-            "cleanup",
-        ]
-    )
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "Dry run" in out
-    assert "ref_0001.json" in out
-    assert ref_file.exists(), "dry run must not delete anything"
-
-
-def test_manifest_cleanup_apply_removes(tmp_path, capsys):
-    lib = _fake_library(tmp_path)
-    ref_file = _obsolete_ref(tmp_path)
-    rc = main(
-        [
-            "--source-path",
-            str(lib),
-            "--reference-root",
-            str(tmp_path / "refs"),
-            "manifest",
-            "cleanup",
-            "--apply",
-        ]
-    )
-    assert rc == 0
-    assert "Removed 1 obsolete reference files." in capsys.readouterr().out
-    assert not ref_file.exists()
-
-
 def test_manifest_cleanup_with_nothing_to_do(tmp_path, capsys):
     lib = _fake_library(tmp_path)
     rc = main(
@@ -2449,12 +2387,9 @@ def test_id_mapping_written_with_lf(tmp_path, monkeypatch):
         os.linesep — so pin the argument at the call site instead.
     """
 
-    class _Index:
-        def active_tests(self):
-            return {"0001": "Lib.A"}
-
     class _Store:
-        index = _Index()
+        def list_models(self):
+            return ["Lib.A"]
 
     class _Config:
         work_dir = tmp_path / "work"
@@ -2989,7 +2924,9 @@ def test_the_id_mapping_is_written_by_a_command_that_runs_nothing(run_env, comma
         ["--config", str(run_env.config_dir), *argv]
         + ["--work-dir", str(run_env.work_dir), "--no-browser"]
     )
-    assert json.loads(mapping.read_text(encoding="utf-8")) == {"ref_0001": "Lib.T1"}
+    assert json.loads(mapping.read_text(encoding="utf-8")) == {
+        "ref_0da1bdf4cf2f": "Lib.T1"
+    }
 
 
 def test_the_live_page_is_there_when_the_tab_opens_on_it(run_env, monkeypatch):

@@ -2295,9 +2295,10 @@ async def test_accept_stores_the_rest(session):
         assert C in notice and "re-run before accepting" in notice
         assert classify(session.comparisons[B]) == PASS  # NO_REF -> PASS
         assert classify(session.comparisons[A]) == PASS  # re-baselined
-        rid = session.project.store.index.get_id(B)
-        assert rid == "0004"  # A, D and G hold 0001-0003
-        raw = (session.project.config.reference_dir / f"ref_{rid}.json").read_bytes()
+        # B's own name: nothing allocated beside A's, D's and G's files.
+        raw = (
+            session.project.config.reference_dir / "ref_9f8a673da3c0.json"
+        ).read_bytes()
         assert b"\r" not in raw and json.loads(raw)["model_id"] == B
 
 
@@ -2379,7 +2380,7 @@ def test_accept_names_the_simulate_only_test_it_stored_nothing_for(session):
         f"Accept: stored 1 baseline(s) to {session.project.config.reference_dir}"
         f"; Simulate-only, nothing to store: {B}"
     )
-    assert session.project.store.index.get_id(B) is None
+    assert session.project.store.index.file(B) is None
 
 
 async def test_accept_excludes_a_test_that_declares_nothing_to_score(session):

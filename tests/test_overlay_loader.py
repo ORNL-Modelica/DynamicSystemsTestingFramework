@@ -8,9 +8,7 @@ report render.
 
 from __future__ import annotations
 
-import functools
 import json
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -878,15 +876,11 @@ class TestANameStoredTwice:
         assert ov.variables["h"].values == [1.0, 1.0]
 
     def test_a_sibling_backends_reference_overlays_its_first_entry(self, tmp_path):
-        from dstf.reporting.overlay_loader import (
-            _sibling_backend_index,
-            load_sibling_backend_overlays,
-        )
+        from dstf.reporting.overlay_loader import load_sibling_backend_overlays
 
-        _sibling_backend_index.cache_clear()
         peer = tmp_path / "Dymola" / "windows"
         peer.mkdir(parents=True)
-        (peer / "ref_0001.json").write_text(
+        (peer / M_FILE).write_text(
             json.dumps(
                 {
                     "model_id": "M",
@@ -1049,6 +1043,11 @@ class _FakeConfigForSibling:
         self.os_name = os_name
 
 
+#: Model "M"'s baseline name in every folder: ``sha256sum`` of "M", a literal.
+M_STEM = "ref_08f271887ce9"
+M_FILE = f"{M_STEM}.json"
+
+
 def _write_ref(
     dir_path: Path, stem: str, model_id: str, varname: str = "h", status: str = "active"
 ):
@@ -1066,64 +1065,6 @@ def _write_ref(
 
 
 class TestSiblingBackendOverlays:
-    def setup_method(self):
-        # Clear the lru_cache between tests — it keys on the arg tuple so
-        # a fresh tmp_path already dodges collisions, but being explicit
-        # prevents surprises if a test reuses a path.
-        from dstf.reporting.overlay_loader import (
-            _sibling_backend_index,
-        )
-
-        _sibling_backend_index.cache_clear()
-
-    def test_warm_builds_the_index_once_and_a_later_load_hits_the_cache(self, tmp_path):
-        from dstf.reporting.overlay_loader import (
-            _sibling_backend_index,
-            load_sibling_backend_overlays,
-            warm_sibling_backend_index,
-        )
-
-        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
-        config = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
-        _sibling_backend_index.cache_clear()
-        warm_sibling_backend_index(config)
-        after_warm = _sibling_backend_index.cache_info()
-        load_sibling_backend_overlays(config, "M")
-        after_load = _sibling_backend_index.cache_info()
-        assert after_warm.misses == 1 and after_warm.hits == 0
-        assert after_load.misses == 1 and after_load.hits == 1
-
-    def test_two_threads_warming_at_once_build_the_index_once(
-        self, tmp_path, monkeypatch
-    ):
-        import threading
-
-        from dstf.reporting import overlay_loader as ol
-
-        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
-        config = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
-        ol._sibling_backend_index.cache_clear()
-        builds = []
-        real = ol._sibling_backend_index.__wrapped__
-
-        def slow(*args):
-            builds.append(threading.current_thread().name)
-            time.sleep(0.2)
-            return real(*args)
-
-        monkeypatch.setattr(
-            ol, "_sibling_backend_index", functools.lru_cache(maxsize=8)(slow)
-        )
-        threads = [
-            threading.Thread(target=ol.warm_sibling_backend_index, args=(config,))
-            for _ in range(3)
-        ]
-        for th in threads:
-            th.start()
-        for th in threads:
-            th.join()
-        assert len(builds) == 1
-
     def test_discovers_peer_backend_ref(self, tmp_path):
         from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
@@ -1131,8 +1072,8 @@ class TestSiblingBackendOverlays:
 
         # Dymola/windows has a ref for model M; current partition is
         # OpenModelica/linux (which may or may not have its own).
-        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
-        _write_ref(tmp_path / "OpenModelica" / "linux", "ref_0001", "M")
+        _write_ref(tmp_path / "Dymola" / "windows", M_STEM, "M")
+        _write_ref(tmp_path / "OpenModelica" / "linux", M_STEM, "M")
 
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
         overlays = load_sibling_backend_overlays(cfg, "M")
@@ -1149,7 +1090,7 @@ class TestSiblingBackendOverlays:
         )
 
         # Only the current partition has a ref — nothing to overlay.
-        _write_ref(tmp_path / "OpenModelica" / "linux", "ref_0001", "M")
+        _write_ref(tmp_path / "OpenModelica" / "linux", M_STEM, "M")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
         assert load_sibling_backend_overlays(cfg, "M") == []
 
@@ -1158,7 +1099,7 @@ class TestSiblingBackendOverlays:
             load_sibling_backend_overlays,
         )
 
-        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M", status="obsolete")
+        _write_ref(tmp_path / "Dymola" / "windows", M_STEM, "M", status="obsolete")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
         assert load_sibling_backend_overlays(cfg, "M") == []
 
@@ -1167,8 +1108,8 @@ class TestSiblingBackendOverlays:
             load_sibling_backend_overlays,
         )
 
-        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
-        _write_ref(tmp_path / "FMPy" / "linux", "ref_0001", "M")
+        _write_ref(tmp_path / "Dymola" / "windows", M_STEM, "M")
+        _write_ref(tmp_path / "FMPy" / "linux", M_STEM, "M")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
         overlays = load_sibling_backend_overlays(cfg, "M")
         names = {o.name for o in overlays}
@@ -1179,14 +1120,14 @@ class TestSiblingBackendOverlays:
         old API — no auto-discovery."""
         from dstf.reporting.overlay_loader import load_overlays
 
-        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
+        _write_ref(tmp_path / "Dymola" / "windows", M_STEM, "M")
         store = _FakeStore(tmp_path / "OpenModelica" / "linux")
         assert load_overlays(store, "M") == []
 
     def test_load_overlays_integrates_sibling_when_config_passed(self, tmp_path):
         from dstf.reporting.overlay_loader import load_overlays
 
-        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
+        _write_ref(tmp_path / "Dymola" / "windows", M_STEM, "M")
         store = _FakeStore(tmp_path / "OpenModelica" / "linux")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
         overlays = load_overlays(store, "M", config=cfg)

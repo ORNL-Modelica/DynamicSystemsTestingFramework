@@ -834,12 +834,7 @@ def _build_per_test_args(
         test, comp.variables, result, backend_cls, test_dir, diagnostics
     )
 
-    ref_file = None
-    test_id = store.index.get_id(model_id)
-    if test_id:
-        from ..storage.ref_index import RefIndex
-
-        ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
+    ref_file = store.reference_file(model_id)
 
     if comp.test_id:
         report_id = f"ref_{comp.test_id}"
@@ -852,7 +847,7 @@ def _build_per_test_args(
     # against, else the one the store holds for it. A comparison that
     # compared nothing (a failed simulation's, a test's with no result)
     # names none, and its sidecar said null beside that baseline's file.
-    ref_number = comp.test_id or test_id
+    stored = store.index.stem(model_id)
 
     return {
         "model_id": model_id,
@@ -866,7 +861,7 @@ def _build_per_test_args(
         "test_key": test_key,
         "status_text": status_text,
         "status_class": status_class,
-        "ref_id": f"ref_{ref_number}" if ref_number else None,
+        "ref_id": f"ref_{comp.test_id}" if comp.test_id else stored,
         "last_run_at": last_run_at,
         "comparison": comp,
         "comp_variables": comp.variables,

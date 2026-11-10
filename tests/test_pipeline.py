@@ -178,8 +178,12 @@ def test_run_pipeline_runs_a_test_and_leaves_the_run_on_disk(example):
     import json
 
     mapping = json.loads((work / "reference_manifest.json").read_text())
-    assert sorted(mapping) == ["ref_0001", "ref_0002", "ref_0003"]
-    assert CONSTANT_CSV in mapping.values()
+    # Each baseline's name and its model, in model-id order.
+    assert list(mapping.items()) == [
+        ("ref_f612690ea655", "PythonTestingLib.Examples.ConstantCsv"),
+        ("ref_8cb5c68dba3b", "PythonTestingLib.Examples.PointsCheck"),
+        ("ref_9bbf24e6f8aa", "PythonTestingLib.Examples.SimpleRamp"),
+    ]
 
     sim_dirs = [d for d in work.iterdir() if d.is_dir() and d.name.startswith("test_")]
     assert [d.name for d in sim_dirs] == ["test_0001"]

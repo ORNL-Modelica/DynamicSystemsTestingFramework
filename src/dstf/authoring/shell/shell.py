@@ -128,7 +128,6 @@ class Shell:
             "notice",
             "loading",
             "known",
-            "overlays",
         ):
             self.session.on(event, self._events.put)
         self.pages: list[Page] = []

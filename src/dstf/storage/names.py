@@ -31,6 +31,12 @@ def baseline_code(model_id: str) -> str:
     return hashlib.sha256(model_id.encode("utf-8")).hexdigest()[:CODE_LENGTH]
 
 
+def baseline_stem(model_id: str) -> str:
+    """``ref_<code>`` — the name of ``model_id``'s role folders and report
+    dir, and what a row's Reference reads."""
+    return f"ref_{baseline_code(model_id)}"
+
+
 def baseline_file(model_id: str) -> str:
     """``ref_<code>.json`` — the name of ``model_id``'s baseline file."""
-    return f"ref_{baseline_code(model_id)}.json"
+    return f"{baseline_stem(model_id)}.json"

@@ -677,10 +677,7 @@ def test_soft_check_add_names_a_variable_whose_name_is_no_text(tmp_path, capsys)
 
 
 def test_a_sibling_partitions_reference_overlays_the_runs_own_numbers(tmp_path):
-    from dstf.reporting.overlay_loader import (
-        _sibling_backend_index,
-        load_sibling_backend_overlays,
-    )
+    from dstf.reporting.overlay_loader import load_sibling_backend_overlays
 
     config, _path = _single_reference(tmp_path)
     assert config.reference_dir.parent.name == "Python"
@@ -689,7 +686,6 @@ def test_a_sibling_partitions_reference_overlays_the_runs_own_numbers(tmp_path):
         work_dir=tmp_path / "work",
         backend_name="OpenModelica",
     )
-    _sibling_backend_index.cache_clear()
     (overlay,) = load_sibling_backend_overlays(elsewhere, M)
     assert overlay.variables["x"].values == _AS_SINGLE
 
@@ -949,10 +945,16 @@ def test_a_baseline_file_over_five_megabytes_is_said_and_is_stored(tmp_path):
     )
 
     assert (stored, skipped) == (2, [])
-    path = config.reference_dir / "ref_0001.json"
+    path = config.reference_dir / "ref_ebcbe83084e4.json"
     assert path.stat().st_size > LARGE_BASELINE_BYTES
     assert warnings == [
-        _said("ref_0001.json", "Lib.Big", _megabytes(path), "75,000", "3 variables")
+        _said(
+            "ref_ebcbe83084e4.json",
+            "Lib.Big",
+            _megabytes(path),
+            "75,000",
+            "3 variables",
+        )
     ]
     assert len(_view(store.get_reference("Lib.Big"))["time"]) == 75_000  # stored whole
 
@@ -993,7 +995,10 @@ def test_the_warning_is_one_per_file_over_the_threshold(tmp_path, monkeypatch):
     )
 
     assert (stored, skipped) == (4, [])
-    whole, half = (config.reference_dir / f"ref_000{n}.json" for n in (2, 4))
+    whole, half = (
+        config.reference_dir / f"ref_{code}.json"
+        for code in ("744158f3b950", "c38223129b93")  # Lib.Run, Lib.Half
+    )
     assert warnings == [
         _said(whole.name, M, _megabytes(whole), "5,000", "2 variables"),
         _said(half.name, "Lib.Half", _megabytes(half), "500", "2 variables"),
@@ -1131,8 +1136,8 @@ def test_the_tools_accept_notice_carries_the_warning(tmp_path, monkeypatch):
     said = [
         _said(path.name, model_id, _megabytes(path), "5", "1 variable")
         for model_id, path in (
-            (A, reference_dir / "ref_0001.json"),
-            (B, reference_dir / "ref_0004.json"),
+            (A, reference_dir / "ref_72dff21d8a3c.json"),
+            (B, reference_dir / "ref_9f8a673da3c0.json"),
         )
     ]
     assert notice.startswith("Accept: stored 2 baseline(s) to ")
@@ -1175,13 +1180,13 @@ def test_an_accept_says_which_variables_its_baseline_no_longer_holds(
     assert accept("a", "b") == []
     assert accept("a", "b", "c") == []
     assert accept("a", "c") == [
-        f"ref_0001.json ({M}) no longer holds b — the accepted result does not hold it."
+        f"ref_744158f3b950.json ({M}) no longer holds b — the accepted result does not hold it."
     ]
     assert accept("a", "c", *"defghijk") == []
     monkeypatch.setattr("dstf.storage.accept.LARGE_BASELINE_BYTES", 1)
     lost, large = accept("z")
     assert lost == (
-        f"ref_0001.json ({M}) no longer holds a, c, d, e, f, g and 4 more — "
+        f"ref_744158f3b950.json ({M}) no longer holds a, c, d, e, f, g and 4 more — "
         "the accepted result does not hold them."
     )
     assert " MB (" in large

@@ -61,7 +61,7 @@ def test_an_accept_over_a_baseline_spelled_dymola_s_way_loses_nothing(tmp_path):
         return warnings
 
     assert accept() == []
-    (path,) = config.reference_root.rglob("ref_0001.json")
+    (path,) = config.reference_root.rglob("ref_*.json")
     stored = json.loads(path.read_text(encoding="utf-8"))
     stored["variables"][0]["name"] = "T[1, 2]"  # as Dymola's run wrote it
     path.write_text(json.dumps(stored), encoding="utf-8")

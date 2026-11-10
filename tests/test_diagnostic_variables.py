@@ -440,7 +440,7 @@ def test_an_accept_stores_a_summary_and_a_curve_only_once_a_criterion_needs_it(
             store, [test], {test.model_id: result}, config.work_dir
         )
         assert (stored, skipped) == (1, [])
-        (path,) = config.reference_root.rglob("ref_0001.json")
+        (path,) = config.reference_root.rglob("ref_*.json")
         return json.loads(path.read_text(encoding="utf-8"))
 
     first = accepted()
@@ -575,7 +575,7 @@ def test_an_accept_over_an_old_file_writes_no_copy(tmp_path):
     test = make_test_model("Lib.A", variable_patterns=["x"])
     store = ReferenceStore(config)
     assert store.store_reference(test, run, provenance={"by": "test"})
-    (path,) = config.reference_root.rglob("ref_0001.json")
+    (path,) = config.reference_root.rglob("ref_*.json")
     old = json.loads(path.read_text(encoding="utf-8"))
     old["statistics"]["CPUtime"] = 0.002  # as 1.1 wrote it
     path.write_text(json.dumps(old), encoding="utf-8")

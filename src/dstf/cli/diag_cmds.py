@@ -197,28 +197,10 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
         if args.work_dir is not None and work is not None and not work.is_dir():
             raise ConfigError(f"--work-dir {work}: no such directory")
         return _cleanup_orphans(config, apply=args.apply)
-    from ..storage.reference_store import ReferenceStore
-
-    return _cleanup_obsolete(ReferenceStore(config), apply=args.apply)
-
-
-def _cleanup_obsolete(store, apply: bool) -> int:
-    """List (or, with apply=True, delete) reference files marked obsolete."""
-    obsolete = store.list_obsolete()
-    if not obsolete:
-        print("No obsolete references to clean up.")
-        return 0
-
-    print(f"Found {len(obsolete)} obsolete reference files:")
-    for test_id, model_id, ref_file in obsolete:
-        print(f"  {ref_file.name}  {model_id or f'ref_{test_id}'}")
-
-    if not apply:
-        print("\nDry run. Re-run with --apply to actually remove.")
-        return 0
-
-    removed = store.cleanup_obsolete()
-    print(f"\nRemoved {removed} obsolete reference files.")
+    # `status: obsolete` is gone (a baseline is removed by deleting its
+    # file), and with it this path's one job; `manifest cleanup` becomes
+    # the work dir's alone in the plan's next step.
+    print("No obsolete references to clean up: delete a baseline's file to remove it.")
     return 0
 
 
@@ -242,16 +224,16 @@ def _cleanup_orphans(config, apply: bool) -> int:
         from ..storage.reference_store import ReferenceStore
 
         store = ReferenceStore(config)
-        ref_id = store.index.get_id(model_id)
-        if ref_id:
-            rep_ref = report_dir / f"ref_{ref_id}"
+        stem = store.index.stem(model_id)
+        if stem:
+            rep_ref = report_dir / stem
         bits = []
         if work.exists():
             bits.append(f"work_dir={tk}/")
         if rep_test.exists():
             bits.append(f"reports/{tk}/")
         if rep_ref and rep_ref.exists():
-            bits.append(f"reports/ref_{ref_id}/")
+            bits.append(f"reports/{rep_ref.name}/")
         print(f"  {tk}  {model_id}  [{', '.join(bits) or 'manifest only'}]")
 
     if not apply:
@@ -276,9 +258,9 @@ def _cleanup_orphans(config, apply: bool) -> int:
         from ..storage.reference_store import ReferenceStore
 
         store = ReferenceStore(config)
-        ref_id = store.index.get_id(model_id)
-        if ref_id:
-            rep_ref = report_dir / f"ref_{ref_id}"
+        stem = store.index.stem(model_id)
+        if stem:
+            rep_ref = report_dir / stem
             if rep_ref.exists():
                 shutil.rmtree(rep_ref)
                 n_dirs += 1

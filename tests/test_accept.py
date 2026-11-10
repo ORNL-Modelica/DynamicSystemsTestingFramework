@@ -126,8 +126,8 @@ def test_a_simulate_only_test_is_named_and_is_neither_stored_nor_skipped(tmp_pat
         [],
         ["Simulate-only, nothing to store: FakeLib.Tank, FakeLib.Marked"],
     )
-    assert store.index.get_id("FakeLib.Tank") is None
-    assert store.index.get_id("FakeLib.Marked") is None
+    assert store.index.file("FakeLib.Tank") is None
+    assert store.index.file("FakeLib.Marked") is None
     # Alone: nothing stored, nothing skipped, and said.
     assert accept_run_results(store, tests[:1], results, config.work_dir) == (
         0,
