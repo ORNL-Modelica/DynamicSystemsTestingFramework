@@ -411,13 +411,6 @@ UNREAD: tuple[Unread, ...] = (
         "the work directory is where the file goes when --output names none",
     ),
     Unread(
-        "manifest cleanup",
-        ("test_spec", "work_dir"),
-        ("orphans",),
-        "only --orphans reads the tests and cleans the work directory",
-        with_=False,
-    ),
-    Unread(
         "check",
         ("reference_root",),
         ("config",),
@@ -520,7 +513,7 @@ def _without(node: argparse.ArgumentParser, dests: tuple[str, ...]) -> str:
 def _say_unread(nodes: dict[str, argparse.ArgumentParser]) -> None:
     """Each :data:`UNREAD` row in the help: on the flag that decides, the
     flags it is not read with (``--accept``: "Not with --report, …"); on a
-    flag read only beside another, which ("Only with --orphans")."""
+    flag read only beside another, which ("Only with --report")."""
     for row in UNREAD:
         node = nodes[row.command]
         if row.with_:
@@ -1038,7 +1031,7 @@ READS: dict[str, tuple[str, ...]] = {
     "companion remove": (*_STORE, "backend"),
     "manifest show": (*_STORE, "backend"),
     "manifest dump": (*_STORE, "backend", "work_dir"),
-    "manifest cleanup": (*_ALL, "orphans", "apply", "backend", "work_dir"),
+    "manifest cleanup": (*_ALL, "apply", "backend", "work_dir"),
 }
 
 
@@ -1911,29 +1904,25 @@ def _add_manifest(tree: _Tree, top) -> None:
     node = tree.command(
         sub,
         "manifest cleanup",
-        summary="Remove obsolete references, or a run's leftovers",
+        summary="Remove what the work directory holds for no test",
         description="""
-            List what is no longer used, and with --apply remove it. By
-            default that is the partition's reference files marked
-            obsolete. With --orphans it is, in the work directory, the
-            entries, result directories and report pages of models the
-            project no longer declares.
+            List what the work directory holds that no test uses, and with
+            --apply remove it: the entries of the last runs' batch manifest
+            for models the project no longer declares, with their result
+            directories and report pages, and every report page under a
+            test's name (ref_<code>, test_NNNN, or an old ref_NNNN) that no
+            test of the project is reported under. Nothing else is touched:
+            a file, or a directory of any other name, stays.
 
             Nothing is removed without --apply: the command lists what it
-            would remove and exits 0.
+            would remove and exits 0. It is refused, and removes nothing,
+            when the reference folder or the work directory's
+            batch_manifest.json is not there or cannot be read.
             """,
         examples=(
             "dstf manifest cleanup --config testing.json",
             "dstf manifest cleanup --config testing.json --apply",
-            "dstf manifest cleanup --config testing.json --orphans --apply",
         ),
-    )
-    node.add_argument(
-        "--orphans",
-        action="store_true",
-        help="Clean the work directory instead of the reference root: the "
-        "last runs' entries and directories of models the project no longer "
-        "declares.",
     )
     node.add_argument(
         "--apply",
@@ -1941,11 +1930,7 @@ def _add_manifest(tree: _Tree, top) -> None:
         help="Remove what is listed. Without it nothing is removed.",
     )
     _offer(node, "backend")
-    _offer(
-        node,
-        "work_dir",
-        fill={"work_dir_use": "The work directory --orphans cleans."},
-    )
+    _offer(node, "work_dir", fill={"work_dir_use": "The work directory to clean."})
 
 
 # ---------------------------------------------------------------------------

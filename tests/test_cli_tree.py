@@ -183,7 +183,7 @@ _SUMMARY_WORDS = {
     "companion remove": "Remove a companion",
     "manifest show": "status",
     "manifest dump": "mapping",
-    "manifest cleanup": "obsolete",
+    "manifest cleanup": "for no test",
 }
 
 
@@ -737,7 +737,7 @@ READS: dict[str, set[str]] = {
     "manifest show": _STORE | {"--backend"},
     # reference_manifest.json is written to the work dir
     "manifest dump": _STORE | {"--backend", "--work-dir"},
-    # --orphans discovers the tests and cleans the work dir
+    # it discovers the tests and cleans the work dir
     "manifest cleanup": _PROJECT | {"--backend", "--work-dir"},
 }
 
@@ -754,8 +754,6 @@ ARGV: dict[str, list[str]] = {
     "companion add": ["Lib.M", "rig", "rig.csv"],
     "companion freeze": ["Lib.M", "rig"],
     "companion remove": ["Lib.M", "rig"],
-    # --test-spec and --work-dir are read with --orphans only
-    "manifest cleanup": ["--orphans"],
 }
 
 _FLAGS = sorted(_PROJECT | _AFTER_ONLY)
@@ -1193,9 +1191,10 @@ def test_an_old_command_name_is_an_invalid_choice_and_nothing_more(line, capsys)
 @pytest.mark.parametrize(
     "argv",
     [
-        # --orphans / --apply are cleanup's
-        ["manifest", "show", "--orphans"],
+        # --apply is cleanup's
         ["manifest", "dump", "--apply"],
+        # --orphans is gone: the bare command cleans the work dir
+        ["manifest", "cleanup", "--orphans"],
         # obsolete is gone: no status, no flag to list it
         ["manifest", "show", "--show-obsolete"],
         # --map and --format are `companion add`'s
@@ -1340,23 +1339,23 @@ def test_manifest_dump_into_a_work_dir_it_cannot_write_is_one_sentence(
     ("flag", "said"),
     [("--test-spec", "no such file"), ("--work-dir", "no such directory")],
 )
-def test_manifest_cleanup_orphans_of_a_path_that_is_not_there_is_refused(
+def test_manifest_cleanup_of_a_path_that_is_not_there_is_refused(
     flag, said, tmp_path, capsys
 ):
-    """`manifest cleanup --orphans --work-dir <missing>` said `No orphan
-    manifest entries.`, exit 0 — of a work dir it never read."""
+    """`manifest cleanup --work-dir <missing>` said `No orphan manifest
+    entries.`, exit 0 — of a work dir it never read."""
     from conftest import python_example_copy
 
     config, _ = python_example_copy(tmp_path)
     missing = tmp_path / "missing" / ("spec.json" if flag == "--test-spec" else "w")
     rc = main(
-        ["manifest", "cleanup", "--orphans", "--config", str(config.config_file)]
+        ["manifest", "cleanup", "--config", str(config.config_file)]
         + [flag, str(missing)]
     )
     captured = capsys.readouterr()
     assert rc == 2
     assert captured.err.strip() == f"Config error: {flag} {missing}: {said}"
-    assert "No orphan" not in captured.out
+    assert captured.out == ""
 
 
 def test_soft_check_add_s_source_that_holds_no_object_is_said(tmp_path, capsys):
@@ -1562,7 +1561,6 @@ _GIVEN = {
     "default_points": ["--default-points"],
     "merge": ["--merge"],
     "parallel": ["--parallel", "2"],
-    "orphans": ["--orphans"],
     "work_dir": ["--work-dir", "w"],
     "test_spec": ["--test-spec", "s.json"],
     "reference_root": ["--reference-root", "r"],
@@ -1602,7 +1600,6 @@ _REFUSED_BY_HAND = [
     ["compare", "--parallel", "2"],
     ["compare", "-o", "x.xml"],
     ["baseline", "export", "-o", "x.json", "--work-dir", "w"],
-    ["manifest", "cleanup", "--work-dir", "w"],
     ["check", "--config", "testing.json", "--reference-root", "refs"],
 ]
 
@@ -1689,8 +1686,8 @@ def test_the_sentence_names_both_flags_and_the_value(capsys):
         ["run", "-i", "--merge", "--filter", "Lib.*", "--tolerance", "0.5"],
         ["compare", "--parallel", "2", "--report"],
         ["compare", "--accept", "--filter", "Lib.*"],
-        ["manifest", "cleanup", "--orphans", "--work-dir", "w"],
-        ["--test-spec", "s.json", "manifest", "cleanup", "--orphans"],
+        ["manifest", "cleanup", "--work-dir", "w"],
+        ["--test-spec", "s.json", "manifest", "cleanup"],
         ["baseline", "export", "--work-dir", "w"],
         ["check", "--reference-root", "r"],
         ["--config", "t.json", "check", "--source-path", "L"],
@@ -1708,8 +1705,8 @@ def test_a_flag_that_is_read_beside_the_others_parses(argv, capsys):
 
 
 def test_a_flag_written_before_the_command_counts_too(capsys):
-    text = _parse(["--test-spec", "s.json", "manifest", "cleanup"], capsys)
-    assert "--test-spec s.json does not apply without --orphans" in text
+    text = _parse(["--reference-root", "r", "check", "--config", "t.json"], capsys)
+    assert "--reference-root r does not apply with --config" in text
     text = _parse(["--config", "t.json", "check", "--reference-root", "r"], capsys)
     assert "--reference-root r does not apply with --config" in text
 

@@ -2225,20 +2225,7 @@ def test_malformed_metrics_block_is_a_config_error(tmp_path, capsys):
 # --- 3. dry-run is the universal destructive default ---------------------
 
 
-def test_manifest_cleanup_with_nothing_to_do(tmp_path, capsys):
-    lib = _fake_library(tmp_path)
-    rc = main(
-        [
-            "--source-path",
-            str(lib),
-            "--reference-root",
-            str(tmp_path / "refs"),
-            "manifest",
-            "cleanup",
-        ]
-    )
-    assert rc == 0
-    assert "No obsolete references" in capsys.readouterr().out
+# (tests/test_manifest_cleanup.py: a dry run lists, and removes nothing)
 
 
 # --- 4. --parallel disambiguation ----------------------------------------
