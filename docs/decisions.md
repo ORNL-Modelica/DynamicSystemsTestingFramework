@@ -9486,9 +9486,11 @@ three folders, and Dymola/windows held `PulseSine_Test` twice, as
 3. *Amends D2.* D2 chose numbers because a model id as a file name exceeds
    Windows MAX_PATH. A code keeps the name short and fixed: a report's tail
    grows from `reports/ref_0001/comparison_data.json` (37 characters) to
-   `reports/ref_<code>/comparison_data.json` (45). The plan's review
-   measured the longest report path of the example libraries at 133
-   characters, well under 260.
+   `reports/ref_<code>/comparison_data.json` (45). Under the default work
+   dir the longest example report path is
+   `testing_output/ModelicaTestingLib/OpenModelica/windows/reports/ref_<code>/comparison_data.json`,
+   100 characters, which leaves 160 of Windows' 260 for the folder the
+   project sits in.
 4. *Retires D99.* Nothing is allocated, so nothing is remembered:
    `.id_high_water.json`, the claim loop, `next_id` and the race D99
    mitigated are gone. A lookup opens the one file named for the model; the
