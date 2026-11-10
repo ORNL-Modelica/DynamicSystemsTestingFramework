@@ -1,7 +1,9 @@
 """Any variable of a result file, by name — the three on-disk formats the
 bundled backends write, each as a pair: the names in the file (``None`` when
 there is no readable file) and the named series as ``{name: (time, values)}``
-(a name the file lacks is left out). A backend class points its
+(a name the file lacks is left out). Every name is in the one spelling
+(``types.variable_name``) whatever the file writes, and a file that names
+one variable both ways reads as none. A backend class points its
 ``result_names`` / ``result_series`` at one pair. The tracked-variable read
 (``read_result``) stays where it is: it resolves patterns, indexes and
 diagnostics; this reads what a plot asks for."""
@@ -15,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..types import raw_by_name
 from .mat_reader import list_result_mat_variables, read_result_mat
 
 SeriesByName = dict[str, tuple[np.ndarray, np.ndarray]]
@@ -46,24 +49,35 @@ def _json_payload(path: Path) -> dict | None:
     return payload
 
 
+def _spelled(raw_names) -> dict[str, str] | None:
+    """``raw_by_name`` of a file's names; None for a file that names one
+    variable both ways — unreadable, as a cut file is."""
+    try:
+        return raw_by_name(raw_names)
+    except ValueError:
+        return None
+
+
 def json_names(path: Path) -> list[str] | None:
     payload = _json_payload(path)
-    if payload is None:
+    raw = None if payload is None else _spelled(payload["variables"])
+    if raw is None:
         return None
-    return [n for n in payload["variables"] if n != "time"]
+    return [n for n in raw if n != "time"]
 
 
 def json_series(path: Path, names: Collection[str]) -> SeriesByName:
     payload = _json_payload(path)
-    if payload is None:
+    raw = None if payload is None else _spelled(payload["variables"])
+    if payload is None or raw is None:
         return {}
     time = _vector(payload.get("time"))
     if time is None:
         return {}
     out: SeriesByName = {}
     for n in names:
-        values = _vector(payload["variables"].get(n)) if n != "time" else None
-        if values is not None and values.shape == time.shape:
+        values = _vector(payload["variables"][raw[n]]) if n in raw else None
+        if n != "time" and values is not None and values.shape == time.shape:
             out[n] = (time, values)
     return out
 
@@ -90,20 +104,24 @@ def _npz_array(path: Path) -> np.ndarray | None:
 
 def npz_names(path: Path) -> list[str] | None:
     arr = _npz_array(path)
-    if arr is None or arr.dtype.names is None:
+    raw = None if arr is None or arr.dtype.names is None else _spelled(arr.dtype.names)
+    if raw is None:
         return None
-    return [n for n in arr.dtype.names if n != "time"]
+    return [n for n in raw if n != "time"]
 
 
 def npz_series(path: Path, names: Collection[str]) -> SeriesByName:
     arr = _npz_array(path)
     if arr is None or arr.dtype.names is None or "time" not in arr.dtype.names:
         return {}
+    raw = _spelled(arr.dtype.names)
+    if raw is None:
+        return {}
     time = np.asarray(arr["time"], dtype=float)
     out: SeriesByName = {}
     for n in names:
-        if n in arr.dtype.names and n != "time":
-            values = np.asarray(arr[n], dtype=float)
+        if n in raw and n != "time":
+            values = np.asarray(arr[raw[n]], dtype=float)
             if values.shape == time.shape:  # a subarray column is not a series
                 out[n] = (time, values)
     return out

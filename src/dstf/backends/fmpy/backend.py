@@ -64,8 +64,10 @@ from ..types import (
     TestResult,
     TestRunResult,
     VariableResult,
+    raw_by_name,
     resolve_variable_patterns,
     timeout_message,
+    variable_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -270,7 +272,10 @@ class FmpyBackend(Backend):
                 self.progress.on_phase(test_key, "loading")
             with _MODEL_DESCRIPTION_LOCK:
                 md = fmpy.read_model_description(str(fmu_path))
-            available = _list_scalar_variables(md)
+            # The model description's names in the one spelling, each to
+            # the FMU's own: what fmpy is handed is the FMU's.
+            spelled = _list_scalar_variables(md)
+            available = list(spelled)
             listed = diagnostic_names(test, self.config.diagnostic_variables)
             requested = _tracked(
                 test, _resolve_requested_outputs(test, available), available, listed
@@ -310,7 +315,7 @@ class FmpyBackend(Backend):
                 # `_get_output_variables`: outputs, else up to five states,
                 # else local variables) — never every variable. Empty:
                 # nothing is compared, so what fmpy picks is only plotted.
-                "output": output or None,
+                "output": [spelled.get(n, n) for n in output] or None,
             }
             if test.output_interval is not None:
                 sim_kwargs["output_interval"] = test.output_interval
@@ -420,7 +425,18 @@ class FmpyBackend(Backend):
             )
 
         arr = _load_result(result_path)
-        available = [name for name in arr.dtype.names if name != "time"]
+        # The saved columns are the FMU's names; read under the one
+        # spelling (``types.variable_name``).
+        try:
+            spelled = raw_by_name(arr.dtype.names)
+        except ValueError as exc:
+            return TestResult(
+                model_id=test.model_id,
+                success=False,
+                error_message=f"{result_path.name} cannot be read: {exc}",
+                statistics=run_result.statistics if run_result else None,
+            )
+        available = [name for name in spelled if name != "time"]
 
         # Resolve patterns (spec can use globs like "h" or "*"); for Modelica
         # flows we re-use the same mechanism as DymolaBackend.
@@ -459,7 +475,7 @@ class FmpyBackend(Backend):
                 index=i + 1,
                 name=name,
                 time=time_arr,
-                values=np.asarray(arr[name], dtype=np.float64),
+                values=np.asarray(arr[spelled[name]], dtype=np.float64),
             )
             for i, name in enumerate(n for n in listed if n in saved)
         ]
@@ -468,7 +484,7 @@ class FmpyBackend(Backend):
                 index=i + 1,
                 name=name,
                 time=time_arr,
-                values=np.asarray(arr[name], dtype=np.float64),
+                values=np.asarray(arr[spelled[name]], dtype=np.float64),
             )
             for i, name in enumerate(requested)
         ]
@@ -495,9 +511,11 @@ class FmpyBackend(Backend):
 # ---------------------------------------------------------------------------
 
 
-def _list_scalar_variables(md) -> list[str]:
-    """Return all scalar variable names from an FMPy model description."""
-    return [sv.name for sv in md.modelVariables]
+def _list_scalar_variables(md) -> dict[str, str]:
+    """Every scalar variable of an FMPy model description, as ``{one
+    spelling: the FMU's name}`` (``types.raw_by_name``; an FMU naming one
+    variable both ways is a ``ValueError``, and its run fails saying so)."""
+    return raw_by_name(sv.name for sv in md.modelVariables)
 
 
 def _resolve_requested_outputs(test: TestModel, available: list[str]) -> list[str]:
@@ -514,10 +532,10 @@ def _resolve_requested_outputs(test: TestModel, available: list[str]) -> list[st
 
 
 def _default_outputs(fmpy, md) -> list[str]:
-    """What fmpy records for ``output=None``: its own rule
+    """What fmpy records for ``output=None``, in the one spelling: its own rule
     (`fmpy.simulation._get_output_variables`, private — asked, not copied,
     so it cannot drift from what fmpy does)."""
-    return [v.name for v in fmpy.simulation._get_output_variables(md)]
+    return [variable_name(v.name) for v in fmpy.simulation._get_output_variables(md)]
 
 
 def _tracked(

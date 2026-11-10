@@ -11,6 +11,7 @@ from ..backends.common.result_variables import criterion_variables, tracks
 from ..backends.types import TestResult
 from ..comparison.comparator import (
     broken_roles,
+    missing_names,
     nothing_scored,
     refused_base_tolerance,
 )
@@ -128,9 +129,10 @@ def accept_refusal(
     store: ReferenceStore, test: TestModel, result: TestResult | None
 ) -> str | None:
     """Why the comparison REFUSES ``test`` — its base tolerance is no
-    number, its result holds nothing it tracks, or its tree is wrong in its
-    file — or ``None``: the comparison's own decisions
-    (`refused_base_tolerance`, `nothing_scored`, `broken_roles`), asked of
+    number, its result holds nothing it tracks or lacks a name it lists, or
+    its tree is wrong in its file — or ``None``: the comparison's own
+    decisions (`refused_base_tolerance`, `nothing_scored`, `missing_names`,
+    `broken_roles`), asked of
     the test and its stored reference as ``compare_one`` asks them, in its
     order. A test with no successful result is not refused: it has its own
     reason."""
@@ -141,7 +143,11 @@ def accept_refusal(
     )
     if refused is not None:
         return refused.error_message
-    return nothing_scored(test, result) or broken_roles(test)
+    return (
+        nothing_scored(test, result)
+        or missing_names(test, result)
+        or broken_roles(test)
+    )
 
 
 def _provenance(meta: dict | None, config: Config) -> dict:

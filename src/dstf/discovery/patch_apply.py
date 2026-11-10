@@ -71,20 +71,38 @@ def apply_patch_to_document(
     applied. A refused patch leaves ``data`` as it was — not the earlier
     ops of the patch, not a ``"metrics": {}`` an op's descent made before
     the op was refused, not a ``{"model": ...}`` for a model it named. The
-    entry is a new object afterwards: read it back from ``data``."""
+    entry is a new object afterwards: read it back from ``data``.
+
+    Every variable name lands in the one spelling (``a[1, 1]`` is
+    ``a[1,1]``, ``spec_parser.spell_entry_names``) — in an op's value and
+    in its pointer, so ``/comparison/variable_overrides/a[1, 1]`` finds
+    the key the decoder wrote ``a[1,1]``."""
+    from ..backends.types import variable_name
+    from .spec_parser import spell_entry_names
+
     index = _entry_index(data, model_id)
     entry = (
         {"model": model_id} if index is None else copy.deepcopy(data["tests"][index])
     )
     for i, op in enumerate(patch_ops):
         try:
-            _apply_one_op(entry, op, whitelist)
+            path = op.get("path") if isinstance(op, dict) else None
+            spelled = (
+                {**op, "path": variable_name(path)} if isinstance(path, str) else op
+            )
+            _apply_one_op(entry, spelled, whitelist)
         except PatchError as e:
             raise PatchError(
                 f"patch_ops[{i}] ({op!r}): {e}",
                 path=e.path,
                 reason=e.reason,
             ) from None
+    try:
+        spell_entry_names(entry)
+    except ValueError as e:
+        raise PatchError(
+            f"patched entry is invalid: tests[{model_id}].{e}", reason=str(e)
+        ) from None
     if index is None:
         data["tests"].append(entry)
     else:

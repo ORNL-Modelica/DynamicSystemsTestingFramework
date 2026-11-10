@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
+from ..backends.types import raw_by_name, variable_name
 from ..storage.baseline import Baseline, ReferenceFile
 from ..storage.baseline_codec import read_reference, read_series
 
@@ -453,7 +454,9 @@ def _load_csv(path: Path) -> dict[str, OverlayVariable]:
             return {}
         if len(header) < 2:
             return {}
-        var_names = [h.strip() for h in header[1:]]
+        # Each header in the one spelling of a name (#28); two that are one
+        # variable are an unreadable file (`raw_by_name`).
+        var_names = list(raw_by_name(h.strip() for h in header[1:]))
         times: list[float] = []
         cols: list[list[float]] = [[] for _ in var_names]
         for row in reader:
@@ -572,6 +575,9 @@ def _overlay_variable_for(
         return var, []
     if not _matches_by_more_than_name(ov):
         return None, []
+    # An expression is a label, kept as the model wrote it (`a[1, 1]`);
+    # looked for among names, it is read in their one spelling (#28).
+    expression = variable_name(expression)
     if expression:
         var = ov.variables.get(expression)
         if var is not None:
@@ -579,7 +585,9 @@ def _overlay_variable_for(
 
     wanted = {name, expression} - {""}
     candidates = sorted(
-        key for key, value in ov.variables.items() if value.expression in wanted
+        key
+        for key, value in ov.variables.items()
+        if variable_name(value.expression) in wanted
     )
     if len(candidates) > 1:
         return None, candidates

@@ -215,7 +215,9 @@ def test_a_marked_test_stays_simulate_only_over_an_override():
 
 
 def test_one_tracked_variable_in_the_result_is_scored_as_before():
-    test = make_test_model(variable_patterns=["x", "gone"])
+    # A glob that matches nothing beside it: an exact name the result lacks
+    # fails the test (`missing_names`, test_missing_names.py).
+    test = make_test_model(variable_patterns=["x", "gone*"])
     comp = compare_one(test, _result("x"), _Store(REFERENCE))
     assert classify(comp) == PASS and [v.name for v in comp.variables] == ["x"]
     assert nothing_scored(test, _result("x")) is None
@@ -245,7 +247,14 @@ def _lost(name: str) -> str:
 #: What a flat test tracks -> (its fields, what the baseline holds, what the
 #: run holds, the variables it lost).
 LOSSES = {
-    "a literal pattern": (dict(variable_patterns=["x", "y"]), "x y", "x", ["y"]),
+    # A literal name the run lost is no lost criterion: the test is refused
+    # (`missing_names`, test_missing_names.py).
+    "a glob that matched it alone": (
+        dict(variable_patterns=["x", "y*"]),
+        "x y",
+        "x",
+        ["y"],
+    ),
     "every variable": (dict(variable_patterns=["*"]), "x y", "x", ["y"]),
     "a glob that matched it": (
         dict(variable_patterns=["T[*]"]),
@@ -286,9 +295,9 @@ def test_a_tracked_variable_the_baseline_holds_and_the_run_lost_fails(what):
 
 
 def test_the_lost_criterion_is_the_one_a_tree_would_report():
-    flat = make_test_model(variable_patterns=["x", "y"])
+    flat = make_test_model(variable_patterns=["x", "y*"])
     tree = make_test_model(
-        variable_patterns=["x", "y"],
+        variable_patterns=["x", "y*"],
         metric_tree_spec=parse_metric_tree(
             {
                 "combinator": "and",
@@ -327,7 +336,7 @@ def test_the_lost_criterion_is_the_one_a_tree_would_report():
 )
 def test_a_lost_variable_keeps_its_overrides_metric_and_tolerance(override, against):
     test = make_test_model(
-        variable_patterns=["x", "y"],
+        variable_patterns=["x", "y*"],
         variable_overrides={"y": override},
         comparison_tolerance=0.05,
     )
@@ -346,7 +355,7 @@ def test_a_lost_variable_whose_override_is_an_error_names_only_a_real_metric(
     override, metric
 ):
     test = make_test_model(
-        variable_patterns=["x", "y"], variable_overrides={"y": override}
+        variable_patterns=["x", "y*"], variable_overrides={"y": override}
     )
     comp = compare_one(test, _result("x"), _Store(BOTH))
     (y,) = [v for v in comp.variables if v.name == "y"]
@@ -356,15 +365,14 @@ def test_a_lost_variable_whose_override_is_an_error_names_only_a_real_metric(
 @pytest.mark.parametrize(
     "fields",
     [
-        # A glob that matches nothing anywhere stays a log line.
+        # A glob that matches nothing anywhere is a warning, no loss (a
+        # name neither side holds fails the test: test_missing_names.py).
         dict(variable_patterns=["x", "q*"]),
-        # ...and so does a name neither side holds.
-        dict(variable_patterns=["x", "gone"]),
         # `y` is in the baseline and no longer tracked: the test does not ask.
         dict(variable_patterns=["x"]),
         dict(source="unit_tests", n_vars=0, variable_patterns=["x"]),
     ],
-    ids=["an empty glob", "a name nowhere", "no longer tracked", "no UnitTests"],
+    ids=["an empty glob", "no longer tracked", "no UnitTests"],
 )
 def test_what_the_test_does_not_track_or_no_side_holds_is_not_a_loss(fields):
     comp = compare_one(make_test_model(**fields), _result("x"), _Store(BOTH))
@@ -390,7 +398,7 @@ def test_a_warn_over_a_lost_variable_is_an_advisory_failure():
             ],
         }
     )
-    test = make_test_model(variable_patterns=["x", "y"], metric_tree_spec=tree)
+    test = make_test_model(variable_patterns=["x"], metric_tree_spec=tree)
     comp = compare_one(test, _result("x"), _Store(BOTH))
     assert classify(comp) == PASS
     (leaf,) = advisory_failures(comp)
@@ -407,7 +415,9 @@ def test_a_simulate_only_test_still_passes_by_having_run():
 
 def test_a_tree_is_not_asked_each_leaf_fails_by_itself():
     tree = parse_metric_tree({"metric": "nrmse", "variable": "x"})
-    test = make_test_model(variable_patterns=["x"], metric_tree_spec=tree)
+    # Tracked by its criterion alone: a name `variables` lists that the
+    # result lacks refuses the test (`missing_names`) before a leaf is asked.
+    test = make_test_model(metric_tree_spec=tree)
     assert nothing_scored(test, _result()) is None
     comp = compare_one(test, _result(), _Store(REFERENCE))
     assert classify(comp) == FAIL and refusal(comp) is None
@@ -574,9 +584,10 @@ def test_accept_neither_stores_nor_skips_a_test_that_declares_nothing(
 
 
 def _hold_y_too(project: Project) -> None:
-    """RAMP tracks `x` and `y`, and its stored baseline holds both: the
-    run, which writes `x` alone, has lost `y`."""
-    _track(project, RAMP, "x", "y")
+    """RAMP tracks `x` and, by a glob, `y`, and its stored baseline holds
+    both: the run, which writes `x` alone, has lost `y`. (Listed by its
+    name, `y` lost refuses the test: test_missing_names.py.)"""
+    _track(project, RAMP, "x", "y*")
     path = project.reference(RAMP)
     data = json.loads(path.read_text(encoding="utf-8"))
     (x,) = data["variables"]
@@ -688,7 +699,8 @@ def test_an_accept_says_why_each_variable_left_the_baseline(tmp_path, capsys):
     ]
     assert accept(["x", "y", "z", "w"], ["x", "y", "z", "w"]) == []
     # Tracked and lost, and two no longer tracked: a line for each reason.
-    assert accept(["x", "y"], ["x", "z", "w"]) == [
+    # (`y` by a glob: a name the result lacks refuses the accept.)
+    assert accept(["x", "y*"], ["x", "z", "w"]) == [
         f"{said} y — the accepted result does not hold it.",
         f"{said} z, w — the test no longer tracks them.",
     ]

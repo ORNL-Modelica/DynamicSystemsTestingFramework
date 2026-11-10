@@ -153,11 +153,15 @@ def _read_variable_mapping(entry: dict) -> tuple[dict[str, str], tuple[str, ...]
             "the 'variables' record is not an object of <test variable>: "
             "<companion variable> pairs, so nothing is drawn from it",
         )
+    from ..backends.types import variable_name
+
     mapping: dict[str, str] = {}
     warnings: list[str] = []
     for key, value in raw.items():
         if isinstance(key, str) and isinstance(value, str) and value:
-            mapping[key] = value
+            # Both names in the one spelling (#28): a record written as
+            # `a[1, 1]` draws on the run's `a[1,1]`.
+            mapping[variable_name(key)] = variable_name(value)
         else:
             warnings.append(f"mapping for {key} is not a variable name")
     return mapping, tuple(warnings)

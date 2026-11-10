@@ -259,3 +259,11 @@ def test_a_search_is_given_the_wall_time_left_when_that_is_less(monkeypatch):
     with pytest.raises(TimeoutError):
         keep("a" * 32 + "b")
     assert time.perf_counter() - start < 0.2
+
+
+@pytest.mark.parametrize("needle", ["T[1, 2]", "T[1, *]", "T[1, ", "t[1, 2]"])
+def test_a_needle_typed_with_spaces_in_an_index_finds_the_one_spelling(needle):
+    """A row is listed as ``T[1,2]`` whichever way its file wrote it (#28):
+    typed Dymola's way — whole, as a glob, or half-typed with its bracket
+    still open — the filter still finds it."""
+    assert matcher(needle, regex=False, case=False)("T[1,2]") is True

@@ -4,6 +4,11 @@ module sees :mod:`dstf.storage.baseline` types; nothing else parses or
 writes these files, so a second format, or a new kind of data, changes this
 module and the types, not their readers.
 
+Every variable name is read in the one spelling (``types.variable_name``:
+a Dymola baseline's ``T[1, 2]`` is ``T[1,2]``, #28) — its variables, its
+diagnostics, the statistics keys compared with them and the stored
+``variable_overrides`` keys — and written as it is held.
+
 The number rule. A value is written with the fewest significant digits that
 identify every number of its precision — 9 for a float32, 17 for a float64
 (IEEE 754 round-trip bounds) — and JSON then spells it at its shortest. A
@@ -21,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from ..backends.types import variable_name
 from .baseline import (
     PRIMARY_BASELINE,
     Baseline,
@@ -117,11 +123,17 @@ def unread_variable_keys(data: dict) -> dict[str, list[str]]:
     return out
 
 
+def _name(raw: Any) -> Any:
+    """A stored name in the one spelling; one that is no text (a hand-made
+    file) as it is — what reads it says so."""
+    return variable_name(raw) if isinstance(raw, str) else raw
+
+
 def _variable(entry: dict, single: bool) -> StoredVariable:
     values = entry.get("values") or []
     return StoredVariable(
         index=entry.get("index"),
-        name=entry.get("name") or "",
+        name=_name(entry.get("name") or ""),
         # Absent (old data, see StoredVariable) stays None; null is "".
         expression=(entry.get("expression") or "") if "expression" in entry else None,
         values=_through_single(values) if single else list(values),
@@ -134,15 +146,15 @@ def _diagnostic(entry: dict) -> DiagnosticSummary:
     if "values" in entry and "final" not in entry:
         values = np.asarray(entry.get("values") or [], dtype=float)
         if values.size == 0:
-            return DiagnosticSummary(name=entry.get("name") or "")
+            return DiagnosticSummary(name=_name(entry.get("name") or ""))
         return DiagnosticSummary(
-            name=entry.get("name") or "",
+            name=_name(entry.get("name") or ""),
             final=float(values[-1]),
             min=float(values.min()),
             max=float(values.max()),
         )
     return DiagnosticSummary(
-        name=entry.get("name") or "",
+        name=_name(entry.get("name") or ""),
         final=entry.get("final"),
         min=entry.get("min"),
         max=entry.get("max"),
@@ -187,7 +199,7 @@ def decode_series(data: dict, name: str) -> Baseline:
     statistics = {
         key: value
         for key, value in dict(data.get("statistics") or {}).items()
-        if isinstance(value, dict) or key not in named
+        if isinstance(value, dict) or _name(key) not in named
     }
     return Baseline(
         name=name,
@@ -200,6 +212,16 @@ def decode_series(data: dict, name: str) -> Baseline:
     )
 
 
+def _comparison(raw: Any) -> dict:
+    """A reference's ``comparison`` section, its ``variable_overrides``
+    keyed by the one spelling of a name (``types.variable_name``)."""
+    comparison = dict(raw or {})
+    overrides = comparison.get("variable_overrides")
+    if isinstance(overrides, dict):
+        comparison["variable_overrides"] = {_name(k): v for k, v in overrides.items()}
+    return comparison
+
+
 def decode_reference(data: dict) -> ReferenceFile:
     """A primary reference file's parsed JSON as a :class:`ReferenceFile`."""
     return ReferenceFile(
@@ -209,7 +231,7 @@ def decode_reference(data: dict) -> ReferenceFile:
         date_added=data.get("date_added"),
         last_updated=data.get("last_updated"),
         sampling=_sampling(data.get("sampling")),
-        comparison=dict(data.get("comparison") or {}),
+        comparison=_comparison(data.get("comparison")),
         baseline=decode_series(data, PRIMARY_BASELINE),
     )
 

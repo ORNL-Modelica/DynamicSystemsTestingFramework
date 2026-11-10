@@ -223,7 +223,9 @@ LEAF: dict[str, Setting] = {
         "variables do not match it — except a name in diagnostic_variables "
         "that only a scalar's final, min or max over the whole run names: "
         "its summary is stored, not its curve. A scalar criterion whose "
-        "quantity is a path may leave it out.",
+        "quantity is a path may leave it out. An index is written without "
+        "spaces: a[1, 1] is read, stored and matched as a[1,1], whichever "
+        "way the simulator writes it.",
     ),
     "against": Setting(
         {"type": "string", "minLength": 1},
@@ -313,7 +315,12 @@ ENTRY: dict[str, Setting] = {
         "that only a scalar's final, min or max over the whole run names is "
         "not: its summary is stored, and its curve only when this list "
         "matches it. An entry that tracks nothing and "
-        "scores nothing passes when its simulation completes.",
+        "scores nothing passes when its simulation completes. A name listed "
+        "here without a wildcard that the completed result does not hold "
+        "fails the test, and no accept stores a baseline for it; a pattern "
+        "that matches nothing is a warning beside the verdict. An index is "
+        "written without spaces: a[1, 1] is read, stored and matched as "
+        "a[1,1], whichever way the simulator writes it.",
     ),
     "simulation": Setting(
         {
@@ -376,7 +383,9 @@ ENTRY: dict[str, Setting] = {
         "in addition to `testing.json`'s list. A listed name's curve is "
         "stored only when a criterion needs it — any criterion but a "
         "scalar's final, min or max over the whole run — or when the "
-        "entry's variables match it.",
+        "entry's variables match it. An index is written without spaces: "
+        "a[1, 1] is read, stored and matched as a[1,1], whichever way the "
+        "simulator writes it.",
     ),
     **NOTES,
 }

@@ -1,5 +1,6 @@
 """Pure unit tests for OpenModelica .mos script generation."""
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -467,3 +468,41 @@ class TestMatSync:
             ]
         assert "simflags" not in calls[False]
         assert calls[True] == calls[False][: -len(");")] + ', simflags="-mat_sync=1");'
+
+
+def test_a_name_the_spec_spells_dymolas_way_is_filtered_as_omc_writes_it():
+    """OpenModelica writes ``pipe.T[1,1]``: a filter alternative spelled
+    ``pipe\\.T\\[1,\\ 1\\]`` dropped the variable (#28). The spec's name is
+    read in the one spelling, so the filter is omc's — a glob's too."""
+    import json
+    import re
+
+    from dstf.discovery.spec_parser import (
+        spec_document_from_bytes,
+        spec_models_from_document,
+    )
+
+    raw = json.dumps(
+        {
+            "tests": [
+                {
+                    "model": "Demo.Example.A",
+                    "variables": ["pipe.T[1, 1]", "pipe.T[2, *]"],
+                }
+            ]
+        }
+    ).encode()
+    (test,) = spec_models_from_document(
+        spec_document_from_bytes(raw, "test_spec.json"),
+        base_dir=Path("."),
+        label="test_spec.json",
+    )
+    test = dataclasses.replace(
+        test, stop_time=1.0, tolerance=1e-6, method="dassl", number_of_intervals=10
+    )
+    (arg,) = [
+        a for a in build_simulate_args(test, []) if a.startswith("variableFilter")
+    ]
+    regex = arg.split("=", 1)[1].strip('"').replace("\\\\", "\\")
+    assert regex == r"^(time|pipe\.T\[1,1\]|pipe\.T\[2,.*\])$"
+    assert re.fullmatch(regex, "pipe.T[2,3]")

@@ -18,6 +18,17 @@ this file says when they do.
 
 ### Changed
 
+- **A variable name has one spelling, and a name `variables` lists must be in
+  the result.** An array index is written without spaces: Dymola's
+  `T[1, 2]` is OpenModelica's `T[1,2]`, read that way from every result file,
+  `test_spec.json`, `testing.json`, a stored baseline and a companion, and a
+  saved spec or an accepted baseline writes `T[1,2]`. A name `variables` lists
+  without a wildcard that a completed result does not hold now fails the test
+  (`the result does not hold … — a name "variables" lists must be in the
+  result`), and no accept stores a baseline for it; it read PASS, scoring
+  nothing about that variable. A pattern that matches nothing is a warning
+  beside the verdict. Files that still hold `[1, 1]` read the same; see
+  [How to convert a library to the one spelling](#how-to-convert-a-library-to-the-one-spelling).
 - A baseline records the solver that ran, as the backend names it, not the
   name the test asked for: an FMPy baseline records `CVode` where it recorded
   `Dassl`, and an OpenModelica one `dassl`.
@@ -71,6 +82,23 @@ this file says when they do.
 - On a plot with a spectrum panel under it, in the report and in `dstf author`,
   the time axis's title "Time" was drawn inside the spectrum panel. The gap
   between the two panels now holds it.
+
+### How to convert a library to the one spelling
+
+Nothing has to change for a library's tests to run: every reader takes both
+spellings. To make the files say what the program now writes:
+
+1. In `test_spec.json`, delete the spaces inside each index's brackets —
+   `"pipe.mediums[1, 1].T"` becomes `"pipe.mediums[1,1].T"` — in `variables`,
+   `diagnostic_variables`, the keys of `comparison.variable_overrides`, each
+   criterion's `variable` and `plots`. Saving the spec from `dstf author` or
+   `dstf spec update` does the same.
+2. In each stored baseline (`<reference_root>/<Backend>/<os>/ref_NNNN.json`),
+   do the same to the `name` of each entry of `variables` and `diagnostics`,
+   and to the keys of `comparison.variable_overrides`. The next accept of a
+   test rewrites its baseline that way; an `expression` stays as it is.
+3. Run `compare` and read the tests that now fail with `the result does not
+   hold …`: each lists a name its result lacks, which it never scored.
 
 ## [1.3.0] - 2026-10-22
 

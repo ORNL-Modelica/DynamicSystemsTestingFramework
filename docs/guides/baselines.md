@@ -23,7 +23,8 @@ $ dstf --config testing.json run --filter "MyLib.Examples.Pipe*" --accept
 
 A test whose simulation failed is not stored: the accept names it, and its
 exit code is 1. Nor is a test the comparison refused, such as one that scored
-nothing or whose `metrics` tree is wrong in its file. A
+nothing, whose result lacks a name `variables` lists exactly, or whose
+`metrics` tree is wrong in its file. A
 test that declares nothing to score stores no baseline: it passes by
 simulating. When a stored baseline is large, or no longer holds a variable the
 one it replaced held, the accept says so and stores it anyway.

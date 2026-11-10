@@ -8,7 +8,7 @@ import re
 from collections.abc import Callable
 from time import monotonic, thread_time
 
-from ..backends.types import is_glob_pattern
+from ..backends.types import is_glob_pattern, variable_name
 
 #: Seconds of the searching thread's CPU (`thread_time`) ONE typed regex
 #: may search, over every name of one filter: the verdict "the pattern took
@@ -45,8 +45,12 @@ REGEX_WALL_BACKSTOP = 5 * REGEX_BUDGET
 def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
     """What the filter box keeps. A regex (``.*`` on) searches; a glob (a
     ``*`` or ``?`` in it) matches the WHOLE text with ``[ ]`` literal — the
-    rule a spec's ``variables`` list uses, so what you type here means what
-    it means there (`_glob`); anything else is a substring. ``regex.error``
+    rule a spec's ``variables`` list uses (`_glob`); anything else is a
+    substring. A glob or a substring is read in the one spelling of a name
+    first (``types.variable_name``, #28), as a spec's ``variables`` are, so
+    ``T[1, 2]`` and ``T[1, *]`` find the row ``T[1,2]`` and a half-typed
+    ``T[1, `` finds it too; a typed regex is the person's own syntax (a
+    space in ``[ ,]`` is a character) and is searched as typed. ``regex.error``
     for a bad regex, and ``TimeoutError`` from the returned closure once the
     regex has searched `REGEX_BUDGET` seconds of its thread's CPU in all,
     for the drawer to say.
@@ -87,6 +91,7 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
             return pattern.search(text, timeout=left, concurrent=False) is not None
 
         return search
+    needle = variable_name(needle)
     if is_glob_pattern(needle):
         return _glob(needle, flags)
     folded = needle if case else needle.lower()
