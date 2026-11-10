@@ -1287,3 +1287,50 @@ def test_discover_names_each_test_whose_tree_is_wrong_in_its_file(tmp_path, caps
         "baseline is scored: a soft check sits under a 'warn', and a companion "
         "is only drawn."
     ]
+
+
+@pytest.mark.parametrize("group", ["companion", "soft-check"])
+def test_a_list_over_every_model_is_in_model_order(
+    store_with_primary, tmp_path, capsys, group
+):
+    """Codes sort Lib.B (452b…), Lib.Test1 (4894…), Lib.A (6e18…); the list
+    reads in model-id order, as numbers once ordered it."""
+    from dstf.cli import main
+
+    store, test = store_with_primary
+    rig = tmp_path / "rig.csv"
+    rig.write_text("time,x\n0,0\n1,1\n", encoding="utf-8")
+    for model_id in ("Lib.B", "Lib.A"):
+        store.store_reference(
+            _make_test_model(model_id),
+            _make_test_result(model_id),
+            provenance=PROVENANCE,
+        )
+    for model_id in ("Lib.B", test.model_id, "Lib.A"):
+        if group == "companion":
+            store.add_companion(model_id, "rig", rig)
+        else:
+            store.add_soft_check(
+                model_id,
+                series(
+                    "om",
+                    time=[0.0, 1.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+                ),
+            )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--source-path",
+                str(store.config.source_path),
+                "--reference-root",
+                str(store.config.reference_root),
+                group,
+                "list",
+            ]
+        )
+        == 0
+    )
+    headers = [ln for ln in capsys.readouterr().out.splitlines() if ln.endswith(":")]
+    assert headers == ["Lib.A:", "Lib.B:", "Lib.Test1:"]
