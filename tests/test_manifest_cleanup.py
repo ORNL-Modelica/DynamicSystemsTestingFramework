@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 
 import numpy as np
 import pytest
@@ -112,6 +113,7 @@ def test_a_dry_run_lists_exactly_what_no_test_uses_and_removes_nothing(
 ):
     config, argv = _project(tmp_path)
     before = _listing(tmp_path)
+    manifest = (config.work_dir / "batch_manifest.json").read_bytes()
 
     rc = main(argv)
 
@@ -123,6 +125,7 @@ def test_a_dry_run_lists_exactly_what_no_test_uses_and_removes_nothing(
         "Dry run: nothing was removed. Re-run with --apply to remove them.",
     ]
     assert _listing(tmp_path) == before
+    assert (config.work_dir / "batch_manifest.json").read_bytes() == manifest
 
 
 def test_apply_removes_exactly_what_the_dry_run_lists(tmp_path, capsys):
@@ -142,6 +145,67 @@ def test_apply_removes_exactly_what_the_dry_run_lists(tmp_path, capsys):
     manifest = json.loads((work / "batch_manifest.json").read_text(encoding="utf-8"))
     assert sorted(manifest) == ["test_0001", "test_0002", "test_0003"]
     assert manifest["test_0001"]["model_id"] == RAMP
+
+
+def test_a_manifest_key_not_shaped_like_a_test_names_no_directory(tmp_path, capsys):
+    """Undeclared models' entries under the keys ``reports`` and ``""``: a
+    key names a simulation dir only when it is shaped ``test_NNNN``, so
+    ``--apply`` removes their entries and neither ``reports/`` nor the work
+    dir itself."""
+    config, argv = _project(tmp_path)
+    work = config.work_dir
+    path = work / "batch_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["reports"] = {"model_id": f"{GONE}2", "ref_id": None}
+    manifest[""] = {"model_id": f"{GONE}3", "ref_id": None}
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    before = _listing(work)
+
+    rc = main([*argv, "--apply"])
+
+    assert rc == 0
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "Removed 7 directories and 3 manifest entries."
+    )
+    gone = {line for line in STALE if line.endswith("/")}
+    assert _listing(work) == sorted(set(before) - set(_under(before, gone)))
+    after = json.loads(path.read_text(encoding="utf-8"))
+    assert sorted(after) == ["test_0001", "test_0002", "test_0003"]
+
+
+@pytest.mark.parametrize("entry", [{"ref_id": None}, 5], ids=["no-model-id", "int"])
+def test_a_manifest_entry_that_names_no_model_is_warned_and_left(
+    entry, tmp_path, capsys, caplog
+):
+    """An entry with no model id, or one that is not an object: whose it
+    was cannot be told, so it is warned of and kept, with its directories,
+    and the rest is cleaned up as before."""
+    config, argv = _project(tmp_path)
+    work = config.work_dir
+    path = work / "batch_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["test_0005"] = entry
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    for d in (work / "test_0005", work / "reports" / "test_0005"):
+        d.mkdir()
+        (d / "kept.txt").write_text("x", encoding="utf-8")
+    before = _listing(work)
+
+    with caplog.at_level(logging.WARNING, logger="dstf.cli.diag_cmds"):
+        rc = main([*argv, "--apply"])
+
+    assert rc == 0
+    assert [r.getMessage() for r in caplog.records] == [
+        "batch_manifest.json: test_0005 names no model — left as it is"
+    ]
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "Removed 7 directories and 1 manifest entry."
+    )
+    gone = {line for line in STALE if line.endswith("/")}
+    assert _listing(work) == sorted(set(before) - set(_under(before, gone)))
+    after = json.loads(path.read_text(encoding="utf-8"))
+    assert sorted(after) == ["test_0001", "test_0002", "test_0003", "test_0005"]
+    assert after["test_0005"] == entry
 
 
 def _under(listing: list[str], dirs: set[str]) -> list[str]:

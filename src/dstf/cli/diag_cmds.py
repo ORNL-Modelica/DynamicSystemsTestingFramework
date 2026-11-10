@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -14,6 +15,8 @@ from ..discovery.unit_tests import unit_test_variables
 from ..pipeline import write_id_mapping
 from ..storage.names import baseline_file, baseline_stem
 from .common import _build_config, _filter_tests
+
+logger = logging.getLogger(__name__)
 
 
 def _vars_text(test: TestModel) -> str:
@@ -245,15 +248,25 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     manifest = BatchManifest.load(manifest_path)
     declared = {t.model_id for t in discover_tests(config)}
 
+    # Each entry's model. One that names none (no model_id, or not an
+    # object) cannot be told to be anyone's: warned of and left, with its
+    # directories, rather than removed or raised over.
+    model_of: dict[str, str] = {}
+    for key, e in manifest.manifest.items():
+        model_id = e.get("model_id") if isinstance(e, dict) else None
+        if isinstance(model_id, str) and model_id:
+            model_of[key] = model_id
+        else:
+            logger.warning(
+                "batch_manifest.json: %s names no model — left as it is", key
+            )
     # The names a declared test is reported under: its baseline's, when the
     # store reads one for it, and its manifest key.
     stems = {store.index.stem(model_id) for model_id in declared}
-    keys = {key for key, e in manifest.manifest.items() if e["model_id"] in declared}
-    keep = (stems - {None}) | keys
+    keys = {key for key, model_id in model_of.items() if model_id in declared}
+    keep = (stems - {None}) | keys | (manifest.manifest.keys() - model_of.keys())
     orphans = {
-        key: e["model_id"]
-        for key, e in manifest.manifest.items()
-        if e["model_id"] not in declared
+        key: model_id for key, model_id in model_of.items() if model_id not in declared
     }
     reports = work / "reports"
     stale: set[Path] = set()
