@@ -1319,6 +1319,12 @@ class _NoBaselineStore:
     def get_reference(self, _model_id):
         return None
 
+    def refusal(self, model_id):
+        return None
+
+    def reference_file(self, model_id):
+        return None
+
     folder = "Stub/linux"
 
     def get_soft_checks(self, _model_id):
@@ -1959,6 +1965,12 @@ class TestTreeConfigErrorIsALeafFailure:
                         ],
                     }
                 )
+
+            def refusal(self, model_id):
+                return None
+
+            def reference_file(self, model_id):
+                return None
 
             folder = "Stub/linux"
 
@@ -2637,6 +2649,12 @@ class _NoRefStore:
     def get_reference(self, model_id):
         return None
 
+    def refusal(self, model_id):
+        return None
+
+    def reference_file(self, model_id):
+        return None
+
 
 class TestSimFailWithoutBaselineIsSimFail:
     """compare_all's no-baseline short-circuit ran BEFORE any sim-success
@@ -2739,6 +2757,12 @@ class TestCompareOne:
         class _Store:
             def get_reference(self, model_id):
                 return decode_reference(ref) if model_id == "Test.Model" else None
+
+            def refusal(self, model_id):
+                return None
+
+            def reference_file(self, model_id):
+                return None
 
             folder = "Stub/linux"
 
@@ -4557,7 +4581,6 @@ class TestABaseToleranceIsANumber:
         assert comp.error_message == _said(where, bad)
         assert not comp.passed
         assert comp.sim_success and comp.variables == []
-        assert comp.test_id == "0001"
         assert classify(comp) == "FAIL"
 
     @staticmethod
@@ -4703,6 +4726,12 @@ class TestABaseToleranceIsANumber:
             def get_reference(self, model_id):
                 return None
 
+            def refusal(self, model_id):
+                return None
+
+            def reference_file(self, model_id):
+                return None
+
         test = _make_test(comparison_tolerance="abc")
         failed = TestResult(model_id="Test.Model", success=False)
         assert classify(compare_one(test, failed, _Store())) == "SIM_FAIL"
@@ -4718,6 +4747,12 @@ class TestABaseToleranceIsANumber:
 
         class _Store:
             def get_reference(self, model_id):
+                return None
+
+            def refusal(self, model_id):
+                return None
+
+            def reference_file(self, model_id):
                 return None
 
         test = _make_test(comparison_tolerance=bad)

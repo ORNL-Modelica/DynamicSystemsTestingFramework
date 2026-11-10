@@ -24,11 +24,10 @@ def session(tmp_path) -> Session:
 
 def test_a_scored_pass(session):
     row = suite_row(session, D)
-    comp = session.comparisons[D]
     assert row.status == "PASS" and row.model_id == D
     assert row.n_vars == 1 and row.n_vars_passed == 1
     assert row.worst_score is not None and row.worst_score < 0.01
-    assert row.ref_id == f"ref_{comp.test_id}"
+    assert row.ref_id == "ref_56e96bc1bb39"  # D's code: sha256sum, a literal
     assert row.field_sources == session.project.test(D).field_sources
     assert row.edits == 0 and not row.waiting
 

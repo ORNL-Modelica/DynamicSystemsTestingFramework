@@ -2,6 +2,7 @@
 
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import markupsafe
@@ -11,6 +12,10 @@ from dstf.reporting.dashboard_render import (
     render_final,
     render_live,
 )
+
+#: Lib.A's baseline code (``sha256sum`` of the model id, a literal) and name.
+A_CODE = "6e187be76792"
+A_REF = f"ref_{A_CODE}"
 
 
 def _write_status_json(work_dir: Path, snapshot: dict) -> None:
@@ -1148,7 +1153,7 @@ def test_a_final_page_without_sidecars_shows_verdicts(tmp_path):
     }
     _write_status_json(tmp_path, snapshot)
     comparisons = [
-        TestComparison(model_id="Lib.A", passed=True, test_id="0001"),
+        TestComparison(model_id="Lib.A", passed=True, test_id=A_CODE),
         TestComparison(model_id="Lib.B", passed=False),
         TestComparison(model_id="Lib.C", passed=True),
     ]
@@ -1156,7 +1161,7 @@ def test_a_final_page_without_sidecars_shows_verdicts(tmp_path):
         "tests"
     ]
     assert [r.status for r in rows] == ["PASS", "FAIL", "PASS"]
-    assert rows[0].ref_id == "ref_0001"
+    assert rows[0].ref_id == A_REF
     render_final(tmp_path, comparisons=comparisons)
     html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     statuses = [_attrs(tr)["data-status"] for tr in _body_rows(html)]
@@ -1382,66 +1387,56 @@ def _sidecar_in(work_dir: Path, report_dir: str, summary: dict) -> None:
 
 
 def test_the_comparisons_reference_wins_over_the_sidecars(tmp_path):
-    """`compare --backend <other>` on another backend's work dir: the run
-    pre-populated report_dir ref_0005 and its sidecar names ref_0005, but
-    this command scored against ref_0007. The row names the baseline its
-    verdict came from, and links to no other one."""
+    """`compare --backend OpenModelica` on a Dymola work dir: the run named
+    report_dir ``ref_<code>`` and its sidecar links Dymola's file of that
+    name, but this command scored OpenModelica's — the same name, another
+    path. The row names the baseline its verdict came from, and links to no
+    other file: the names agree, only the paths tell them apart."""
     from dstf.comparison.types import TestComparison
 
+    dymola = Path("/refs/Dymola/linux") / f"{A_REF}.json"
+    openmodelica = Path("/refs/OpenModelica/linux") / f"{A_REF}.json"
     snapshot = _one_test_snapshot()
     snapshot["start_wall"] = 1.0
-    snapshot["tests"][0]["report_dir"] = "ref_0005"
+    snapshot["tests"][0]["report_dir"] = A_REF
     _write_status_json(tmp_path, snapshot)
-    _sidecar_in(tmp_path, "ref_0005", _passing_sidecar("ref_0005"))
+    _sidecar_in(
+        tmp_path, A_REF, {**_passing_sidecar(A_REF), "ref_file": dymola.as_uri()}
+    )
     comp = TestComparison(
-        model_id="Lib.A", passed=False, variables=[_failing_var()], test_id="0007"
+        model_id="Lib.A",
+        passed=False,
+        variables=[_failing_var()],
+        test_id=A_CODE,
+        baseline_path=str(openmodelica),
     )
     (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
         "tests"
     ]
-    assert (row.ref_id, row.ref_file) == ("ref_0007", None)
+    assert (row.ref_id, row.ref_file) == (A_REF, None)
     assert row.total_wall == 4.0  # what only the sidecar knows survives
     render_final(tmp_path, comparisons=[comp])
     (tr,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
-    assert _attrs(tr)["data-ref"] == "ref_0007"
-    assert "ref_0005.json" not in tr
-    # No sidecar: the report_dir's ref_0005 loses to the comparison's too.
-    (tmp_path / "reports" / "ref_0005" / "comparison_data.json").unlink()
-    (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
-        "tests"
-    ]
-    assert (row.ref_id, row.ref_file) == ("ref_0007", None)
-
-
-def test_a_sidecar_that_agrees_with_the_comparison_keeps_its_link(tmp_path):
-    from dstf.comparison.types import TestComparison
-
-    snapshot = _one_test_snapshot()
-    snapshot["start_wall"] = 1.0
-    snapshot["tests"][0]["report_dir"] = "ref_0005"
-    _write_status_json(tmp_path, snapshot)
-    _sidecar_in(tmp_path, "ref_0005", _passing_sidecar("ref_0005"))
-    comp = TestComparison(model_id="Lib.A", passed=True, test_id="0005")
-    (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
-        "tests"
-    ]
-    assert (row.ref_id, row.ref_file) == ("ref_0005", "file:///refs/ref_0005.json")
+    assert _attrs(tr)["data-ref"] == A_REF
+    assert "Dymola" not in tr
+    # Scored against the very file the sidecar links: the link stays.
+    own = replace(comp, baseline_path=str(dymola))
+    (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[own])["tests"]
+    assert (row.ref_id, row.ref_file) == (A_REF, dymola.as_uri())
 
 
 def test_the_first_place_holding_a_sidecar_is_the_one_read(tmp_path):
-    """A sidecar is looked for in three places, in this order: under the
-    baseline the comparison in hand was scored against, under the name the
-    run guessed, under the test key. With one in two of them, the row's
-    numbers and its page link are the earlier place's — a test accepted
-    since its run has a page under each of the first two, and the guess's
-    is the older verdict."""
+    """A sidecar is looked for under the baseline the comparison in hand was
+    scored against, then under the name the run gave the test — its test key
+    when it had no baseline then. A test accepted since its run has a page
+    under each, and the run's is the older verdict."""
     from dstf.comparison.types import TestComparison
 
     def sidecar(place: str, total_wall: float) -> None:
         _sidecar_in(
             tmp_path,
             place,
-            {**_passing_sidecar("ref_0007"), "total_wall": total_wall},
+            {**_passing_sidecar(A_REF), "total_wall": total_wall},
         )
 
     def read(comparisons=()) -> tuple[str | None, float | None]:
@@ -1450,17 +1445,15 @@ def test_the_first_place_holding_a_sidecar_is_the_one_read(tmp_path):
         )["tests"]
         return row.report_page, row.total_wall
 
-    _one_row(tmp_path, report_dir="ref_0005")
-    comp = TestComparison(model_id="Lib.A", passed=True, test_id="0007")
-    sidecar("ref_0005", 5.0)
+    _one_row(tmp_path, report_dir="test_0001")
+    comp = TestComparison(model_id="Lib.A", passed=True, test_id=A_CODE)
     sidecar("test_0001", 1.0)
-    # the run's guess, before the test key
-    assert read() == ("ref_0005", 5.0)
-    assert read([comp]) == ("ref_0005", 5.0)  # none under the baseline compared
-    # the baseline compared against, before both
-    sidecar("ref_0007", 7.0)
-    assert read([comp]) == ("ref_0007", 7.0)
-    assert read() == ("ref_0005", 5.0)  # no comparison in hand names it
+    assert read() == ("test_0001", 1.0)
+    assert read([comp]) == ("test_0001", 1.0)  # none under the baseline compared
+    # the baseline compared against, before the run's name
+    sidecar(A_REF, 7.0)
+    assert read([comp]) == (A_REF, 7.0)
+    assert read() == ("test_0001", 1.0)  # no comparison in hand names it
 
 
 def test_the_comparisons_numbers_replace_the_sidecars(tmp_path):
@@ -1916,7 +1909,7 @@ def test_a_failed_simulation_s_row_keeps_its_reference(tmp_path, monkeypatch):
     config, tests = python_example_copy(tmp_path)
     work = config.work_dir
     ramp = next(t.model_id for t in tests if t.model_id.endswith("SimpleRamp"))
-    ref_id = f"ref_{ReferenceStore(config).index.get_id(ramp)}"
+    ref_id = ReferenceStore(config).index.stem(ramp)
     (tmp_path / "lib" / "Examples" / "SimpleRamp.py").write_text(
         "def simulate(stop_time, tolerance):\n    raise RuntimeError('boom')\n",
         encoding="utf-8",

@@ -33,10 +33,6 @@ def _store(tmp_path: Path) -> ReferenceStore:
     return store
 
 
-def _high_water_mark(tmp_path: Path) -> Path:
-    return _store(tmp_path).ref_dir / ".id_high_water.json"
-
-
 def _companion(tmp_path: Path, *, frozen: bool) -> Path:
     store = _store(tmp_path)
     src = tmp_path / "rig.csv"
@@ -44,7 +40,7 @@ def _companion(tmp_path: Path, *, frozen: bool) -> Path:
     store.add_companion("FakeLib.A", "rig", src, variables={"x": "y"})
     if frozen:
         store.freeze_companion("FakeLib.A", "rig")
-    return store.ref_dir / "companions" / "ref_0001" / "rig.json"
+    return store.ref_dir / "companions" / "ref_72dff21d8a3c" / "rig.json"
 
 
 def _test_spec(tmp_path: Path) -> Path:
@@ -69,7 +65,6 @@ def _default_testing_json(tmp_path: Path) -> Path:
 WRITERS = {
     "the default testing.json": _default_testing_json,
     "a test_spec.json an edit writes": _test_spec,
-    "the id high-water mark": _high_water_mark,
     "a companion's registration": lambda p: _companion(p, frozen=False),
     "a frozen companion's registration": lambda p: _companion(p, frozen=True),
 }

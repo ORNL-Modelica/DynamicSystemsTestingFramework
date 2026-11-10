@@ -64,9 +64,9 @@ per test:
 Running 3 tests (parallel=1, timeout=60s)
 Backend: Python · linux · DSTF 1.3.0
 ...
-  PASS  [0001] PythonTestingLib.Examples.ConstantCsv
-  PASS  [0003] PythonTestingLib.Examples.PointsCheck
-  PASS  [0002] PythonTestingLib.Examples.SimpleRamp
+  PASS  PythonTestingLib.Examples.ConstantCsv
+  PASS  PythonTestingLib.Examples.PointsCheck
+  PASS  PythonTestingLib.Examples.SimpleRamp
 
 Results: 3/3 passed
 ```
@@ -91,7 +91,8 @@ testing_output/PythonTestingLib/Python/linux/
 
 Nothing under `examples/` changed. The baselines the run compared against
 are under the reference root, `Resources/ReferenceResults/Python/linux/`, one
-`ref_NNNN.json` per test; only accepting a result writes there.
+file per test, named from its model: SimpleRamp's is `ref_9bbf24e6f8aa.json`.
+Only accepting a result writes there.
 
 ## Make it fail
 
@@ -104,9 +105,9 @@ $ dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/test
 ```
 
 ```text
-  PASS  [0001] PythonTestingLib.Examples.ConstantCsv
-  PASS  [0003] PythonTestingLib.Examples.PointsCheck
-  FAIL  [0002] PythonTestingLib.Examples.SimpleRamp
+  PASS  PythonTestingLib.Examples.ConstantCsv
+  PASS  PythonTestingLib.Examples.PointsCheck
+  FAIL  PythonTestingLib.Examples.SimpleRamp
 
 Results: 2/3 passed
   Failed: 1
@@ -114,7 +115,7 @@ Results: 2/3 passed
 Failure Details:
 --------------------------------------------------------------------------------
 
-  [0002] PythonTestingLib.Examples.SimpleRamp
+  PythonTestingLib.Examples.SimpleRamp
     x: nrmse · against primary
       NRMSE 2.894e-02 vs tolerance 1.000e-02 → FAIL
       RMSE:               2.893959e-01 (range 1.0000e+01)

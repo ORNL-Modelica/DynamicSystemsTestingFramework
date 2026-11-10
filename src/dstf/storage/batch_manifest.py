@@ -141,10 +141,10 @@ class BatchManifest:
                 entry["last_run_status"] = PENDING_RUN_STATUS
 
     def enrich_ref_ids(self, ref_index) -> None:
-        """Add ref_id to each entry using the reference index."""
+        """Add each entry's ``ref_id``: ``ref_<code>`` of a model with a
+        baseline (`RefIndex.stem`), else None."""
         for _test_key, entry in self.manifest.items():
-            ref_id = ref_index.get_id(entry["model_id"])
-            entry["ref_id"] = f"ref_{ref_id}" if ref_id else None
+            entry["ref_id"] = ref_index.stem(entry["model_id"])
         self.save()
 
     @classmethod

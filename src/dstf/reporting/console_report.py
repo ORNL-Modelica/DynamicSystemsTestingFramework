@@ -78,12 +78,6 @@ def print_report(comparisons: list[TestComparison]) -> int:
             warn_tag = _color(" [WARN]", _YELLOW)
             warned.append(comp)
 
-        if comp.test_id:
-            id_tag = f"[{comp.test_id}] "
-        elif not comp.has_reference:
-            id_tag = "[new] "
-        else:
-            id_tag = ""
         # A test that passes with a failure under `warn` says so: it read a
         # plain PASS, with no word of the criterion that failed.
         advisory = advisory_failures(comp)
@@ -91,7 +85,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
         if advisory:
             advised.append((comp, advisory))
             advisory_tag = _color(f" ({advisory_text(len(advisory))})", _YELLOW)
-        print(f"  {status}  {id_tag}{comp.model_id}{advisory_tag}{warn_tag}")
+        print(f"  {status}  {comp.model_id}{advisory_tag}{warn_tag}")
 
         if not comp.passed and comp.sim_success:
             failures.append(comp)
@@ -119,8 +113,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
         print(_color("Failure Details:", _BOLD))
         print("-" * 80)
         for comp in failures:
-            id_tag = f"[{comp.test_id}] " if comp.test_id else ""
-            print(f"\n  {id_tag}{comp.model_id}")
+            print(f"\n  {comp.model_id}")
             if comp.error_message:
                 print(f"    Error: {comp.error_message}")
             for block in failure_blocks(comp):
@@ -137,8 +130,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
         print(_color("Advisory Failures (under `warn`: they fail no test):", _BOLD))
         print("-" * 80)
         for comp, advisory in advised:
-            id_tag = f"[{comp.test_id}] " if comp.test_id else ""
-            print(f"\n  {id_tag}{comp.model_id}")
+            print(f"\n  {comp.model_id}")
             for block in _blocks(advisory):
                 for line in block:
                     print(line)

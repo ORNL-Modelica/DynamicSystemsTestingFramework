@@ -153,7 +153,7 @@ The tool is a **regression testing** framework. "Does this signal match the stor
 
 **Companion references** — visual overlays, never scored.
 - External time-series data (experimental CSV, analytical solution output, vendor reference, digitized plot data).
-- Registered as metadata under `ReferenceResults/.../companions/ref_NNNN/<name>.json`, never in the test spec; two storage options — `external` (the metadata points at a path; tool loads best-effort on each run) or `frozen` (file copied in beside it; immutable).
+- Registered as metadata under `ReferenceResults/.../companions/ref_<code>/<name>.json`, never in the test spec; two storage options — `external` (the metadata points at a path; tool loads best-effort on each run) or `frozen` (file copied in beside it; immutable).
 - Load failures emit a warning on the test but do not affect pass/fail — graceful degradation.
 - MetricTree leaves cannot target companions (schema error). Companions are plot-only.
 - Commands: `companion add <test> <name> <path>` / `companion freeze <test> <name>`.

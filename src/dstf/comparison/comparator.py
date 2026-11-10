@@ -41,6 +41,7 @@ from ..storage.baseline import (
     ReferenceFile,
     StoredVariable,
 )
+from ..storage.names import baseline_code
 from ..storage.reference_store import ReferenceStore
 from .algorithms import same_instant
 from .registry import metric as registry_metric
@@ -96,7 +97,6 @@ def refused_base_tolerance(
     return TestComparison(
         model_id=test.model_id,
         passed=False,
-        test_id=reference.test_id if reference is not None else None,
         has_reference=reference is not None,
         error_message=base_tolerance_refused(_BASE_TOLERANCE_WHERE[source], value),
     )
@@ -654,13 +654,10 @@ def compare_test(
     from .modes import override_metric, resolve_mode
     from .tree_eval import collect_leaf_variables, evaluate_spec
 
-    ref_test_id = reference.test_id
-
     if not result.success:
         return TestComparison(
             model_id=test.model_id,
             passed=False,
-            test_id=ref_test_id,
             sim_success=False,
             error_message=result.error_message or "Simulation failed",
         )
@@ -685,7 +682,6 @@ def compare_test(
         return TestComparison(
             model_id=test.model_id,
             passed=True,
-            test_id=ref_test_id,
             variables=[],
             metric_tree=leaf,
             simulate_only=True,
@@ -700,7 +696,6 @@ def compare_test(
         return TestComparison(
             model_id=test.model_id,
             passed=False,
-            test_id=ref_test_id,
             error_message=nothing,
         )
 
@@ -733,7 +728,7 @@ def compare_test(
 
         var_results_by_name = {v.name: v for v in result.variables if v.name}
         # Load primary from the flat ref file; merge in soft_checks from the
-        # `soft_checks/ref_NNNN/` subdir when a store is supplied (D66). Leaves
+        # `soft_checks/ref_<code>/` subdir when a store is supplied (D66). Leaves
         # pick which baseline to score against via `leaf.against` (defaults
         # to primary). With no store there are no named baselines, so an
         # `against: <name>` leaf gets the missing-baseline sentinel.
@@ -773,7 +768,6 @@ def compare_test(
         return TestComparison(
             model_id=test.model_id,
             passed=tree.passed,
-            test_id=ref_test_id,
             variables=collect_leaf_variables(tree),
             warnings=structural_warnings + ([unscored] if unscored else []),
             metric_tree=tree,
@@ -950,7 +944,6 @@ def compare_test(
     return TestComparison(
         model_id=test.model_id,
         passed=tree.passed,
-        test_id=ref_test_id,
         variables=comparisons,
         warnings=structural_warnings,
         metric_tree=tree,
@@ -1138,7 +1131,6 @@ def _no_reference(model_id: str) -> ReferenceFile:
     nothing from it."""
     return ReferenceFile(
         model_id=model_id,
-        test_id=None,
         status=None,
         date_added=None,
         last_updated=None,
@@ -1190,7 +1182,54 @@ def compare_one(
             error_message=result.error_message or "Simulation failed",
         )
 
+    # The file named for this model is not its baseline: it holds another
+    # model (two ids share a code, or a hand copy) or a status that is none.
+    # The test is REFUSED with the sentence — the lookup says it and never
+    # raises, so a bad file fails its own test, not the run around it.
+    bad_file = store.refusal(test.model_id)
+    if bad_file is not None:
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            has_reference=False,
+            error_message=bad_file,
+        )
+
     reference = store.get_reference(test.model_id)
+    comp = _compared(
+        test,
+        result,
+        reference,
+        store,
+        default_tolerance,
+        default_points,
+        dataset_kind,
+    )
+    if reference is not None:
+        # The baseline it was scored against, named from ONE source: the
+        # code of the model id (`storage.names`), for a model whose file the
+        # store reads — never a number from inside the file, which an old
+        # file still holds. Its path beside it: one model has ONE name in
+        # every backend folder, so only the path tells the file this
+        # comparison read from another backend's (`compare --backend`).
+        ref_file = store.reference_file(test.model_id)
+        if ref_file is not None:
+            comp.test_id = baseline_code(test.model_id)
+            comp.baseline_path = str(ref_file)
+    return comp
+
+
+def _compared(
+    test: TestModel,
+    result: TestResult,
+    reference: ReferenceFile | None,
+    store: ReferenceStore,
+    default_tolerance: float,
+    default_points: bool,
+    dataset_kind: DatasetType,
+) -> TestComparison:
+    """`compare_one` past its short-circuits, against ``reference`` (the
+    store's, or None)."""
     if reference is not None:
         # A stored override nothing reads: this test is refused, with the
         # sentence naming its reference file. A command has stopped on it
@@ -1200,7 +1239,6 @@ def compare_one(
             return TestComparison(
                 model_id=test.model_id,
                 passed=False,
-                test_id=reference.test_id,
                 has_reference=True,
                 error_message=unread,
             )
@@ -1217,7 +1255,6 @@ def compare_one(
         return TestComparison(
             model_id=test.model_id,
             passed=False,
-            test_id=reference.test_id if reference is not None else None,
             has_reference=reference is not None,
             error_message=nothing,
         )
@@ -1227,7 +1264,6 @@ def compare_one(
         return TestComparison(
             model_id=test.model_id,
             passed=False,
-            test_id=reference.test_id if reference is not None else None,
             has_reference=reference is not None,
             error_message=broken,
         )

@@ -10,9 +10,9 @@ A run that scores prints a line per test and the totals, then, for each
 failed test, one block per criterion that did not pass:
 
 ```text
-  PASS  [0001] PythonTestingLib.Examples.ConstantCsv
-  PASS  [0003] PythonTestingLib.Examples.PointsCheck
-  FAIL  [0002] PythonTestingLib.Examples.SimpleRamp
+  PASS  PythonTestingLib.Examples.ConstantCsv
+  PASS  PythonTestingLib.Examples.PointsCheck
+  FAIL  PythonTestingLib.Examples.SimpleRamp
 
 Results: 2/3 passed
   Failed: 1
@@ -20,7 +20,7 @@ Results: 2/3 passed
 Failure Details:
 --------------------------------------------------------------------------------
 
-  [0002] PythonTestingLib.Examples.SimpleRamp
+  PythonTestingLib.Examples.SimpleRamp
     x: nrmse · against primary
       NRMSE 2.894e-02 vs tolerance 1.000e-02 → FAIL
       RMSE:               2.893959e-01 (range 1.0000e+01)
@@ -87,8 +87,9 @@ in `reports/`, so move or zip the `reports/` folder whole.
 Two files in the work directory are written for programs:
 
 - `verdicts.json` — written by every `run` and `compare` that scores. One
-  entry per test: its status word (`PASS`, `FAIL`, `SIM_FAIL`, `NO_REF`,
-  `NOT RUN`), a message where there is one, its warnings, and its criteria
+  entry per test: its model id, the baseline it was scored against
+  (`ref_id`: `ref_<code>`, or null), its status word (`PASS`, `FAIL`,
+  `SIM_FAIL`, `NO_REF`, `NOT RUN`), a message where there is one, its warnings, and its criteria
   tree with each node's verdict, score and tolerance. Beside them, the totals
   by status and the exit code they give.
 - `status.json` — what became of each SIMULATION: `passed` there means the

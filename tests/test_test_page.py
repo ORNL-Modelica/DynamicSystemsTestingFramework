@@ -596,7 +596,7 @@ async def test_the_test_header_is_a_second_row_of_the_shared_header(shell):
         assert isinstance(header, ui.header)
         assert header in list(_ancestors(_one(user, "wordmark")))
         assert _one(user, "status").text == "FAIL"
-        assert _one(user, "meta").text == "Python · ref_0001"
+        assert _one(user, "meta").text == "Python · ref_72dff21d8a3c"
         await _test_page(shell, user, B)
         assert _one(user, "meta").text == "Python · no baseline"
 
@@ -1852,7 +1852,7 @@ async def test_a_simulate_only_test_says_that_and_not_no_baseline(shell):
     entry["variables"] = []
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
     session.reload()
-    assert session.project.store.index.get_id(D) is not None  # it HAS one
+    assert session.project.store.index.file(D) is not None  # it HAS one
     assert session.comparisons[D].simulate_only
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user, D)
@@ -1881,7 +1881,7 @@ async def test_a_test_whose_scoring_raised_does_not_say_no_baseline(shell, monke
     with pytest.raises(RuntimeError):
         shell.session._reload_results()
     assert D not in shell.session.comparisons
-    assert shell.session.project.store.index.get_id(D) is not None
+    assert shell.session.project.store.index.file(D) is not None
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user, D)
         assert _one(user, "tree:summary").text == "nothing scored: scoring failed"
@@ -3361,7 +3361,7 @@ async def test_painting_the_header_never_loads_the_baseline(shell, monkeypatch):
         monkeypatch.setattr(shell.session.project.store, "get_reference", boom)
         with page.client:
             page.sync()
-        assert _one(user, "meta").text == "Python · ref_0001"
+        assert _one(user, "meta").text == "Python · ref_72dff21d8a3c"
 
 
 async def test_a_cancelled_forms_row_is_gone_from_the_page(shell):

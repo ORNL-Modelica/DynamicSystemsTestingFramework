@@ -45,7 +45,6 @@ def test_sampling_holds_the_four_fields():
 
 PRIMARY_SINGLE = """{
   "model_id": "Lib.M",
-  "test_id": "0007",
   "status": "active",
   "date_added": "2026-10-13T00:00:00+00:00",
   "last_updated": "2026-10-13T00:00:00+00:00",
@@ -213,3 +212,13 @@ def test_provenance_is_written_after_sampling_and_read_back():
     assert ref.baseline.provenance == prov
     keys = list(json.loads(codec.encode_reference(ref)))
     assert keys.index("provenance") == keys.index("sampling") + 1
+
+
+def test_an_old_files_number_is_read_by_nothing_and_not_written_back():
+    """A file accepted before baselines were named by code holds a
+    ``"test_id"``: the reader ignores it (old data, not old code) and the
+    writer, which never writes one, drops it on the next write."""
+    data = json.loads(PRIMARY_SINGLE)
+    old = {"model_id": data.pop("model_id"), "test_id": "0007", **data}
+    written = codec.encode_reference(codec.decode_reference(old))
+    assert written == PRIMARY_SINGLE

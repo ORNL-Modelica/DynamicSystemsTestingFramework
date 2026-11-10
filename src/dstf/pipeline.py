@@ -31,6 +31,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .storage.names import baseline_stem
+
 if TYPE_CHECKING:
     from .backends.base import Backend
     from .backends.pool import QueueItem, SimulationPool
@@ -67,16 +69,17 @@ class RunOutcome:
 
 
 def write_id_mapping(store: ReferenceStore, config: Config) -> None:
-    """Write a ref ID → model ID mapping file to the work directory."""
-    active = store.index.active_tests()
-    if not active:
+    """Write ``reference_manifest.json`` to the work directory: each
+    baseline's ``ref_<code>`` and its model id, in model-id order."""
+    models = store.list_models()
+    if not models:
         return
 
     work_dir = config.work_dir
     assert work_dir is not None  # resolved in Config.__post_init__
     mapping_path = work_dir / "reference_manifest.json"
     work_dir.mkdir(parents=True, exist_ok=True)
-    mapping = {f"ref_{tid}": active[tid] for tid in sorted(active)}
+    mapping = {baseline_stem(m): m for m in models}
     # LF on every platform, like every other JSON we write.
     mapping_path.write_text(
         json.dumps(mapping, indent=2) + "\n", encoding="utf-8", newline="\n"
@@ -106,7 +109,7 @@ def wipe_stale_state_for_scope(
 
     1. Per-test report dir at ``<work_dir>/reports/<report_dir>/``. Holds
        the ``comparison_data.json`` sidecar (read by the dashboard's
-       enricher) and ``interactive.html``. ``report_dir`` is ``ref_NNNN``
+       enricher) and ``interactive.html``. ``report_dir`` is ``ref_<code>``
        when a baseline exists for the model, else ``test_NNNN``.
 
     2. Per-test sim work dir at ``<work_dir>/<test_key>/``. Holds the
@@ -115,7 +118,7 @@ def wipe_stale_state_for_scope(
        prior sims and must not erase them.
 
     ``ref_id_map`` is the *backend's* map (a plain dict of model_id →
-    ``"ref_NNNN"``), pre-populated by the caller; not the store's index.
+    ``"ref_<code>"``), pre-populated by the caller; not the store's index.
 
     test_key for an in-scope test is read from the persistent
     ``batch_manifest.json``. Tests not yet in the manifest (first-time
@@ -237,13 +240,13 @@ def run_pipeline(
 
     write_id_mapping(store, config)
 
-    # Pre-populate model_id → "ref_NNNN" map so the live dashboard can link
+    # Pre-populate model_id → "ref_<code>" map so the live dashboard can link
     # to the correct per-test report directory (matches generate_report_suite
     # naming), and so the wipe below finds each test's report dir.
     for test in tests:
-        ref_id = store.index.get_id(test.model_id)
-        if ref_id:
-            backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
+        stem = store.index.stem(test.model_id)
+        if stem:
+            backend.ref_id_map[test.model_id] = stem
 
     # Clean each in-scope test's prior footprint before running. Without
     # this, a prior run's stale `comparison_data.json` sidecar could bleed
@@ -330,9 +333,9 @@ class ItemRun:
         """Key *test*, stamp it pending and clear what its last run left;
         returns its key."""
         config, backend = self.config, self.backend
-        ref_id = self.store.index.get_id(test.model_id)
-        if ref_id:
-            backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
+        stem = self.store.index.stem(test.model_id)
+        if stem:
+            backend.ref_id_map[test.model_id] = stem
         with self._manifest_lock:
             _, keyed = backend.key_tests([test])
         wipe_stale_state_for_scope(

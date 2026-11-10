@@ -49,13 +49,11 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import threading
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 
 from ..backends.types import raw_by_name, variable_name
-from ..storage.baseline import Baseline, ReferenceFile
+from ..storage.baseline import Baseline
 from ..storage.baseline_codec import read_reference, read_series
 
 logger = logging.getLogger(__name__)
@@ -171,123 +169,61 @@ def load_overlays(store, model_id: str, config=None) -> list[Overlay]:
     return overlays
 
 
-_INDEX_LOCK = threading.Lock()
-
-
-def index_args(config) -> tuple[str, str, str] | None:
-    """The three values the sibling index is keyed by, or None when the
-    config names no reference root."""
-    reference_root = getattr(config, "reference_root", None)
-    if reference_root is None:
-        return None
-    return (
-        str(reference_root),
-        getattr(config, "backend", None) or "",
-        getattr(config, "os_name", None) or "",
-    )
-
-
-def sibling_backend_index(reference_root: str, current_backend: str, current_os: str):
-    """The cached index, built under a lock: ``lru_cache`` does not
-    serialise concurrent first calls, and the authoring Session warms the
-    index on a thread while a click may ask for it."""
-    with _INDEX_LOCK:
-        return _sibling_backend_index(reference_root, current_backend, current_os)
-
-
-def warm_sibling_backend_index(config) -> None:
-    """Build the index for ``config`` now (the tool calls this right after
-    open, off the UI thread), so no click pays for it."""
-    args = index_args(config)
-    if args is not None:
-        sibling_backend_index(*args)
-
-
 def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
-    """Find peer-backend references for ``model_id`` and render them as overlays.
+    """Peer-backend references for ``model_id``, as overlays.
 
-    Scans ``<reference_root>/<backend>/<os>/`` directories, excluding the
-    current partition (``config.backend`` + ``config.os_name``),
-    for ``ref_*.json`` files whose ``model_id`` matches. Each match becomes
-    an :class:`Overlay` with ``role="companion"`` + ``kind="sibling-backend"``
-    and ``name`` like ``"Dymola/windows"``. Every failure mode
-    (missing root, unreadable ref, obsolete status) is silently skipped —
+    In every ``<reference_root>/<backend>/<os>/`` but the current one
+    (``config.backend`` + ``config.os_name``), the one file named for the
+    model (``ref_<code>.json``, :mod:`dstf.storage.names`) — computed, so no
+    folder is scanned: a sibling's name is the model's in every folder.
+    That file must hold ``model_id`` itself, else it is another model's (a
+    collision, a hand copy) and no overlay. Each match becomes an
+    :class:`Overlay` with ``role="companion"`` + ``kind="sibling-backend"``
+    and ``name`` like ``"Dymola/windows"``. Every failure mode (missing
+    root, unreadable file, a status that is none) is silently skipped —
     this path must never break a report.
     """
-    args = index_args(config) if config is not None else None
-    if args is None:
+    from ..storage.names import baseline_file
+    from ..storage.ref_index import STATUSES
+
+    reference_root = getattr(config, "reference_root", None) if config else None
+    if reference_root is None:
         return []
-    index = sibling_backend_index(*args)
-    matches = index.get(model_id, ())
-    overlays: list[Overlay] = []
-    for ref in matches:
-        ov_vars = _baseline_to_overlay_vars(ref.ref.baseline)
-        overlays.append(
-            Overlay(
-                name=f"{ref.backend}/{ref.os}",
-                role="companion",
-                kind="sibling-backend",
-                status="loaded" if ov_vars else "invalid",
-                note="" if ov_vars else "sibling ref has no variable trajectories",
-                variables=ov_vars,
-            )
-        )
-    return overlays
-
-
-@dataclass(frozen=True)
-class _SiblingRef:
-    backend: str
-    os: str
-    path: Path
-    ref: ReferenceFile
-
-
-@lru_cache(maxsize=8)
-def _sibling_backend_index(
-    reference_root: str,
-    current_backend: str,
-    current_os: str,
-) -> dict[str, tuple[_SiblingRef, ...]]:
-    """Build ``model_id -> (SiblingRef, ...)`` once per (root, current).
-
-    ``lru_cache`` is safe here because the file tree is read-only during
-    a report run. Any later accept-and-rerender invalidates the cache by
-    using fresh args only on the partition the user *isn't* excluding —
-    the sibling partitions it scans don't change mid-run.
-    """
-    index: dict[str, list[_SiblingRef]] = {}
     root = Path(reference_root)
-    if not root.exists():
-        return {}
+    if not root.is_dir():
+        return []
+    current = (getattr(config, "backend", None), getattr(config, "os_name", None))
+    name = baseline_file(model_id)
+    overlays: list[Overlay] = []
     for backend_dir in sorted(root.iterdir()):
         if not backend_dir.is_dir():
             continue
         for os_dir in sorted(backend_dir.iterdir()):
-            if not os_dir.is_dir():
+            # The current partition's file is the primary baseline, not
+            # an overlay.
+            if not os_dir.is_dir() or (backend_dir.name, os_dir.name) == current:
                 continue
-            # Skip the current partition — its refs are the primary
-            # baselines, not overlays.
-            if backend_dir.name == current_backend and os_dir.name == current_os:
+            ref_file = os_dir / name
+            if not ref_file.is_file():
                 continue
-            for ref_file in sorted(os_dir.glob("ref_*.json")):
-                try:
-                    ref = read_reference(ref_file)
-                except (json.JSONDecodeError, OSError):
-                    continue
-                if ref.active_status == "obsolete":
-                    continue
-                if not ref.model_id:
-                    continue
-                index.setdefault(ref.model_id, []).append(
-                    _SiblingRef(
-                        backend=backend_dir.name,
-                        os=os_dir.name,
-                        path=ref_file,
-                        ref=ref,
-                    )
+            try:
+                ref = read_reference(ref_file)
+            except (json.JSONDecodeError, OSError):
+                continue
+            if ref.model_id != model_id or ref.active_status not in STATUSES:
+                continue
+            ov_vars = _baseline_to_overlay_vars(ref.baseline)
+            overlays.append(
+                Overlay(
+                    name=f"{backend_dir.name}/{os_dir.name}",
+                    role="companion",
+                    kind="sibling-backend",
+                    status="loaded" if ov_vars else "invalid",
+                    note="" if ov_vars else "sibling ref has no variable trajectories",
+                    variables=ov_vars,
                 )
-    return {k: tuple(v) for k, v in index.items()}
+            )
+    return overlays
 
 
 # ---------------------------------------------------------------------------

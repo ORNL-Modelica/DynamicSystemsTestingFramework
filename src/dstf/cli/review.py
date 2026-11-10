@@ -117,13 +117,7 @@ def _interactive_review(
         if comp.warnings:
             warn = f" {YELLOW}[{len(comp.warnings)} warning(s)]{RESET}"
 
-        if comp.test_id:
-            id_tag = f"[{comp.test_id}] "
-        elif not comp.has_reference:
-            id_tag = "[new] "
-        else:
-            id_tag = ""
-        print(f"[{idx}/{n_total}] {BOLD}{id_tag}{model_id}{RESET}")
+        print(f"[{idx}/{n_total}] {BOLD}{model_id}{RESET}")
         print(f"  Status: {status}{warn}")
 
         # A refused test's reason is its whole finding: there is no failing
@@ -330,12 +324,7 @@ def _generate_and_open_plots(
     test_dir = config.work_dir / test_key if test_key else None
 
     # Resolve reference file path for clickable link in report
-    ref_file = None
-    test_id = store.index.get_id(model_id)
-    if test_id:
-        from ..storage.ref_index import RefIndex
-
-        ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
+    ref_file = store.reference_file(model_id)
 
     from ..backends import get_backend_class
 

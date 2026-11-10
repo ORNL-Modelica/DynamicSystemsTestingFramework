@@ -649,8 +649,8 @@ class Backend(ABC):
         self.config = config
         self.quiet: bool = False
         self.progress = None  # set to a ProgressReporter during run_tests()
-        # Optional model_id → "ref_NNNN" map for dashboard report links
-        # (set by CLI before run_tests if reference IDs are known)
+        # Optional model_id → "ref_<code>" map for dashboard report links
+        # (set by CLI before run_tests for each model with a baseline)
         self.ref_id_map: dict[str, str | None] = {}
 
     @classmethod

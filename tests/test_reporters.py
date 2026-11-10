@@ -730,13 +730,13 @@ class TestConsoleReport:
         assert comp.passed
         assert print_report([comp, _passing()]) == 0
         out = capsys.readouterr().out
-        assert "  PASS  [0001] Lib.Examples.T (2 advisory failures)\n" in out
+        assert "  PASS  Lib.Examples.T (2 advisory failures)\n" in out
         assert "  PASS  Lib.Examples.A\n" in out
         assert "Results: 2/2 passed\n  With advisory failures: 1\n" in out
         assert "Failure Details" not in out
         section = out.split("Advisory Failures (under `warn`: they fail no test):")[1]
         assert [ln for ln in section.splitlines() if ln.strip()][1:] == [
-            "  [0001] Lib.Examples.T",
+            "  Lib.Examples.T",
             "    advisory — x: nrmse · against primary",
             "      NRMSE 2.500e-03 vs tolerance 1.000e-09 → FAIL",
             "      RMSE:               5.000000e-03 (range 2.0000e+00)",
@@ -775,7 +775,7 @@ class TestConsoleReport:
         }
         assert print_report([_scored(tree)]) == 1
         out = capsys.readouterr().out
-        assert "  FAIL  [0001] Lib.Examples.T\n" in out
+        assert "  FAIL  Lib.Examples.T\n" in out
         assert "advisory failure" not in out and "Advisory Failures" not in out
         assert out.count("advisory — x: range") == 1
 

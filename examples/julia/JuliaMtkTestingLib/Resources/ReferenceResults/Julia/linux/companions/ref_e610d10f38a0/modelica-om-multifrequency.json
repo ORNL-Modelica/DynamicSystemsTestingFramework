@@ -1,0 +1,8 @@
+{
+  "kind": "external",
+  "format": "json",
+  "path": "../../../../../../modelica/ModelicaTestingLib/Resources/ReferenceResults/OpenModelica/linux/ref_699af4ea7055.json",
+  "variables": {
+    "y": "unitTests.x[1]"
+  }
+}

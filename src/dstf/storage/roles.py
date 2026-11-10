@@ -1,9 +1,9 @@
 """Soft_check and companion storage — the two non-primary baseline roles (D66).
 
 Both roles hang off a model's primary ref file: soft_checks in
-``<ref_dir>/soft_checks/ref_NNNN/<name>.json`` (scored via ``against:``, but
+``<ref_dir>/soft_checks/ref_<code>/<name>.json`` (scored via ``against:``, but
 the validator forces ``warn`` wrapping so they never hard-fail) and companions
-in ``<ref_dir>/companions/ref_NNNN/<name>.{json,csv}`` (plot-only overlays,
+in ``<ref_dir>/companions/ref_<code>/<name>.{json,csv}`` (plot-only overlays,
 never scored against; the metadata records which of the companion's own
 variables draw on which of the test's).
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 # review 2026-07-06 (finding 35): soft_check/companion names are interpolated
-# into file paths (``soft_checks/ref_NNNN/<name>.json``) — an unvalidated name
+# into file paths (``soft_checks/ref_<code>/<name>.json``) — an unvalidated name
 # containing a separator or ".." writes outside the role dir and becomes
 # invisible to list/remove/``against``. Windows-illegal characters are also
 # rejected because reference partitions are shared across OSes.
@@ -57,7 +57,7 @@ def _validate_role_name(name: str, role: str) -> None:
 
 
 def _ref_stem(ref_file: Path) -> str:
-    """Extract ``ref_NNNN`` stem from ``<ref_dir>/ref_NNNN.json``."""
+    """Extract ``ref_<code>`` stem from ``<ref_dir>/ref_<code>.json``."""
     return ref_file.stem
 
 
@@ -174,7 +174,7 @@ class _RolesMixin:
     supplies, and they are the mixin's only coupling to it.
     """
 
-    #: The partition directory holding ``ref_NNNN.json`` — set by the store.
+    #: The partition directory holding ``ref_<code>.json`` — set by the store.
     ref_dir: Path
 
     def _ref_file_for_model(self, model_id: str) -> Path | None:

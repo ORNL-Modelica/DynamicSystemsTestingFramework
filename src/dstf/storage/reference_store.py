@@ -1,13 +1,14 @@
-"""JSON file-based storage for reference results with stable numeric test IDs.
+"""JSON file-based storage for reference results, one file per model.
 
-Reference files (ref_NNNN.json) are the source of truth. Each file contains
-model_id, test_id, status, date_added, and last_updated metadata. An in-memory
-index is built by scanning ref files — no persistent manifest file needed
-(:mod:`dstf.storage.ref_index`).
+Reference files are the source of truth. A model's file is
+``ref_<code>.json``, named from its model id (:mod:`dstf.storage.names`), and
+holds model_id, status, date_added and last_updated beside the baseline; the
+folder is read through :class:`~dstf.storage.ref_index.RefIndex`, with no
+manifest beside it.
 
 Every file is read and written by :mod:`dstf.storage.baseline_codec`; this
 store hands out :class:`~dstf.storage.baseline.ReferenceFile`s. Additional
-named baselines are separate files under ``soft_checks/ref_NNNN/<name>.json``
+named baselines are separate files under ``soft_checks/ref_<code>/<name>.json``
 (D66); that CRUD lives in :mod:`dstf.storage.roles`.
 """
 
@@ -15,7 +16,6 @@ import csv
 import io
 import json
 import logging
-import shutil
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,7 +43,7 @@ from .baseline_codec import (
     write_reference,
 )
 from .ref_index import RefIndex, _atomic_write_text
-from .roles import _companion_dir, _RolesMixin, _soft_check_dir
+from .roles import _RolesMixin
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +75,14 @@ class ReferenceStore(_RolesMixin):
         self.ref_dir.mkdir(parents=True, exist_ok=True)
 
     def _ref_file_for_model(self, model_id: str) -> Path | None:
-        """Get the reference file path for a model. Returns None if not indexed."""
-        test_id = self._index.get_id(model_id)
-        if test_id is None:
-            return None
-        return self.ref_dir / RefIndex.ref_filename(test_id)
+        """The model's baseline file, or None when it has none this store
+        reads (`RefIndex.file`)."""
+        return self._index.file(model_id)
+
+    def refusal(self, model_id: str) -> str | None:
+        """Why the file named for ``model_id`` is refused as its baseline,
+        or None (`RefIndex.refusal`): the test is refused with it."""
+        return self._index.refusal(model_id)
 
     def reference_file(self, model_id: str) -> Path | None:
         """The file a model's baseline is read from — what an error about
@@ -112,8 +115,9 @@ class ReferenceStore(_RolesMixin):
         store a baseline without saying where it came from.
 
         Raises :class:`ValueError` when the trajectory contains non-finite
-        values or no rows at all — callers that accept in bulk should catch
-        it per test.
+        values or no rows at all, or the file named for the model is refused
+        (`RefIndex.refusal`) — callers that accept in bulk should catch it
+        per test.
         """
         if not result.success or not result.variables:
             return False
@@ -145,11 +149,19 @@ class ReferenceStore(_RolesMixin):
                     f"'{var.name or var.index}' contains non-finite values (NaN/Inf)"
                 )
 
+        # The file named for this model cannot be read, holds another
+        # model, or a status that is none: refused, the file untouched. A ValueError, so an
+        # accept skips the test with the sentence its comparison fails with.
+        refused = self._index.refusal(test.model_id)
+        if refused is not None:
+            raise ValueError(refused)
+
         self._ensure_dir()
 
-        test_id = self._index.register(test.model_id)
-        filename = RefIndex.ref_filename(test_id)
-        ref_file = self.ref_dir / filename
+        # The model's own name, computed — nothing is allocated or claimed.
+        # Two processes accepting one model write one name, and the atomic
+        # replace below makes the last one win whole.
+        ref_file = self._index.path_for(test.model_id)
 
         # Check if this is a new file or an update
         existing: ReferenceFile | None = None
@@ -279,7 +291,6 @@ class ReferenceStore(_RolesMixin):
 
         ref = ReferenceFile(
             model_id=test.model_id,
-            test_id=test_id,
             status="active",
             date_added=date_added,
             last_updated=now,
@@ -297,9 +308,9 @@ class ReferenceStore(_RolesMixin):
         )
 
         # review 2026-07-06 (finding 31): atomic — a Ctrl-C mid-accept must
-        # not corrupt the baseline (a corrupt file is silently dropped by the
-        # next scan and its ID re-allocated to a different model).
+        # not corrupt the baseline (a corrupt file is skipped by every read).
         write_reference(ref_file, ref)
+        self._index.written(test.model_id)
 
         return True
 
@@ -354,7 +365,7 @@ class ReferenceStore(_RolesMixin):
         return stored, skipped, simulate_only
 
     def list_models(self) -> list[str]:
-        """List all model IDs with stored references (excluding obsolete)."""
+        """Every model with a baseline this store reads, sorted."""
         return sorted(self._index.active_tests().values())
 
     def export_json(self, output_path: Path):
@@ -379,7 +390,7 @@ class ReferenceStore(_RolesMixin):
         writer = csv.writer(buf)
         writer.writerow(
             [
-                "test_id",
+                "file",
                 "model_id",
                 "status",
                 "n_vars",
@@ -392,11 +403,12 @@ class ReferenceStore(_RolesMixin):
         )
         for model_id in models:
             ref = self.get_reference(model_id)
-            if ref is not None:
+            ref_file = self.reference_file(model_id)
+            if ref is not None and ref_file is not None:
                 sim = ref.baseline.simulation
                 writer.writerow(
                     [
-                        ref.test_id or "",
+                        ref_file.name,
                         model_id,
                         ref.active_status,
                         len(ref.baseline.variables),
@@ -410,49 +422,6 @@ class ReferenceStore(_RolesMixin):
         # review 2026-07-06 (finding 31): atomic like every other export —
         # an interrupted write must not leave a truncated summary behind.
         _atomic_write_text(output_path, buf.getvalue(), newline="")
-
-    def list_obsolete(self) -> list[tuple[str, str, Path]]:
-        """``(test_id, model_id, ref_file)`` for every obsolete reference that
-        still has a file on disk.
-
-        The listing half of :meth:`cleanup_obsolete`, so ``manifest cleanup``
-        can show what it would delete before it deletes anything (dry-run is
-        the default for every destructive path).
-        """
-        out = []
-        for test_id, entry in self._index.all_tests().items():
-            if entry.get("status") != "obsolete":
-                continue
-            ref_file = self.ref_dir / RefIndex.ref_filename(test_id)
-            if ref_file.exists():
-                out.append((test_id, entry.get("model_id", ""), ref_file))
-        return sorted(out)
-
-    def cleanup_obsolete(self) -> int:
-        """Remove reference files with status 'obsolete'."""
-        all_tests = self._index.all_tests()
-        removed = 0
-        for test_id, entry in all_tests.items():
-            if entry.get("status") == "obsolete":
-                ref_file = self.ref_dir / RefIndex.ref_filename(test_id)
-                if ref_file.exists():
-                    ref_file.unlink()
-                    removed += 1
-                    logger.info("Removed obsolete reference: %s", ref_file.name)
-                # review 2026-07-06 (finding 32): also remove the deleted
-                # ref's soft_checks/ and companions/ dirs — a later reuse of
-                # this ID must not inherit another model's role data.
-                for role_dir in (
-                    _soft_check_dir(self.ref_dir, ref_file),
-                    _companion_dir(self.ref_dir, ref_file),
-                ):
-                    if role_dir.is_dir():
-                        shutil.rmtree(role_dir, ignore_errors=True)
-                        # Said only of a folder that is gone: one the
-                        # removal could not delete is still there.
-                        if not role_dir.exists():
-                            logger.info("Removed orphaned role dir: %s", role_dir)
-        return removed
 
 
 def _downsample(

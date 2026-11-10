@@ -18,6 +18,30 @@ this file says when they do.
 
 ### Changed
 
+- **A baseline's file is named from its model, not numbered.** `ref_0001.json`
+  becomes `ref_<code>.json`, the code the first 12 hex digits of the SHA-256 of
+  the model id (`MyLib.HeatExchanger` → `ref_ac8d62fff049.json`), the same name
+  in every `<Backend>/<os>/` folder; its `soft_checks/` and `companions/`
+  folders and its report page (`reports/ref_<code>/`) are named the same way.
+  A baseline no longer holds `"test_id"`, and `.id_high_water.json` is gone. A
+  reference folder that still holds numbered files is refused (`… holds
+  baselines under the old numbered names (ref_0001.json, …) — convert them with
+  scripts/convert_baseline_names.py, see CHANGELOG`, exit 2): see
+  [How to convert your baseline names](#how-to-convert-your-baseline-names).
+  The `obsolete` status is gone: a baseline is removed by deleting its file,
+  and a file still marked `obsolete` fails its test (`status "obsolete" is not
+  a status — delete the file to remove a baseline`). The console no longer
+  tags a test `[0001]` or `[new]`; `verdicts.json` names each test's baseline
+  in `ref_id` (`ref_<code>`, or null) where it held `test_id`; `dstf baseline
+  export --format csv` writes a `file` column where it wrote `test_id`; a
+  test's page loses its Test ID row; `dstf manifest show` lists each baseline's
+  file, status and model in model-id order, without `--show-obsolete`, and its
+  `Active` count counts `active` baselines only (it counted the skipped ones
+  too); and
+  `dstf manifest cleanup` does one job, the work directory's — what
+  `--orphans` did, plus the report pages no test is reported under — and
+  `--orphans` is gone. For a plug-in, `ReferenceFile.test_id` is gone and
+  `TestComparison.test_id` holds the code.
 - **A variable name has one spelling, and a name `variables` lists must be in
   the result.** An array index is written without spaces: Dymola's
   `T[1, 2]` is OpenModelica's `T[1,2]`, read that way from every result file,
@@ -83,6 +107,43 @@ this file says when they do.
   the time axis's title "Time" was drawn inside the spectrum panel. The gap
   between the two panels now holds it.
 
+### How to convert your baseline names
+
+A reference folder of numbered baselines is refused until it is converted.
+The conversion renames each file to its model's code, deletes its `"test_id"`
+line and nothing else, renames its `soft_checks/` and `companions/` folders,
+rewrites a companion's path to another library's baseline, and deletes
+`.id_high_water.json`.
+
+1. Get the script from the DSTF repository:
+   [`scripts/convert_baseline_names.py`](https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/scripts/convert_baseline_names.py).
+   It needs only Python 3.10 or later, not DSTF.
+2. See what it would do, over the reference root and every other root whose
+   companions point into it, all in one run:
+
+   ```console
+   $ python convert_baseline_names.py --dry-run <reference_root> [<other_root> ...]
+   ```
+
+   It checks everything before it writes anything, and writes nothing at all
+   when it refuses.
+3. If it refuses a folder because two files hold one model (`<model> is held
+   by ref_0011.json, ref_0326.json -- name the one to keep with --keep`),
+   choose the one to keep and name it, relative to its root:
+   `--keep <Backend>/<os>/ref_NNNN.json`. The other is deleted, with its
+   `soft_checks/` and `companions/` folders.
+4. Run it again without `--dry-run` (and with the same `--keep`), on a
+   committed tree, so the renames show in `git status`. A second run says
+   `nothing to do`.
+5. In each work directory, once, remove the report pages kept under the old
+   names. `--work-dir` names the directory; it can be left out only for the
+   default, `testing_output/<library>/<backend>/<os>/` under the current
+   directory:
+
+   ```console
+   $ dstf --config testing.json manifest cleanup --backend <backend> --work-dir <work_dir> --apply
+   ```
+
 ### How to convert a library to the one spelling
 
 Nothing has to change for a library's tests to run: every reader takes both
@@ -93,7 +154,7 @@ spellings. To make the files say what the program now writes:
    `diagnostic_variables`, the keys of `comparison.variable_overrides`, each
    criterion's `variable` and `plots`. Saving the spec from `dstf author` or
    `dstf spec update` does the same.
-2. In each stored baseline (`<reference_root>/<Backend>/<os>/ref_NNNN.json`),
+2. In each stored baseline (`<reference_root>/<Backend>/<os>/ref_<code>.json`),
    do the same to the `name` of each entry of `variables` and `diagnostics`,
    and to the keys of `comparison.variable_overrides`. The next accept of a
    test rewrites its baseline that way; an `expression` stays as it is.

@@ -45,6 +45,10 @@ def _make_test_result(model_id="Lib.Test1"):
     )
 
 
+#: Lib.Test1's role folders' name: ``sha256sum`` of the model id, a literal.
+STEM = "ref_489430e35458"
+
+
 @pytest.fixture
 def store_with_primary(sample_models_dir, tmp_path):
     """A ReferenceStore with one test's primary baseline already stored."""
@@ -79,7 +83,7 @@ class TestSoftCheckStorage:
         assert ok is True
 
         # Disk layout: soft_checks/ref_NNNN/<name>.json
-        sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "experiment.json"
+        sc_file = store.ref_dir / "soft_checks" / STEM / "experiment.json"
         assert sc_file.exists()
         data = json.loads(sc_file.read_text())
         assert data["time"] == [0.0, 1.0, 2.0]
@@ -108,7 +112,7 @@ class TestSoftCheckStorage:
                 ],
             ),
         )
-        sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "imported.json"
+        sc_file = store.ref_dir / "soft_checks" / STEM / "imported.json"
         written = json.loads(sc_file.read_text())["variables"]
         assert [list(entry) for entry in written] == [
             ["index", "name", "expression", "values"],
@@ -139,7 +143,7 @@ class TestSoftCheckStorage:
             test.model_id,
             series("odd-order", time=[0.0, 1.0], variables=[entry]),
         )
-        sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "odd-order.json"
+        sc_file = store.ref_dir / "soft_checks" / STEM / "odd-order.json"
         (written,) = json.loads(sc_file.read_text())["variables"]
         assert list(written) == ["index", "name", "expression", "values"]
         # Values as well as key order: the caller's entry may be a live
@@ -168,7 +172,7 @@ class TestSoftCheckStorage:
                 ],
             ),
         )
-        sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "nulled.json"
+        sc_file = store.ref_dir / "soft_checks" / STEM / "nulled.json"
         (written,) = json.loads(sc_file.read_text())["variables"]
         assert written["expression"] == ""
 
@@ -233,7 +237,7 @@ class TestSoftCheckStorage:
                 ),
             )
         store.remove_soft_check(test.model_id, "a")
-        assert (store.ref_dir / "soft_checks" / "ref_0001").is_dir()
+        assert (store.ref_dir / "soft_checks" / STEM).is_dir()
         store.remove_soft_check(test.model_id, "b")
         assert list((store.ref_dir / "soft_checks").iterdir()) == []
 
@@ -341,10 +345,10 @@ class TestCompanionStorage:
         )
         assert ok is True
 
-        meta_file = store.ref_dir / "companions" / "ref_0001" / "rig.json"
+        meta_file = store.ref_dir / "companions" / STEM / "rig.json"
         assert meta_file.exists()
         # No data copied for external kind
-        data_file = store.ref_dir / "companions" / "ref_0001" / "rig.csv"
+        data_file = store.ref_dir / "companions" / STEM / "rig.csv"
         assert not data_file.exists()
 
         companions = store.get_companions(test.model_id)
@@ -375,7 +379,7 @@ class TestCompanionStorage:
 
         assert store.freeze_companion(test.model_id, "rig") is True
 
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / STEM
         assert (co_dir / "rig.csv").exists()
         assert (co_dir / "rig.csv").read_text() == "time,value\n0,0\n1,1\n"
 
@@ -440,7 +444,7 @@ class TestCompanionStorage:
 
         assert store.freeze_companion(test.model_id, "analytical") is True
 
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / STEM
         assert json.loads((co_dir / "analytical.data.json").read_text()) == payload
 
         companions = store.get_companions(test.model_id)
@@ -468,7 +472,7 @@ class TestCompanionStorage:
         store.add_companion(test.model_id, "analytical", path=src)
         store.freeze_companion(test.model_id, "analytical")
 
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / STEM
         assert (co_dir / "rig.csv").read_text() == "time,value\n0,0\n"
         assert set(store.get_companions(test.model_id)) == {"rig", "analytical"}
 
@@ -482,7 +486,7 @@ class TestCompanionStorage:
             test.model_id, "rig", path=external, variables={"x": "sensor_a"}
         )
         meta = json.loads(
-            (store.ref_dir / "companions" / "ref_0001" / "rig.json").read_text()
+            (store.ref_dir / "companions" / STEM / "rig.json").read_text()
         )
         assert meta["variables"] == {"x": "sensor_a"}
         assert store.get_companions(test.model_id)["rig"].variables == {"x": "sensor_a"}
@@ -497,7 +501,7 @@ class TestCompanionStorage:
         external.write_text("time,h\n0,0\n", encoding="utf-8")
         store.add_companion(test.model_id, "rig", path=external)
         meta = json.loads(
-            (store.ref_dir / "companions" / "ref_0001" / "rig.json").read_text()
+            (store.ref_dir / "companions" / STEM / "rig.json").read_text()
         )
         assert meta["variables"] == {}
         assert store.get_companions(test.model_id)["rig"].variables == {}
@@ -510,7 +514,7 @@ class TestCompanionStorage:
         store, test = store_with_primary
         external = tmp_path / "rig.csv"
         external.write_text("time,h\n0,0\n", encoding="utf-8")
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / STEM
         co_dir.mkdir(parents=True)
         (co_dir / "rig.json").write_text(
             json.dumps({"kind": "external", "format": "csv", "path": str(external)}),
@@ -568,7 +572,7 @@ class TestCompanionStorage:
         src = tmp_path / "blk.csv"
         src.write_text("t\n0\n")
         store.add_companion(test.model_id, "blk", path=src)
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / STEM
         (co_dir / "blk.csv").mkdir()  # the copy cannot land
         with pytest.raises(IsADirectoryError):
             store.freeze_companion(test.model_id, "blk")
@@ -581,7 +585,7 @@ class TestCompanionStorage:
         store.add_companion(test.model_id, "rig", src, provenance={"who": "me"})
         store.freeze_companion(test.model_id, "rig")
         meta = json.loads(
-            (store.ref_dir / "companions" / "ref_0001" / "rig.json").read_text()
+            (store.ref_dir / "companions" / STEM / "rig.json").read_text()
         )
         assert meta["kind"] == "frozen"
         assert meta["provenance"] == {"who": "me"}
@@ -594,7 +598,7 @@ class TestCompanionStorage:
         store.freeze_companion(test.model_id, "c1")
 
         assert store.remove_companion(test.model_id, "c1") is True
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / STEM
         # Parent dir cleaned up after last entry removed
         assert not co_dir.exists()
 
@@ -618,7 +622,7 @@ class TestCompanionStorage:
         src = tmp_path / "rig.csv"
         src.write_text("t\n0\n")
         store.add_companion(test.model_id, "keep", src)  # makes the folder
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / STEM
         (co_dir / "hand.json").write_text(
             json.dumps(
                 {
@@ -697,7 +701,7 @@ class TestReadingAMalformedVariableMap:
             ),
             encoding="utf-8",
         )
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / STEM
         co_dir.mkdir(parents=True)
         (co_dir / "rig.json").write_text(
             json.dumps(
@@ -1283,3 +1287,50 @@ def test_discover_names_each_test_whose_tree_is_wrong_in_its_file(tmp_path, caps
         "baseline is scored: a soft check sits under a 'warn', and a companion "
         "is only drawn."
     ]
+
+
+@pytest.mark.parametrize("group", ["companion", "soft-check"])
+def test_a_list_over_every_model_is_in_model_order(
+    store_with_primary, tmp_path, capsys, group
+):
+    """Codes sort Lib.B (452b…), Lib.Test1 (4894…), Lib.A (6e18…); the list
+    reads in model-id order, as numbers once ordered it."""
+    from dstf.cli import main
+
+    store, test = store_with_primary
+    rig = tmp_path / "rig.csv"
+    rig.write_text("time,x\n0,0\n1,1\n", encoding="utf-8")
+    for model_id in ("Lib.B", "Lib.A"):
+        store.store_reference(
+            _make_test_model(model_id),
+            _make_test_result(model_id),
+            provenance=PROVENANCE,
+        )
+    for model_id in ("Lib.B", test.model_id, "Lib.A"):
+        if group == "companion":
+            store.add_companion(model_id, "rig", rig)
+        else:
+            store.add_soft_check(
+                model_id,
+                series(
+                    "om",
+                    time=[0.0, 1.0],
+                    variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+                ),
+            )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--source-path",
+                str(store.config.source_path),
+                "--reference-root",
+                str(store.config.reference_root),
+                group,
+                "list",
+            ]
+        )
+        == 0
+    )
+    headers = [ln for ln in capsys.readouterr().out.splitlines() if ln.endswith(":")]
+    assert headers == ["Lib.A:", "Lib.B:", "Lib.Test1:"]

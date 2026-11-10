@@ -1235,6 +1235,39 @@ def test_the_table_fits_1280_and_shows_edits_at_900(tmp_path, playwright_browser
             proc.wait(10)
 
 
+#: Whether a row's cell text is cut at the cell's edge.
+CELL_CUT = """([id, col]) => {
+  const cell = document.querySelector(`.ag-row[row-id='${id}'] .ag-cell[col-id='${col}']`);
+  const text = cell.querySelector('.ag-cell-value') || cell;
+  return text.scrollWidth > text.clientWidth
+    || text.getBoundingClientRect().right > cell.getBoundingClientRect().right;
+}"""
+
+
+def test_the_reference_column_shows_a_baselines_whole_name(
+    tmp_path, playwright_browser
+):
+    """Switched on from the chooser, Reference reads A's baseline name,
+    `ref_` and 12 hex digits, whole: at the 90 px every column had it was
+    cut to `ref_72df…`."""
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        page.get_by_role("button", name="Choose columns").click()
+        menu = page.locator("#dstf-colmenu")
+        menu.locator("label", has_text="Reference").locator("input").check()
+        page.keyboard.press("Escape")
+        cell = page.locator(f".ag-row[row-id='{A}'] .ag-cell[col-id='ref']")
+        expect(cell).to_have_text("ref_72dff21d8a3c", timeout=EXPECT_TIMEOUT)
+        assert page.evaluate(CELL_CUT, [A, "ref"]) is False
+        _keep(page, tmp_path, "suite-reference-column")
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 #: An id as long as TRANSFORM's longest (149 characters, no space to wrap at).
 LONGEST_ID = (
     "TRANSFORM.HeatAndMassTransfer.DiscritizedModels.ClassicalMethod.Examples."

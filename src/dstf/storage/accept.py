@@ -19,7 +19,6 @@ from ..config import Config
 from ..discovery.test_registry import TestModel, diagnostic_names
 from .baseline import ReferenceFile
 from .batch_manifest import BatchManifest, unfinished_run_models
-from .ref_index import RefIndex
 from .reference_store import ReferenceStore
 from .run_stats import read_run_stats
 
@@ -33,10 +32,9 @@ def large_baseline_warning(store: ReferenceStore, model_id: str) -> str | None:
     `LARGE_BASELINE_BYTES`, else ``None``. A warning: the baseline IS stored.
     The size is the file's, and its counts are read back from it — only for
     a file that is over, so an accept of small baselines reads nothing."""
-    test_id = store.index.get_id(model_id)
-    if test_id is None:
+    ref_file = store.reference_file(model_id)
+    if ref_file is None:
         return None
-    ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
     try:
         size = ref_file.stat().st_size
     except OSError:
@@ -99,8 +97,8 @@ def lost_variables_warnings(
     ``the test no longer tracks it`` — that half read ``the accepted result
     does not hold it`` too, of a result file that held it."""
     model_id = test.model_id
-    test_id = store.index.get_id(model_id)
-    if test_id is None:
+    ref_file = store.reference_file(model_id)
+    if ref_file is None:
         return []
     holds = set(_variable_names(store.get_reference(model_id)))
     lost = [name for name in held_before if name and name not in holds]
@@ -115,7 +113,7 @@ def lost_variables_warnings(
 
     def said(names: list[str], why: str) -> str:
         return (
-            f"{RefIndex.ref_filename(test_id)} ({model_id}) no longer holds "
+            f"{ref_file.name} ({model_id}) no longer holds "
             f"{_named(names)} — {why} {'it' if len(names) == 1 else 'them'}."
         )
 
@@ -128,16 +126,20 @@ def lost_variables_warnings(
 def accept_refusal(
     store: ReferenceStore, test: TestModel, result: TestResult | None
 ) -> str | None:
-    """Why the comparison REFUSES ``test`` — its base tolerance is no
-    number, its result holds nothing it tracks or lacks a name it lists, or
-    its tree is wrong in its file — or ``None``: the comparison's own
-    decisions (`refused_base_tolerance`, `nothing_scored`, `missing_names`,
+    """Why the comparison REFUSES ``test`` — the file named for it is not
+    its baseline, its base tolerance is no number, its result holds nothing
+    it tracks or lacks a name it lists, or its tree is wrong in its file —
+    or ``None``: the comparison's own decisions (`ReferenceStore.refusal`,
+    `refused_base_tolerance`, `nothing_scored`, `missing_names`,
     `broken_roles`), asked of
     the test and its stored reference as ``compare_one`` asks them, in its
     order. A test with no successful result is not refused: it has its own
     reason."""
     if result is None or not result.success:
         return None
+    bad_file = store.refusal(test.model_id)
+    if bad_file is not None:
+        return bad_file
     refused = refused_base_tolerance(
         test, store.get_reference(test.model_id), store.config.tolerance
     )

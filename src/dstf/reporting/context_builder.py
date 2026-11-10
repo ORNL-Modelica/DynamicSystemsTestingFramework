@@ -260,13 +260,12 @@ def _build_ref_info(
     ref_file: Path | None,
 ) -> list:
     """Build the test-metadata rows shown in the report's "Reference Info"
-    section: test_id / status / dates / reference-file link / test-dir link
+    section: status / dates / reference-file link / test-dir link
     / how many criteria scored the run / how many variables the baseline
     stores.
     """
     ref_info = []
     meta_fields = [
-        ("Test ID", ref_data.test_id if ref_data else None),
         ("Status", ref_data.active_status if ref_data else None),
         ("Date Added", ref_data.date_added if ref_data else None),
         ("Last Updated", ref_data.last_updated if ref_data else None),
@@ -275,12 +274,11 @@ def _build_ref_info(
         if ref_val:
             ref_info.append({"label": label, "value": _format_value(ref_val)})
 
-    if ref_data and ref_data.test_id:
-        from ..storage.ref_index import RefIndex
-
-        ref_filename = RefIndex.ref_filename(ref_data.test_id)
-        row = {"label": "Reference File", "value": ref_filename}
-        if ref_file and ref_file.exists():
+    # The file's own name: the store's lookup computed it (ref_<code>.json),
+    # and nothing read from inside the file names it.
+    if ref_data and ref_file is not None:
+        row = {"label": "Reference File", "value": ref_file.name}
+        if ref_file.exists():
             row["link"] = ref_file.resolve().as_uri()
         ref_info.append(row)
 

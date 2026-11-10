@@ -38,6 +38,7 @@ from ..backends.common.result_variables import run_timing
 from ..backends.progress import read_status
 from ..backends.types import TestResult
 from ..comparison.types import TestComparison
+from ..storage.names import baseline_stem
 from .rows import (
     COLUMNS,
     FILTER_HINTS,
@@ -331,9 +332,11 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     The ref_id is the comparison's when it names one — ``compare --backend
     <other>`` on another backend's work dir scores against a baseline the
     report_dir and the sidecar do not name. The sidecar's reference link
-    survives only when its ref_id is the comparison's: otherwise it opens
-    the other baseline. A comparison with no stored baseline names none,
-    and the row keeps whatever it had.
+    survives only when it is the very FILE the comparison read, compared by
+    path: a model's baseline has one name in every backend folder, so a
+    matching ref_id can still open the other backend's baseline. A
+    comparison with no stored baseline names none, and the row keeps
+    whatever it had.
 
     The Message is the run's (status.json's ``detail``) — but for a test
     the comparison refused, whose reason is the one thing to read of it.
@@ -344,8 +347,15 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     summary = summary_fields(comp)
     ref_id, ref_file = row.ref_id, row.ref_file
     if comp.test_id:
-        ref_id = f"ref_{comp.test_id}"
-        if ref_id != row.ref_id:
+        ref_id = baseline_stem(comp.model_id)
+        # The row's link survives only when it IS the file this comparison
+        # read, by path: a model's baseline has one name in every backend
+        # folder, so after `compare --backend <other>` the names agree and
+        # a name check kept a link to the other backend's file.
+        if (
+            comp.baseline_path is None
+            or Path(comp.baseline_path).as_uri() != row.ref_file
+        ):
             ref_file = None
     return replace(
         row,
@@ -365,7 +375,7 @@ def _manifest_rows(work_dir: Path) -> dict[str, tuple[TestRow, float | None]]:
     """``{model_id: (row, last_run_at)}`` for every test
     ``batch_manifest.json`` keys, in its order: the work-dir key and the
     baseline the run named, and the report dir a run gives such a row
-    (``ref_NNNN``, else the key); beside it the wall clock that test's last
+    (``ref_<code>``, else the key); beside it the wall clock that test's last
     run started at (``assign_test_keys`` stamps ``last_run_at`` then, with
     the clock a sidecar's ``written_at`` uses), ``None`` when the entry
     holds no number. Read as data — never quarantined, as
@@ -468,11 +478,13 @@ def build_dashboard_context(
         before = row
         comp = by_model.get(row.model_id)
         # Where this test's report page may be. The suite writes it under
-        # the baseline it was compared against (``ref_NNNN``), else under
+        # the baseline it was compared against (``ref_<code>``), else under
         # its test key — a failed simulation's too. The name its RUN gave
         # it is a guess made before either was known: a test accepted
         # since has a baseline its run did not name.
-        compared = f"ref_{comp.test_id}" if comp is not None and comp.test_id else None
+        compared = (
+            baseline_stem(comp.model_id) if comp is not None and comp.test_id else None
+        )
         places = dict.fromkeys(d for d in (compared, row.report_dir, row.test_key) if d)
         for place in places if mode == "final" else ():
             sidecar = _read_comparison_sidecar(work_dir, place)

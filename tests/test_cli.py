@@ -246,6 +246,23 @@ def test_every_header_counts_the_tests_under_review(monkeypatch, tmp_path, capsy
     ]
 
 
+def test_a_header_starts_with_the_model_id(monkeypatch, tmp_path, capsys):
+    """No `[<code>]` before a test with a baseline, no `[new]` before one
+    without: the model id is the name a person reads (owner, 2026-11-10)."""
+    comps = [
+        TestComparison("L.A", passed=False, test_id="0da1bdf4cf2f"),
+        TestComparison("L.B", passed=False, has_reference=False),
+    ]
+    config, store = _review_env(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+    _interactive_review([], {}, comps, store, config)
+    out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
+    assert re.findall(r"^\[\d+/\d+\] .*$", out, flags=re.M) == [
+        "[1/2] L.A",
+        "[2/2] L.B",
+    ]
+
+
 def _scored_by(tree: dict) -> TestComparison:
     """A real comparison of one variable, `x`, off its baseline by 0.005
     (nrmse 2.5e-3), scored by `tree`."""
@@ -1762,7 +1779,7 @@ class TestInteractiveReviewExitCode:
         assert "  Simulate-only, nothing to store: Lib.S\n" in out
         assert "Not accepted" not in out
         assert "Done. Accepted 0, skipped 1." in out
-        assert store.index.get_id("Lib.S") is None
+        assert store.index.file("Lib.S") is None
         assert rc == 0
 
 
@@ -2208,82 +2225,7 @@ def test_malformed_metrics_block_is_a_config_error(tmp_path, capsys):
 # --- 3. dry-run is the universal destructive default ---------------------
 
 
-def _obsolete_ref(tmp_path):
-    """A reference root holding one obsolete ref_NNNN.json."""
-    from dstf.config import detect_os as _detect_os
-
-    ref_dir = tmp_path / "refs" / "Dymola" / _detect_os()
-    ref_dir.mkdir(parents=True)
-    (ref_dir / "ref_0001.json").write_text(
-        json.dumps(
-            {
-                "test_id": 1,
-                "model_id": "FakeLib.Gone",
-                "status": "obsolete",
-                "time": [0.0, 1.0],
-                "variables": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    return ref_dir / "ref_0001.json"
-
-
-def test_manifest_cleanup_is_a_dry_run_by_default(tmp_path, capsys):
-    """`manifest cleanup` deleted obsolete reference files on sight while
-    `--orphans` dry-ran. Unified: nothing is removed without --apply."""
-    lib = _fake_library(tmp_path)
-    ref_file = _obsolete_ref(tmp_path)
-    rc = main(
-        [
-            "--source-path",
-            str(lib),
-            "--reference-root",
-            str(tmp_path / "refs"),
-            "manifest",
-            "cleanup",
-        ]
-    )
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "Dry run" in out
-    assert "ref_0001.json" in out
-    assert ref_file.exists(), "dry run must not delete anything"
-
-
-def test_manifest_cleanup_apply_removes(tmp_path, capsys):
-    lib = _fake_library(tmp_path)
-    ref_file = _obsolete_ref(tmp_path)
-    rc = main(
-        [
-            "--source-path",
-            str(lib),
-            "--reference-root",
-            str(tmp_path / "refs"),
-            "manifest",
-            "cleanup",
-            "--apply",
-        ]
-    )
-    assert rc == 0
-    assert "Removed 1 obsolete reference files." in capsys.readouterr().out
-    assert not ref_file.exists()
-
-
-def test_manifest_cleanup_with_nothing_to_do(tmp_path, capsys):
-    lib = _fake_library(tmp_path)
-    rc = main(
-        [
-            "--source-path",
-            str(lib),
-            "--reference-root",
-            str(tmp_path / "refs"),
-            "manifest",
-            "cleanup",
-        ]
-    )
-    assert rc == 0
-    assert "No obsolete references" in capsys.readouterr().out
+# (tests/test_manifest_cleanup.py: a dry run lists, and removes nothing)
 
 
 # --- 4. --parallel disambiguation ----------------------------------------
@@ -2449,12 +2391,9 @@ def test_id_mapping_written_with_lf(tmp_path, monkeypatch):
         os.linesep — so pin the argument at the call site instead.
     """
 
-    class _Index:
-        def active_tests(self):
-            return {"0001": "Lib.A"}
-
     class _Store:
-        index = _Index()
+        def list_models(self):
+            return ["Lib.A"]
 
     class _Config:
         work_dir = tmp_path / "work"
@@ -2600,8 +2539,9 @@ class TestTheThreeReportsAreIndependent:
 
         # the verdict table, always
         lines = out.splitlines()
-        assert [ln for ln in lines if ln.endswith(_T1)] == [f"  PASS  [0001] {_T1}"]
-        assert [ln for ln in lines if ln.endswith(_T2)][0] == f"  FAIL  [0002] {_T2}"
+        # A verdict line starts with the model id: no tag before it.
+        assert [ln for ln in lines if ln.endswith(_T1)] == [f"  PASS  {_T1}"]
+        assert [ln for ln in lines if ln.endswith(_T2)][0] == f"  FAIL  {_T2}"
         assert "Results: 1/2 passed" in lines
         assert "Failure Details:" in lines
 
@@ -2888,8 +2828,38 @@ def test_compare_reads_backend_path_for_a_backend_built_from_its_executable(
 
 _ORPHAN_NOTE = (
     "Note: 1 orphan manifest entries (models no longer in discovery). "
-    "Run 'manifest cleanup --orphans' to list/prune."
+    "Run 'manifest cleanup' to list/prune."
 )
+
+
+def test_manifest_show_lists_each_file_in_model_id_order(run_env, capsys):
+    """Each baseline by its file, status and model, sorted by model id (the
+    files' own order is by code); no id column, no obsolete count."""
+    ref_dir = run_env.ref_root / FAKE / detect_os()
+    ref_dir.mkdir(parents=True)
+    for name, model, status in [
+        ("ref_2fea06fb17ef.json", "Lib.Cherry", "active"),
+        ("ref_882df898287f.json", "Lib.Apple", "active"),
+        ("ref_e33c83ca7b0e.json", "Lib.Banana", "skip"),
+    ]:
+        (ref_dir / name).write_text(
+            json.dumps({"model_id": model, "status": status}), encoding="utf-8"
+        )
+    capsys.readouterr()
+    assert main(["--config", str(run_env.config_dir), "manifest", "show"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        f"References: {ref_dir}",
+        "Active: 2  Skip: 1",
+        "",
+        "File                   Status      Model ID",
+        "-" * 90,
+        "ref_882df898287f.json  active      Lib.Apple",
+        "ref_e33c83ca7b0e.json  skip        Lib.Banana",
+        "ref_2fea06fb17ef.json  active      Lib.Cherry",
+        "",
+        "Skipped:",
+        "ref_e33c83ca7b0e.json  Lib.Banana",
+    ]
 
 
 def _with_an_orphan(env):
@@ -2989,7 +2959,9 @@ def test_the_id_mapping_is_written_by_a_command_that_runs_nothing(run_env, comma
         ["--config", str(run_env.config_dir), *argv]
         + ["--work-dir", str(run_env.work_dir), "--no-browser"]
     )
-    assert json.loads(mapping.read_text(encoding="utf-8")) == {"ref_0001": "Lib.T1"}
+    assert json.loads(mapping.read_text(encoding="utf-8")) == {
+        "ref_0da1bdf4cf2f": "Lib.T1"
+    }
 
 
 def test_the_live_page_is_there_when_the_tab_opens_on_it(run_env, monkeypatch):

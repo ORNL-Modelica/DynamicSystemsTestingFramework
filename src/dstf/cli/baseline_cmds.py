@@ -160,12 +160,12 @@ def cmd_companion_list(args: argparse.Namespace) -> int:
         _print_companions(companions)
         return 0
     total = 0
-    for _tid, entry in sorted(store.index.all_tests().items()):
-        if entry["status"] == "obsolete":
-            continue
-        companions = store.get_companions(entry["model_id"])
+    # In model-id order: a baseline's name is a code, whose order means
+    # nothing to a reader.
+    for model_id in store.list_models():
+        companions = store.get_companions(model_id)
         if companions:
-            print(f"{entry['model_id']}:")
+            print(f"{model_id}:")
             _print_companions(companions)
             total += len(companions)
     if total == 0:
@@ -221,12 +221,12 @@ def cmd_soft_check_list(args: argparse.Namespace) -> int:
         _print_soft_checks(checks)
         return 0
     total = 0
-    for _tid, entry in sorted(store.index.all_tests().items()):
-        if entry["status"] == "obsolete":
-            continue
-        checks = store.get_soft_checks(entry["model_id"])
+    # In model-id order: a baseline's name is a code, whose order means
+    # nothing to a reader.
+    for model_id in store.list_models():
+        checks = store.get_soft_checks(model_id)
         if checks:
-            print(f"{entry['model_id']}:")
+            print(f"{model_id}:")
             _print_soft_checks(checks)
             total += len(checks)
     if total == 0:
@@ -248,7 +248,7 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     """Store another regression system's primary as a soft_check (D66).
 
     Reads a reference-shape JSON from ``source`` (same schema a
-    ``ref_NNNN.json`` file uses at its top level) and stores it under
+    ``ref_<code>.json`` file uses at its top level) and stores it under
     the local model's soft_checks with the given name.
     """
     import dataclasses

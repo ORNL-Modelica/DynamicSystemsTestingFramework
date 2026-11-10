@@ -27,28 +27,28 @@ def _file(store: ReferenceStore, model_id: str) -> dict:
     return json.loads(store.reference_file(model_id).read_text(encoding="utf-8"))
 
 
-def _set_status(store: ReferenceStore, model_id: str, status: str) -> None:
-    """Rewrite a reference file's ``status`` by hand (no writer of the
-    package does) and refresh the store's index."""
-    ref_file = store.reference_file(model_id)
-    data = json.loads(ref_file.read_text(encoding="utf-8"))
-    data["status"] = status
-    ref_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    store.index._loaded = False
-
-
 # ---------------------------------------------------------------------------
 # RefIndex (in-memory index built from ref files)
 # ---------------------------------------------------------------------------
 
 
+#: Models and the codes of their files, LITERALS (``sha256sum`` over the id):
+#: a test that placed a file by the function under test would follow it.
+T1, T2, T3 = "MyLib.Test1", "MyLib.Test2", "MyLib.Test3"
+CODE = {
+    T1: "772e48f118ed",
+    T2: "4dfc8a0300c3",
+    T3: "52aff1e9704e",
+    "MyLib.Old": "c90c603220d1",
+}
+
+
 class TestRefIndex:
-    def _write_ref(self, ref_dir, test_id, model_id, status="active"):
-        """Helper to write a minimal ref file."""
+    def _write_ref(self, ref_dir, model_id, status="active", *, name=None):
+        """Helper to write a minimal ref file under its model's name."""
         ref_dir.mkdir(parents=True, exist_ok=True)
         data = {
             "model_id": model_id,
-            "test_id": test_id,
             "status": status,
             "date_added": "2026-01-01T00:00:00+00:00",
             "last_updated": "2026-01-01T00:00:00+00:00",
@@ -56,7 +56,7 @@ class TestRefIndex:
             "time": [],
             "variables": [],
         }
-        path = ref_dir / f"ref_{test_id}.json"
+        path = ref_dir / (name or f"ref_{CODE[model_id]}.json")
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def test_scan_nonexistent_dir(self, tmp_path):
@@ -65,42 +65,32 @@ class TestRefIndex:
         assert index.active_tests() == {}
 
     def test_scan_finds_refs(self, tmp_path):
-        """Scanning finds ref files and builds the index."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1")
-        self._write_ref(tmp_path, "0002", "MyLib.Test2")
+        """A listing reads every file named for the model it holds."""
+        self._write_ref(tmp_path, T1)
+        self._write_ref(tmp_path, T2)
         index = RefIndex(tmp_path)
-        active = index.active_tests()
-        assert len(active) == 2
-        assert active["0001"] == "MyLib.Test1"
-        assert active["0002"] == "MyLib.Test2"
+        assert index.active_tests() == {"772e48f118ed": T1, "4dfc8a0300c3": T2}
 
-    def test_get_id(self, tmp_path):
-        """Look up ID by model_id."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1")
+    def test_a_lookup_opens_the_models_file(self, tmp_path):
+        self._write_ref(tmp_path, T1)
         index = RefIndex(tmp_path)
-        assert index.get_id("MyLib.Test1") == "0001"
-        assert index.get_id("NonExistent") is None
-
-    def test_get_model_id(self, tmp_path):
-        """Look up model_id by ID."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1")
-        index = RefIndex(tmp_path)
-        assert index.get_model_id("0001") == "MyLib.Test1"
-        assert index.get_model_id("9999") is None
+        assert index.file(T1) == tmp_path / "ref_772e48f118ed.json"
+        assert index.stem(T1) == "ref_772e48f118ed"
+        assert (index.file(T2), index.stem(T2)) == (None, None)
 
     def test_obsolete_excluded_from_active(self, tmp_path):
-        """Obsolete tests are excluded from active_tests."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1")
-        self._write_ref(tmp_path, "0002", "MyLib.Test2", status="obsolete")
+        """A status that is none is listed by all_tests, read by no lookup."""
+        self._write_ref(tmp_path, T1)
+        self._write_ref(tmp_path, T2, status="obsolete")
         index = RefIndex(tmp_path)
-        active = index.active_tests()
-        assert len(active) == 1
-        assert "0001" in active
+        assert index.active_tests() == {"772e48f118ed": T1}
+        assert index.file(T2) is None
 
     def test_a_file_without_status_is_listed_active(self, tmp_path):
         """A reference file written before ``status`` existed — no key at
         all, its variables without ``expression`` — is an active baseline:
-        listed, and found by its model."""
+        listed, and found by its model. An old ``test_id`` key in it is
+        read by nothing."""
         old = {
             "model_id": "MyLib.Old",
             "test_id": "0001",
@@ -110,100 +100,48 @@ class TestRefIndex:
             "time": [0.0, 1.0],
             "variables": [{"index": 1, "name": "x", "values": [0.0, 1.0]}],
         }
-        (tmp_path / "ref_0001.json").write_text(json.dumps(old), encoding="utf-8")
+        (tmp_path / "ref_c90c603220d1.json").write_text(
+            json.dumps(old), encoding="utf-8"
+        )
         index = RefIndex(tmp_path)
-        assert index.active_tests() == {"0001": "MyLib.Old"}
-        assert index.get_id("MyLib.Old") == "0001"
-
-    def test_obsolete_excluded_from_get_model_id(self, tmp_path):
-        """Obsolete tests return None from get_model_id."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1", status="obsolete")
-        index = RefIndex(tmp_path)
-        assert index.get_model_id("0001") is None
-
-    def test_next_id_increments(self, tmp_path):
-        """Next ID is one more than the highest existing."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1")
-        self._write_ref(tmp_path, "0003", "MyLib.Test3")
-        index = RefIndex(tmp_path)
-        assert index.next_id() == "0004"
-
-    def test_next_id_includes_obsolete(self, tmp_path):
-        """Next ID counts obsolete IDs (never reuse)."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1")
-        self._write_ref(tmp_path, "0002", "MyLib.Test2", status="obsolete")
-        index = RefIndex(tmp_path)
-        assert index.next_id() == "0003"
-
-    def test_register_new(self, tmp_path):
-        """Register a new model returns next ID."""
-        index = RefIndex(tmp_path)
-        test_id = index.register("MyLib.Test1")
-        assert test_id == "0001"
-
-    def test_register_idempotent(self, tmp_path):
-        """Registering the same model twice returns the same ID."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1")
-        index = RefIndex(tmp_path)
-        assert index.register("MyLib.Test1") == "0001"
-
-    def test_a_register_colliding_with_another_writers_claim_for_it_returns_that(
-        self, tmp_path
-    ):
-        self._write_ref(tmp_path, "0001", "A")
-        index = RefIndex(tmp_path)
-        index.ensure_loaded()
-        self._write_ref(tmp_path, "0002", "C")  # another process, after the load
-        assert index.register("C") == "0002"
-        assert sorted(p.name for p in tmp_path.glob("ref_*.json")) == [
-            "ref_0001.json",
-            "ref_0002.json",
-        ]
-
-    def test_a_register_colliding_with_another_model_moves_to_the_next_id(
-        self, tmp_path
-    ):
-        self._write_ref(tmp_path, "0001", "A")
-        index = RefIndex(tmp_path)
-        index.ensure_loaded()
-        self._write_ref(tmp_path, "0002", "X")
-        assert index.register("C") == "0003"
-        assert (tmp_path / "ref_0003.json").exists()
-
-    def test_the_rescan_after_a_collision_forgets_a_file_that_is_gone(self, tmp_path):
-        self._write_ref(tmp_path, "0001", "A")
-        index = RefIndex(tmp_path)
-        index.ensure_loaded()
-        (tmp_path / "ref_0001.json").unlink()  # another process's edits
-        self._write_ref(tmp_path, "0002", "X")
-        assert index.register("C") == "0003"
-        assert index.get_id("A") is None
-        assert index.get_model_id("0001") is None
-        assert index.active_tests() == {"0002": "X", "0003": "C"}
+        assert index.active_tests() == {"c90c603220d1": "MyLib.Old"}
+        assert index.stem("MyLib.Old") == "ref_c90c603220d1"
 
     def test_an_index_is_read_once_over_a_missing_directory_too(self, tmp_path):
-        """Loaded on first use, as over a directory that exists: a file
+        """Read on first use, as over a directory that exists: a file
         another writer adds later is not seen by this index."""
         ref_dir = tmp_path / "refs"
         index = RefIndex(ref_dir)
-        assert index.get_id("A") is None
-        self._write_ref(ref_dir, "0001", "A")
-        assert index.get_id("A") is None
-        assert index.next_id() == "0001"
+        assert index.file(T1) is None
+        self._write_ref(ref_dir, T1)
+        assert index.file(T1) is None
+        assert RefIndex(ref_dir).file(T1) == ref_dir / "ref_772e48f118ed.json"
 
     def test_all_tests_includes_all_statuses(self, tmp_path):
-        """all_tests() returns everything including obsolete and skip."""
-        self._write_ref(tmp_path, "0001", "MyLib.Test1")
-        self._write_ref(tmp_path, "0002", "MyLib.Test2", status="obsolete")
-        self._write_ref(tmp_path, "0003", "MyLib.Test3", status="skip")
+        """all_tests() returns every named file, obsolete and skip included."""
+        self._write_ref(tmp_path, T1)
+        self._write_ref(tmp_path, T2, status="obsolete")
+        self._write_ref(tmp_path, T3, status="skip")
         index = RefIndex(tmp_path)
-        all_t = index.all_tests()
-        assert len(all_t) == 3
+        assert {c: e["status"] for c, e in index.all_tests().items()} == {
+            "772e48f118ed": "active",
+            "4dfc8a0300c3": "obsolete",
+            "52aff1e9704e": "skip",
+        }
 
-    def test_ref_filename(self):
-        """Static method generates correct filename."""
-        assert RefIndex.ref_filename("0001") == "ref_0001.json"
-        assert RefIndex.ref_filename("0042") == "ref_0042.json"
+    def test_a_file_named_for_another_model_is_in_no_listing(self, tmp_path):
+        """T1's baseline copied under T2's name: listed by neither, and
+        T2's lookup refuses the file."""
+        self._write_ref(tmp_path, T1, name="ref_4dfc8a0300c3.json")
+        index = RefIndex(tmp_path)
+        assert index.all_tests() == {}
+        assert index.file(T1) is None
+        assert index.file(T2) is None
+        assert index.refusal(T2) == (
+            "ref_4dfc8a0300c3.json holds the baseline of MyLib.Test1, not of "
+            "MyLib.Test2 — two model ids share its code, or the file was copied "
+            "by hand"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -509,50 +447,6 @@ class TestReferenceStore:
             f"{test.model_id}: variable 'x' contains non-finite values (NaN/Inf)"
         ]
 
-    def test_cleanup_tolerates_a_role_folder_it_cannot_delete(
-        self, sample_models_dir, tmp_path, caplog
-    ):
-        """...and does not say it removed it."""
-        import os
-
-        store = ReferenceStore(
-            Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        )
-        test = self._make_test_model()
-        store.store_reference(test, self._make_test_result(), provenance=PROVENANCE)
-        _set_status(store, test.model_id, "obsolete")
-        locked = store.ref_dir / "soft_checks" / "ref_0001" / "locked"
-        locked.mkdir(parents=True)
-        (locked / "k.json").write_text("{}", encoding="utf-8")
-        os.chmod(locked, 0o555)
-        try:
-            with caplog.at_level(logging.INFO, logger="dstf"):
-                assert store.cleanup_obsolete() == 1
-        finally:
-            os.chmod(locked, 0o755)
-        assert not (store.ref_dir / "ref_0001.json").exists()
-        assert locked.is_dir()
-        assert not any("role dir" in r.getMessage() for r in caplog.records)
-
-    def test_cleanup_obsolete(self, sample_models_dir, tmp_path):
-        """cleanup_obsolete removes files with obsolete status."""
-        config = Config(
-            source_path=sample_models_dir,
-            reference_root=tmp_path / "refs",
-        )
-        store = ReferenceStore(config)
-        test = self._make_test_model()
-        result = self._make_test_result()
-
-        store.store_reference(test, result, provenance=PROVENANCE)
-        _set_status(store, test.model_id, "obsolete")
-
-        removed = store.cleanup_obsolete()
-        assert removed == 1
-
-        ref_files = list(config.reference_dir.glob("ref_*.json"))
-        assert len(ref_files) == 0
-
     def test_number_of_intervals_auto_derived(self, sample_models_dir, tmp_path):
         """numberOfIntervals is derived from result when not explicitly set."""
         config = Config(
@@ -608,7 +502,7 @@ class TestReferenceStore:
         keys = list(data.keys())
 
         assert keys.index("model_id") < keys.index("time")
-        assert keys.index("test_id") < keys.index("variables")
+        assert "test_id" not in keys
         assert keys.index("status") < keys.index("time")
         assert keys.index("date_added") < keys.index("time")
 
@@ -732,7 +626,7 @@ class TestBaselineView:
         store.store_reference(
             test, TestReferenceStore()._make_test_result(), provenance=PROVENANCE
         )
-        ref_file = store.ref_dir / "ref_0001.json"
+        ref_file = store.reference_file(test.model_id)
         data = json.loads(ref_file.read_text(encoding="utf-8"))
         data["baselines"] = {
             "experiment": {
@@ -768,8 +662,12 @@ class TestExports:
 
         with out.open(encoding="utf-8", newline="") as f:
             rows = list(csv.reader(f))
-        assert rows[0][0] == "test_id"
-        assert rows[1][:3] == ["0001", "ModelicaTestingLib.Examples.Test1", "active"]
+        assert rows[0][0] == "file"
+        assert rows[1][:3] == [
+            "ref_c6161898c511.json",
+            "ModelicaTestingLib.Examples.Test1",
+            "active",
+        ]
         stored = _file(store, "ModelicaTestingLib.Examples.Test1")
         when = dict(zip(rows[0], rows[1]))
         assert (when["date_added"], when["last_updated"]) == (
@@ -848,20 +746,14 @@ class TestLineEndings:
 #   exceed the budget, the events are evenly thinned but the endpoints stay.
 # * Every reference-store JSON write is atomic (tmp file in the same
 #   directory + replace) — an interrupted write must not corrupt a baseline.
-# * New IDs are claimed by exclusive file creation, so a stale in-memory
-#   index or a concurrent ``--accept`` in another process cannot allocate
-#   the same ID and silently overwrite another model's baseline.
-# * ``cleanup_obsolete`` also removes the deleted ref's orphaned
-#   ``soft_checks/ref_NNNN/`` and ``companions/ref_NNNN/`` directories, so
-#   a later reuse of the ID cannot inherit another model's role data.
+# * A baseline is written under its model's own name, so two stores over one
+#   folder (two ``--accept`` processes) cannot overwrite each other's model.
 # * ``add_companion`` resolves relative paths against the CWD, stores the
 #   absolute path, and rejects missing files at registration time. The
 #   overlay loader keeps ref_dir-relative resolution as a legacy fallback.
 # * soft_check / companion names must be filename-safe — path separators,
 #   ``..``, and Windows-illegal characters are rejected everywhere a name
 #   reaches the filesystem.
-# * Duplicate active ``model_id`` across ref files: the scan warns naming
-#   both files and deterministically keeps the lowest-numbered one.
 # =========================================================================
 
 
@@ -1090,19 +982,18 @@ class TestAtomicWrites:
 # ---------------------------------------------------------------------------
 
 
-class TestIdAllocation:
-    def test_stale_index_cannot_clobber_another_models_baseline(
+class TestTwoWriters:
+    def test_two_stores_over_one_folder_write_each_models_own_file(
         self, sample_models_dir, tmp_path
     ):
-        """Two stores over the same partition (simulating two --accept
-        processes): the second, holding a stale empty index, must not
-        reuse ID 0001 and overwrite the first model's baseline."""
+        """Two stores over the same partition (two --accept processes), each
+        read while it was empty: each writes its own model's name, and
+        neither touches the other's."""
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store1 = ReferenceStore(config)
         store2 = ReferenceStore(config)
-        # Force both indexes to load while the partition is empty.
-        assert store1.index.get_id("Lib.A") is None
-        assert store2.index.get_id("Lib.B") is None
+        store1.index.ensure_loaded()
+        store2.index.ensure_loaded()
 
         store1.store_reference(
             _mk_model("Lib.A"), _mk_result("Lib.A"), provenance=PROVENANCE
@@ -1111,154 +1002,37 @@ class TestIdAllocation:
             _mk_model("Lib.B"), _mk_result("Lib.B"), provenance=PROVENANCE
         )
 
-        fresh = ReferenceStore(config)
-        ref_a = fresh.get_reference("Lib.A")
-        ref_b = fresh.get_reference("Lib.B")
-        assert ref_a is not None and ref_a.model_id == "Lib.A"
-        assert ref_b is not None and ref_b.model_id == "Lib.B"
-        assert ref_a.test_id != ref_b.test_id
+        held = {
+            p.name: json.loads(p.read_text(encoding="utf-8"))["model_id"]
+            for p in config.reference_dir.iterdir()
+        }
+        assert held == {
+            "ref_6e187be76792.json": "Lib.A",
+            "ref_452b135a045c.json": "Lib.B",
+        }
 
-    def test_register_skips_id_taken_on_disk_but_missing_from_index(self, tmp_path):
-        """An unindexed (e.g. mid-write, unreadable) ref file still blocks
-        its ID from being handed out."""
-        tmp_path.mkdir(exist_ok=True)
-        (tmp_path / "ref_0001.json").write_text("not json", encoding="utf-8")
-        index = RefIndex(tmp_path)
-        assert index.register("Lib.New") != "0001"
-
-    def test_cleanup_obsolete_removes_orphaned_role_dirs(
-        self, store_with_primary, tmp_path, caplog
+    def test_a_store_over_an_unreadable_file_under_the_models_name_is_refused(
+        self, sample_models_dir, tmp_path
     ):
-        """Deleting an obsolete ref must also delete its soft_checks/ and
-        companions/ dirs so a reused ID cannot inherit them."""
-        store, test = store_with_primary
-        store.add_soft_check(
-            test.model_id,
-            series(
-                "experiment",
-                time=[0.0, 1.0],
-                variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
-            ),
-        )
-        ext = tmp_path / "rig.csv"
-        ext.write_text("time,x\n0,1\n", encoding="utf-8")
-        store.add_companion(test.model_id, "rig", path=ext)
-        store.freeze_companion(test.model_id, "rig")
-
-        sc_dir = store.ref_dir / "soft_checks" / "ref_0001"
-        co_dir = store.ref_dir / "companions" / "ref_0001"
-        assert sc_dir.is_dir() and co_dir.is_dir()
-
-        _set_status(store, test.model_id, "obsolete")
-        with caplog.at_level(logging.INFO, logger="dstf"):
-            assert store.cleanup_obsolete() == 1
-        assert not sc_dir.exists()
-        assert not co_dir.exists()
-        assert [
-            r.getMessage() for r in caplog.records if "role dir" in r.getMessage()
-        ] == [
-            f"Removed orphaned role dir: {sc_dir}",
-            f"Removed orphaned role dir: {co_dir}",
-        ]
-
-
-class TestIdHighWaterMark:
-    """IDs are never reused, even after the highest ref file is deleted.
-
-    ``next_id()`` scanning alone hands a freed ID to a different model, and
-    external artifacts keyed on ref_NNNN (report dirs, notes) then point at
-    the wrong test. A per-partition high-water dot-file closes the gap.
-    """
-
-    def test_id_freed_by_cleanup_is_not_reused(self, sample_models_dir, tmp_path):
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        """A file cut short at the model's own name (a Ctrl-C mid-write by a
+        writer before the atomic one, a hand edit): what it held cannot be
+        told, so the write refuses it, as it refuses a file of another
+        model, and leaves it as it is."""
         store = _mk_store(sample_models_dir, tmp_path)
-        store.store_reference(
-            _mk_model("Lib.A"), _mk_result("Lib.A"), provenance=PROVENANCE
+        store.ref_dir.mkdir(parents=True)
+        path = store.ref_dir / "ref_6e187be76792.json"
+        path.write_text("{not js", encoding="utf-8")
+
+        with pytest.raises(ValueError) as caught:
+            store.store_reference(
+                _mk_model("Lib.A"), _mk_result("Lib.A"), provenance=PROVENANCE
+            )
+
+        assert str(caught.value) == (
+            "ref_6e187be76792.json cannot be read (not JSON at line 1, "
+            "column 2) — fix or delete it"
         )
-        store.store_reference(
-            _mk_model("Lib.B"), _mk_result("Lib.B"), provenance=PROVENANCE
-        )
-        assert store.get_reference("Lib.B").test_id == "0002"
-
-        _set_status(store, "Lib.B", "obsolete")
-        assert store.cleanup_obsolete() == 1
-
-        # Fresh process, fresh scan: 0002 is gone from disk but still spent.
-        fresh = ReferenceStore(config)
-        fresh.store_reference(
-            _mk_model("Lib.C"), _mk_result("Lib.C"), provenance=PROVENANCE
-        )
-        assert fresh.get_reference("Lib.C").test_id == "0003"
-
-    def test_high_water_file_is_not_indexed_as_a_ref(self, tmp_path):
-        index = RefIndex(tmp_path)
-        index.register("Lib.A")
-        assert (tmp_path / ".id_high_water.json").exists()
-        assert list(RefIndex(tmp_path).all_tests()) == ["0001"]
-
-    def test_scan_only_fallback_when_no_high_water_file(self, tmp_path):
-        """Partitions written before the mark existed keep allocating from
-        the scan — old data, not old code."""
-        (tmp_path / "ref_0007.json").write_text(
-            json.dumps({"model_id": "Lib.Old", "test_id": "0007", "status": "active"}),
-            encoding="utf-8",
-        )
-        assert not (tmp_path / ".id_high_water.json").exists()
-        assert RefIndex(tmp_path).register("Lib.New") == "0008"
-
-    def test_corrupt_high_water_file_falls_back_to_scan(self, tmp_path):
-        """An unreadable mark must degrade to scan-only allocation, never
-        crash an accept or hand out a low ID."""
-        (tmp_path / "ref_0007.json").write_text(
-            json.dumps({"model_id": "Lib.Old", "test_id": "0007", "status": "active"}),
-            encoding="utf-8",
-        )
-        (tmp_path / ".id_high_water.json").write_text("{not json", encoding="utf-8")
-        assert RefIndex(tmp_path).register("Lib.New") == "0008"
-
-    def test_mark_write_failure_warns_but_never_fails_the_accept(
-        self, tmp_path, monkeypatch, caplog
-    ):
-        """Losing the mark costs only the never-reused guarantee for the
-        partition — the register itself must still succeed."""
-        import logging
-
-        import dstf.storage.ref_index as ri
-
-        real = ri._atomic_write_text
-
-        def _flaky(path, text, **kwargs):
-            if path.name == ".id_high_water.json":
-                raise OSError("disk says no")
-            return real(path, text, **kwargs)
-
-        monkeypatch.setattr(ri, "_atomic_write_text", _flaky)
-        with caplog.at_level(logging.WARNING):
-            assert RefIndex(tmp_path).register("Lib.A") == "0001"
-        assert any("high-water" in r.message for r in caplog.records)
-        assert not (tmp_path / ".id_high_water.json").exists()
-
-    def test_concurrent_bump_cannot_regress_the_mark(self, tmp_path):
-        """A slower writer with a lower ID must not clobber a concurrent
-        higher claim (A5 review finding 1). The competitor's O_EXCL-claimed
-        ref file is on disk before any bump it makes, so folding the disk
-        scan into the written value makes last-writer-wins harmless — even
-        when the competitor's own mark write is then overwritten."""
-        index = RefIndex(tmp_path)
-        # Competitor process: claimed ref_0006 (file on disk). Its own mark
-        # write is about to be clobbered by ours — the worst interleaving,
-        # represented here by the mark file simply not being there yet.
-        (tmp_path / "ref_0006.json").write_text(
-            json.dumps(
-                {"model_id": "Lib.Other", "test_id": "0006", "status": "active"}
-            ),
-            encoding="utf-8",
-        )
-        # Our bump for the lower id 0005 lands last: it must fold the disk
-        # scan and write 6, not 5 — a stored-mark-only max writes 5 here.
-        index._bump_high_water("0005")
-        assert index._read_high_water() == 6
+        assert path.read_bytes() == b"{not js"
 
 
 # ---------------------------------------------------------------------------
@@ -1304,7 +1078,7 @@ class TestCompanionPathResolution:
         """Pre-fix metadata stored relative paths verbatim; the loader keeps
         ref_dir-relative resolution as a fallback for those entries."""
         store, test = store_with_primary
-        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir = store.ref_dir / "companions" / "ref_489430e35458"
         co_dir.mkdir(parents=True, exist_ok=True)
         (co_dir / "legacy.json").write_text(
             json.dumps(
@@ -1417,44 +1191,6 @@ class TestRoleNameValidation:
             ),
         )
         assert ok is True
-
-
-# ---------------------------------------------------------------------------
-# Finding 36 — duplicate model_id on scan: lowest ID wins, loudly
-# ---------------------------------------------------------------------------
-
-
-class TestDuplicateModelIdScan:
-    def _write_ref(self, ref_dir: Path, test_id: str, model_id: str):
-        ref_dir.mkdir(parents=True, exist_ok=True)
-        data = {
-            "model_id": model_id,
-            "test_id": test_id,
-            "status": "active",
-            "n_vars": 0,
-            "time": [],
-            "variables": [],
-        }
-        (ref_dir / f"ref_{test_id}.json").write_text(json.dumps(data), encoding="utf-8")
-
-    def test_lowest_id_wins_with_warning(self, tmp_path, caplog):
-        self._write_ref(tmp_path, "0001", "Lib.Dup")
-        self._write_ref(tmp_path, "0002", "Lib.Dup")
-
-        with caplog.at_level(logging.WARNING, logger="dstf.storage.ref_index"):
-            index = RefIndex(tmp_path)
-            assert index.get_id("Lib.Dup") == "0001"
-
-        messages = [r.getMessage() for r in caplog.records]
-        assert any("ref_0001" in m and "ref_0002" in m for m in messages)
-
-    def test_lowest_wins_regardless_of_scan_order(self, tmp_path, caplog):
-        """Numeric comparison, not string order of the scan."""
-        self._write_ref(tmp_path, "0010", "Lib.Dup")
-        self._write_ref(tmp_path, "0002", "Lib.Dup")
-        with caplog.at_level(logging.WARNING, logger="dstf.storage.ref_index"):
-            index = RefIndex(tmp_path)
-            assert index.get_id("Lib.Dup") == "0002"
 
 
 # =========================================================================
@@ -1595,17 +1331,21 @@ class TestStoreReferenceRejectsNonFinite:
         )
 
 
-def test_no_shipped_example_partition_carries_a_high_water_mark():
-    """The mark keeps an id spent after the baseline that held it is
-    removed. A shipped partition has lost none: the scan gives the same
-    next id without it, and the two an accept on a scratch copy left in
-    the Modelica example were the only ones among the shipped partitions."""
+def test_every_shipped_example_baseline_is_named_for_its_model():
+    """Every example folder holds only ``ref_<code>.json`` files, each named
+    for the model inside it, and no ``.id_high_water.json`` — converted
+    whole, as the store refuses a folder holding a numbered file."""
+    from dstf.storage.names import baseline_file
+
     examples = Path(__file__).parent.parent / "examples"
-    partitions = sorted({ref.parent for ref in examples.rglob("ref_*.json")})
+    files = sorted(examples.rglob("ref_*.json"))
+    partitions = {ref.parent for ref in files}
     assert len(partitions) >= 7, partitions
     assert sorted(examples.rglob(".id_high_water.json")) == []
-    for partition in partitions:
-        highest = max(
-            int(ref.stem[len("ref_") :]) for ref in partition.glob("ref_*.json")
-        )
-        assert RefIndex(partition).next_id() == f"{highest + 1:04d}"
+    misnamed = [
+        ref
+        for ref in files
+        if ref.name
+        != baseline_file(json.loads(ref.read_text(encoding="utf-8"))["model_id"])
+    ]
+    assert misnamed == []

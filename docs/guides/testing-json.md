@@ -22,7 +22,7 @@ MyLib/
     └── ReferenceResults/
         ├── testing.json
         ├── test_spec.json
-        └── Dymola/linux/ref_0001.json ...
+        └── Dymola/linux/ref_ac8d62fff049.json ...
 ```
 
 The library is two folders up, so a Modelica library needs one key:
@@ -45,7 +45,7 @@ MyLibTests/
 └── ReferenceResults/
     ├── testing.json
     ├── test_spec.json
-    └── Dymola/linux/ref_0001.json ...
+    └── Dymola/linux/ref_ac8d62fff049.json ...
 ```
 
 The library is beside the test project:

@@ -207,12 +207,12 @@ def test_open_queue_accept_queue_again_over_the_python_example(tmp_path, capsys,
     assert classify(comp) == PASS
     assert comp.has_reference is True
 
-    reference = project.config.reference_dir / "ref_0001.json"  # empty partition
+    reference = project.config.reference_dir / "ref_f612690ea655.json"  # its own name
     assert json.loads(reference.read_text())["model_id"] == CONSTANT_CSV
     # The selection is ConstantCsv alone, so the accept stored exactly that
-    # test: one baseline file, and no id burned on anything else.
+    # test: one baseline file, under its own name.
     assert sorted(p.name for p in reference.parent.glob("ref_*.json")) == [
-        "ref_0001.json"
+        "ref_f612690ea655.json"
     ]
     raw = reference.read_bytes()
     assert b"\r" not in raw and raw.endswith(b"\n")  # LF on every platform (D122)
@@ -234,7 +234,7 @@ def test_open_queue_accept_queue_again_over_the_python_example(tmp_path, capsys,
     assert comp.has_reference is True
     assert reference.read_bytes() == stored_bytes
     assert sorted(p.name for p in reference.parent.glob("ref_*.json")) == [
-        "ref_0001.json"
+        "ref_f612690ea655.json"
     ]
 
     # 5. Nothing printed at any point in the scenario.

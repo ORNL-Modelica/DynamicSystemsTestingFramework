@@ -466,7 +466,9 @@ class TestASolverOpenModelicaDoesNotKnow:
         )
         assert (stored, skipped) == (1, [])
 
-        (ref_file,) = (tmp_path / "refs" / "OpenModelica").glob("*/ref_0001.json")
+        (ref_file,) = (tmp_path / "refs" / "OpenModelica").glob(
+            "*/ref_6e187be76792.json"
+        )
         written = json.loads(ref_file.read_text(encoding="utf-8"))
         assert written["simulation"]["method"] == "dassl"
 
@@ -491,7 +493,9 @@ class TestASolverOpenModelicaDoesNotKnow:
         store = ReferenceStore(backend.config)
         accept_run_results(store, tests, results, backend.config.work_dir)
         if stored is not None:
-            (ref_file,) = (tmp_path / "refs" / "OpenModelica").glob("*/ref_0001.json")
+            (ref_file,) = (tmp_path / "refs" / "OpenModelica").glob(
+                "*/ref_6e187be76792.json"
+            )
             written = json.loads(ref_file.read_text(encoding="utf-8"))
             written["simulation"]["method"] = stored
             ref_file.write_text(json.dumps(written), encoding="utf-8")
@@ -500,7 +504,10 @@ class TestASolverOpenModelicaDoesNotKnow:
         generate_report_suite(comparisons, results, tests, store, backend.config)
 
         page = (
-            backend.config.work_dir / "reports" / "ref_0001" / "interactive.html"
+            backend.config.work_dir
+            / "reports"
+            / "ref_6e187be76792"
+            / "interactive.html"
         ).read_text(encoding="utf-8")
         (row,) = re.findall(r"<tr[^>]*><td>Method</td>.*?</tr>", page)
         return row

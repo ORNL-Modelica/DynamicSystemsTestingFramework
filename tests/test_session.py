@@ -465,85 +465,6 @@ class TestOpen:
         Session().open(cfg, work_dir=work)
         assert _snapshot(work) == before
 
-    def test_open_warms_the_overlay_index_off_the_calling_thread(
-        self, tmp_path, monkeypatch
-    ):
-        """Brief §2.2: the first click paid 3 s for the sibling-backend
-        index. It is built once, right after open, on its own thread."""
-        from dstf.reporting import overlay_loader as ol
-
-        warmed_on = []
-        real_warm = ol.warm_sibling_backend_index
-
-        def spy(config):
-            warmed_on.append(threading.current_thread().name)
-            real_warm(config)
-
-        monkeypatch.setattr(ol, "warm_sibling_backend_index", spy)
-        cfg, work = _project(tmp_path)
-        ol._sibling_backend_index.cache_clear()
-        s = Session()
-        s.open(cfg, work_dir=work)
-        assert s.overlay_index_ready.wait(5.0)
-        assert warmed_on == ["dstf-overlay-index"]
-        before = ol._sibling_backend_index.cache_info()
-        s.view(A, "x")
-        after = ol._sibling_backend_index.cache_info()
-        assert before.misses == 1
-        assert after.misses == 1 and after.hits == before.hits + 1
-
-    def test_the_index_warms_alongside_the_results_read_not_after_it(
-        self, tmp_path, monkeypatch
-    ):
-        """The warm thread reads the sibling reference trees; the results read
-        reads this backend's. Neither waits on the other, so the warm belongs
-        at the commit point, where the project is live and the reload has not
-        started — over TRANSFORM the reload is 15.6 s of head start.
-
-        The reload here blocks until the warm thread is observed running, so a
-        start moved back after the reload deadlocks this test rather than
-        quietly costing the first click its overlays.
-        """
-        from dstf.reporting import overlay_loader as ol
-
-        warming = threading.Event()
-        monkeypatch.setattr(
-            ol, "warm_sibling_backend_index", lambda config: warming.set()
-        )
-        real_reload = Session._reload_results
-
-        def reload_waiting_for_the_warm(self):
-            assert warming.wait(5.0), "the overlay index was not warming yet"
-            return real_reload(self)
-
-        monkeypatch.setattr(Session, "_reload_results", reload_waiting_for_the_warm)
-        cfg, work = _project(tmp_path)
-        s = Session()
-        s.open(cfg, work_dir=work)
-        assert s.overlay_index_ready.wait(5.0)
-
-    def test_a_failed_warm_still_marks_the_index_ready(
-        self, tmp_path, monkeypatch, caplog
-    ):
-        """A sibling tree that raises (a PermissionError from iterdir) is
-        logged, and the Event is set anyway — a waiter never hangs on it.
-        A warm that fails posts nothing."""
-        from dstf.reporting import overlay_loader as ol
-
-        def broken(config):
-            raise PermissionError("sibling tree unreadable")
-
-        monkeypatch.setattr(ol, "warm_sibling_backend_index", broken)
-        cfg, work = _project(tmp_path)
-        posted: list = []
-        s = Session(post=posted.append)
-        with caplog.at_level("ERROR", logger="dstf.authoring.session"):
-            s.open(cfg, work_dir=work)
-            assert s.overlay_index_ready.wait(5.0)
-        assert "warming the sibling-backend overlay index failed" in caplog.text
-        time.sleep(0.2)
-        assert posted == []
-
     def test_the_recorded_backend_wins_over_the_config(self, tmp_path):
         cfg, work = _project(tmp_path)
         (work / "status.json").write_text(
@@ -1069,10 +990,8 @@ class TestOpen:
         _running(s, before.model_id)
         rescored = []
         s.on("results", lambda e: rescored.append(set(e["models"])))
-        # The rescan's re-merge, run on "the UI loop" — and the open's other
-        # post, the sibling index ready (D141), in whichever order they came.
-        for _ in range(2):
-            posted.get(timeout=10)()
+        # The rescan's re-merge, run on "the UI loop": the open's one post.
+        posted.get(timeout=10)()
         assert s.rescan_done.is_set()
         assert s.comparisons[before.model_id] is comp  # not rescored mid-run
         assert all(before.model_id not in r for r in rescored)
@@ -1080,18 +999,17 @@ class TestOpen:
     def test_a_late_thread_from_a_previous_open_does_not_mark_this_one_ready(
         self, tmp_path, monkeypatch
     ):
-        """Each open owns its Events; a rescan or index thread still running
-        from the previous open sets ITS events, never the new open's."""
+        """Each open owns its Event; a rescan thread still running from the
+        previous open sets ITS event, never the new open's."""
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
         cfg = _modelica_project(tmp_path)
         Session().open(cfg, work_dir=tmp_path / "work")
         s = Session()
         s.open(cfg, work_dir=tmp_path / "work")
-        first_rescan, first_index = s.rescan_done, s.overlay_index_ready
+        first_rescan = s.rescan_done
         s.open(cfg, work_dir=tmp_path / "work")  # nothing queued, no pending edits
         assert s.rescan_done is not first_rescan
-        assert s.overlay_index_ready is not first_index
-        assert s.rescan_done.wait(10.0) and s.overlay_index_ready.wait(5.0)
+        assert s.rescan_done.wait(10.0)
 
     def test_open_writes_nothing_in_the_work_dir_even_when_it_caches(
         self, tmp_path, monkeypatch
@@ -1818,7 +1736,8 @@ class TestSaveDiscardExport:
                 entry["baseline_points"] = 3
         p.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
         store = session.project.store
-        assert store.index.get_id(B) is None  # B has no baseline
+        assert store.index.file(B) is None  # B has no baseline
+        before = sorted(p.name for p in session.project.config.reference_dir.iterdir())
         view = SessionView(session, Selection(tests=frozenset({B})))
         with pytest.raises(StaleSpecError) as refused:
             session.apply(Accept().act(view))
@@ -1826,14 +1745,17 @@ class TestSaveDiscardExport:
             f"{p} changed on disk since it was loaded; reload before accepting"
         )
         # Nothing was written, and nothing said to have been.
-        assert not list(session.project.config.reference_dir.glob("ref_0004*"))
+        assert (
+            sorted(p.name for p in session.project.config.reference_dir.iterdir())
+            == before
+        )
         assert not [n for n in session.notices if n.startswith("Accept")]
 
         session.reload()
         session.apply(
             Accept().act(SessionView(session, Selection(tests=frozenset({B}))))
         )
-        (ref,) = session.project.config.reference_dir.glob("ref_0004.json")
+        ref = session.project.config.reference_dir / "ref_9f8a673da3c0.json"
         stored = json.loads(ref.read_text(encoding="utf-8"))
         assert stored["model_id"] == B and stored["sampling"]["setting"] == 3
         assert len(stored["time"]) == 3

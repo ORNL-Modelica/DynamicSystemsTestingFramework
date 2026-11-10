@@ -1,5 +1,5 @@
 """THE reader and writer of stored-baseline files — a primary reference
-(``ref_NNNN.json``), a soft check, a JSON companion's data. Every other
+(``ref_<code>.json``), a soft check, a JSON companion's data. Every other
 module sees :mod:`dstf.storage.baseline` types; nothing else parses or
 writes these files, so a second format, or a new kind of data, changes this
 module and the types, not their readers.
@@ -223,10 +223,13 @@ def _comparison(raw: Any) -> dict:
 
 
 def decode_reference(data: dict) -> ReferenceFile:
-    """A primary reference file's parsed JSON as a :class:`ReferenceFile`."""
+    """A primary reference file's parsed JSON as a :class:`ReferenceFile`.
+
+    An old file's number key is read by nothing: the model id is the file's
+    identity and its name is computed from it, so a number inside a file
+    could only disagree with that name (old data, not old code)."""
     return ReferenceFile(
         model_id=data.get("model_id") or "",
-        test_id=data.get("test_id"),
         status=data.get("status"),
         date_added=data.get("date_added"),
         last_updated=data.get("last_updated"),
@@ -285,7 +288,7 @@ def reference_to_json(ref: ReferenceFile) -> dict:
     b = ref.baseline
     single = ref.sampling is not None and ref.sampling.precision == SINGLE
     out: dict[str, Any] = {"model_id": ref.model_id}
-    for key in ("test_id", "status", "date_added", "last_updated"):
+    for key in ("status", "date_added", "last_updated"):
         value = getattr(ref, key)
         if value is not None:
             out[key] = value
@@ -349,9 +352,3 @@ def encode_soft_check(b: Baseline) -> str:
 def write_soft_check(path: Path, b: Baseline) -> None:
     """Write a soft check's file atomically."""
     _atomic_write_text(path, encode_soft_check(b))
-
-
-def claim_stub(model_id: str, test_id: str) -> str:
-    """The text ``RefIndex.register`` creates a new ID's file with
-    (exclusively), before ``store_reference`` replaces it whole."""
-    return json.dumps({"model_id": model_id, "test_id": test_id, "status": "active"})

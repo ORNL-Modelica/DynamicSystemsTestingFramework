@@ -21,6 +21,7 @@ from ..reporting.status import (
     SIM_FAIL,
     scored_status,
 )
+from ..storage.names import baseline_stem
 from .spec_document import edit_counts
 
 if TYPE_CHECKING:
@@ -68,7 +69,7 @@ def suite_row(
             comp,
             stats=result.statistics if result is not None else None,
             diagnostics=(result.diagnostics or []) if result is not None else (),
-            ref_id=f"ref_{comp.test_id}" if comp.test_id else None,
+            ref_id=baseline_stem(model_id) if comp.test_id else None,
             field_sources=row.field_sources,
         )
         return replace(

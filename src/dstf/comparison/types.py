@@ -162,7 +162,10 @@ class TestComparison:
 
     model_id: str
     passed: bool
-    test_id: str | None = None  # ref file ID (e.g., "0001")
+    #: The code of the baseline this test was scored against
+    #: (``storage.names.baseline_code`` of its model id), None when no
+    #: stored baseline was read — set by ``compare_one`` alone.
+    test_id: str | None = None
     variables: list[VariableComparison] = field(default_factory=list)
     warnings: list[StructuralWarning] = field(default_factory=list)
     error_message: str | None = None
@@ -193,6 +196,10 @@ class TestComparison:
     tolerance_source: str | None = None
     #: That base tolerance: what a leaf without its own is scored with.
     base_tolerance: float | None = None
+    #: The path of the baseline file this test was scored against, beside
+    #: its code: the code is the model's in every backend folder, so the
+    #: path is what tells this file from another backend's.
+    baseline_path: str | None = None
 
     @property
     def evaluated(self) -> bool:

@@ -314,14 +314,14 @@ async def test_accept_refused_on_a_changed_file_says_so_in_saves_dialog(shell):
         assert _one(user, "stale-spec").text == (
             f"{spec_path} changed on disk since it was loaded."
         )
-        assert session.project.store.index.get_id(B) is None
+        assert session.project.store.index.file(B) is None
         assert page.actions.errors == {} and not page.actions.dialog.value
         user.find("Reload").click()
         await _settled(lambda: not session.spec.on_disk_changed())
         user.find(marker="action:accept").click()
         await user.should_see("Accept 1 result as baselines", retries=20)
         user.find(kind=ui.button, content="Accept 1 result as baselines").click()
-        await _settled(lambda: session.project.store.index.get_id(B) is not None)
+        await _settled(lambda: session.project.store.index.file(B) is not None)
 
 
 def _touch_spec(shell) -> None:

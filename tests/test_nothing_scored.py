@@ -12,6 +12,7 @@ At the comparator, and through the CLI over a real Python-backend project."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -61,6 +62,13 @@ class _Store:
     def get_reference(self, model_id):
         return self.reference
 
+    def refusal(self, model_id):
+        return None
+
+    def reference_file(self, model_id):
+        # Where the store would find it; nothing reads the file itself.
+        return None if self.reference is None else Path("/refs/ref_0b4da9e81e2e.json")
+
     folder = "Stub/linux"
 
     def get_soft_checks(self, model_id):
@@ -103,9 +111,9 @@ def test_a_result_holding_nothing_the_test_tracks_fails_and_says_so(route, basel
     comp = compare_one(test, _result(*names), _Store(REFERENCE if baseline else None))
     assert classify(comp) == FAIL and comp.passed is False
     assert comp.has_reference is baseline and comp.sim_success is True
-    # The baseline's id: a refused test with one is `[0003]` on the console
-    # and `ref_0003` on the dashboard, as any other test.
-    assert comp.test_id == (3 if baseline else None)
+    # The baseline's code: a refused test with one is named by it on the
+    # dashboard (`ref_0b4da9e81e2e`), as any other test.
+    assert comp.test_id == ("0b4da9e81e2e" if baseline else None)
     # The sentence stands where a failing criterion would be named.
     assert refusal(comp) == f"{NONE_OF} {tracked}{NOTHING}"
     assert comp.variables == [] and comp.metric_tree is None

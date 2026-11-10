@@ -2,6 +2,10 @@
 `manifest` group, `check`."""
 
 import argparse
+import json
+import logging
+import re
+import shutil
 from pathlib import Path
 
 from ..backends import get_backend_class
@@ -9,11 +13,10 @@ from ..config import Config, ConfigError, NoProject
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
 from ..pipeline import write_id_mapping
-from .common import (
-    _build_config,
-    _filter_tests,
-    _find_orphan_manifest_entries,
-)
+from ..storage.names import baseline_file, baseline_stem
+from .common import _build_config, _filter_tests
+
+logger = logging.getLogger(__name__)
 
 
 def _vars_text(test: TestModel) -> str:
@@ -129,35 +132,32 @@ def cmd_baseline_export(args: argparse.Namespace) -> int:
 
 
 def cmd_manifest_show(args: argparse.Namespace) -> int:
-    """List the partition's references and the status of each."""
+    """List the partition's baselines — each one's file, status and model,
+    in model-id order — with the counts of active and skipped ones."""
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-    all_tests = store.index.all_tests()
-    active = {tid: e for tid, e in all_tests.items() if e["status"] != "obsolete"}
-    obsolete = {tid: e for tid, e in all_tests.items() if e["status"] == "obsolete"}
-    skipped = {tid: e for tid, e in all_tests.items() if e["status"] == "skip"}
+    entries = sorted(
+        (e["model_id"], baseline_file(e["model_id"]), e["status"])
+        for e in store.index.all_tests().values()
+    )
+    skipped = [(model, file) for model, file, status in entries if status == "skip"]
+    n_active = sum(status == "active" for _, _, status in entries)
 
     print(f"References: {config.reference_dir}")
-    print(f"Active: {len(active)}  Skip: {len(skipped)}  Obsolete: {len(obsolete)}\n")
+    print(f"Active: {n_active}  Skip: {len(skipped)}\n")
 
-    if active:
-        print(f"{'ID':>6}  {'Status':<10}  {'Model ID'}")
+    if entries:
+        print(f"{'File':<21}  {'Status':<10}  {'Model ID'}")
         print("-" * 90)
-        for tid in sorted(active):
-            entry = active[tid]
-            print(f"{tid:>6}  {entry['status']:<10}  {entry['model_id']}")
+        for model, file, status in entries:
+            print(f"{file:<21}  {status:<10}  {model}")
 
     if skipped:
         print("\nSkipped:")
-        for tid in sorted(skipped):
-            print(f"{tid:>6}  {skipped[tid]['model_id']}")
-
-    if obsolete and args.show_obsolete:
-        print("\nObsolete:")
-        for tid in sorted(obsolete):
-            print(f"{tid:>6}  {obsolete[tid]['model_id']}")
+        for model, file in skipped:
+            print(f"{file:<21}  {model}")
 
     return 0
 
@@ -179,112 +179,138 @@ def cmd_manifest_dump(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
-    """List what a cleanup would remove, or — ``--apply`` — remove it.
+#: The names a work dir's report dirs are written under, and only those:
+#: ``ref_<code>`` of a test with a baseline, ``test_NNNN`` (its batch
+#: manifest key) of one without, and ``ref_NNNN`` of a baseline before the
+#: names were codes. `manifest cleanup` removes a directory of these shapes
+#: that no test uses, and never one of another shape: a user's notes, a
+#: page named after a model.
+_REPORT_DIR = re.compile(r"ref_\d{4,}|ref_[0-9a-f]{12}|test_\d{4,}")
 
-    Dry-run is the universal default for destructive paths: ``cleanup``
-    lists what it would remove and exits 0 unless ``--apply`` is given. The
-    ``--orphans`` path always worked this way; the obsolete-reference path
-    used to delete on sight.
+#: A batch manifest key, the name of a test's simulation dir.
+_TEST_KEY = re.compile(r"test_\d{4,}")
+
+
+def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
+    """List what the work dir holds that no test uses, or — ``--apply`` —
+    remove it: the batch manifest's entries of models the project no
+    longer declares, with their simulation and report dirs, and every
+    report dir under a test's name (``ref_<code>``, ``test_NNNN``, an old
+    ``ref_NNNN``) that no declared test is reported under.
+
+    Refused (a ConfigError, exit 2, nothing removed) when what it decides
+    by is not there or cannot be read: the reference folder, which says
+    which tests are reported under ``ref_<code>``, and the batch manifest,
+    which says which ``test_NNNN`` is whose. Without them every report dir
+    would read as unused. A reference folder of old numbered names is
+    refused by the store (`OldBaselineNames`).
     """
     config = _build_config(args)
-    if args.orphans:
-        # What --orphans reads, named on the line: one that is not there
-        # would read as "no orphans" of a spec or work dir never looked at.
-        spec, work = config.test_spec_file, config.work_dir
-        if args.test_spec is not None and spec is not None and not spec.is_file():
-            raise ConfigError(f"--test-spec {spec}: no such file")
-        if args.work_dir is not None and work is not None and not work.is_dir():
-            raise ConfigError(f"--work-dir {work}: no such directory")
-        return _cleanup_orphans(config, apply=args.apply)
-    from ..storage.reference_store import ReferenceStore
+    # What it reads, named on the line: one that is not there would read as
+    # "nothing to clean up" of a spec or work dir never looked at.
+    spec, work = config.test_spec_file, config.work_dir
+    assert work is not None  # resolved in Config.__post_init__
+    if args.test_spec is not None and spec is not None and not spec.is_file():
+        raise ConfigError(f"--test-spec {spec}: no such file")
+    if args.work_dir is not None and not work.is_dir():
+        raise ConfigError(f"--work-dir {work}: no such directory")
 
-    return _cleanup_obsolete(ReferenceStore(config), apply=args.apply)
-
-
-def _cleanup_obsolete(store, apply: bool) -> int:
-    """List (or, with apply=True, delete) reference files marked obsolete."""
-    obsolete = store.list_obsolete()
-    if not obsolete:
-        print("No obsolete references to clean up.")
-        return 0
-
-    print(f"Found {len(obsolete)} obsolete reference files:")
-    for test_id, model_id, ref_file in obsolete:
-        print(f"  {ref_file.name}  {model_id or f'ref_{test_id}'}")
-
-    if not apply:
-        print("\nDry run. Re-run with --apply to actually remove.")
-        return 0
-
-    removed = store.cleanup_obsolete()
-    print(f"\nRemoved {removed} obsolete reference files.")
-    return 0
-
-
-def _cleanup_orphans(config, apply: bool) -> int:
-    """List or prune manifest entries (and their on-disk dirs) for models
-    no longer in discover_tests. Dry-run by default; pass apply=True to delete.
-    """
-    all_tests = discover_tests(config)
-    orphans = _find_orphan_manifest_entries(config, all_tests)
-    if not orphans:
-        print("No orphan manifest entries.")
-        return 0
-
-    report_dir = config.work_dir / "reports"
-    print(f"Found {len(orphans)} orphan manifest entries:")
-    for tk, model_id in sorted(orphans.items()):
-        work = config.work_dir / tk
-        # Try both possible report-dir names
-        rep_test = report_dir / tk
-        rep_ref = None
-        from ..storage.reference_store import ReferenceStore
-
-        store = ReferenceStore(config)
-        ref_id = store.index.get_id(model_id)
-        if ref_id:
-            rep_ref = report_dir / f"ref_{ref_id}"
-        bits = []
-        if work.exists():
-            bits.append(f"work_dir={tk}/")
-        if rep_test.exists():
-            bits.append(f"reports/{tk}/")
-        if rep_ref and rep_ref.exists():
-            bits.append(f"reports/ref_{ref_id}/")
-        print(f"  {tk}  {model_id}  [{', '.join(bits) or 'manifest only'}]")
-
-    if not apply:
-        print("\nDry run. Re-run with --apply to actually remove.")
-        return 0
-
-    import shutil
+    ref_dir = config.reference_dir
+    if not ref_dir.is_dir():
+        raise ConfigError(
+            f"the reference folder {ref_dir} is not there — nothing was removed"
+        )
+    try:
+        next(ref_dir.iterdir(), None)
+    except OSError as e:
+        raise ConfigError(
+            f"the reference folder {ref_dir} cannot be read: {e.strerror} — "
+            "nothing was removed"
+        ) from e
+    manifest_path = work / "batch_manifest.json"
+    if not manifest_path.is_file():
+        raise ConfigError(f"{manifest_path} is not there — nothing was removed")
+    # Read here, not by `BatchManifest.load`: that moves a file it cannot
+    # read aside to `.corrupt`, and a refusal removes nothing.
+    try:
+        entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(entries, dict):
+            raise ValueError(f"expected a JSON object, got {type(entries).__name__}")
+    except (ValueError, OSError) as e:
+        raise ConfigError(
+            f"{manifest_path} cannot be read: {e} — nothing was removed"
+        ) from e
 
     from ..backends import BatchManifest
+    from ..storage.reference_store import ReferenceStore
 
-    manifest_path = config.work_dir / "batch_manifest.json"
+    store = ReferenceStore(config)  # refuses a folder of old names
     manifest = BatchManifest.load(manifest_path)
-    n_dirs = 0
-    for tk, model_id in orphans.items():
-        for candidate in [
-            config.work_dir / tk,
-            report_dir / tk,
-        ]:
-            if candidate.exists():
-                shutil.rmtree(candidate)
-                n_dirs += 1
-        from ..storage.reference_store import ReferenceStore
+    declared = {t.model_id for t in discover_tests(config)}
 
-        store = ReferenceStore(config)
-        ref_id = store.index.get_id(model_id)
-        if ref_id:
-            rep_ref = report_dir / f"ref_{ref_id}"
-            if rep_ref.exists():
-                shutil.rmtree(rep_ref)
-                n_dirs += 1
-        manifest.manifest.pop(tk, None)
-    manifest.save()
-    print(f"\nRemoved {len(orphans)} manifest entries and {n_dirs} directories.")
+    # Each entry's model. One that names none (no model_id, or not an
+    # object) cannot be told to be anyone's: warned of and left, with its
+    # directories, rather than removed or raised over.
+    model_of: dict[str, str] = {}
+    for key, e in manifest.manifest.items():
+        model_id = e.get("model_id") if isinstance(e, dict) else None
+        if isinstance(model_id, str) and model_id:
+            model_of[key] = model_id
+        else:
+            logger.warning(
+                "batch_manifest.json: %s names no model — left as it is", key
+            )
+    # The names a declared test is reported under: its baseline's, when the
+    # store reads one for it, and its manifest key.
+    stems = {store.index.stem(model_id) for model_id in declared}
+    keys = {key for key, model_id in model_of.items() if model_id in declared}
+    keep = (stems - {None}) | keys | (manifest.manifest.keys() - model_of.keys())
+    orphans = {
+        key: model_id for key, model_id in model_of.items() if model_id not in declared
+    }
+    reports = work / "reports"
+    stale: set[Path] = set()
+    for key, model_id in orphans.items():
+        if _TEST_KEY.fullmatch(key):
+            stale |= {work / key, reports / key}
+        stale.add(reports / baseline_stem(model_id))
+    if reports.is_dir():
+        stale |= {
+            p
+            for p in reports.iterdir()
+            if _REPORT_DIR.fullmatch(p.name) and p.name not in keep
+        }
+    dirs = sorted(
+        p for p in stale if p.is_dir() and not p.is_symlink() and p.name not in keep
+    )
+
+    if not dirs and not orphans:
+        print(
+            f"Nothing to clean up in {work}: every entry and directory "
+            "belongs to a test."
+        )
+        return 0
+    lines = [
+        f"batch_manifest.json: {key} ({model_id})" for key, model_id in orphans.items()
+    ] + [f"{p.relative_to(work).as_posix()}/" for p in dirs]
+    print(f"In {work}, no test uses:")
+    for line in sorted(lines):
+        print(f"  {line}")
+    if not args.apply:
+        print("Dry run: nothing was removed. Re-run with --apply to remove them.")
+        return 0
+
+    for p in dirs:
+        shutil.rmtree(p)
+    if orphans:
+        for key in orphans:
+            del manifest.manifest[key]
+        manifest.save()
+    n_dirs, n_entries = len(dirs), len(orphans)
+    print(
+        f"Removed {n_dirs} director{'y' if n_dirs == 1 else 'ies'} and "
+        f"{n_entries} manifest entr{'y' if n_entries == 1 else 'ies'}."
+    )
     return 0
 
 

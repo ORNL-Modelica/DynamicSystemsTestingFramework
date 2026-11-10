@@ -194,6 +194,10 @@ def _column_defs() -> list[dict[str, Any]]:
         elif key == "nrmse":
             # "1.5309e-01" and its header: 110 px cut both at 1280.
             d["width"] = 135
+        elif key == "ref":
+            # A baseline's whole name, "ref_6e187be76792": 90 px cut it to
+            # "ref_f612…". Hidden by default, so Edits stays in view at 900.
+            d["width"] = 150
         elif key == "detail":
             d.update(flex=1, minWidth=160)
             del d["width"]

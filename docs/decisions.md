@@ -9443,3 +9443,122 @@ that forgets is #28 again.
 spec strings) are converted by the TRANSFORM project with a one-off script,
 outside this change; until then its unconverted files read the same
 (rule 2).
+
+## D165 — A baseline is named by its model: `ref_<code>.json` (2026-11-10)
+
+Amends D2: the name is still short and of fixed length, but computed from
+the model id, not allocated. Retires D99 (the high-water file). Makes D3's
+"IDs are stable across platforms" true.
+
+**Context.** A baseline was `ref_NNNN.json`, numbered by the folder it was
+in. The next number came from a scan of the folder and
+`.id_high_water.json` (D99), and a claim loop created the file before the
+accept wrote it. Each `<Backend>/<os>/` folder numbered its models
+independently, so one model could have different numbers in different
+folders, and
+D3's "IDs are stable across platforms" did not hold. The number also had two
+sources: the file's name (the batch manifest's `ref_id`,
+`reference_manifest.json`, `manifest show`) and the file's own `"test_id"`
+(the console tag, the report dir, the report's Test ID row). Measured
+2026-11-10 over TRANSFORM-UnitTests' references: 335 distinct model ids in
+three folders, and Dymola/windows held `PulseSine_Test` twice, as
+`ref_0011.json` and `ref_0326.json`.
+
+**Decision.** The model id is the identity (owner, 2026-11-04).
+
+1. *The rule* (`storage/names.py`). `baseline_code(model_id)` is the first
+   12 hex digits of the SHA-256 of the model id as UTF-8. A model's baseline
+   is `ref_<code>.json`, the same name in every backend folder; its
+   `soft_checks/ref_<code>/` and `companions/ref_<code>/` folders and its
+   `reports/ref_<code>/` page take the same stem. Every name is built from
+   this one function: no reader takes a name from a file's contents or from
+   a directory listing. A model has a code on a surface only when its file
+   exists; a test with no baseline keeps its `test_NNNN` work-dir key. The
+   `ref_` prefix stays because TRANSFORM-UnitTests' table script globs
+   `ref_*.json`. A code can be all digits
+   (`TRANSFORM.Media.IdealGases.Examples.HeXeAlternate` →
+   `ref_121677875640.json`), so the new form is told from the old only by
+   its pattern, `ref_` and 12 lowercase hex digits.
+2. *Collisions.* 48 bits: among 10,000 models, the chance that any two share
+   a code is about 2e-7. TRANSFORM's 335 ids have none (at 12 digits, and at
+   8). The file holds its model id, so a collision is seen, never silently
+   overwritten.
+3. *Amends D2.* D2 chose numbers because a model id as a file name exceeds
+   Windows MAX_PATH. A code keeps the name short and fixed: a report's tail
+   grows from `reports/ref_0001/comparison_data.json` (37 characters) to
+   `reports/ref_<code>/comparison_data.json` (45). Under the default work
+   dir the longest example report path is
+   `testing_output/ModelicaTestingLib/OpenModelica/windows/reports/ref_<code>/comparison_data.json`,
+   100 characters, which leaves 160 of Windows' 260 for the folder the
+   project sits in.
+4. *Retires D99.* Nothing is allocated, so nothing is remembered:
+   `.id_high_water.json`, the claim loop, `next_id` and the race D99
+   mitigated are gone. A lookup opens the one file named for the model; the
+   folder is listed only for the commands that walk every baseline.
+5. *One source.* `ReferenceFile.test_id` is deleted; a reader ignores an old
+   file's `"test_id"` and no writer writes it. `compare_one` stamps the
+   comparison with `baseline_code(model_id)` and the path of the file it
+   read. Every surface names the baseline from that code: the report dir,
+   `verdicts.json`'s `ref_id`, the batch manifest, `reference_manifest.json`,
+   a row's Reference. The dashboard keeps a run's reference link only when
+   it is the very file the comparison read, compared by PATH: with one name
+   in every folder, a name check would link another backend's file after
+   `compare --backend <other>`. The console's `[NNNN]` and `[new]` tags and
+   the report's Test ID row are gone (owner, 2026-11-10, shown rendered);
+   listings that followed the number (`manifest show`, `reference_manifest.json`,
+   `soft-check list`, `companion list`) follow the model id.
+6. *Refusals.* Each is a sentence that names the file, never an exception
+   out of a lookup:
+   - a file named for a model that holds another model (two ids share a
+     code, or a hand copy): the test FAILS with that reason, naming the
+     file and both ids, and an accept skips it, leaving the file as it is;
+   - a `status` that is neither `active` nor `skip`: the test FAILS with
+     `ref_….json: status "obsolete" is not a status — delete the file to
+     remove a baseline`, and an accept skips it;
+   - a file named for a model that cannot be read (not JSON, such as a
+     merge's conflict markers, or a `model_id` that is no string): the test
+     FAILS with `ref_….json cannot be read (<why>) — fix or delete it`, and
+     an accept skips it rather than write over it;
+   - a folder that still holds a numbered `ref_*.json`: the store refuses
+     the whole folder (`OldBaselineNames`, a config error, exit 2) and names
+     the conversion script. Read as it is, every test would read NO_REF
+     and an accept would write a second file beside each old one.
+7. *A misnamed file.* A `ref_<12 hex>.json` whose code is not its model's is
+   warned of, with the name it should have, and left out of every lookup:
+   its model reads NO_REF and gets no report page.
+8. *`obsolete` is deleted* (owner, 2026-11-10). Nothing in DSTF wrote it.
+   Removing a baseline is deleting its file; `list_obsolete`,
+   `cleanup_obsolete` and `manifest show --show-obsolete` are gone. `skip`
+   stays, and only `manifest show` reads it.
+9. *`manifest cleanup` has one job, the work dir's* (owner, 2026-11-10). It
+   lists, and with `--apply` removes, the batch manifest's entries of models
+   the project no longer declares, with their simulation and report dirs,
+   and every directory under `reports/` named like a test (`ref_<code>`,
+   `test_NNNN`, an old `ref_NNNN`) that no declared test is reported under.
+   It never touches a file (`plotly.min.js`) or a directory of any other
+   name. It is refused, removing nothing, when the reference folder or
+   `batch_manifest.json` is not there or cannot be read: without them every
+   report dir would read as unused. `--orphans` is deleted.
+10. *The conversion* is `scripts/convert_baseline_names.py`, in the
+    repository and not in the installed package (owner, 2026-11-10): each
+    library converts once, and it runs with any Python 3.10 or later
+    without DSTF installed, so a library owner can run it from any
+    environment. It writes the rule out itself, and the tests pin it and
+    `storage/names.py` to the same literal codes. It takes every
+    reference root at once, because a companion's path can point into
+    another library; it refuses two files of one model in a folder unless
+    `--keep` names one, two ids that share a code, and a companion path to
+    a numbered baseline outside the roots given; it deletes only the
+    `"test_id"` line, keeping every other byte and the line endings; it
+    checks everything before it writes; `--dry-run` lists the changes, and a second run has nothing to
+    do. The example libraries were converted with it (55 files).
+
+**Rejected.** The model id itself as the file name: D2's reason (MAX_PATH)
+stands.
+
+**TRANSFORM.** Its references are converted by the TRANSFORM project with
+the committed script, keeping Dymola/windows `ref_0011.json` of the two
+`PulseSine_Test` files (owner, 2026-11-10). Over a copy, with that
+`--keep`: 977 files renamed, `ref_0326.json` and three high-water files
+deleted, 335 / 335 / 307 files left, only the `"test_id"` line gone from
+each, and a second run had nothing to do.

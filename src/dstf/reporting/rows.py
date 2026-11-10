@@ -380,7 +380,7 @@ def row_from_status(entry: Mapping[str, Any]) -> TestRow:
         model_id=entry.get("model_id") or "",
         test_key=entry.get("test_key"),
         status=status,
-        # A live ref_id follows the "ref_NNNN" naming of a report_dir the run
+        # A live ref_id follows the "ref_<code>" naming of a report_dir the run
         # pre-populated (backend.ref_id_map); a test with no baseline yet has
         # its test_key there, and no ref_id.
         ref_id=report_dir if report_dir.startswith("ref_") else None,

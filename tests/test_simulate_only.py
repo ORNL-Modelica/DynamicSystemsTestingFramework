@@ -99,6 +99,12 @@ class TestSimulateOnly:
             def get_reference(self, _model_id):
                 return None  # no baseline exists yet
 
+            def refusal(self, model_id):
+                return None
+
+            def reference_file(self, model_id):
+                return None
+
             def get_soft_checks(self, _model_id):
                 return {}
 
@@ -128,6 +134,12 @@ class TestSimulateOnly:
 
         class _FakeStore:
             def get_reference(self, _):
+                return None
+
+            def refusal(self, model_id):
+                return None
+
+            def reference_file(self, model_id):
                 return None
 
             def get_soft_checks(self, _):
