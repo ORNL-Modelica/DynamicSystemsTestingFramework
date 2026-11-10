@@ -2322,7 +2322,7 @@ def test_the_variables_drawer_edits_the_extras_with_a_real_mouse(
         )
         _shot(page, tmp_path, "var-check")
 
-        port = _var_row(page, "port[2, 1].C[1:3]")
+        port = _var_row(page, "port[2,1].C[1:3]")
         port.hover()
         expect(port.locator(".dstf-var-new")).to_be_disabled(timeout=EXPECT_TIMEOUT)
 

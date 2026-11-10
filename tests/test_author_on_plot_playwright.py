@@ -305,6 +305,14 @@ def _v_not_in_baseline(tmp_path: Path) -> tuple[Path, Path]:
     data["variables"]["v"] = [0.5 * value for value in data["variables"]["x"]]
     del data["variables"]["y"]
     result.write_text(json.dumps(data), encoding="utf-8")
+    # Only the tree names `y`: a name `variables` lists that the run lacks
+    # refuses the whole test (#28), and this one is about one criterion.
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = [v for v in entry.get("variables", []) if v != "y"]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
     return cfg, work
 
 
