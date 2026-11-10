@@ -1,0 +1,37 @@
+{
+  "model_id": "JuliaMtkTestingLib.Examples.SimpleRamp",
+  "status": "active",
+  "date_added": "2026-04-24T01:02:01.277761+00:00",
+  "last_updated": "2026-04-24T01:02:01.277761+00:00",
+  "simulation": {
+    "stop_time": 5.0,
+    "tolerance": 1e-06,
+    "method": "Dassl",
+    "number_of_intervals": 5,
+    "output_interval": null
+  },
+  "n_vars": 1,
+  "time": [
+    0.0,
+    0.0001,
+    0.00480092977349972,
+    0.0518102275084969,
+    0.521903204858469,
+    5.0
+  ],
+  "variables": [
+    {
+      "index": 1,
+      "name": "x",
+      "expression": "",
+      "values": [
+        0.0,
+        0.0002,
+        0.00960185954699944,
+        0.103620455016994,
+        1.04380640971694,
+        10.0
+      ]
+    }
+  ]
+}

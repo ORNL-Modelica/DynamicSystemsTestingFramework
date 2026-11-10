@@ -1,0 +1,8 @@
+{
+  "kind": "external",
+  "format": "json",
+  "path": "../../../../../../julia/JuliaMtkTestingLib/Resources/ReferenceResults/Julia/linux/ref_c36c1dc9bf55.json",
+  "variables": {
+    "unitTests.x[1]": "x"
+  }
+}
