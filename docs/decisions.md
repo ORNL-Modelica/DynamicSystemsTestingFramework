@@ -9454,7 +9454,8 @@ the model id, not allocated. Retires D99 (the high-water file). Makes D3's
 in. The next number came from a scan of the folder and
 `.id_high_water.json` (D99), and a claim loop created the file before the
 accept wrote it. Each `<Backend>/<os>/` folder numbered its models
-independently, so one model had different numbers in different folders, and
+independently, so one model could have different numbers in different
+folders, and
 D3's "IDs are stable across platforms" did not hold. The number also had two
 sources: the file's name (the batch manifest's `ref_id`,
 `reference_manifest.json`, `manifest show`) and the file's own `"test_id"`
@@ -9541,9 +9542,9 @@ three folders, and Dymola/windows held `PulseSine_Test` twice, as
     reference root at once, because a companion's path can point into
     another library; it refuses two files of one model in a folder unless
     `--keep` names one, two ids that share a code, and a companion path to
-    a numbered baseline outside the roots given; it deletes only the `"test_id"` line, keeping
-    every other byte and the line endings; it checks everything before it
-    writes; `--dry-run` lists the changes, and a second run has nothing to
+    a numbered baseline outside the roots given; it deletes only the
+    `"test_id"` line, keeping every other byte and the line endings; it
+    checks everything before it writes; `--dry-run` lists the changes, and a second run has nothing to
     do. The example libraries were converted with it (55 files).
 
 **Rejected.** The model id itself as the file name: D2's reason (MAX_PATH)
