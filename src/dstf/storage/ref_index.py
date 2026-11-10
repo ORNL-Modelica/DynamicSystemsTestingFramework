@@ -106,6 +106,9 @@ class RefIndex:
         #: ``ref_<code>.json`` -> (the model id it holds, its status), or
         #: None for a file that is not there or cannot be read.
         self._files: dict[str, tuple[str, str] | None] = {}
+        #: ``ref_<code>.json`` -> why it cannot be read, for each file that
+        #: is there and is no readable baseline: what its model is refused by.
+        self._unreadable: dict[str, str] = {}
         self._loaded = False
         self._refuse_old_names()
 
@@ -160,7 +163,9 @@ class RefIndex:
                 if model_id is None
                 else f"model_id {json.dumps(model_id)} is not a string"
             )
-        logger.warning("%s cannot be read (%s) — fix or delete it", name, why)
+        said = f"{name} cannot be read ({why}) — fix or delete it"
+        logger.warning("%s", said)
+        self._unreadable[name] = said
         return None
 
     def _held(self, model_id: str) -> tuple[str, str] | None:
@@ -176,6 +181,7 @@ class RefIndex:
         not its model's code is warned of and left out: no lookup opens it,
         so the model it holds reads as having no baseline."""
         self._files.clear()
+        self._unreadable.clear()
         if self.ref_dir.is_dir():
             for ref_file in sorted(self.ref_dir.glob("ref_*.json")):
                 if _NAME.match(ref_file.name):
@@ -205,17 +211,20 @@ class RefIndex:
 
     def refusal(self, model_id: str) -> str | None:
         """Why the file named for ``model_id`` cannot be its baseline, or
-        None: it holds another model (two ids share a code, or a hand copy),
-        or its ``status`` is not a status.
+        None: it cannot be read (not JSON — a merge's conflict markers, a
+        hand edit — or no model id), it holds another model (two ids share
+        a code, or a hand copy), or its ``status`` is not a status. A file
+        that cannot be read is refused, not written over: what it held
+        cannot be told, and it may be a baseline one fix away.
 
         A sentence, not an exception: the comparison FAILS the test with it
         and an accept skips the test with it (`compare_one`, the store's
         write), and every other reader of the lookup sees no baseline — a
         bad file in the folder must not stop a run, a report or the tool."""
         held = self._held(model_id)
-        if held is None:
-            return None
         name = baseline_file(model_id)
+        if held is None:
+            return self._unreadable.get(name)
         other, status = held
         if other != model_id:
             return (
@@ -249,7 +258,9 @@ class RefIndex:
 
     def written(self, model_id: str) -> None:
         """A baseline of ``model_id`` was just written under its name."""
-        self._files[baseline_file(model_id)] = (model_id, "active")
+        name = baseline_file(model_id)
+        self._files[name] = (model_id, "active")
+        self._unreadable.pop(name, None)
 
     def all_tests(self) -> dict[str, dict]:
         """``{code: {"model_id", "status"}}`` for every file of the folder

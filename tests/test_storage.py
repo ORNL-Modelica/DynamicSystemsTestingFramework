@@ -1012,24 +1012,28 @@ class TestTwoWriters:
             "ref_452b135a045c.json": "Lib.B",
         }
 
-    def test_an_unreadable_file_under_the_models_name_is_replaced_by_its_accept(
+    def test_a_store_over_an_unreadable_file_under_the_models_name_is_refused(
         self, sample_models_dir, tmp_path
     ):
         """A file cut short at the model's own name (a Ctrl-C mid-write by a
-        writer before the atomic one) names no other model: an accept
-        writes the baseline over it."""
+        writer before the atomic one, a hand edit): what it held cannot be
+        told, so the write refuses it, as it refuses a file of another
+        model, and leaves it as it is."""
         store = _mk_store(sample_models_dir, tmp_path)
         store.ref_dir.mkdir(parents=True)
-        (store.ref_dir / "ref_6e187be76792.json").write_text(
-            "{not js", encoding="utf-8"
+        path = store.ref_dir / "ref_6e187be76792.json"
+        path.write_text("{not js", encoding="utf-8")
+
+        with pytest.raises(ValueError) as caught:
+            store.store_reference(
+                _mk_model("Lib.A"), _mk_result("Lib.A"), provenance=PROVENANCE
+            )
+
+        assert str(caught.value) == (
+            "ref_6e187be76792.json cannot be read (not JSON at line 1, "
+            "column 2) — fix or delete it"
         )
-        assert store.store_reference(
-            _mk_model("Lib.A"), _mk_result("Lib.A"), provenance=PROVENANCE
-        )
-        data = json.loads(
-            (store.ref_dir / "ref_6e187be76792.json").read_text(encoding="utf-8")
-        )
-        assert data["model_id"] == "Lib.A"
+        assert path.read_bytes() == b"{not js"
 
 
 # ---------------------------------------------------------------------------

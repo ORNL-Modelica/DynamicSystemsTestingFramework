@@ -153,6 +153,50 @@ def test_a_baseline_whose_status_is_no_status_is_refused_by_name(
     assert path.read_bytes() == before
 
 
+def _conflicted(path) -> None:
+    """A's baseline as a merge leaves it: git's conflict markers around it."""
+    _hand_written(path, A)
+    path.write_bytes(
+        b"<<<<<<< HEAD\n" + path.read_bytes() + b"=======\n{}\n>>>>>>> other\n"
+    )
+
+
+def _id_five(path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"model_id": 5, "status": "active"}', encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("leave", "why"),
+    [
+        (_conflicted, "not JSON at line 1, column 1"),
+        (_id_five, "model_id 5 is not a string"),
+    ],
+    ids=["conflict-markers", "model-id-5"],
+)
+def test_an_unreadable_file_under_the_name_refuses_the_test_untouched(
+    sample_models_dir, tmp_path, leave, why
+):
+    """A file at the model's own name that is no readable baseline of it is
+    refused like a file of another model: the compare FAILS with the
+    sentence, the accept skips the test with it, and the file is kept."""
+    store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
+    path = store.ref_dir / A_FILE
+    leave(path)
+    before = path.read_bytes()
+    said = f"ref_6e187be76792.json cannot be read ({why}) — fix or delete it"
+
+    comp = compare_one(_model(A), _result(A), store)
+    stored, skipped, _ = store.accept_results(
+        [_model(A)], {A: _result(A)}, provenance=PROVENANCES
+    )
+
+    assert (classify(comp), refusal(comp)) == (FAIL, said)
+    assert (stored, skipped) == ([], [(A, said)])
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in store.ref_dir.iterdir()) == [A_FILE]
+
+
 def test_a_skipped_baseline_is_read(sample_models_dir, tmp_path):
     store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
     _hand_written(store.ref_dir / A_FILE, A, status="skip")

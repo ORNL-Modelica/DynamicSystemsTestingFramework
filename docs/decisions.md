@@ -9515,6 +9515,10 @@ three folders, and Dymola/windows held `PulseSine_Test` twice, as
    - a `status` that is neither `active` nor `skip`: the test FAILS with
      `ref_….json: status "obsolete" is not a status — delete the file to
      remove a baseline`, and an accept skips it;
+   - a file named for a model that cannot be read (not JSON, such as a
+     merge's conflict markers, or a `model_id` that is no string): the test
+     FAILS with `ref_….json cannot be read (<why>) — fix or delete it`, and
+     an accept skips it rather than write over it;
    - a folder that still holds a numbered `ref_*.json`: the store refuses
      the whole folder (`OldBaselineNames`, a config error, exit 2) and names
      the conversion script. Read as it is, every test would read NO_REF

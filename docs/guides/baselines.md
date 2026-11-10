@@ -114,6 +114,10 @@ dstf checks each file it reads against its name:
 - A file named for a model that holds another model's baseline, or whose
   `status` is neither `active` nor `skip`, fails that test with a sentence
   that names the file, and an accept skips the test.
+- A file named for a model that cannot be read — not JSON, such as a merge's
+  conflict markers, or a `model_id` that is not a string — fails that test
+  with `ref_….json cannot be read (…) — fix or delete it`, and an accept
+  skips the test rather than write over the file.
 
 `dstf manifest cleanup` lists what the work directory holds that no test
 uses — result folders and report pages of tests the project no longer

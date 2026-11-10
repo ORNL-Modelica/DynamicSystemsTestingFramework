@@ -115,8 +115,9 @@ class ReferenceStore(_RolesMixin):
         store a baseline without saying where it came from.
 
         Raises :class:`ValueError` when the trajectory contains non-finite
-        values or no rows at all — callers that accept in bulk should catch
-        it per test.
+        values or no rows at all, or the file named for the model is refused
+        (`RefIndex.refusal`) — callers that accept in bulk should catch it
+        per test.
         """
         if not result.success or not result.variables:
             return False
@@ -148,8 +149,8 @@ class ReferenceStore(_RolesMixin):
                     f"'{var.name or var.index}' contains non-finite values (NaN/Inf)"
                 )
 
-        # The file named for this model holds another model, or a status
-        # that is none: refused, the file untouched. A ValueError, so an
+        # The file named for this model cannot be read, holds another
+        # model, or a status that is none: refused, the file untouched. A ValueError, so an
         # accept skips the test with the sentence its comparison fails with.
         refused = self._index.refusal(test.model_id)
         if refused is not None:
