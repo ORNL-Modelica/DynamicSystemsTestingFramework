@@ -6,6 +6,7 @@ import sys
 from ..config import ConfigError
 from .author_cmd import cmd_author
 from .baseline_cmds import (
+    cmd_baseline_diff,
     cmd_companion_add,
     cmd_companion_freeze,
     cmd_companion_list,
@@ -25,6 +26,7 @@ from .diag_cmds import (
 from .parser import build_arg_parser, command_path
 from .run_cmds import cmd_compare, cmd_run
 from .spec_cmds import cmd_spec_add, cmd_spec_schema, cmd_spec_update
+from .summary_cmd import cmd_summary
 
 # Command → handler dispatch table, keyed by the command as it is typed
 # (`cli.parser.command_path`). Lives at module scope so tests can assert the
@@ -35,12 +37,14 @@ _COMMANDS = {
     "discover": cmd_discover,
     "run": cmd_run,
     "compare": cmd_compare,
+    "summary": cmd_summary,
     "author": cmd_author,
     "check": cmd_check,
     "spec add": cmd_spec_add,
     "spec update": cmd_spec_update,
     "spec schema": cmd_spec_schema,
     "baseline export": cmd_baseline_export,
+    "baseline diff": cmd_baseline_diff,
     "soft-check add": cmd_soft_check_add,
     "soft-check list": cmd_soft_check_list,
     "soft-check remove": cmd_soft_check_remove,

@@ -416,6 +416,12 @@ UNREAD: tuple[Unread, ...] = (
         ("config",),
         "check reads it only to look for testing.json in it",
     ),
+    Unread(
+        "baseline diff",
+        ("config",),
+        ("reference_root",),
+        "baseline diff reads testing.json only for its reference root",
+    ),
 )
 
 
@@ -911,12 +917,13 @@ class _Tree:
         examples,
         creates: bool = False,
         spec_use: str = "this command reads",
-        config_help: str | None = None,
+        own_help: dict[str, str] | None = None,
     ):
         """A command that runs. The project flags it reads (:data:`READS`)
         are offered here, and ONLY they are accepted before it.
         ``spec_use`` is this command's word in those flags' help,
-        ``config_help`` its own help for ``--config``.
+        ``own_help`` its own help for a project flag, by dest, where the
+        shared one would say what this command does not do.
 
         ``creates`` is the command's declaration that it may create a file
         of the project — a baseline, a spec entry, a soft check, a
@@ -933,7 +940,7 @@ class _Tree:
         no_config = _NO_CONFIG_WRITES if creates else _NO_CONFIG_READS
         project = [dest for dest in PROJECT_FLAGS if dest in READS[path]]
         for dest in project:
-            own = {"help": config_help} if dest == "config" and config_help else {}
+            own = {"help": own_help[dest]} if own_help and dest in own_help else {}
             # SUPPRESS is load-bearing: a sub-parser parses into a fresh
             # namespace and copies EVERY attribute of it onto the top-level
             # one, so a plain default here would erase a value given before
@@ -954,12 +961,13 @@ class _Tree:
 
 #: The top-level help's listing: the commands by what they are for.
 COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("run and score", ("discover", "run", "compare")),
+    ("run and score", ("discover", "run", "compare", "summary")),
     ("write criteria", ("author", "spec add", "spec update", "spec schema")),
     (
         "baselines and the data beside them",
         (
             "baseline export",
+            "baseline diff",
             "soft-check add",
             "soft-check list",
             "soft-check remove",
@@ -1022,6 +1030,15 @@ READS: dict[str, tuple[str, ...]] = {
     "spec update": (*_ALL, "backend"),
     "spec schema": ("output",),
     "baseline export": (*_STORE, "format", "output", "backend", "work_dir"),
+    "summary": ("base", "format", "output"),
+    "baseline diff": (
+        "config",
+        "reference_root",
+        "against",
+        "details",
+        "format",
+        "output",
+    ),
     "soft-check add": (*_STORE, "backend"),
     "soft-check list": (*_STORE, "backend"),
     "soft-check remove": (*_STORE, "backend"),
@@ -1092,6 +1109,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     _add_discover(tree, top)
     _add_run(tree, top)
     _add_compare(tree, top)
+    _add_summary(tree, top)
     _add_author(tree, top)
     _add_check(tree, top)
     _add_spec(tree, top)
@@ -1367,6 +1385,76 @@ def _add_compare(tree: _Tree, top) -> None:
     )
 
 
+def _add_summary(tree: _Tree, top) -> None:
+    node = tree.command(
+        top,
+        "summary",
+        summary="Tabulate several runs' verdicts by backend/os",
+        description="""
+            Print a matrix of several runs' results, to paste into a pull
+            request: a row per <Backend>/<os>, a column per LABEL, each cell
+            the tests that passed over the tests run (NOT RUN included),
+            read from the verdicts.json a scoring `dstf run` or `dstf
+            compare` writes in its work dir. Then, per cell, a folded list
+            of the tests that did not pass, each with its status and what
+            failed: the first failing criterion that is not advisory, else
+            the last line of its message.
+
+            Each DIR is searched for verdicts.json files (not under
+            reports/), each one cell; its backend and os are the file's.
+            A LABEL may repeat: the Windows and the Linux work dirs of one
+            change live in different places.
+
+            With --base, a test not passing in a cell is counted as "also fails on <base>"
+            when the base label's cell of the same backend/os failed it too
+            (FAIL or SIM_FAIL) or ended it with the same status; a base
+            NO_REF or NOT RUN did not fail it. Each list says the base's
+            status beside it. Lists holding a new one are open, the others
+            folded.
+
+            Markdown by default; --format json for the same facts as data.
+            Nothing is judged: the status words are the files'.
+
+            Exit code: 0 when the matrix is printed, whatever the runs
+            say; 2 when an argument is not LABEL=DIR, a DIR holds no
+            verdicts.json, a verdicts.json names no backend and os, a label
+            holds two files of one backend/os, one file is read twice under
+            a label, or --base names no label.
+            """,
+        examples=(
+            "dstf summary main=../main/testing_output branch=testing_output "
+            "--base main",
+            "dstf summary linux=out/linux windows=win/out --format json "
+            "-o summary.json",
+        ),
+    )
+    node.add_argument(
+        "runs",
+        metavar="LABEL=DIR",
+        nargs="+",
+        help="A run's label and a directory holding its verdicts.json "
+        "(a work dir, or a folder of work dirs). Columns follow the labels' "
+        "order; a label may repeat.",
+    )
+    node.add_argument(
+        "--base",
+        metavar="LABEL",
+        default=None,
+        help="Count, in every other label's cells, the tests not passing "
+        "that this label's cell of the same backend/os failed too, or ended "
+        'with the same status ("also fails on <base>"). Default: no such count.',
+    )
+    _offer(
+        node,
+        "format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="markdown (to paste into a pull request) or json (the same facts "
+        "as data). Default: markdown.",
+    )
+    _offer(node, "output", default=None, help="The file to write. Default: printed.")
+
+
 # ---------------------------------------------------------------------------
 # write criteria
 # ---------------------------------------------------------------------------
@@ -1394,10 +1482,12 @@ def _add_author(tree: _Tree, top) -> None:
         ),
         # Its own words: no testing.json is searched for, and the other
         # three flags are not this command's.
-        config_help="The project's testing.json. Required: the tool reads "
-        "the library, the reference results and test_spec.json from it and "
-        "saves the spec it names, so none of the three can be named here "
-        "instead.",
+        own_help={
+            "config": "The project's testing.json. Required: the tool reads "
+            "the library, the reference results and test_spec.json from it and "
+            "saves the spec it names, so none of the three can be named here "
+            "instead.",
+        },
     )
     _offer_selection(node)
     node.add_argument(
@@ -1588,14 +1678,17 @@ def _add_baseline(tree: _Tree, top) -> None:
     group, sub = tree.group(
         top,
         "baseline",
-        summary="Stored baselines: export them to one file",
+        summary="Stored baselines: export them, diff two revisions",
         description="""
             Commands over the stored baselines of one partition of the
             reference root (<reference_root>/<Backend>/<os>/). Baselines
             are written by `dstf run --accept`, `dstf compare --accept`
             and the authoring tool's Accept.
             """,
-        examples=("dstf baseline export --config testing.json -o references.json",),
+        examples=(
+            "dstf baseline export --config testing.json -o references.json",
+            "dstf baseline diff main --reference-root Resources/ReferenceResults",
+        ),
     )
     node = tree.command(
         sub,
@@ -1631,6 +1724,112 @@ def _add_baseline(tree: _Tree, top) -> None:
         node,
         "work_dir",
         fill={"work_dir_use": "Where the file is written when --output names none."},
+    )
+
+    _add_baseline_diff(tree, sub)
+
+
+def _add_baseline_diff(tree: _Tree, sub) -> None:
+    node = tree.command(
+        sub,
+        "baseline diff",
+        summary="Show which baselines changed between two revisions",
+        description="""
+            Print which stored baselines changed between two git revisions
+            of the reference root — or between REV1 and the files on disk,
+            when REV2 is left out (what an accept leaves before `git add`).
+            The Markdown is one line of counts and an overview table: a row
+            per test, a column per <Backend>/<os> folder, each cell the
+            largest change of a variable there, as a percent of the old
+            baseline's range (of its value where it is constant). Baselines
+            are paired by model id, never by file name. Only the stored
+            samples are compared.
+
+            --details adds a folded section per test: each variable's change
+            and the time it happens, the settings that changed, and the
+            solver statistics old → new, the machine-dependent times on a
+            line of their own. The JSON always holds all of it.
+
+            The reference root is --reference-root; else the reference_root
+            of the testing.json --config names (or the one in the current
+            directory), or that file's own directory when it is named
+            ReferenceResults. The library is not read: a checkout of the
+            references alone is enough.
+
+            Markdown by default, to paste into a pull request; --format
+            json for the same facts as data. Markdown longer than a GitHub
+            pull-request body holds (65,536 characters) is printed whole,
+            with a note on stderr. git is only read: nothing is written to
+            the repository.
+
+            Exit code: 0 when the difference is printed, whatever changed;
+            2 when git cannot answer (no repository, an unknown revision),
+            no reference root is named, --against names a folder the newer
+            side holds no baseline in, or --details names a test the diff
+            does not list.
+            """,
+        examples=(
+            "dstf baseline diff main --reference-root Resources/ReferenceResults",
+            "dstf baseline diff v1.3.0 HEAD --config testing.json -o baselines.md",
+            "dstf baseline diff HEAD~1 HEAD --config testing.json --against Dymola/linux",
+            "dstf baseline diff main HEAD --config testing.json --details NSSS_Test",
+            "dstf baseline diff main --config testing.json --format json -o diff.json",
+        ),
+        own_help={
+            "config": "A testing.json, or the directory holding it, read for "
+            "its reference root alone: its reference_root, else its own "
+            "directory when that is named ReferenceResults. Default: the "
+            "testing.json in the current directory; with none there and no "
+            "--reference-root, the command is refused. The library is not read.",
+            "reference_root": "The reference root whose revisions are "
+            "compared: a folder of a git repository's work tree. Default: "
+            "read from testing.json (--config).",
+        },
+    )
+    node.add_argument(
+        "rev1",
+        metavar="REV1",
+        help="The older revision: a commit, branch or tag (main, HEAD~1, v1.3.0).",
+    )
+    node.add_argument(
+        "rev2",
+        metavar="REV2",
+        nargs="?",
+        default=None,
+        help="The newer revision. Default: the files on disk, tracked or not.",
+    )
+    node.add_argument(
+        "--against",
+        metavar="BACKEND/OS",
+        default=None,
+        help="Also score each other folder's newer baseline of each listed "
+        "test against this folder's newer one (Dymola/linux), by the same "
+        "rule. Default: no such comparison.",
+    )
+    node.add_argument(
+        "--details",
+        metavar="NAME",
+        nargs="*",
+        default=None,
+        help="Add each test's folded section to the Markdown: with no NAME, "
+        "every listed test's; else only the named ones, each a short name "
+        "(NSSS_Test) or a full model id. A NAME that matches no listed test "
+        "is refused. Give it after REV1 and REV2. Default: the overview "
+        "alone. The JSON is always complete.",
+    )
+    _offer(
+        node,
+        "format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="markdown (to paste into a pull request) or json (the same facts "
+        "as data, non-finite numbers as null beside a flag). Default: markdown.",
+    )
+    _offer(
+        node,
+        "output",
+        default=None,
+        help="The file to write. Default: printed.",
     )
 
 

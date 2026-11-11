@@ -1,7 +1,9 @@
 """Shared test fixtures."""
 
 import json
+import os
 import shutil
+import subprocess
 from collections import defaultdict
 from collections.abc import Mapping
 from pathlib import Path
@@ -15,6 +17,41 @@ from dstf.storage.baseline_codec import decode_series
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PROJECT_ROOT = Path(__file__).parent.parent
+
+
+#: A throwaway repository's git: no user or system configuration read.
+GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
+
+
+class GitRepo:
+    """A throwaway git repository under a test's tmp_path."""
+
+    def __init__(self, top: Path):
+        self.top = top
+        top.mkdir(parents=True, exist_ok=True)
+        self.git("init", "-q")
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self.top), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, **GIT_ENV},
+        ).stdout.strip()
+
+    def commit(self, subject: str) -> str:
+        """Commit every change; the new commit's hash."""
+        self.git("add", "--all")
+        self.git("commit", "-q", "--allow-empty", "-m", subject)
+        return self.git("rev-parse", "HEAD")
 
 
 def make_test_model(model_id: str = "Lib.T", **kw) -> TestModel:

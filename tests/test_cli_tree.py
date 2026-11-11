@@ -168,12 +168,14 @@ _SUMMARY_WORDS = {
     "discover": "List the tests",
     "run": "Simulate",
     "compare": "without simulating",
+    "summary": "several runs",
     "author": "authoring tool",
     "check": "backends",
     "spec add": "Add a test",
     "spec update": "JSON-Patch",
     "spec schema": "schema",
     "baseline export": "every stored baseline",
+    "baseline diff": "between two revisions",
     "soft-check add": "as a soft check",
     "soft-check list": "soft checks",
     "soft-check remove": "Remove a soft check",
@@ -716,6 +718,8 @@ READS: dict[str, set[str]] = {
     "discover": _PROJECT,
     "run": _PROJECT | _AFTER_ONLY,
     "compare": _PROJECT | _AFTER_ONLY,
+    # its runs are named by LABEL=DIR: no project
+    "summary": set(),
     # the Session builds its Config from testing.json alone
     "author": {"--config", "--backend", "--work-dir"},
     # the search for a testing.json; never the spec, a partition or a work dir
@@ -727,6 +731,9 @@ READS: dict[str, set[str]] = {
     "spec schema": set(),
     # the default output file is in the work dir
     "baseline export": _STORE | {"--backend", "--work-dir"},
+    # the reference root alone, named or read from testing.json — never the
+    # library: a checkout of the references holds none
+    "baseline diff": {"--config", "--reference-root"},
     "soft-check add": _STORE | {"--backend"},
     "soft-check list": _STORE | {"--backend"},
     "soft-check remove": _STORE | {"--backend"},
@@ -749,6 +756,8 @@ ARGV: dict[str, list[str]] = {
     "spec schema": ["test_spec"],
     "spec add": ["Lib.M"],
     "spec update": ["patch.json"],
+    "baseline diff": ["HEAD"],
+    "summary": ["head=."],
     "soft-check add": ["Lib.M", "other", "ref.json"],
     "soft-check remove": ["Lib.M", "other"],
     "companion add": ["Lib.M", "rig", "rig.csv"],
@@ -1238,6 +1247,8 @@ _OUTPUTS = {
     "compare": ["--report-format", "junit"],
     "spec schema": [],
     "baseline export": [],
+    "baseline diff": ["HEAD"],
+    "summary": ["head=."],
 }
 
 
@@ -1380,8 +1391,10 @@ def test_output_has_its_short_form_everywhere():
     assert [path for path, _ in found] == [
         "run",
         "compare",
+        "summary",
         "spec schema",
         "baseline export",
+        "baseline diff",
     ]
     for path, action in found:
         assert action.option_strings == ["-o", "--output"], path
@@ -1389,8 +1402,20 @@ def test_output_has_its_short_form_everywhere():
 
 def test_format_lists_its_choices_in_one_order():
     found = _actions("--format")
-    assert [path for path, _ in found] == ["baseline export", "companion add"]
-    assert {tuple(action.choices) for _, action in found} == {("json", "csv")}
+    assert [path for path, _ in found] == [
+        "summary",
+        "baseline export",
+        "baseline diff",
+        "companion add",
+    ]
+    choices = {path: tuple(action.choices) for path, action in found}
+    # a file of data: json first; a text to read (baseline diff): Markdown
+    assert choices == {
+        "baseline export": ("json", "csv"),
+        "baseline diff": ("markdown", "json"),
+        "summary": ("markdown", "json"),
+        "companion add": ("json", "csv"),
+    }
 
 
 def test_no_browser_is_one_flag():
@@ -1601,6 +1626,7 @@ _REFUSED_BY_HAND = [
     ["compare", "-o", "x.xml"],
     ["baseline", "export", "-o", "x.json", "--work-dir", "w"],
     ["check", "--config", "testing.json", "--reference-root", "refs"],
+    ["baseline", "diff", "HEAD", "--reference-root", "refs", "--config", "t.json"],
 ]
 
 
@@ -1689,6 +1715,8 @@ def test_the_sentence_names_both_flags_and_the_value(capsys):
         ["manifest", "cleanup", "--work-dir", "w"],
         ["--test-spec", "s.json", "manifest", "cleanup"],
         ["baseline", "export", "--work-dir", "w"],
+        ["baseline", "diff", "HEAD", "--config", "t.json"],
+        ["baseline", "diff", "HEAD", "main", "--reference-root", "r"],
         ["check", "--reference-root", "r"],
         ["--config", "t.json", "check", "--source-path", "L"],
         # a flag that asks for something NOT to happen is always accepted
@@ -1729,8 +1757,9 @@ CREATES = {
     "companion freeze",
 }
 
-#: A command line for each command that looks for a project (`author` and
-#: `spec schema` look for none), run in a directory that holds only a library.
+#: A command line for each command that looks for a project (`author`,
+#: `spec schema` and `summary` look for none), run in a directory that holds
+#: only a library.
 IN_A_LIBRARY = {
     "discover": [],
     "check": [],
@@ -1739,6 +1768,7 @@ IN_A_LIBRARY = {
     "spec add": ["Lib.A"],
     "spec update": ["{file}"],
     "baseline export": [],
+    "baseline diff": ["HEAD"],
     "soft-check add": ["Lib.A", "om", "{file}"],
     "soft-check list": [],
     "soft-check remove": ["Lib.A", "om"],
@@ -1762,7 +1792,7 @@ PAST_ITS_CHECKS = {"compare", "spec add"}
 
 
 def test_every_command_says_whether_it_may_create_the_project_s_files():
-    assert sorted({*IN_A_LIBRARY, "author", "spec schema"}) == COMMANDS
+    assert sorted({*IN_A_LIBRARY, "author", "spec schema", "summary"}) == COMMANDS
     assert PARSER.creates == CREATES
 
 
@@ -1799,13 +1829,20 @@ def test_a_command_that_creates_nothing_of_a_project_writes_no_config(
     assert not list(tmp_path.rglob("Lib/testing.json"))
 
 
+#: The commands that read testing.json for one setting and are refused
+#: without it: no project is read on defaults.
+REFUSED_WITHOUT_ONE = {"baseline diff"}
+
+
 @pytest.mark.parametrize("path", sorted(IN_A_LIBRARY))
 def test_a_command_s_help_says_what_it_does_where_no_testing_json_is_found(path):
     text = " ".join(NODES[path].format_help().split())
     writes = "When none is found, this command writes a default one beside the library"
     reads = "When none is found, the project is read on defaults and none is written."
+    refused = "with none there and no --reference-root, the command is refused"
     assert (writes in text) is (path in CREATES)
-    assert (reads in text) is (path not in CREATES)
+    assert (reads in text) is (path not in CREATES | REFUSED_WITHOUT_ONE)
+    assert (refused in text) is (path in REFUSED_WITHOUT_ONE)
 
 
 def test_a_compare_keeps_the_run_s_settings_for_what_it_does_not_read(

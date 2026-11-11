@@ -222,3 +222,41 @@ def test_an_old_files_number_is_read_by_nothing_and_not_written_back():
     old = {"model_id": data.pop("model_id"), "test_id": "0007", **data}
     written = codec.encode_reference(codec.decode_reference(old))
     assert written == PRIMARY_SINGLE
+
+
+# --- a body from bytes: parse_body, the one rule every reader applies -------
+
+
+def test_a_body_from_bytes_is_the_parsed_object():
+    raw = b'{"model_id": "Lib.M", "time": [0, 1], "variables": []}'
+    assert codec.parse_body(raw) == {
+        "model_id": "Lib.M",
+        "time": [0, 1],
+        "variables": [],
+    }
+
+
+def test_a_body_with_a_byte_order_mark_is_not_json():
+    """``json.loads(bytes)`` would read through a BOM; a file DSTF writes
+    has none, and the codec reads the text as it is."""
+    with pytest.raises(json.JSONDecodeError, match="BOM"):
+        codec.parse_body(b'\xef\xbb\xbf{"time": [0, 1], "variables": []}')
+
+
+def test_a_utf16_body_is_not_utf8_text():
+    """``json.loads(bytes)`` would detect UTF-16 and read it."""
+    raw = '{"time": [0, 1], "variables": []}'.encode("utf-16")
+    with pytest.raises(codec.UndecodableBaseline, match="^not UTF-8 text$"):
+        codec.parse_body(raw)
+
+
+def test_a_body_holding_no_object_says_what_it_holds():
+    with pytest.raises(
+        codec.UndecodableBaseline, match="^it holds a JSON list, not an object$"
+    ):
+        codec.parse_body(b"[1, 2]")
+
+
+def test_a_body_is_held_to_check_body():
+    with pytest.raises(codec.UndecodableBaseline, match="^variable 1 has no name$"):
+        codec.parse_body(b'{"time": [0], "variables": [{"values": [0]}]}')

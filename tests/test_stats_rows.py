@@ -456,3 +456,26 @@ def test_a_name_the_test_does_not_list_has_no_row_from_its_old_copy_either():
         statistics_rows(None, base, listing=["h"], baseline_diagnostics=summaries)
     )
     assert (rows["h"].kind, rows["h"].baseline) == ("value", 0.5)
+
+
+def test_a_stored_run_side_is_shown_at_the_digits_its_file_says():
+    """`baseline diff` puts a newer BASELINE on the run side: a summary
+    holds no samples to read a precision from, so its file's precision is
+    given (`run_digits`) — a single-precision CPU time reads 7 digits, not
+    `29.8774642944336 s`."""
+    from dstf.reporting.stats_rows import report_text
+
+    old = [DiagnosticSummary(name="CPUtime", final=33.43780136108398)]
+    new = [DiagnosticSummary(name="CPUtime", final=29.8774642944336)]
+    (row,) = statistics_rows(
+        {},
+        {},
+        listing=["CPUtime"],
+        run_diagnostics=new,
+        baseline_diagnostics=old,
+        baseline_digits=7,
+        run_digits=7,
+    )
+    assert row.digits == (7, 7)
+    assert report_text(row.kind, row.run, row.digits[0]) == "29.87746 s"
+    assert report_text(row.kind, row.baseline, row.digits[1]) == "33.4378 s"
