@@ -330,16 +330,23 @@ def decode_reference(data: dict) -> ReferenceFile:
     )
 
 
-def _load(path: Path) -> Any:
-    """``path``'s parsed JSON; a file that is not UTF-8 text raises
+def _parse_json(raw: bytes) -> Any:
+    """The JSON a file's bytes hold; bytes that are not UTF-8 text raise
     :class:`UndecodableBaseline` (``not UTF-8 text``), so a reader that
     catches it beside ``json.JSONDecodeError`` and ``OSError`` catches
-    every file it cannot read."""
+    every file it cannot read. Decoded strictly, THEN parsed: ``json.loads``
+    given the bytes themselves reads through a BOM and detects UTF-16, and a
+    baseline is UTF-8 text with neither."""
     try:
-        text = path.read_text(encoding="utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError as e:
         raise UndecodableBaseline("not UTF-8 text") from e
     return json.loads(text)
+
+
+def _load(path: Path) -> Any:
+    """``path``'s parsed JSON (:func:`_parse_json`)."""
+    return _parse_json(path.read_bytes())
 
 
 def _json_kind(value: Any) -> str:
@@ -349,17 +356,24 @@ def _json_kind(value: Any) -> str:
     )
 
 
-def read_body(path: Path) -> dict:
-    """``path``'s parsed JSON, its body held to :func:`check_body`: what a
-    reader that scores a file (:func:`read_reference`,
-    :func:`read_soft_check`) decodes, and what ``soft-check add`` reads its
-    source by, so it never writes a soft check a run then skips. Raises
-    ``OSError``, ``json.JSONDecodeError`` or :class:`UndecodableBaseline`."""
-    data = _load(path)
+def parse_body(raw: bytes) -> dict:
+    """The parsed JSON of a reference-shape file's bytes, its body held to
+    :func:`check_body`: THE rule a body is read by, from a file on disk
+    (:func:`read_body`) or from a blob at a git revision (``baseline
+    diff``). Raises ``json.JSONDecodeError`` or :class:`UndecodableBaseline`."""
+    data = _parse_json(raw)
     if not isinstance(data, dict):
         raise UndecodableBaseline(f"it holds a JSON {_json_kind(data)}, not an object")
     check_body(data)
     return data
+
+
+def read_body(path: Path) -> dict:
+    """``path``'s body (:func:`parse_body`): what a reader that scores a
+    file (:func:`read_reference`, :func:`read_soft_check`) decodes, and what
+    ``soft-check add`` reads its source by, so it never writes a soft check
+    a run then skips. Raises ``OSError`` besides :func:`parse_body`'s."""
+    return parse_body(path.read_bytes())
 
 
 def read_reference(path: Path) -> ReferenceFile:
