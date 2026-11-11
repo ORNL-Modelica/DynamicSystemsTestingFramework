@@ -182,7 +182,9 @@ def _test_rank(test: TestDiff) -> tuple[int, int, float, float]:
 # --- the overview ------------------------------------------------------------
 
 
-def _short(model_id: str) -> str:
+def short_name(model_id: str) -> str:
+    """A test's name as the overview prints it: the last part of its model
+    id (a path, for a file whose model id cannot be read, whole)."""
     return model_id.rsplit(".", 1)[-1] if "/" not in model_id else model_id
 
 
@@ -247,7 +249,7 @@ def _against_cell(test: TestDiff, several: bool) -> str:
     return _marked(_DASH if best is None else _amount(best[2]), marks)
 
 
-def _steps_folder(diff: Diff) -> str | None:
+def steps_folder(diff: Diff) -> str | None:
     """The first folder, in column order, where a listed test records its
     steps on both sides."""
     for folder in diff.folders:
@@ -274,25 +276,36 @@ def _row(cells: list[str]) -> str:
     return "| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |"
 
 
-def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]:
+def overview_header(diff: Diff, steps: str | None) -> list[str]:
+    """The overview table's column titles."""
     header = ["Test", *(f"Change, {folder}" for folder in diff.folders)]
     if diff.against:
         header.append(f"Gap to {diff.against}")
     if steps:
         header.append("Solver steps")
-    lines = [_row(header), _row(["---"] * len(header))]
+    return header
+
+
+def overview_cells(diff: Diff, test: TestDiff, steps: str | None) -> list[str]:
+    """One test's overview cells after its name: each folder's change, then
+    the gap and the steps where the table has those columns."""
     several = len(diff.folders) > 2
+    cells = []
+    for folder in diff.folders:
+        b = test.baselines.get(folder)
+        cells.append(_cell(b) if b else _SAME if folder in test.unchanged else _NONE)
+    if diff.against:
+        cells.append(_against_cell(test, several))
+    if steps:
+        cells.append(_steps_cell(test, steps))
+    return cells
+
+
+def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]:
+    header = overview_header(diff, steps)
+    lines = [_row(header), _row(["---"] * len(header))]
     for test in tests:
-        cells = [_code(_short(test.model_id))]
-        for folder in diff.folders:
-            b = test.baselines.get(folder)
-            cells.append(
-                _cell(b) if b else _SAME if folder in test.unchanged else _NONE
-            )
-        if diff.against:
-            cells.append(_against_cell(test, several))
-        if steps:
-            cells.append(_steps_cell(test, steps))
+        cells = [_code(short_name(test.model_id)), *overview_cells(diff, test, steps)]
         lines.append(_row(cells))
     return lines
 
@@ -490,7 +503,7 @@ def _detail(diff: Diff, test: TestDiff) -> list[str]:
     )
     lines = [
         "<details>",
-        f"<summary><code>{_short(test.model_id)}</code> — {what}</summary>",
+        f"<summary><code>{short_name(test.model_id)}</code> — {what}</summary>",
         "",
         f"`{test.model_id}`",
         "",
@@ -565,15 +578,17 @@ def detailed(diff: Diff, names: list[str]) -> list[str]:
     unknown = []
     for name in names:
         got = [
-            t.model_id for t in diff.tests if name in (t.model_id, _short(t.model_id))
+            t.model_id
+            for t in diff.tests
+            if name in (t.model_id, short_name(t.model_id))
         ]
         if not got:
             unknown.append(name)
         chosen += [m for m in got if m not in chosen]
     if unknown:
-        tests = _sorted(diff.tests)
+        tests = sorted_tests(diff.tests)
         such = (
-            f"a short name such as {_short(tests[0].model_id)}, or a full model id"
+            f"a short name such as {short_name(tests[0].model_id)}, or a full model id"
             if tests
             else "it lists none"
         )
@@ -583,7 +598,7 @@ def detailed(diff: Diff, names: list[str]) -> list[str]:
     return chosen
 
 
-def _sorted(tests: list[TestDiff]) -> list[TestDiff]:
+def sorted_tests(tests: list[TestDiff]) -> list[TestDiff]:
     """The overview's order: largest change first."""
     return sorted(tests, key=lambda t: (_test_rank(t), t.model_id))
 
@@ -594,8 +609,8 @@ def as_markdown(diff: Diff, details: Collection[str] = ()) -> str:
     folded section for each test whose model id is in ``details``
     (:func:`detailed`)."""
     lines = [_headline(diff), ""]
-    tests = _sorted(diff.tests)
-    steps = _steps_folder(diff)
+    tests = sorted_tests(diff.tests)
+    steps = steps_folder(diff)
     if tests:
         lines += [*_overview(diff, tests, steps), "", _key(diff, tests, steps), ""]
     else:

@@ -208,43 +208,76 @@ def machine_dependent(row: StatRow) -> bool:
 # --- one series against another ---------------------------------------------
 
 
-def compare_series(
+@dataclass(frozen=True)
+class Difference:
+    """``new - old`` at each of old's points, paired as :func:`compare_series`
+    pairs them: the series a change is the largest of, and what the change
+    panel of ``baseline plot`` draws."""
+
+    #: old's time
+    time: np.ndarray
+    #: new read on old's grid, minus old; NaN at old's points outside new's span
+    delta: np.ndarray
+    scale: Scale
+    #: what a percent is of: old's range or value (1.0 for ``absolute``)
+    scale_value: float
+    #: old's points inside new's time span (within one instant)
+    inside: np.ndarray
+    #: of those, the points where both sides are finite: the compared ones
+    finite: np.ndarray
+    #: of those inside, the points where a side is NaN or infinite and the
+    #: two differ
+    differs: np.ndarray
+    #: why nothing was compared; "" otherwise
+    note: str = ""
+
+    @property
+    def scaled(self) -> np.ndarray:
+        """``delta`` as a change is said: a percent of the scale, or the
+        absolute difference."""
+        if self.scale == "absolute":
+            return self.delta
+        return self.delta / self.scale_value * 100
+
+
+def difference_series(
     old_time: np.ndarray,
     old_values: np.ndarray,
     new_time: np.ndarray,
     new_values: np.ndarray,
-) -> SeriesChange:
-    """How much ``new`` changed against ``old`` (the module docstring's
-    rule). An event is two samples at one time: old's first sample there
-    meets new's value just before the event, its second new's value just
-    after (a straight line through the step reads a 0.1 % move as 100 %).
-    A point where either side is NaN or infinite is a non-finite
-    difference, unless both hold the same one."""
+) -> Difference:
+    """``new - old`` on old's grid (the module docstring's rule). An event
+    is two samples at one time: old's first sample there meets new's value
+    just before the event, its second new's value just after (a straight
+    line through the step reads a 0.1 % move as 100 %). A point where
+    either side is NaN or infinite is a non-finite difference, unless both
+    hold the same one."""
     to, yo = np.asarray(old_time, float), np.asarray(old_values, float)
     tn, yn = np.asarray(new_time, float), np.asarray(new_values, float)
     note = _unreadable_series(to, yo, "old") or _unreadable_series(tn, yn, "new")
     if note:
-        return SeriesChange(largest=None, scale="absolute", at=None, note=note)
+        none = np.zeros(0, bool)
+        return Difference(to[:0], to[:0], "absolute", 1.0, none, none, none, note)
 
     # new on old's grid: after an event by default, before it for the first
     # of old's samples at a time it holds twice
     post = np.concatenate((np.diff(tn) != 0, [True]))
     pre = np.concatenate(([True], np.diff(tn) != 0))
-    on_old = np.interp(to, tn[post], yn[post])
-    repeats_next = np.concatenate((np.diff(to) == 0, [False]))
-    repeats_prev = np.concatenate(([False], np.diff(to) == 0))
-    first_of_event = repeats_next & ~repeats_prev
-    on_old[first_of_event] = np.interp(to[first_of_event], tn[pre], yn[pre])
+    with np.errstate(invalid="ignore"):  # a line to or from an infinity
+        on_old = np.interp(to, tn[post], yn[post])
+        repeats_next = np.concatenate((np.diff(to) == 0, [False]))
+        repeats_prev = np.concatenate(([False], np.diff(to) == 0))
+        first_of_event = repeats_next & ~repeats_prev
+        on_old[first_of_event] = np.interp(to[first_of_event], tn[pre], yn[pre])
 
     # A time within one instant of new's ends is inside its span: a
     # single-precision run ends at float32(11.9) = 11.8999996, and old's
     # samples at 11.9 are that instant, not outside it.
     reach = SAME_INSTANT * max(float(tn[-1] - tn[0]), abs(tn[0]), abs(tn[-1]))
     inside = (to >= tn[0] - reach) & (to <= tn[-1] + reach)
-    t, a, b = to[inside], yo[inside], on_old[inside]
-    finite = np.isfinite(a) & np.isfinite(b)
-    same = (a == b) | (np.isnan(a) & np.isnan(b))
-    differs = ~finite & ~same
+    finite = inside & np.isfinite(yo) & np.isfinite(on_old)
+    same = (yo == on_old) | (np.isnan(yo) & np.isnan(on_old))
+    differs = inside & ~finite & ~same
 
     finite_old = yo[np.isfinite(yo)]
     if finite_old.size:
@@ -256,23 +289,46 @@ def compare_series(
     else:
         scale_value, scale = 1.0, "absolute"
 
+    with np.errstate(invalid="ignore"):  # inf - inf
+        delta = np.where(inside, on_old - yo, np.nan)
+    return Difference(to, delta, scale, float(scale_value), inside, finite, differs)
+
+
+def series_change(d: Difference) -> SeriesChange:
+    """The change a difference series says: its largest compared point, as
+    a percent of the scale (or absolute), and what was not compared."""
+    if d.note:
+        return SeriesChange(largest=None, scale="absolute", at=None, note=d.note)
     largest = at = None
-    if finite.any():
-        d = np.abs(b[finite] - a[finite])
-        i = int(np.argmax(d))
+    if d.finite.any():
+        size = np.abs(d.delta[d.finite])
+        i = int(np.argmax(size))
         largest = (
-            float(d[i]) if scale == "absolute" else float(d[i] / scale_value * 100)
+            float(size[i])
+            if d.scale == "absolute"
+            else float(size[i] / d.scale_value * 100)
         )
-        at = float(t[finite][i])
+        at = float(d.time[d.finite][i])
     return SeriesChange(
         largest=largest,
-        scale=scale,
+        scale=d.scale,
         at=at,
-        compared=int(finite.sum()),
-        outside=int((~inside).sum()),
-        non_finite=int(differs.sum()),
-        non_finite_at=float(t[differs][0]) if differs.any() else None,
+        compared=int(d.finite.sum()),
+        outside=int((~d.inside).sum()),
+        non_finite=int(d.differs.sum()),
+        non_finite_at=float(d.time[d.differs][0]) if d.differs.any() else None,
     )
+
+
+def compare_series(
+    old_time: np.ndarray,
+    old_values: np.ndarray,
+    new_time: np.ndarray,
+    new_values: np.ndarray,
+) -> SeriesChange:
+    """How much ``new`` changed against ``old``: the largest point of their
+    :func:`difference_series`."""
+    return series_change(difference_series(old_time, old_values, new_time, new_values))
 
 
 def _unreadable_series(time: np.ndarray, values: np.ndarray, side: str) -> str:
@@ -395,23 +451,26 @@ def _on_disk(root: Path) -> list[_File]:
     return out
 
 
-def _keyed(
-    olds: list[_File], news: list[_File]
-) -> dict[tuple[str, str], tuple[list[_File], list[_File]]]:
-    """Both sides' files by (folder, model id). A file whose model id
-    cannot be read takes the model id of the other side's file at its
-    path, or else its own path as its key."""
-    by_path = {
-        "old": {f.path: f.model_id for f in olds if f.model_id},
-        "new": {f.path: f.model_id for f in news if f.model_id},
-    }
-    out: dict[tuple[str, str], tuple[list[_File], list[_File]]] = defaultdict(
-        lambda: ([], [])
+def keyed_many(
+    sides: list[list[_File]],
+) -> dict[tuple[str, str], list[list[_File]]]:
+    """Every side's files by (folder, model id), one list per side. A file
+    whose model id cannot be read takes the model id another side's file
+    at its path names — the nearest side's, the earlier first on a tie —
+    or else its own path as its key."""
+    by_path = [{f.path: f.model_id for f in files if f.model_id} for files in sides]
+    out: dict[tuple[str, str], list[list[_File]]] = defaultdict(
+        lambda: [[] for _ in sides]
     )
-    for side, files, other in ((0, olds, "new"), (1, news, "old")):
+    for i, files in enumerate(sides):
+        others = sorted(
+            (j for j in range(len(sides)) if j != i), key=lambda j: abs(j - i)
+        )
         for f in files:
-            model_id = f.model_id or by_path[other].get(f.path) or f.path
-            out[(f.folder, model_id)][side].append(f)
+            model_id = f.model_id or next(
+                (by_path[j][f.path] for j in others if f.path in by_path[j]), f.path
+            )
+            out[(f.folder, model_id)][i].append(f)
     return out
 
 
@@ -449,7 +508,7 @@ def diff_baselines(
     unchanged = metadata_only = 0
     changed: dict[str, dict[str, BaselineDiff]] = defaultdict(dict)
     same: dict[str, list[str]] = defaultdict(list)
-    keyed = _keyed(olds, news)
+    keyed = keyed_many([olds, news])
     for (folder, model_id), (o, n) in keyed.items():
         if len(o) == len(n) and sorted(f.raw for f in o) == sorted(f.raw for f in n):
             unchanged += 1
@@ -643,20 +702,20 @@ def _steps(old: Mapping, new: Mapping) -> tuple[float, float] | None:
 def _against(
     model_id: str,
     against: str,
-    keyed: Mapping[tuple[str, str], tuple[list[_File], list[_File]]],
+    keyed: Mapping[tuple[str, str], list[list[_File]]],
     folders: list[str],
 ) -> dict[str, list[VariableDiff]]:
     """Each other folder's newer baseline of ``model_id`` scored against
     the ``against`` folder's newer one; a folder where either is not one
     readable file is left out."""
-    reference = _one_readable(keyed.get((against, model_id), ([], []))[1])
+    reference = _one_readable(keyed.get((against, model_id), [[], []])[1])
     if reference is None:
         return {}
     out = {}
     for folder in folders:
         if folder == against:
             continue
-        other = _one_readable(keyed.get((folder, model_id), ([], []))[1])
+        other = _one_readable(keyed.get((folder, model_id), [[], []])[1])
         if other is not None:
             out[folder] = _variables(reference.baseline, other.baseline)
     return out
