@@ -1872,11 +1872,12 @@ def _add_manifest(tree: _Tree, top) -> None:
         "manifest show",
         summary="List the stored references and the status of each",
         description="""
-            List the references of the partition, in model-id order: each
-            one's file, status and model. Then each file of the folder that
-            is read as no baseline, with the sentence it is refused by: a
-            file that cannot be read, one named for another model than the
-            one it holds, one whose status is not active. Nothing is
+            List the references of the partition a run reads, in model-id
+            order: each one's file, status and model. Then, and only there,
+            each file of the folder that is read as no baseline, with the
+            sentence it is refused by: a file that cannot be read, one named
+            for another model than the one it holds, one whose name is no
+            baseline name, one whose status is not active. Nothing is
             written.
             """,
         examples=(

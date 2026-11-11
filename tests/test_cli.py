@@ -2833,11 +2833,13 @@ _ORPHAN_NOTE = (
 
 
 def test_manifest_show_lists_each_file_in_model_id_order(run_env, capsys):
-    """Each baseline by its file, status and model, sorted by model id (the
-    files' own order is by code); no id column. Then every file the folder's
-    index will not read, in name order, each with the sentence it is refused
-    by: a status that is none (``skip``), a file that cannot be read, a
-    file named for another code than its model's, and a stray name."""
+    """Each baseline the index reads by its file, status and model, sorted
+    by model id (the files' own order is by code); no id column. Then every
+    file the folder's index will not read, in name order, each with the
+    sentence it is refused by: a status that is none (``skip``), a file that
+    cannot be read, a file named for another code than its model's, and a
+    stray name. A refused file is listed under ``Refused:`` only, never in
+    the table too."""
     ref_dir = run_env.ref_root / FAKE / detect_os()
     ref_dir.mkdir(parents=True)
     for name, model, status in [
@@ -2860,7 +2862,6 @@ def test_manifest_show_lists_each_file_in_model_id_order(run_env, capsys):
         "File                   Status      Model ID",
         "-" * 90,
         "ref_882df898287f.json  active      Lib.Apple",
-        "ref_e33c83ca7b0e.json  skip        Lib.Banana",
         "ref_2fea06fb17ef.json  active      Lib.Cherry",
         "",
         "Refused:",
