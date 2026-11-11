@@ -119,6 +119,15 @@ class TestUnknownKeys:
         assert str(exc.value) == f'{path}: must be an object, got ["a"]'
 
 
+#: What a file nested 100000 deep is refused as. The interpreter decides:
+#: up to 3.13 `json` raised RecursionError ("not JSON (maximum recursion
+#: depth exceeded"); 3.14 raises it with other words ("Stack overflow …") or,
+#: with a larger stack (CI's test workers), reads the array, and the file is
+#: refused by its shape. Each is one sentence that names the file -- the
+#: property these tests hold.
+_DEEP_SAID = ("not JSON (", "must be an object, got [[[")
+
+
 class TestAFileThatIsNotThatFile:
     """testing.json is decoded by the decoder test_spec.json is
     (`config.json_from_bytes`): what is no UTF-8 JSON is one sentence that
@@ -135,7 +144,7 @@ class TestAFileThatIsNotThatFile:
         ),
         "nested 100000 deep": (
             b'{"metadata": ' + b"[" * 100000 + b"]" * 100000 + b"}",
-            "not JSON (maximum recursion depth exceeded",
+            (_DEEP_SAID[0], "metadata: " + _DEEP_SAID[1]),
         ),
         "not JSON": (b"{ nope", "not JSON (Expecting property name"),
         "empty": (b"", "the file is empty"),
@@ -157,7 +166,8 @@ class TestAFileThatIsNotThatFile:
         path.write_bytes(raw)
         assert main(["--config", str(path), *command]) == 2
         err = capsys.readouterr().err
-        assert err.startswith(f"Config error: {path}: {said}"), err
+        said = said if isinstance(said, tuple) else (said,)
+        assert err.startswith(tuple(f"Config error: {path}: {s}" for s in said)), err
         assert err.count("\n") == 1 and "Traceback" not in err
 
     def test_a_byte_order_mark_is_read_as_the_spec_s_is(self, tmp_path):
@@ -179,7 +189,7 @@ class TestAFileThatIsNotThatFile:
 
         for raw, said in (
             (b'{"tests": [], "x": ' + b"1" * 5000 + b"}", "F: not JSON (Exceeds"),
-            (b"[" * 100000 + b"]" * 100000, "F: not JSON (maximum recursion"),
+            (b"[" * 100000 + b"]" * 100000, tuple("F: " + s for s in _DEEP_SAID)),
         ):
             with pytest.raises(ConfigError) as exc:
                 spec_document_from_bytes(raw, "F")
