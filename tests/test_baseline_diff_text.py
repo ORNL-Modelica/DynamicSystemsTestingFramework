@@ -62,7 +62,12 @@ def _var(name, largest, *, label=None, status="changed", **more):
 
 
 def _diff(
-    tests, *, folders=("Dymola/linux", "OpenModelica/linux"), new=NEW, against=None
+    tests,
+    *,
+    folders=("Dymola/linux", "OpenModelica/linux"),
+    new=NEW,
+    against=None,
+    metadata_only=2,
 ):
     return Diff(
         root=Path("refs"),
@@ -72,7 +77,7 @@ def _diff(
         folders=list(folders),
         tests=tests,
         unchanged=7,
-        metadata_only=2,
+        metadata_only=metadata_only,
     )
 
 
@@ -101,7 +106,7 @@ def _overview(text):
     return [[c.strip() for c in row.strip("|").split("|")] for row in rows]
 
 
-def test_the_first_line_counts_tests_and_each_folder_s_baselines():
+def test_the_headline_counts_the_listed_tests_new_and_removed_apart():
     diff = _diff(
         [
             TestDiff(
@@ -122,27 +127,48 @@ def test_the_first_line_counts_tests_and_each_folder_s_baselines():
     )
     first = as_markdown(diff).splitlines()[0]
     assert first == (
-        "**Baselines changed aaaaaaa..bbbbbbb**: 1 test changed, 1 new, 1 removed "
-        "(Dymola/linux: 1 changed, 1 new; OpenModelica/linux: 1 new, 1 removed). "
-        "7 baselines unchanged, 2 of them in metadata only."
+        "**1 test changed, 1 new, 1 removed** (`aaaaaaa` → `bbbbbbb`). "
+        "7 unchanged, 2 only in metadata."
     )
 
 
-def test_against_the_files_on_disk_the_line_says_so():
+def test_the_headline_of_changed_tests_only_says_they_have_new_baselines():
+    diff = _diff(
+        [
+            TestDiff("Lib.A", {"Dymola/linux": _changed("Dymola/linux", _var("x", 1))}),
+            TestDiff("Lib.B", {"Dymola/linux": _changed("Dymola/linux", _var("x", 2))}),
+        ],
+        metadata_only=0,
+    )
+    assert as_markdown(diff).splitlines()[0] == (
+        "**2 tests have new baselines** (`aaaaaaa` → `bbbbbbb`). 7 unchanged."
+    )
+
+
+def test_against_the_files_on_disk_the_headline_says_so():
     diff = _diff([], new=None)
-    assert as_markdown(diff).startswith(
-        "**Baselines changed aaaaaaa..files on disk**: "
+    assert as_markdown(diff).splitlines()[0] == (
+        "**No baseline changed** (`aaaaaaa` → files on disk). "
+        "7 unchanged, 2 only in metadata."
     )
 
 
-def test_the_revisions_subjects_are_named():
-    text = as_markdown(_diff([]))
-    assert "`aaaaaaa` the old one → `bbbbbbb` the new one" in text
+def test_the_revisions_subjects_head_the_details_and_only_them():
+    diff = _two_tests()
+    assert "the old one" not in as_markdown(diff)
+    text = as_markdown(diff, details=["Lib.other.B"])
+    said = text.index("`aaaaaaa` the old one → `bbbbbbb` the new one")
+    assert text.index("Only stored points are compared.") < said
+    assert said < text.index("<details>")
+    on_disk = _diff(_two_tests().tests, folders=["Dymola/linux"], new=None)
+    assert "`aaaaaaa` the old one → the files on disk" in as_markdown(
+        on_disk, details=["Lib.other.B"]
+    )
 
 
 def test_nothing_changed_says_so_and_prints_no_table():
     text = as_markdown(_diff([]))
-    assert "No baseline changed." in text
+    assert text.startswith("**No baseline changed**")
     assert "| Test |" not in text
 
 
@@ -177,12 +203,48 @@ def test_the_overview_has_a_row_per_test_sorted_by_its_largest_change():
         ]
     )
     assert _overview(as_markdown(diff)) == [
-        ["Test", "Dymola/linux", "OpenModelica/linux"],
+        ["Test", "Change, Dymola/linux", "Change, OpenModelica/linux"],
         ["---", "---", "---"],
-        ["`Big`", "30 %", "0.010 % +1 new · settings"],
-        ["`Mid`", "3.0 %", "unchanged"],
+        ["`Big`", "30 %", "0.010 % (+1 variable, settings)"],
+        ["`Mid`", "3.0 %", "="],
         ["`Small`", "0.50 %", ""],
         ["`New`", "new", ""],
+    ]
+
+
+def test_a_cell_s_marks_join_in_one_parenthesis():
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux",
+                        _var("x", 0.0, non_finite=1, non_finite_at=2.0),
+                        _var("y", 1.0),
+                        _var("a", None, status="new"),
+                        _var("b", None, status="new"),
+                        _var("c", None, status="removed"),
+                    )
+                },
+            ),
+            TestDiff(
+                "Lib.B",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux",
+                        _var("y", 0.5),
+                        _var("c", None, status="removed"),
+                        _var("d", None, status="removed"),
+                    )
+                },
+            ),
+        ],
+        folders=["Dymola/linux"],
+    )
+    assert _overview(as_markdown(diff))[2:] == [
+        ["`A`", "1.0 % (+2 variables, −1 variable, not finite)"],
+        ["`B`", "0.50 % (−2 variables)"],
     ]
 
 
@@ -230,7 +292,7 @@ def test_a_non_finite_difference_sorts_first_and_is_said():
         folders=["Dymola/linux"],
     )
     text = _md(diff)
-    assert _overview(text)[2:] == [["`NaN`", "0 · not finite"], ["`Big`", "90 %"]]
+    assert _overview(text)[2:] == [["`NaN`", "0 (not finite)"], ["`Big`", "90 %"]]
     assert "| `x` | 0; 2 points not finite from 1.5 s |" in text
 
 
@@ -253,13 +315,17 @@ def test_against_adds_a_column_with_the_largest_and_where():
         against="Dymola/linux",
     )
     text = _md(diff)
-    assert _overview(text)[0][-1] == "vs Dymola/linux"
-    assert _overview(text)[2][-1] == "0.67 % OpenModelica/linux"
+    assert _overview(text)[0][-1] == "Gap to Dymola/linux"
+    assert _overview(text)[2][-1] == "0.67 % (OpenModelica/linux)"
+    assert (
+        "| Variable | Change, Dymola/linux | Gap, Dymola/windows to Dymola/linux "
+        "| Gap, OpenModelica/linux to Dymola/linux |" in text
+    )
     assert "| `x` | 1.0 % (1 s) | 0.0010 % (1 s) | 0.67 % (99.8 s) |" in text
     assert "| `w` |  |  | not in Dymola/linux |" in text
 
 
-def test_the_steps_column_names_its_folder_and_reads_a_dash_where_none():
+def test_the_steps_column_reads_a_true_minus_and_a_dash_where_none():
     diff = _diff(
         [
             TestDiff(
@@ -277,19 +343,21 @@ def test_the_steps_column_names_its_folder_and_reads_a_dash_where_none():
         ]
     )
     rows = _overview(as_markdown(diff))
-    assert rows[0][-1] == "steps, Dymola/linux"
-    assert [r[-1] for r in rows[2:]] == ["-25 %", "–"]
+    assert rows[0][-1] == "Solver steps"
+    assert [r[-1] for r in rows[2:]] == ["−25 %", "–"]
 
 
 def test_no_steps_anywhere_has_no_steps_column():
     diff = _diff(
         [TestDiff("Lib.A", {"Dymola/linux": _changed("Dymola/linux", _var("x", 5.0))})]
     )
-    assert _overview(as_markdown(diff))[0] == [
+    text = as_markdown(diff)
+    assert _overview(text)[0] == [
         "Test",
-        "Dymola/linux",
-        "OpenModelica/linux",
+        "Change, Dymola/linux",
+        "Change, OpenModelica/linux",
     ]
+    assert "Solver steps" not in text
 
 
 def test_the_detail_lists_each_variable_settings_and_solver_effort():
@@ -330,7 +398,7 @@ def test_the_detail_lists_each_variable_settings_and_solver_effort():
     assert detail.startswith(
         "\n<summary><code>A</code> — 0.19 %</summary>\n\n`Lib.pkg.A`\n"
     )
-    assert "| Variable | Dymola/linux |" in detail
+    assert "| Variable | Change, Dymola/linux |" in detail
     assert "| `pipe.T` | 0.19 % (60 s) |" in detail
     assert "| `gone` | removed |" in detail
     assert (
@@ -376,9 +444,37 @@ def test_a_baseline_that_cannot_be_compared_says_why():
     )
 
 
-def test_the_limits_are_printed_last():
-    assert as_markdown(_diff([])).rstrip().endswith(LIMITS)
-    assert "stored samples" in LIMITS
+KEY_CHANGE = (
+    "Change = the biggest move of a tracked variable, old → new, as % of its range."
+)
+KEY_END = "Only stored points are compared. = unchanged; blank = no baseline."
+
+
+def test_one_key_line_under_the_table_names_only_the_columns_it_has():
+    plain = as_markdown(_two_tests())
+    assert plain.rstrip().splitlines()[-1] == f"{KEY_CHANGE} {KEY_END}"
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux", _var("x", 1.0), steps=(10.0, 12.0)
+                    )
+                },
+                against={"OpenModelica/linux": [_var("x", 0.1)]},
+            )
+        ],
+        against="Dymola/linux",
+    )
+    lines = as_markdown(diff).rstrip().splitlines()
+    assert lines[-3].startswith("| `A` |")
+    assert lines[-2:] == [
+        "",
+        f"{KEY_CHANGE} Gap = the same, between tools or OSes, after the change. "
+        f"Solver steps: Dymola/linux, new vs old. {KEY_END}",
+    ]
+    assert "_" not in lines[-1]
 
 
 # --- JSON -----------------------------------------------------------------------
@@ -494,17 +590,16 @@ def test_a_test_that_could_not_be_compared_is_not_counted_as_changed():
             )
         ]
     )
-    first = as_markdown(diff).splitlines()[0]
-    assert first.startswith(
-        "**Baselines changed aaaaaaa..bbbbbbb**: 0 tests changed, 0 new, 0 removed, "
-        "1 not compared (Dymola/linux: 1 two baselines). "
+    assert as_markdown(diff).splitlines()[0] == (
+        "**1 test not compared** (`aaaaaaa` → `bbbbbbb`). "
+        "7 unchanged, 2 only in metadata."
     )
 
 
 # --- the overview's cells ---------------------------------------------------------
 
 
-def test_the_vs_cell_is_the_largest_change_and_says_a_non_finite_point():
+def test_the_gap_cell_is_the_largest_change_and_says_a_non_finite_point():
     """The folder is chosen by its largest change, as a cell's is; a
     non-finite point anywhere is said beside it, never chosen over a
     larger number (a NaN beside 0.1 % hid a 600 % change)."""
@@ -525,10 +620,10 @@ def test_the_vs_cell_is_the_largest_change_and_says_a_non_finite_point():
         folders=["A/linux", "B/linux", "C/linux"],
         against="A/linux",
     )
-    assert _overview(as_markdown(diff))[2][-1] == "600 % C/linux · not finite"
+    assert _overview(as_markdown(diff))[2][-1] == "600 % (C/linux, not finite)"
 
 
-def test_the_vs_cell_ranks_any_percent_above_an_absolute_difference():
+def test_the_gap_cell_ranks_any_percent_above_an_absolute_difference():
     """A 50 absolute difference (a change from 0) is no larger than a 5 %
     one: the folder is chosen as a cell's change is."""
     diff = _diff(
@@ -545,7 +640,7 @@ def test_the_vs_cell_ranks_any_percent_above_an_absolute_difference():
         folders=["A/linux", "B/linux", "C/linux"],
         against="A/linux",
     )
-    assert _overview(as_markdown(diff))[2][-1] == "5.0 % C/linux"
+    assert _overview(as_markdown(diff))[2][-1] == "5.0 % (C/linux)"
 
 
 def test_a_cell_where_nothing_was_compared_reads_a_dash_not_0():
@@ -570,12 +665,13 @@ def test_a_cell_where_nothing_was_compared_reads_a_dash_not_0():
             )
         ]
     )
-    assert _overview(as_markdown(diff))[2] == ["`N`", "– · not finite", "–"]
+    assert _overview(as_markdown(diff))[2] == ["`N`", "– (not finite)", "–"]
 
 
 def test_a_test_new_in_one_folder_but_held_in_another_is_not_a_new_test():
     """A test is new only where no folder held it at the older revision
-    (removed likewise); the folder that gained it still reads `new`."""
+    (removed likewise); the folder that gained it still reads `new`, and
+    a folder whose baseline did not change reads `=`."""
     diff = _diff(
         [
             TestDiff(
@@ -595,18 +691,15 @@ def test_a_test_new_in_one_folder_but_held_in_another_is_not_a_new_test():
         ]
     )
     text = as_markdown(diff)
-    assert text.splitlines()[0].startswith(
-        "**Baselines changed aaaaaaa..bbbbbbb**: 2 tests changed, 1 new, 0 removed "
-        "(OpenModelica/linux: 2 new, 1 removed). "
-    )
+    assert text.splitlines()[0].startswith("**2 tests changed, 1 new** (")
     assert _overview(text)[2:] == [
-        ["`E`", "unchanged", "new"],
+        ["`E`", "=", "new"],
         ["`F`", "", "new"],
-        ["`G`", "unchanged", "removed"],
+        ["`G`", "=", "removed"],
     ]
 
 
-def test_the_steps_column_reads_unchanged_where_that_baseline_is():
+def test_the_steps_column_reads_equal_where_that_baseline_is_unchanged():
     diff = _diff(
         [
             TestDiff(
@@ -633,7 +726,7 @@ def test_the_steps_column_reads_unchanged_where_that_baseline_is():
         ]
     )
     rows = _overview(as_markdown(diff))
-    assert [r[-1] for r in rows[2:]] == ["-25 %", "unchanged", "–"]
+    assert [r[-1] for r in rows[2:]] == ["−25 %", "=", "–"]
 
 
 def test_a_pipe_or_a_backtick_in_a_name_keeps_the_table_s_columns():
@@ -694,11 +787,11 @@ def _two_tests():
     )
 
 
-def test_by_default_the_markdown_is_the_overview_and_the_limits():
+def test_by_default_the_markdown_is_the_overview_and_the_key():
     text = as_markdown(_two_tests())
     assert "<details>" not in text
     assert "| `A` | 2.0 % |" in text
-    assert text.rstrip().endswith(LIMITS)
+    assert text.rstrip().endswith(KEY_END)
 
 
 def test_details_with_no_name_folds_out_every_test():

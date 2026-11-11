@@ -3,10 +3,11 @@ as Markdown a reviewer pastes into a pull request (:func:`as_markdown`), or
 as JSON (:func:`as_json`).
 
 The Markdown: a matrix — a row per backend/os, a column per label, each
-cell PASS over the run's total, the other status words' counts, and with a
-base ``· N not new`` — then one folded list per cell with tests that did
-not pass, its summary line ``<Backend>/<os>, <label>: N not passing, K also
-fail on <base>``. A list is open when it holds a test that is new (one the
+cell PASS over the run's total, then in one parenthesis the other status
+words' counts and, with a base and a test not passing, ``K also fail on
+<base>`` — under it one key line, then one folded list per cell with tests
+that did not pass, its summary line ``<Backend>/<os>, <label>: N not
+passing, K also fail on <base>``. A list is open when it holds a test that is new (one the
 base did not fail and did not end the same way — ``NotPassing.not_new``),
 or there is no base to tell; folded otherwise; the base's own lists are
 folded. New ones are listed first.
@@ -30,20 +31,23 @@ def _row(cells: list[str]) -> str:
     return "| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |"
 
 
-def _matrix_cell(cell: Cell | None) -> str:
+def _also_fail(n: int, base: str | None) -> str:
+    return f"{n} also {'fails' if n == 1 else 'fail'} on {base}"
+
+
+def _matrix_cell(summary: Summary, cell: Cell | None) -> str:
     if cell is None:
         return _DASH
-    text = f"{cell.passed}/{cell.total}"
-    others = [
+    others = ", ".join(
         f"{n} {word}"
         for word, n in cell.totals.items()
         if word not in ("total", PASS) and n
-    ]
-    if others:
-        text += f" ({', '.join(others)})"
-    if cell.not_new is not None:
-        text += f" · {cell.not_new} not new"
-    return text
+    )
+    if cell.not_new is not None and cell.not_passing:
+        also = _also_fail(cell.not_new, summary.base)
+        others = f"{others}; {also}" if others else also
+    text = f"{cell.passed}/{cell.total}"
+    return f"{text} ({others})" if others else text
 
 
 def _open(summary: Summary, cell: Cell) -> bool:
@@ -55,8 +59,7 @@ def _open(summary: Summary, cell: Cell) -> bool:
 def _summary_line(summary: Summary, cell: Cell) -> str:
     text = f"{cell.folder}, {cell.label}: {len(cell.not_passing)} not passing"
     if cell.not_new is not None:
-        verb = "fails" if cell.not_new == 1 else "fail"
-        text += f", {cell.not_new} also {verb} on {summary.base}"
+        text += f", {_also_fail(cell.not_new, summary.base)}"
     elif cell.base_note:
         text += f"; {cell.base_note}"
     return text
@@ -95,20 +98,21 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
 
 def as_markdown(summary: Summary) -> str:
     """The Markdown a reviewer pastes into a pull request."""
-    head = "**Tests passed / run**, by backend/os"
-    if summary.base is not None:
-        head += (
-            f". `· N not new`: N of the tests not passing there failed on "
-            f"{summary.base} too, or ended there with the same status"
-        )
-    lines = [head + ".", "", _row(["Backend/os", *summary.labels])]
+    lines = [_row(["Tool / OS", *summary.labels])]
     lines.append(_row(["---"] * (len(summary.labels) + 1)))
     for folder in summary.folders:
         cells = [
-            _matrix_cell(summary.cells.get((label, folder))) for label in summary.labels
+            _matrix_cell(summary, summary.cells.get((label, folder)))
+            for label in summary.labels
         ]
         lines.append(_row([folder, *cells]))
-    lines.append("")
+    key = "Passed / run."
+    if summary.base is not None:
+        key += (
+            f' "also fails on {summary.base}" = the test fails on {summary.base} '
+            "too (or ends there the same way)."
+        )
+    lines += ["", key, ""]
     for folder in summary.folders:
         for label in summary.labels:
             cell = summary.cells.get((label, folder))

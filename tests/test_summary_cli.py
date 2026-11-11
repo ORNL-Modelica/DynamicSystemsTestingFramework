@@ -39,7 +39,7 @@ def test_markdown_is_printed(runs, capsys):
     base, head = runs
     assert main(["summary", f"base={base}", f"head={head}", "--base", "base"]) == 0
     out = capsys.readouterr().out
-    assert "| Python/linux | 1/2 (1 FAIL) | 0/2 (2 FAIL) · 1 not new |" in out
+    assert "| Python/linux | 1/2 (1 FAIL) | 0/2 (2 FAIL; 1 also fails on base) |" in out
     assert (
         "<summary>Python/linux, head: 2 not passing, 1 also fails on base</summary>"
         in out
@@ -54,7 +54,10 @@ def test_a_failure_where_the_base_had_no_baseline_is_new_and_open(tmp_path, caps
     argv = ["summary", f"main={main_}", f"branch={branch}", "--base", "main"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "| Python/linux | 1/2 (1 NO_REF) | 1/2 (1 SIM_FAIL) · 0 not new |" in out
+    assert (
+        "| Python/linux | 1/2 (1 NO_REF) | 1/2 (1 SIM_FAIL; 0 also fail on main) |"
+        in out
+    )
     assert (
         "<details open>\n<summary>Python/linux, branch: 1 not passing, "
         "0 also fail on main</summary>" in out
@@ -73,7 +76,7 @@ def test_a_base_run_cut_short_does_not_fold_the_branch_s_failures(tmp_path, caps
     argv = ["summary", f"main={main_}", f"branch={branch}", "--base", "main"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "0/3 (2 FAIL, 1 SIM_FAIL) · 1 not new |" in out
+    assert "0/3 (2 FAIL, 1 SIM_FAIL; 1 also fails on main) |" in out
     assert (
         "<details open>\n<summary>Python/linux, branch: 3 not passing, "
         "1 also fails on main</summary>" in out

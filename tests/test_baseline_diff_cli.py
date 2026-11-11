@@ -41,7 +41,7 @@ def test_markdown_is_printed(lib, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert out.startswith(
-        f"**Baselines changed {lib.one[:7]}..{lib.two[:7]}**: 1 test changed"
+        f"**1 test has new baselines** (`{lib.one[:7]}` → `{lib.two[:7]}`)"
     )
     assert "| `A` | 10 % |" in out
 
@@ -68,7 +68,9 @@ def test_without_rev2_the_files_on_disk_are_compared(lib, capsys):
     root = lib.top / "ReferenceResults"
     assert main(["baseline", "diff", lib.two, "--reference-root", str(root)]) == 0
     out = capsys.readouterr().out
-    assert out.startswith(f"**Baselines changed {lib.two[:7]}..files on disk**")
+    assert out.startswith(
+        f"**1 test has new baselines** (`{lib.two[:7]}` → files on disk)"
+    )
     assert "| `A` | 20 % |" in out
 
 
@@ -200,7 +202,7 @@ def test_markdown_over_what_a_pull_request_holds_is_noted_on_stderr(tmp_path, ca
     root = repo.top / "ReferenceResults"
     assert main(["baseline", "diff", one, two, "--reference-root", str(root)]) == 0
     captured = capsys.readouterr()
-    assert captured.out.startswith("**Baselines changed")
+    assert captured.out.startswith(f"**{len(names)} tests have new baselines**")
     assert len(captured.out) > 65_536
     assert captured.err == (
         f"Note: this Markdown is {len(captured.out):,} characters; a GitHub "

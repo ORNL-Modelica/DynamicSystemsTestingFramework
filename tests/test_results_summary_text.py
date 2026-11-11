@@ -76,12 +76,37 @@ def test_the_matrix_has_a_row_per_backend_os_and_a_column_per_label():
         totals={"total": 3, "PASS": 3},
     )
     text = as_markdown(_summary([BASE, BRANCH, other]))
-    assert _table(text, "| Backend/os | base | branch |") == [
-        ["Backend/os", "base", "branch"],
+    assert text.startswith("| Tool / OS | base | branch |\n")
+    assert _table(text, "| Tool / OS | base | branch |") == [
+        ["Tool / OS", "base", "branch"],
         ["---", "---", "---"],
         ["Dymola/windows", "–", "3/3"],
-        ["Python/linux", "2/3 (1 SIM_FAIL)", "1/3 (1 FAIL, 1 SIM_FAIL) · 1 not new"],
+        [
+            "Python/linux",
+            "2/3 (1 SIM_FAIL)",
+            "1/3 (1 FAIL, 1 SIM_FAIL; 1 also fails on base)",
+        ],
     ]
+
+
+def test_one_key_line_under_the_matrix_says_what_a_cell_counts():
+    text = as_markdown(_summary([BASE, BRANCH]))
+    lines = text.splitlines()
+    key = (
+        lines.index(
+            "| Python/linux | 2/3 (1 SIM_FAIL) | "
+            "1/3 (1 FAIL, 1 SIM_FAIL; 1 also fails on base) |"
+        )
+        + 1
+    )
+    assert lines[key : key + 3] == [
+        "",
+        'Passed / run. "also fails on base" = the test fails on base too '
+        "(or ends there the same way).",
+        "",
+    ]
+    alone = _cell("head", "Python/linux", [NotPassing("Lib.A", "FAIL", "")])
+    assert "\n\nPassed / run.\n\n<details" in as_markdown(_summary([alone], base=None))
 
 
 def test_a_list_s_summary_line_is_in_the_owner_s_words_and_opens_on_a_new_failure():
@@ -122,7 +147,7 @@ def test_the_summary_line_says_fail_for_other_than_one():
     assert "<summary>Python/linux, branch: 2 not passing, 2 also fail on base" in text
 
 
-def test_with_nothing_old_the_cell_says_0_not_new_and_the_list_is_open():
+def test_with_nothing_old_the_cell_says_0_also_fail_and_the_list_is_open():
     """A base was given and compared: 0 is a count, not a missing one."""
     all_new = _cell(
         "branch",
@@ -131,11 +156,11 @@ def test_with_nothing_old_the_cell_says_0_not_new_and_the_list_is_open():
         not_new=0,
     )
     text = as_markdown(_summary([BASE, all_new]))
-    rows = _table(text, "| Backend/os | base | branch |")
+    rows = _table(text, "| Tool / OS | base | branch |")
     assert rows[2] == [
         "Python/linux",
         "2/3 (1 SIM_FAIL)",
-        "1/3 (1 FAIL, 1 SIM_FAIL) · 0 not new",
+        "1/3 (1 FAIL, 1 SIM_FAIL; 0 also fail on base)",
     ]
     assert (
         "<details open>\n<summary>Python/linux, branch: 1 not passing, "
@@ -178,17 +203,17 @@ def test_with_no_base_run_for_the_backend_os_the_line_says_why():
         "FAIL",
         "y: → FAIL",
     ]
-    rows = _table(text, "| Backend/os | base | branch |")
+    rows = _table(text, "| Tool / OS | base | branch |")
     assert rows[2] == ["OpenModelica/linux", "–", "1/3 (1 FAIL, 1 SIM_FAIL)"]
 
 
-def test_without_a_base_every_list_is_open_and_no_cell_counts_not_new():
+def test_without_a_base_every_list_is_open_and_no_cell_counts_old_failures():
     alone = _cell("head", "Python/linux", [NotPassing("Lib.A", "FAIL", "")])
     text = as_markdown(_summary([alone], base=None))
     assert (
         "<details open>\n<summary>Python/linux, head: 1 not passing</summary>" in text
     )
-    assert "not new" not in text
+    assert "also fail" not in text
 
 
 def test_a_pipe_or_markup_in_what_failed_keeps_the_row():
@@ -208,6 +233,33 @@ def test_a_quote_or_markup_in_a_model_id_is_escaped_in_the_title():
     odd = _cell("head", "Python/linux", [NotPassing('Lib.Q"<x>', "FAIL", "")])
     text = as_markdown(_summary([odd], base=None))
     assert '<code title="Lib.Q&quot;&lt;x&gt;">Q&quot;&lt;x&gt;</code>' in text
+
+
+def test_a_cell_that_failed_nothing_counts_no_old_failures():
+    clean = _cell(
+        "branch",
+        "Python/linux",
+        [],
+        passed=3,
+        total=3,
+        totals={"total": 3, "PASS": 3},
+        not_new=0,
+    )
+    text = as_markdown(_summary([BASE, clean]))
+    assert "| Python/linux | 2/3 (1 SIM_FAIL) | 3/3 |" in text
+
+
+def test_a_cell_with_failures_and_no_counts_holds_its_own_parenthesis():
+    bare = _cell(
+        "branch",
+        "Python/linux",
+        [NotPassing("Lib.pkg.Broken", "SIM_FAIL", "", "SIM_FAIL")],
+        passed=2,
+        totals={"total": 3},
+        not_new=1,
+    )
+    text = as_markdown(_summary([BASE, bare]))
+    assert "| 2/3 (1 also fails on base) |" in text
 
 
 def test_every_run_passing_lists_nothing():

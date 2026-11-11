@@ -2,14 +2,16 @@
 :mod:`dstf.storage.baseline_diff` as Markdown a reviewer pastes into a pull
 request (:func:`as_markdown`), or as strict JSON (:func:`as_json`).
 
-The Markdown, in order: one line of counts; the two revisions' subjects;
-an overview table, one row per test, sorted by its largest change; for the
-tests asked for (:func:`detailed`), one ``<details>`` each with every
-variable, the settings that changed and the solver effort old → new; and
-the limits. A number is a percent with two significant digits under 10 %
+The Markdown, in order: a headline of the tests listed and the baselines
+unchanged; an overview table, one row per test, sorted by its largest
+change; one key line saying what its columns hold; and for the tests asked
+for (:func:`detailed`), the two revisions' subjects, then one ``<details>``
+each with every variable, the settings that changed and the solver effort
+old → new. A number is a percent with two significant digits under 10 %
 (a trailing zero kept: ``1.0 %``), whole above, in scientific notation
 under 0.001 %; a time is ``%g`` seconds. Facts only: nothing here judges
-a change, and nothing knows a library. The JSON is always complete.
+a change, and nothing knows a library. The JSON is always complete, its
+``limits`` the full statement the Markdown's key line shortens.
 """
 
 from __future__ import annotations
@@ -34,7 +36,9 @@ from ..storage.baseline_diff import (
 )
 from .stats_rows import SECTION_TITLES, StatRow, report_text
 
-#: What every output says it did not do.
+#: What a change is and what is not compared: the JSON's ``limits``, in
+#: full. The Markdown says it in its key line (:func:`_key`), shorter; the
+#: guide "Summarize a change for review" says it in full.
 LIMITS = (
     "_Limits: only the stored samples are compared, so what a run did "
     "between them is not seen. A change is the largest |new − old|, the "
@@ -46,6 +50,12 @@ LIMITS = (
 
 #: A cell of a folder where the test has no baseline on either side.
 _NONE = ""
+#: A cell of a folder whose baseline of the test did not change.
+_SAME = "="
+#: The limit the key line keeps, said also where nothing changed.
+_STORED_ONLY = "Only stored points are compared."
+#: A negative percent's sign: the true minus (``−36 %``), not a hyphen.
+_MINUS = "−"
 #: A figure that does not exist: no steps recorded, or no point compared.
 _DASH = "–"
 #: What a GitHub pull-request body or comment holds, in characters.
@@ -71,7 +81,10 @@ def percent(value: float) -> str:
 
 
 def _signed(value: float) -> str:
-    return percent(value) if value <= 0 else "+" + percent(value)
+    """A signed percent, ``+`` or a true minus (``−36 %``)."""
+    if value > 0:
+        return "+" + percent(value)
+    return percent(value).replace("-", _MINUS, 1)
 
 
 def _seconds(t: float) -> str:
@@ -185,28 +198,34 @@ _STATUS_CELL = {
 }
 
 
+def _marked(text: str, marks: list[str]) -> str:
+    """``text`` with its marks in one parenthesis: ``79 % (+1 variable,
+    settings)``."""
+    return f"{text} ({', '.join(marks)})" if marks else text
+
+
 def _cell(b: BaselineDiff) -> str:
     if b.status != "changed":
         return _STATUS_CELL[b.status]
     largest = _largest(b.variables)
-    text = _amount(largest) if largest is not None else _DASH
+    marks = []
     added = sum(v.status == "new" for v in b.variables)
     gone = sum(v.status == "removed" for v in b.variables)
     if added:
-        text += f" +{added} new"
+        marks.append(f"+{_plural(added, 'variable')}")
     if gone:
-        text += f" −{gone} removed"
+        marks.append(f"−{_plural(gone, 'variable')}")
     if b.settings:
-        text += " · settings"
+        marks.append("settings")
     if _non_finite(b.variables):
-        text += " · not finite"
-    return text
+        marks.append("not finite")
+    return _marked(_amount(largest) if largest is not None else _DASH, marks)
 
 
 def _against_cell(test: TestDiff, several: bool) -> str:
     """The largest change of any folder against ``--against``, chosen as a
-    cell's is (:func:`_largest`), and the folder it is in; `` · not
-    finite`` when any folder holds a non-finite difference."""
+    cell's is (:func:`_largest`), and the folder it is in; ``not finite``
+    beside it when any folder holds a non-finite difference."""
     if not test.against:
         return _NONE
     best: tuple[tuple[int, float], str, SeriesChange] | None = None
@@ -214,12 +233,12 @@ def _against_cell(test: TestDiff, several: bool) -> str:
         largest = _largest(variables)
         if largest is not None and (best is None or _size(largest) > best[0]):
             best = (_size(largest), folder, largest)
-    text = _DASH if best is None else _amount(best[2])
+    marks = []
     if best is not None and several:
-        text += f" {best[1]}"
+        marks.append(best[1])
     if any(_non_finite(variables) for variables in test.against.values()):
-        text += " · not finite"
-    return text
+        marks.append("not finite")
+    return _marked(_DASH if best is None else _amount(best[2]), marks)
 
 
 def _steps_folder(diff: Diff) -> str | None:
@@ -236,7 +255,7 @@ def _steps_folder(diff: Diff) -> str | None:
 def _steps_cell(test: TestDiff, folder: str) -> str:
     b = test.baselines.get(folder)
     if b is None and folder in test.unchanged:
-        return "unchanged"
+        return _SAME
     if b is None or b.steps is None or b.steps[0] == 0:
         return _DASH
     old, new = b.steps
@@ -249,13 +268,12 @@ def _row(cells: list[str]) -> str:
     return "| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |"
 
 
-def _overview(diff: Diff, tests: list[TestDiff]) -> list[str]:
-    steps = _steps_folder(diff)
-    header = ["Test", *diff.folders]
+def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]:
+    header = ["Test", *(f"Change, {folder}" for folder in diff.folders)]
     if diff.against:
-        header.append(f"vs {diff.against}")
+        header.append(f"Gap to {diff.against}")
     if steps:
-        header.append(f"steps, {steps}")
+        header.append("Solver steps")
     lines = [_row(header), _row(["---"] * len(header))]
     several = len(diff.folders) > 2
     for test in tests:
@@ -263,7 +281,7 @@ def _overview(diff: Diff, tests: list[TestDiff]) -> list[str]:
         for folder in diff.folders:
             b = test.baselines.get(folder)
             cells.append(
-                _cell(b) if b else "unchanged" if folder in test.unchanged else _NONE
+                _cell(b) if b else _SAME if folder in test.unchanged else _NONE
             )
         if diff.against:
             cells.append(_against_cell(test, several))
@@ -271,6 +289,20 @@ def _overview(diff: Diff, tests: list[TestDiff]) -> list[str]:
             cells.append(_steps_cell(test, steps))
         lines.append(_row(cells))
     return lines
+
+
+def _key(diff: Diff, steps: str | None) -> str:
+    """The one line under the table saying what its columns hold; the
+    guide states the limits in full (:data:`LIMITS`)."""
+    said = [
+        "Change = the biggest move of a tracked variable, old → new, as % of its range."
+    ]
+    if diff.against:
+        said.append("Gap = the same, between tools or OSes, after the change.")
+    if steps:
+        said.append(f"Solver steps: {steps}, new vs old.")
+    said.append(f"{_STORED_ONLY} {_SAME} unchanged; blank = no baseline.")
+    return " ".join(said)
 
 
 # --- the detail --------------------------------------------------------------
@@ -305,7 +337,7 @@ def _variable_table(diff: Diff, test: TestDiff) -> list[str]:
         for v in b.variables:
             labels.setdefault(v.name, v.label)
             cells[v.name] = _variable_cell(v)
-        columns.append((folder, cells))
+        columns.append((f"Change, {folder}", cells))
     for folder in diff.folders:
         if folder not in test.against:
             continue
@@ -313,7 +345,7 @@ def _variable_table(diff: Diff, test: TestDiff) -> list[str]:
         for v in test.against[folder]:
             labels.setdefault(v.name, v.label)
             cells[v.name] = _against_variable_cell(v, str(diff.against), folder)
-        columns.append((f"{folder} vs {diff.against}", cells))
+        columns.append((f"Gap, {folder} to {diff.against}", cells))
     if not columns:
         return []
     lines = [
@@ -456,8 +488,10 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'s' * (n != 1)}"
 
 
-def _counts(diff: Diff) -> str:
-    """The first line's counts: tests, then each folder's baselines."""
+def _headline(diff: Diff) -> str:
+    """The first line: the tests the table lists — all changed, they "have
+    new baselines"; else changed, new, removed and not compared apart — the
+    two revisions, and the baselines unchanged."""
     tests: Counter[str] = Counter()
     for test in diff.tests:
         statuses = {b.status for b in test.baselines.values()}
@@ -469,30 +503,29 @@ def _counts(diff: Diff) -> str:
             tests[statuses.pop()] += 1
         else:
             tests["changed"] += 1
-    per_folder = []
-    for folder in diff.folders:
-        got: Counter[str] = Counter(
-            t.baselines[folder].status for t in diff.tests if folder in t.baselines
-        )
-        if got:
-            words = (
-                f"{got[s]} {_STATUS_CELL.get(s, s)}"
-                for s in ("changed", "new", "removed", "unreadable", "two baselines")
-                if got[s]
-            )
-            per_folder.append(f"{folder}: " + ", ".join(words))
-    text = (
-        f"{_plural(tests['changed'], 'test')} changed, {tests['new']} new, "
-        f"{tests['removed']} removed"
-    )
-    if tests["not compared"]:
-        text += f", {tests['not compared']} not compared"
-    if per_folder:
-        text += " (" + "; ".join(per_folder) + ")"
-    return (
-        f"{text}. {_plural(diff.unchanged, 'baseline')} unchanged, "
-        f"{diff.metadata_only} of them in metadata only."
-    )
+    if not diff.tests:
+        what = "No baseline changed"
+    elif tests["changed"] == len(diff.tests):
+        has = "has" if len(diff.tests) == 1 else "have"
+        what = f"{_plural(len(diff.tests), 'test')} {has} new baselines"
+    else:
+        parts = []
+        for kind in ("changed", "new", "removed", "not compared"):
+            n = tests[kind]
+            if not n:
+                continue
+            if parts:
+                parts.append(f"{n} {kind}")
+            elif kind in ("new", "removed"):
+                parts.append(f"{n} {kind} {'test' if n == 1 else 'tests'}")
+            else:
+                parts.append(f"{_plural(n, 'test')} {kind}")
+        what = ", ".join(parts)
+    new = _code(diff.new.short) if diff.new else "files on disk"
+    unchanged = f"{diff.unchanged} unchanged"
+    if diff.metadata_only:
+        unchanged += f", {diff.metadata_only} only in metadata"
+    return f"**{what}** ({_code(diff.old.short)} → {new}). {unchanged}."
 
 
 def detailed(diff: Diff, names: list[str]) -> list[str]:
@@ -530,26 +563,29 @@ def _sorted(tests: list[TestDiff]) -> list[TestDiff]:
 
 
 def as_markdown(diff: Diff, details: Collection[str] = ()) -> str:
-    """The Markdown a reviewer pastes into a pull request: the counts, the
-    overview and the limits, and a folded section for each test whose
-    model id is in ``details`` (:func:`detailed`)."""
-    new = diff.new.short if diff.new else "files on disk"
-    lines = [f"**Baselines changed {diff.old.short}..{new}**: {_counts(diff)}", ""]
-    old_said = f"`{diff.old.short}` {diff.old.subject}"
-    new_said = (
-        f"`{diff.new.short}` {diff.new.subject}" if diff.new else "the files on disk"
-    )
-    lines += [f"{old_said} → {new_said}", ""]
+    """The Markdown a reviewer pastes into a pull request: the headline, the
+    overview and its key line, and — the two revisions' subjects first — a
+    folded section for each test whose model id is in ``details``
+    (:func:`detailed`)."""
+    lines = [_headline(diff), ""]
     tests = _sorted(diff.tests)
-    if not tests:
-        lines += ["No baseline changed.", ""]
+    steps = _steps_folder(diff)
+    if tests:
+        lines += [*_overview(diff, tests, steps), "", _key(diff, steps), ""]
     else:
-        lines += [*_overview(diff, tests), ""]
-        for test in tests:
-            if test.model_id in details:
-                lines += [*_detail(diff, test), ""]
-    lines.append(LIMITS)
-    return "\n".join(lines) + "\n"
+        lines += [_STORED_ONLY, ""]
+    folded = [test for test in tests if test.model_id in details]
+    if folded:
+        old_said = f"`{diff.old.short}` {diff.old.subject}"
+        new_said = (
+            f"`{diff.new.short}` {diff.new.subject}"
+            if diff.new
+            else "the files on disk"
+        )
+        lines += [f"{old_said} → {new_said}", ""]
+        for test in folded:
+            lines += [*_detail(diff, test), ""]
+    return "\n".join(lines).rstrip("\n") + "\n"
 
 
 # --- JSON ----------------------------------------------------------------------
