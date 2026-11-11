@@ -122,9 +122,13 @@ The default work dir is `testing_output/<library>/<backend>/<os>/` under the CUR
 
 ```bash
 uv sync --extra dev --locked       # One-time: build .venv from uv.lock (what CI runs)
-uv run pytest                      # Run the suite
-uv run pytest -m "not playwright"  # Skip browser-driven interactive-HTML tests
+uv run pytest tests/ -m "not playwright and not dymola and not fmpy and not ompython and not julia and not reference_fmus"
+                                   # CI's selection: no simulator, no browser
 ```
+
+Name the path and the markers every time. On a machine where Dymola or omc is
+installed, a bare `uv run pytest` (an empty path list) or `-m "not
+playwright"` alone STARTS them through the `tests/test_*_real.py` files.
 
 The suite is about 8,700 tests; CI's selection is about 8,250 of them. Add
 `-n 4` to run it in four parallel workers (`pytest-xdist`, in the `dev`
