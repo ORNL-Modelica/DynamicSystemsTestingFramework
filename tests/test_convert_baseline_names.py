@@ -194,6 +194,34 @@ def test_a_companion_path_outside_the_roots_is_refused(roots):
     assert _tree(a.parent.parent) == before
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a drive path is a path there")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "D:\\Lib\\ReferenceResults\\Dymola\\windows\\ref_0011.json",
+        "D:/Lib/ReferenceResults/Dymola/windows/ref_0011.json",
+    ],
+    ids=["backslashes", "slashes"],
+)
+def test_a_windows_drive_companion_path_is_refused_off_windows(roots, path):
+    """Off Windows a drive path can be neither resolved nor rewritten: run
+    as it was, the companion was left naming the old file and the run said
+    nothing (a ``D:/`` path read as relative, a ``D:\\`` one as no ref
+    name). Refused, with what to do, and nothing written."""
+    a, b = roots
+    meta = a / "Dymola/linux/companions/ref_0002/om.json"
+    meta.write_bytes(_external(path.replace("\\", "\\\\")))
+    before = _tree(a.parent.parent)
+    out = _run(a, b, *KEEP)
+    assert out.returncode == 1
+    assert out.stderr.splitlines() == [
+        "REFUSED -- 1 problem(s); nothing written:",
+        f"  {meta}: its path {path} is on a Windows drive -- run the convert "
+        "on Windows, or make the path relative to its baseline's folder",
+    ]
+    assert _tree(a.parent.parent) == before
+
+
 def test_a_one_line_file_is_refused(roots):
     a, b = roots
     one_line = b'{"model_id": "Lib.C", "test_id": "0004", "status": "active"}'
