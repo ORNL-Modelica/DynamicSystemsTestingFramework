@@ -1405,10 +1405,12 @@ def _add_summary(tree: _Tree, top) -> None:
             A LABEL may repeat: the Windows and the Linux work dirs of one
             change live in different places.
 
-            With --base, a test not passing in a cell that does not pass in
-            the base label's cell of the same backend/os either is counted
-            "not new", and each list says the base's status beside it. Lists
-            with a new failure are open, the others folded.
+            With --base, a test not passing in a cell is counted "not new"
+            when the base label's cell of the same backend/os failed it too
+            (FAIL or SIM_FAIL) or ended it with the same status; a base
+            NO_REF or NOT RUN did not fail it. Each list says the base's
+            status beside it. Lists holding a new one are open, the others
+            folded.
 
             Markdown by default; --format json for the same facts as data.
             Nothing is judged: the status words are the files'.
@@ -1416,7 +1418,8 @@ def _add_summary(tree: _Tree, top) -> None:
             Exit code: 0 when the matrix is printed, whatever the runs
             say; 2 when an argument is not LABEL=DIR, a DIR holds no
             verdicts.json, a verdicts.json names no backend and os, a label
-            holds two files of one backend/os, or --base names no label.
+            holds two files of one backend/os, one file is read twice under
+            a label, or --base names no label.
             """,
         examples=(
             "dstf summary main=../main/testing_output branch=testing_output "
@@ -1438,8 +1441,8 @@ def _add_summary(tree: _Tree, top) -> None:
         metavar="LABEL",
         default=None,
         help="Count, in every other label's cells, the tests not passing "
-        "that do not pass in this label's cell of the same backend/os "
-        "either (not new). Default: no such count.",
+        "that this label's cell of the same backend/os failed too, or ended "
+        "with the same status (not new). Default: no such count.",
     )
     _offer(
         node,

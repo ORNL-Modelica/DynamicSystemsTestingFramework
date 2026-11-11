@@ -10,11 +10,12 @@ one cell of a matrix: its column the label, its row the backend/os its
 2026x") — so a row is a ``<Backend>/<os>`` folder of the reference root.
 
 A cell counts its tests as the file does: PASS over ``totals.total``, which
-holds NOT RUN too. With a base label, a test not passing in a cell that
-does not pass in the base label's cell of the SAME backend/os either is
-"not new"; one the base cell does not hold is ``not in <base>``; and a
-backend/os the base label has no run of has no such count, said in the
-cell. Nothing is judged and nothing is recomputed: every word is the
+holds NOT RUN too. With a base label, a test not passing in a cell is "not
+new" when the base label's cell of the SAME backend/os failed it too (FAIL
+or SIM_FAIL) or ended it with the same status word — a base NO_REF or NOT
+RUN scored nothing, so a failure over it is new; one the base cell does not
+hold is ``not in <base>``; and a backend/os the base label has no run of
+has no such count, said in the cell. Nothing is judged and nothing is recomputed: every word is the
 file's.
 """
 
@@ -25,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .status import PASS
+from .status import FAILURES, PASS
 from .verdicts import VERDICTS_FILE
 
 #: The longest reason a list row holds, in characters.
@@ -50,6 +51,14 @@ class NotPassing:
     #: <base>``; None with no base, or no base run of this backend/os
     base: str | None = None
 
+    @property
+    def not_new(self) -> bool:
+        """The base failed it too, or ended it with the same status word
+        (NO_REF on both); False with no base to tell."""
+        return self.base is not None and (
+            self.base in FAILURES or self.base == self.status
+        )
+
 
 @dataclass(frozen=True)
 class Cell:
@@ -64,8 +73,8 @@ class Cell:
     totals: dict[str, int]
     #: its tests that did not pass, in the file's order
     not_passing: list[NotPassing] = field(default_factory=list)
-    #: of those, the ones that do not pass on the base either; None with no
-    #: base, in the base's own cell, or with no base run of this backend/os
+    #: of those, the ones that are not new (:attr:`NotPassing.not_new`);
+    #: None with no base, in the base's own cell, or with no base run of this backend/os
     not_new: int | None = None
     #: why there is no such count where there is a base ("no main run for
     #: Dymola/linux"); "" otherwise
@@ -133,8 +142,10 @@ def _tests(data: dict) -> list[dict]:
 
 def failing_criterion(tree: Any) -> str:
     """The first failing criterion of a verdicts tree that is not advisory
-    (depth first, in order), as ``label: criterion (error)``; "" for none."""
-    if not isinstance(tree, dict):
+    (depth first, in order), as ``label: criterion (error)``; "" for none.
+    A node that passed is not searched: a leaf failing under an ``or`` that
+    passed did not fail the test."""
+    if not isinstance(tree, dict) or tree.get("passed") is True:
         return ""
     if tree.get("kind") == "leaf":
         if tree.get("passed") is not False or tree.get("advisory"):
@@ -190,6 +201,11 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
         for path in _verdict_files(label, Path(directory)):
             data = _read(path)
             key = (label, _folder(path, data))
+            if key in read and read[key][0].resolve() == path.resolve():
+                raise SummaryError(
+                    f"{label}: {read[key][0]} is given twice (one DIR twice, or "
+                    "one DIR inside another)"
+                )
             if key in read:
                 raise SummaryError(
                     f"{label}: two {VERDICTS_FILE} for {key[1]}, {read[key][0]} "
@@ -221,7 +237,7 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
         not_new = None
         note = ""
         if base_tests is not None:
-            not_new = sum(r.base not in (PASS, f"not in {base}") for r in rows)
+            not_new = sum(r.not_new for r in rows)
         elif base is not None and label != base:
             note = f"no {base} run for {folder}"
         cells[(label, folder)] = Cell(

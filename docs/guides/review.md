@@ -142,17 +142,20 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
 
 - **A cell** is the tests that passed over the tests run (`2/3`), the other
   status words' counts beside it (`1 SIM_FAIL`), and with `--base`, `· N not
-  new`: how many of the tests not passing there do not pass on the base
-  either, in the same backend/os. A label with no run of a backend/os reads
-  `–`. NOT RUN is counted in the total and is not a pass.
+  new`: how many of the tests not passing there are not new. A test is not
+  new when the base, in the same backend/os, failed it too (FAIL or
+  SIM_FAIL) or ended it with the same status; a base that had no baseline
+  for it (NO_REF) or never ran it (NOT RUN) did not fail it. A label with no
+  run of a backend/os reads `–`. NOT RUN is counted in the total and is not
+  a pass.
 - **A folded list per cell** names each test that did not pass, its status,
   and what failed: the first failing criterion that is not advisory, else the
   last line of its message (a failed simulation's message is a traceback).
   With `--base` the base's status is beside it, or `not in main`. Its summary
-  line reads `Python/linux, branch: 2 not passing, 1 also fail on main`. A
-  list with a failure the base does not have is open; the others, and the
-  base's own lists, are folded. Where the base has no run of that
-  backend/os, the line says so and nothing is counted.
+  line reads `Python/linux, branch: 2 not passing, 1 also fails on main`. A
+  list holding a test that is new is open; the others, and the base's own
+  lists, are folded. Where the base has no run of that backend/os, the line
+  says so, nothing is counted and the list is open.
 
 A short example:
 
@@ -165,8 +168,9 @@ A short example:
 The command is refused, with one sentence and exit code 2, when an argument
 is not `LABEL=DIR`, a DIR holds no `verdicts.json`, a file names no backend
 and OS, one label holds two files of one backend/os (two libraries in one
-work dir: pass each work dir as its own `LABEL=DIR`), or `--base` names no
-label. It prints facts: whether a failure blocks the change is the
+work dir: pass each work dir as its own `LABEL=DIR`), one file is read twice
+under a label (a DIR given twice, or one inside another), or `--base` names
+no label. It prints facts: whether a failure blocks the change is the
 reviewer's call. `--format json` writes the same facts as data.
 
 ## Next

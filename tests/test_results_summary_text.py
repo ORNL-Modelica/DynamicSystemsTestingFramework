@@ -88,7 +88,7 @@ def test_a_list_s_summary_line_is_in_the_owner_s_words_and_opens_on_a_new_failur
     text = as_markdown(_summary([BASE, BRANCH]))
     assert (
         "<details open>\n<summary>Python/linux, branch: 2 not passing, "
-        "1 also fail on base</summary>" in text
+        "1 also fails on base</summary>" in text
     )
     # the base's own list holds nothing new: folded
     assert "<details>\n<summary>Python/linux, base: 1 not passing</summary>" in text
@@ -104,7 +104,42 @@ def test_a_list_with_nothing_new_is_folded():
     text = as_markdown(_summary([BASE, old_only]))
     assert (
         "<details>\n<summary>Python/linux, branch: 1 not passing, "
-        "1 also fail on base</summary>" in text
+        "1 also fails on base</summary>" in text
+    )
+
+
+def test_the_summary_line_says_fail_for_other_than_one():
+    both_old = _cell(
+        "branch",
+        "Python/linux",
+        [
+            NotPassing("Lib.pkg.Broken", "SIM_FAIL", "", "SIM_FAIL"),
+            NotPassing("Lib.pkg.Ramp", "FAIL", "", "FAIL"),
+        ],
+        not_new=2,
+    )
+    text = as_markdown(_summary([BASE, both_old]))
+    assert "<summary>Python/linux, branch: 2 not passing, 2 also fail on base" in text
+
+
+def test_with_nothing_old_the_cell_says_0_not_new_and_the_list_is_open():
+    """A base was given and compared: 0 is a count, not a missing one."""
+    all_new = _cell(
+        "branch",
+        "Python/linux",
+        [NotPassing("Lib.pkg.Ramp", "FAIL", "", "PASS")],
+        not_new=0,
+    )
+    text = as_markdown(_summary([BASE, all_new]))
+    rows = _table(text, "| Backend/os | base | branch |")
+    assert rows[2] == [
+        "Python/linux",
+        "2/3 (1 SIM_FAIL)",
+        "1/3 (1 FAIL, 1 SIM_FAIL) · 0 not new",
+    ]
+    assert (
+        "<details open>\n<summary>Python/linux, branch: 1 not passing, "
+        "0 also fail on base</summary>" in text
     )
 
 
@@ -167,6 +202,12 @@ def test_a_pipe_or_markup_in_what_failed_keeps_the_row():
         '| <code title="Lib.A\\|B">A\\|B</code> | FAIL | a\\|b &lt;tag&gt; &amp; more |'
         in text
     )
+
+
+def test_a_quote_or_markup_in_a_model_id_is_escaped_in_the_title():
+    odd = _cell("head", "Python/linux", [NotPassing('Lib.Q"<x>', "FAIL", "")])
+    text = as_markdown(_summary([odd], base=None))
+    assert '<code title="Lib.Q&quot;&lt;x&gt;">Q&quot;&lt;x&gt;</code>' in text
 
 
 def test_every_run_passing_lists_nothing():

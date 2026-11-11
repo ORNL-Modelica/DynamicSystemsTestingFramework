@@ -158,6 +158,38 @@ def test_a_test_not_passing_on_the_base_too_is_not_new(tmp_path):
     assert got.cells[("base", "Python/linux")].not_new is None
 
 
+@pytest.mark.parametrize(
+    "on_base, failing, not_passing",
+    [
+        # the base failed it too: not new, whatever it is here
+        ("FAIL", 1, 1),
+        ("SIM_FAIL", 1, 1),
+        # it passed on the base, or the base does not hold it: new
+        ("PASS", 0, 0),
+        (None, 0, 0),
+        # nothing was scored on the base: new, unless it ends the same here
+        ("NO_REF", 0, 1),
+        ("NOT RUN", 0, 0),
+    ],
+)
+def test_not_new_is_failed_on_the_base_too_or_the_same_status(
+    tmp_path, on_base, failing, not_passing
+):
+    """A test is not new when the base failed it (FAIL or SIM_FAIL) or ended
+    with the same word; a base with no baseline for it (NO_REF) or that never
+    ran it (NOT RUN) did not fail it, so a FAIL here is new."""
+    base_tests = [_test("Lib.Other", "PASS")]
+    if on_base is not None:
+        base_tests.append(_test("Lib.A", on_base))
+    _write(tmp_path / "base", base_tests)
+    for here, expected in (("FAIL", failing), ("NO_REF", not_passing)):
+        _write(tmp_path / here, [_test("Lib.A", here)])
+        got = read_summary(
+            [("base", tmp_path / "base"), ("head", tmp_path / here)], base="base"
+        )
+        assert got.cells[("head", "Python/linux")].not_new == expected, here
+
+
 def test_not_new_is_read_in_the_same_backend_os_only(tmp_path):
     """Lib.A fails on the base under OpenModelica and passes there under
     Dymola: failing under Dymola on the branch is new."""
@@ -220,6 +252,35 @@ def test_a_row_says_the_first_failing_criterion_that_is_not_advisory(tmp_path):
         .not_passing
     )
     assert row.reason == "x: NRMSE 5.788e-02 vs 1.000e-02 → FAIL"
+
+
+def test_a_failing_criterion_under_a_combinator_that_passed_is_not_named(tmp_path):
+    """``and(or(A fails, B passes), C fails)``: the or passed, so A did not
+    fail the test; C did."""
+    tree = {
+        "kind": "combinator",
+        "label": "and[2]",
+        "passed": False,
+        "children": [
+            {
+                "kind": "combinator",
+                "label": "or[2]",
+                "passed": True,
+                "children": [
+                    _leaf("A", False, criterion="A → FAIL"),
+                    _leaf("B", True, criterion="B → PASS"),
+                ],
+            },
+            _leaf("C", False, criterion="C → FAIL"),
+        ],
+    }
+    _write(tmp_path / "wd", [_test("Lib.A", "FAIL", tree=tree)])
+    (row,) = (
+        read_summary([("head", tmp_path / "wd")])
+        .cells[("head", "Python/linux")]
+        .not_passing
+    )
+    assert row.reason == "C: C → FAIL"
 
 
 def test_a_criterion_s_error_is_said_beside_it(tmp_path):
@@ -309,6 +370,18 @@ def test_two_verdicts_for_one_label_and_backend_os_are_refused(tmp_path):
     assert str(got.value) == (
         f"head: two verdicts.json for Python/linux, {one} and {two}: "
         "pass each work dir as its own LABEL=DIR"
+    )
+
+
+def test_one_dir_given_twice_under_a_label_is_refused_as_given_twice(tmp_path):
+    """Not two libraries in one work dir: one file read twice."""
+    path = _write(tmp_path / "wd", [_test("Lib.A", "PASS")])
+    with pytest.raises(SummaryError) as got:
+        read_summary(
+            [("head", tmp_path / "wd"), ("head", tmp_path / "wd" / ".." / "wd")]
+        )
+    assert str(got.value) == (
+        f"head: {path} is given twice (one DIR twice, or one DIR inside another)"
     )
 
 

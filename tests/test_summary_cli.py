@@ -41,8 +41,42 @@ def test_markdown_is_printed(runs, capsys):
     out = capsys.readouterr().out
     assert "| Python/linux | 1/2 (1 FAIL) | 0/2 (2 FAIL) · 1 not new |" in out
     assert (
-        "<summary>Python/linux, head: 2 not passing, 1 also fail on base</summary>"
+        "<summary>Python/linux, head: 2 not passing, 1 also fails on base</summary>"
         in out
+    )
+
+
+def test_a_failure_where_the_base_had_no_baseline_is_new_and_open(tmp_path, capsys):
+    """The base said NO_REF: it did not fail the test, so the branch's
+    SIM_FAIL is new, its list open."""
+    main_ = _run_dir(tmp_path / "main", {"L.C": "NO_REF", "L.P": "PASS"})
+    branch = _run_dir(tmp_path / "branch", {"L.C": "SIM_FAIL", "L.P": "PASS"})
+    argv = ["summary", f"main={main_}", f"branch={branch}", "--base", "main"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "| Python/linux | 1/2 (1 NO_REF) | 1/2 (1 SIM_FAIL) · 0 not new |" in out
+    assert (
+        "<details open>\n<summary>Python/linux, branch: 1 not passing, "
+        "0 also fail on main</summary>" in out
+    )
+
+
+def test_a_base_run_cut_short_does_not_fold_the_branch_s_failures(tmp_path, capsys):
+    """The base never ran L.S and L.P (NOT RUN, NO_REF): the branch's FAILs
+    there are new; only L.C, a SIM_FAIL on both, is not."""
+    main_ = _run_dir(
+        tmp_path / "main", {"L.C": "SIM_FAIL", "L.P": "NO_REF", "L.S": "NOT RUN"}
+    )
+    branch = _run_dir(
+        tmp_path / "branch", {"L.C": "SIM_FAIL", "L.P": "FAIL", "L.S": "FAIL"}
+    )
+    argv = ["summary", f"main={main_}", f"branch={branch}", "--base", "main"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "0/3 (2 FAIL, 1 SIM_FAIL) · 1 not new |" in out
+    assert (
+        "<details open>\n<summary>Python/linux, branch: 3 not passing, "
+        "1 also fails on main</summary>" in out
     )
 
 

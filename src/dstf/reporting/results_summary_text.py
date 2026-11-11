@@ -6,9 +6,10 @@ The Markdown: a matrix — a row per backend/os, a column per label, each
 cell PASS over the run's total, the other status words' counts, and with a
 base ``· N not new`` — then one folded list per cell with tests that did
 not pass, its summary line ``<Backend>/<os>, <label>: N not passing, K also
-fail on <base>``. A list is open when it holds a failure the base does not
-(or there is no base to tell), folded otherwise; the base's own lists are
-folded. New failures are listed first.
+fail on <base>``. A list is open when it holds a test that is new (one the
+base did not fail and did not end the same way — ``NotPassing.not_new``),
+or there is no base to tell; folded otherwise; the base's own lists are
+folded. New ones are listed first.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import html
 import json
 from dataclasses import asdict
 
-from .results_summary import Cell, NotPassing, Summary
+from .results_summary import Cell, Summary
 from .status import PASS
 
 #: A cell of a label that has no run of that backend/os.
@@ -45,11 +46,6 @@ def _matrix_cell(cell: Cell | None) -> str:
     return text
 
 
-def _is_new(summary: Summary, row: NotPassing) -> bool:
-    """Not passing here and passing on the base, or not there."""
-    return row.base is None or row.base == PASS or row.base == f"not in {summary.base}"
-
-
 def _open(summary: Summary, cell: Cell) -> bool:
     if summary.base is None or cell.not_new is None:
         return cell.label != summary.base
@@ -59,7 +55,8 @@ def _open(summary: Summary, cell: Cell) -> bool:
 def _summary_line(summary: Summary, cell: Cell) -> str:
     text = f"{cell.folder}, {cell.label}: {len(cell.not_passing)} not passing"
     if cell.not_new is not None:
-        text += f", {cell.not_new} also fail on {summary.base}"
+        verb = "fails" if cell.not_new == 1 else "fail"
+        text += f", {cell.not_new} also {verb} on {summary.base}"
     elif cell.base_note:
         text += f"; {cell.base_note}"
     return text
@@ -78,7 +75,7 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
         *([str(summary.base)] if with_base else []),
         "What failed",
     ]
-    rows = sorted(cell.not_passing, key=lambda r: not _is_new(summary, r))
+    rows = sorted(cell.not_passing, key=lambda r: r.not_new)
     lines = [
         "<details open>" if _open(summary, cell) else "<details>",
         f"<summary>{html.escape(_summary_line(summary, cell))}</summary>",
@@ -101,8 +98,8 @@ def as_markdown(summary: Summary) -> str:
     head = "**Tests passed / run**, by backend/os"
     if summary.base is not None:
         head += (
-            f". `· N not new`: N of the tests not passing there do not pass "
-            f"on {summary.base} either"
+            f". `· N not new`: N of the tests not passing there failed on "
+            f"{summary.base} too, or ended there with the same status"
         )
     lines = [head + ".", "", _row(["Backend/os", *summary.labels])]
     lines.append(_row(["---"] * (len(summary.labels) + 1)))

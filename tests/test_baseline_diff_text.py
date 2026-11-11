@@ -528,6 +528,26 @@ def test_the_vs_cell_is_the_largest_change_and_says_a_non_finite_point():
     assert _overview(as_markdown(diff))[2][-1] == "600 % C/linux · not finite"
 
 
+def test_the_vs_cell_ranks_any_percent_above_an_absolute_difference():
+    """A 50 absolute difference (a change from 0) is no larger than a 5 %
+    one: the folder is chosen as a cell's change is."""
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.T",
+                {"A/linux": _changed("A/linux", _var("x", 1.0))},
+                against={
+                    "B/linux": [_var("y", 50.0, scale="absolute")],
+                    "C/linux": [_var("y", 5.0)],
+                },
+            )
+        ],
+        folders=["A/linux", "B/linux", "C/linux"],
+        against="A/linux",
+    )
+    assert _overview(as_markdown(diff))[2][-1] == "5.0 % C/linux"
+
+
 def test_a_cell_where_nothing_was_compared_reads_a_dash_not_0():
     """An all-NaN newer side, or an empty time: no point compared is no
     change of 0."""

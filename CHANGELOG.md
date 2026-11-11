@@ -19,8 +19,8 @@ this file says when they do.
   The guide "Summarize a change for review" says how.
 - `dstf summary LABEL=DIR...`: several runs' results side by side, a row per
   backend/os and a column per label, passed over run; with `--base`, which
-  tests not passing also do not pass on the base — as Markdown for a pull
-  request, or JSON.
+  tests not passing the base failed too — as Markdown for a pull request, or
+  JSON.
 
 ## [1.4.0] - 2026-11-11
 
