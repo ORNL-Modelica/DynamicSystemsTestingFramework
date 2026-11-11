@@ -331,6 +331,87 @@ def test_with_no_failing_criterion_the_message_s_last_line_is_said(tmp_path):
     ]
 
 
+#: Two OpenModelica failures as a large library's run recorded them: the
+#: call is echoed first, the error after it.
+RANKINE = (
+    "OMCSessionZMQ error: OMCSessionException: [OMC log for 'sendExpression("
+    "simulate(TRANSFORM.Fluid.Examples.RankineCycle, stopTime=1.0, "
+    'tolerance=0.0001, method="dassl", outputFormat="mat", fileNamePrefix='
+    '"result", variableFilter="^(time|unitTests\\\\.x\\\\[1\\\\]|CPUtime|'
+    "EventCounter)$\"), False)']: [translation:error:63] Internal error It is "
+    "not possible to select continuous time states because Number of "
+    "Equations 15 greater than number of States 0 to select from.\n"
+)
+DELAY = (
+    "OMCSessionZMQ error: OMCSessionException: [OMC log for 'sendExpression("
+    "simulate(TRANSFORM.Fluid.Pipes.Examples.TransportDelayPipeTests."
+    'CheckDelayTime, stopTime=11.0, tolerance=0.0001, method="dassl", '
+    'outputFormat="mat", fileNamePrefix="result", variableFilter="^(time|'
+    "unitTests\\\\.x\\\\[1\\\\]|CPUtime|EventCounter)$\"), False)']: "
+    "[translation:error:195] Function argument positiveVelocity=noEvent("
+    "transportDelayPipe.v >= 0.0) in call to spatialDistribution has "
+    "variability continuous which is not a discrete expression.\n"
+)
+WARNING = (
+    "LOG_STDOUT        | warning | The default linear solver fails, the "
+    "fallback solver with total pivoting is started at time 0.000000. That "
+    "might raise performance issues, for more information use -lv LOG_LS."
+)
+
+
+def _reasons(tmp_path, *messages):
+    _write(
+        tmp_path / "wd",
+        [_test(f"Lib.T{i}", "SIM_FAIL", message=m) for i, m in enumerate(messages)],
+    )
+    rows = (
+        read_summary([("head", tmp_path / "wd")])
+        .cells[("head", "Python/linux")]
+        .not_passing
+    )
+    return [r.reason for r in rows]
+
+
+def test_an_openmodelica_error_is_said_from_its_tag_not_the_echoed_call(tmp_path):
+    assert _reasons(tmp_path, RANKINE, DELAY) == [
+        "[translation:error:63] Internal error It is not possible to select "
+        "continuous time states because Number of Equations 15 greater than "
+        "number of States 0 to select from.",
+        "[translation:error:195] Function argument positiveVelocity=noEvent("
+        "transportDelayPipe.v >= 0.0) in call to spatialDistribution has "
+        "variability continuous which is not a discrete expression.",
+    ]
+
+
+def test_a_long_error_is_cut_from_its_tag(tmp_path):
+    long = "OMC log for 'simulate(Lib.A)': [backend:error:7] " + "z" * 300
+    assert _reasons(tmp_path, long) == ["[backend:error:7] " + "z" * 181 + "…"]
+
+
+def test_a_repeated_warning_gives_way_to_the_line_that_says_why(tmp_path):
+    """A failure as a run keeps it (``backends.common.failure_message``):
+    the warning it repeated said once, the reason before a later repeat."""
+    from dstf.backends.common.failure_message import failure_message
+
+    reason_line = "LOG_STDOUT        | error   | the reason the run stopped"
+    kept = failure_message(
+        "\n".join(
+            [
+                "Simulation execution failed for model: Lib.T0",
+                *[WARNING] * 40,
+                reason_line,
+                *[WARNING] * 2,
+            ]
+        )
+    )
+    assert kept.endswith(f"{WARNING} (repeated 2 times)")
+    assert _reasons(tmp_path, kept) == [reason_line]
+
+
+def test_a_repeated_line_is_said_when_nothing_else_is(tmp_path):
+    assert _reasons(tmp_path, "w (repeated 3 times)\n") == ["w (repeated 3 times)"]
+
+
 # --- refusals -----------------------------------------------------------------------
 
 

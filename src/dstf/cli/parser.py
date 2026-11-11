@@ -1398,7 +1398,9 @@ def _add_summary(tree: _Tree, top) -> None:
             compare` writes in its work dir. Then, per cell, a folded list
             of the tests that did not pass, each with its status and what
             failed: the first failing criterion that is not advisory, else
-            the last line of its message.
+            its message from the first OpenModelica error tag
+            ([translation:error:63]), else the message's last line that is
+            not a repeated warning.
 
             Each DIR is searched for verdicts.json files (not under
             reports/), each one cell; its backend and os are the file's.
