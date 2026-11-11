@@ -878,3 +878,34 @@ def test_details_naming_no_listed_test_is_refused_with_its_name():
         "--details: no test this diff lists is named Nope "
         "(a short name such as A, or a full model id)"
     )
+
+
+def _zero_cell_with(*others):
+    """One test whose Dymola/linux cell has x at 0 % beside ``others``."""
+    return _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {"Dymola/linux": _changed("Dymola/linux", _var("x", 0.0), *others)},
+            )
+        ],
+        folders=["Dymola/linux"],
+    )
+
+
+def test_a_move_on_the_absolute_scale_outranks_a_zero_percent():
+    """y went 0 → 0.5 (no range to take a percent of): the cell names that
+    move, not x's 0 %, and the key line does not say nothing moved."""
+    text = as_markdown(_zero_cell_with(_var("y", 0.5, scale="absolute")))
+    assert _overview(text)[2] == ["`A`", "0.5 absolute"]
+    assert KEY_ZERO not in text
+
+
+def test_a_value_that_turned_not_finite_is_no_unmoved_file():
+    text = as_markdown(_zero_cell_with(_var("y", 0.0, non_finite=1, non_finite_at=2.0)))
+    assert KEY_ZERO not in text
+
+
+def test_old_points_outside_the_new_span_are_no_unmoved_file():
+    text = as_markdown(_zero_cell_with(_var("y", 0.0, outside=5)))
+    assert KEY_ZERO not in text

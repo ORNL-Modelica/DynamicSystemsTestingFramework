@@ -54,7 +54,7 @@ What a `Change` cell can say:
 | `1.8 %` | the largest change of a variable there, as a percent of the old baseline's range |
 | `2.9e-05 % of value` | the old series is constant: the change is a percent of its value |
 | `0.004 absolute` | the old series is zero: the change is the difference itself |
-| `0 %` | the file changed, but no stored sample of a tracked variable moved; the key line then says so |
+| `0 %` | the file changed, but no compared sample of a tracked variable moved; the key line says so when no value turned non-finite and no old point fell outside the new run |
 | `–` | nothing compared: no finite point on either side, or no time |
 | `(+N variables)`, `(−N variables)` | N variables only the newer, or only the older, baseline holds |
 | `(settings)` | the simulation settings, the sampling setting or precision, or the comparison settings changed |

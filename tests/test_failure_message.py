@@ -66,3 +66,12 @@ def test_a_repeat_that_does_not_bring_it_under_the_limit_is_collapsed_first():
     assert got.startswith(f"{HEADER}\n{WARNING} (repeated 30 times)\n")
     assert got.endswith(f"{distinct[-1]}\n{REASON}")
     assert len(got) <= 2048
+
+
+def test_windows_line_ends_collapse_without_a_carriage_return_in_the_line():
+    """A ``\\r`` left before the count makes a terminal overwrite the line."""
+    text = "warn A\r\nwarn A\r\nwarn A\r\nthe reason\r\n"
+    out = failure_message(text)
+    assert "warn A (repeated 3 times)" in out
+    assert "\r (repeated" not in out
+    assert out.endswith("the reason\r\n")

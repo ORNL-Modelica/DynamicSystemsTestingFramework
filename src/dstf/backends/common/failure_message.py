@@ -30,7 +30,9 @@ def _collapsed(text: str) -> str:
         while i + n < len(lines) and lines[i + n] == line:
             n += 1
         if n > 1 and line.strip():
-            out.append(f"{line} (repeated {n} times)")
+            # A Windows line end's \r stays at the end, after the count.
+            bare = line.rstrip("\r")
+            out.append(f"{bare} (repeated {n} times){line[len(bare) :]}")
         else:
             out.extend([line] * n)
         i += n

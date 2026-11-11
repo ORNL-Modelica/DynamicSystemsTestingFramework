@@ -149,11 +149,12 @@ def _rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
     return (int(non_finite), max(pct, default=-1.0), max(absolute, default=-1.0))
 
 
-def _size(change: SeriesChange) -> tuple[int, float]:
-    """How large a compared change is: any percent above any absolute
-    difference, then by its number."""
+def _size(change: SeriesChange) -> tuple[int, int, float]:
+    """How large a compared change is: any move above none, then any
+    percent above any absolute difference, then by its number — so a cell
+    never reads ``0 %`` beside a variable that moved."""
     assert change.largest is not None
-    return (int(change.scale != "absolute"), change.largest)
+    return (int(change.largest != 0), int(change.scale != "absolute"), change.largest)
 
 
 def _largest(variables: list[VariableDiff]) -> SeriesChange | None:
@@ -297,12 +298,17 @@ def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]
 
 
 def _unmoved(tests: list[TestDiff]) -> bool:
-    """Whether a Change cell reads ``0 %``: a changed file whose tracked
-    values did not move (its other bytes did)."""
+    """Whether a Change cell says a changed file whose tracked values did
+    not move (its other bytes did): every compared variable 0, none with a
+    value no longer finite and no old point outside the new span."""
     for test in tests:
         for b in test.baselines.values():
-            largest = _largest(b.variables) if b.status == "changed" else None
-            if largest is not None and largest.largest == 0:
+            if b.status != "changed":
+                continue
+            changes = [v.change for v in b.variables if v.change is not None]
+            if changes and all(
+                c.largest == 0 and not c.non_finite and not c.outside for c in changes
+            ):
                 return True
     return False
 
