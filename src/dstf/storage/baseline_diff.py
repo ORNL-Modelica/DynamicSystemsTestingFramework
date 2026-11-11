@@ -436,7 +436,7 @@ def _label(v: StoredVariable) -> str:
 
 
 @dataclass
-class _File:
+class BaselineFile:
     """A baseline file at one side: its path inside the reference root,
     its bytes, and what its JSON says."""
 
@@ -463,33 +463,38 @@ def _is_baseline(path: str) -> bool:
     )
 
 
-def _file(path: str, raw: bytes) -> _File:
+def _file(path: str, raw: bytes) -> BaselineFile:
     try:
         body = parse_body(raw)
     except (ValueError, RecursionError) as e:  # JSONDecodeError, UndecodableBaseline
-        return _File(path, raw, model_id_of(raw), str(e) or type(e).__name__)
+        return BaselineFile(path, raw, model_id_of(raw), str(e) or type(e).__name__)
     model_id = body.get("model_id")
     if not isinstance(model_id, str) or not model_id:
-        return _File(path, raw, None, "it names no model id")
-    return _File(path, raw, model_id, "")
+        return BaselineFile(path, raw, None, "it names no model id")
+    return BaselineFile(path, raw, model_id, "")
 
 
-def _at_commit(
-    repo: Repository, commit: Commit, read: Callable[[str], bytes]
-) -> list[_File]:
-    parsed: dict[str, _File] = {}
-    out = []
-    for path, blob in sorted(repo.files(commit).items()):
-        if not _is_baseline(path):
-            continue
-        if blob not in parsed:
-            parsed[blob] = _file(path, read(blob))
-        known = parsed[blob]
-        out.append(_File(path, known.raw, known.model_id, known.why))
-    return out
+def files_at(
+    repo: Repository, commits: list[Commit], read: Callable[[str], bytes]
+) -> list[list[BaselineFile]]:
+    """Each commit's baseline files, one list per commit; a blob held at
+    several commits is read and parsed once."""
+    parsed: dict[str, BaselineFile] = {}
+    sides = []
+    for commit in commits:
+        out = []
+        for path, blob in sorted(repo.files(commit).items()):
+            if not _is_baseline(path):
+                continue
+            if blob not in parsed:
+                parsed[blob] = _file(path, read(blob))
+            known = parsed[blob]
+            out.append(BaselineFile(path, known.raw, known.model_id, known.why))
+        sides.append(out)
+    return sides
 
 
-def _on_disk(root: Path) -> list[_File]:
+def _on_disk(root: Path) -> list[BaselineFile]:
     out = []
     for path in sorted(root.glob("*/*/ref_*.json")):
         if path.is_file():
@@ -498,14 +503,14 @@ def _on_disk(root: Path) -> list[_File]:
 
 
 def keyed_many(
-    sides: list[list[_File]],
-) -> dict[tuple[str, str], list[list[_File]]]:
+    sides: list[list[BaselineFile]],
+) -> dict[tuple[str, str], list[list[BaselineFile]]]:
     """Every side's files by (folder, model id), one list per side. A file
     whose model id cannot be read takes the model id another side's file
     at its path names — the nearest side's, the earlier first on a tie —
     or else its own path as its key."""
     by_path = [{f.path: f.model_id for f in files if f.model_id} for files in sides]
-    out: dict[tuple[str, str], list[list[_File]]] = defaultdict(
+    out: dict[tuple[str, str], list[list[BaselineFile]]] = defaultdict(
         lambda: [[] for _ in sides]
     )
     for i, files in enumerate(sides):
@@ -535,8 +540,25 @@ def diff_baselines(
     old = repo.commit(rev1)
     new = repo.commit(rev2) if rev2 is not None else None
     with repo.reader() as read:
-        olds = _at_commit(repo, old, read)
-        news = _at_commit(repo, new, read) if new is not None else _on_disk(Path(root))
+        if new is None:
+            (olds,) = files_at(repo, [old], read)
+            news = _on_disk(Path(root))
+        else:
+            olds, news = files_at(repo, [old, new], read)
+    return diff_files(root, old, new, olds, news, against=against)
+
+
+def diff_files(
+    root: Path,
+    old: Commit,
+    new: Commit | None,
+    olds: list[BaselineFile],
+    news: list[BaselineFile],
+    *,
+    against: str | None = None,
+) -> Diff:
+    """:func:`diff_baselines` of files already read: ``olds`` at ``old``,
+    ``news`` at ``new`` (None: on disk)."""
     old_said = old.short
     new_said = new.short if new is not None else "the files on disk"
     folders = sorted(
@@ -588,7 +610,11 @@ def diff_baselines(
 
 
 def _baseline(
-    folder: str, olds: list[_File], news: list[_File], old_said: str, new_said: str
+    folder: str,
+    olds: list[BaselineFile],
+    news: list[BaselineFile],
+    old_said: str,
+    new_said: str,
 ) -> BaselineDiff | None:
     """One test's baseline in one folder, or None where its compared parts
     are equal (it differs in metadata only)."""
@@ -748,7 +774,7 @@ def _steps(old: Mapping, new: Mapping) -> tuple[float, float] | None:
 def _against(
     model_id: str,
     against: str,
-    keyed: Mapping[tuple[str, str], list[list[_File]]],
+    keyed: Mapping[tuple[str, str], list[list[BaselineFile]]],
     folders: list[str],
 ) -> dict[str, list[VariableDiff]]:
     """Each other folder's newer baseline of ``model_id`` scored against
@@ -767,7 +793,7 @@ def _against(
     return out
 
 
-def _one_readable(files: list[_File]) -> ReferenceFile | None:
+def _one_readable(files: list[BaselineFile]) -> ReferenceFile | None:
     if len(files) != 1 or files[0].why:
         return None
     return decode_reference(parse_body(files[0].raw))
