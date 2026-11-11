@@ -81,7 +81,17 @@ this file says when they do.
   it and leaves the file as it is, and every other test runs. A soft check's
   file whose body cannot be read, or that is not UTF-8 text, is warned of
   (`Skipping unreadable soft_check <path>: <why>`) and left out: its test is
-  scored without it.
+  scored without it. Two such bodies were read in 1.3.0 and are not now: a
+  diagnostic whose name is a number (`"name": 5`) and a `sampling` count
+  written as a fraction (`"source_points": 3.0`). A test that passed on such
+  a baseline now fails with the sentence above, and such a soft check is
+  left out.
+- `dstf soft-check add` reads its source by the same rule and refuses one it
+  cannot read before it writes anything: `Failed to read <source>: <why>`,
+  exit 1. In 1.3.0 a source with a variable that had no name was imported
+  and scored, and one whose `variables` was not a list, whose `sampling`
+  count was text, or that was not UTF-8 text stopped the command with a
+  traceback.
 - OpenModelica runs a test whose solver it does not know — Dymola's
   `Esdirk45a`, from a `__Dymola_Algorithm` annotation or `test_spec.json` —
   on dassl, where omc stopped with `unrecognized option -s esdirk45a`; `dstf
