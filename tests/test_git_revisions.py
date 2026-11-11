@@ -146,3 +146,14 @@ def test_reading_never_writes_the_repository(repo):
     # and the hash sees a write: `git diff` refreshes the touched file's entry
     repo.git("diff", "--quiet", "HEAD")
     assert _tree_hash(repo.top / ".git") != before
+
+
+def test_a_revision_s_date_is_its_committer_date(repo, monkeypatch):
+    """The date a plot's legend shows: when the commit was made on the
+    branch (a rebased or cherry-picked commit keeps its author date)."""
+    monkeypatch.setenv("GIT_AUTHOR_DATE", "2025-01-02T10:00:00+00:00")
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-04-30T23:30:00+00:00")
+    (repo.top / "refs" / "a.txt").write_text("a")
+    sha = repo.commit("first")
+    git = Repository.holding(repo.top / "refs")
+    assert git.date(git.commit(sha)) == "2026-04-30"

@@ -208,6 +208,17 @@ class Diff:
     metadata_only: int
 
 
+def short_name(model_id: str) -> str:
+    """A test's short name: the last part of its model id (a path, for a
+    file whose model id cannot be read, whole)."""
+    return model_id.rsplit(".", 1)[-1] if "/" not in model_id else model_id
+
+
+def folder_order(folder: str) -> tuple[str, ...]:
+    """The order folders are listed in: backends alphabetical, then OSes."""
+    return tuple(folder.split("/"))
+
+
 def machine_dependent(row: StatRow) -> bool:
     """A statistic that measures the machine, not the solver: every row the
     statistics rows class as a time (the ``timing`` section, ``cpu_time*``,
@@ -561,13 +572,9 @@ def diff_files(
     ``news`` at ``new`` (None: on disk)."""
     old_said = old.short
     new_said = new.short if new is not None else "the files on disk"
-    folders = sorted(
-        {f.folder for f in (*olds, *news)}, key=lambda f: tuple(f.split("/"))
-    )
+    folders = sorted({f.folder for f in (*olds, *news)}, key=folder_order)
     if against is not None and against not in {f.folder for f in news}:
-        held = ", ".join(
-            sorted({f.folder for f in news}, key=lambda f: tuple(f.split("/")))
-        )
+        held = ", ".join(sorted({f.folder for f in news}, key=folder_order))
         raise DiffError(
             f"--against {against}: no baselines in {against} at {new_said}"
             + (f" (it holds {held})" if held else "")
@@ -595,7 +602,7 @@ def diff_files(
         compared: dict[str, list[VariableDiff]] = {}
         if against is not None:
             compared = _against(model_id, against, keyed, folders)
-        unchanged_in = sorted(same.get(model_id, []), key=lambda f: tuple(f.split("/")))
+        unchanged_in = sorted(same.get(model_id, []), key=folder_order)
         tests.append(TestDiff(model_id, changed[model_id], compared, unchanged_in))
     return Diff(
         root=Path(root),

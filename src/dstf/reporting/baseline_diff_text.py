@@ -34,6 +34,7 @@ from ..storage.baseline_diff import (
     TestDiff,
     VariableDiff,
     machine_dependent,
+    short_name,
 )
 from .stats_rows import SECTION_TITLES, StatRow, report_text
 
@@ -180,12 +181,6 @@ def _test_rank(test: TestDiff) -> tuple[int, int, float, float]:
 
 
 # --- the overview ------------------------------------------------------------
-
-
-def short_name(model_id: str) -> str:
-    """A test's name as the overview prints it: the last part of its model
-    id (a path, for a file whose model id cannot be read, whole)."""
-    return model_id.rsplit(".", 1)[-1] if "/" not in model_id else model_id
 
 
 def _code(text: str) -> str:

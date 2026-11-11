@@ -2,8 +2,8 @@
 
 Plain ``git`` through ``subprocess`` — no library. What it offers: the
 repository that holds a folder (:meth:`Repository.holding`), a revision as
-a commit with its short hash and subject (:meth:`Repository.commit`), the
-files under the folder at a commit with their blob ids
+a commit with its short hash and subject (:meth:`Repository.commit`), its
+committer date (:meth:`Repository.date`), the files under the folder at a commit with their blob ids
 (:meth:`Repository.files`), and a blob's bytes (:meth:`Repository.reader`,
 one ``git cat-file --batch`` for every read).
 
@@ -113,6 +113,15 @@ class Repository:
             proc.stdout.decode("utf-8", "replace").rstrip("\n").partition("\0")
         )
         return Commit(sha=sha, short=short, subject=subject)
+
+    def date(self, commit: Commit) -> str:
+        """``commit``'s committer date, ``YYYY-MM-DD``: when it was made on
+        its branch. Not a field of :class:`Commit`, whose fields are
+        ``baseline diff``'s JSON."""
+        proc = _run(["log", "-1", "--format=%cs", commit.sha, "--"], self.top)
+        if proc.returncode != 0:
+            raise GitError(f"revision '{commit.short}' in {self.top}: {_said(proc)}")
+        return proc.stdout.decode("utf-8", "replace").strip()
 
     def files(self, commit: Commit) -> dict[str, str]:
         """Every file under the folder at ``commit``: its path inside the
