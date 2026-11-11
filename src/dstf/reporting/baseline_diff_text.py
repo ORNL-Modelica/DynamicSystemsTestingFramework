@@ -9,7 +9,8 @@ for (:func:`detailed`), the two revisions' subjects, then one ``<details>``
 each with every variable, the settings that changed and the solver effort
 old → new. A number is a percent with two significant digits under 10 %
 (a trailing zero kept: ``1.0 %``), whole above, in scientific notation
-under 0.001 %; a time is ``%g`` seconds. Facts only: nothing here judges
+under 0.001 %, and ``0 %`` for none (``±0 %`` for a signed one); a time is
+``%g`` seconds. Facts only: nothing here judges
 a change, and nothing knows a library. The JSON is always complete, its
 ``limits`` the full statement the Markdown's key line shortens.
 """
@@ -66,11 +67,11 @@ GITHUB_LIMIT = 65_536
 
 
 def percent(value: float) -> str:
-    """A percent as it is printed: ``0``; ``2.3e-04 %`` under 0.001 %;
+    """A percent as it is printed: ``0 %``; ``2.3e-04 %`` under 0.001 %;
     two significant digits under 10 %, a trailing zero kept (``0.0020 %``,
     ``0.19 %``, ``1.0 %``); a whole percent above (``157 %``)."""
     if value == 0:
-        return "0"
+        return "0 %"
     size = abs(value)
     if size < 1e-3:
         return f"{value:.1e} %"
@@ -81,7 +82,10 @@ def percent(value: float) -> str:
 
 
 def _signed(value: float) -> str:
-    """A signed percent, ``+`` or a true minus (``−36 %``)."""
+    """A signed percent, ``+`` or a true minus (``−36 %``); ``±0 %`` for
+    none (a bare ``0`` beside a count read as "zero steps")."""
+    if value == 0:
+        return "±" + percent(value)
     if value > 0:
         return "+" + percent(value)
     return percent(value).replace("-", _MINUS, 1)
@@ -93,10 +97,11 @@ def _seconds(t: float) -> str:
 
 def _amount(change: SeriesChange) -> str:
     """A change's size: a percent, ``of value`` for a constant's, or the
-    absolute difference."""
+    absolute difference; ``0 %`` for none, whatever its scale (a bare ``0``
+    beside ``=`` read alike)."""
     assert change.largest is not None
     if change.largest == 0:
-        return "0"
+        return percent(0)
     if change.scale == "absolute":
         return f"{change.largest:.2g} absolute"
     return percent(change.largest) + (" of value" if change.scale == "value" else "")
@@ -291,12 +296,27 @@ def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]
     return lines
 
 
-def _key(diff: Diff, steps: str | None) -> str:
+def _unmoved(tests: list[TestDiff]) -> bool:
+    """Whether a Change cell reads ``0 %``: a changed file whose tracked
+    values did not move (its other bytes did)."""
+    for test in tests:
+        for b in test.baselines.values():
+            largest = _largest(b.variables) if b.status == "changed" else None
+            if largest is not None and largest.largest == 0:
+                return True
+    return False
+
+
+def _key(diff: Diff, tests: list[TestDiff], steps: str | None) -> str:
     """The one line under the table saying what its columns hold; the
-    guide states the limits in full (:data:`LIMITS`)."""
+    guide states the limits in full (:data:`LIMITS`). ``0 %`` is said only
+    where a Change cell reads it: a Gap of 0 % is two tools agreeing, which
+    the Gap sentence already says."""
     said = [
         "Change = the biggest move of a tracked variable, old → new, as % of its range."
     ]
+    if _unmoved(tests):
+        said.append(f"{percent(0)} = the file changed but no tracked value moved.")
     if diff.against:
         said.append("Gap = the same, between tools or OSes, after the change.")
     if steps:
@@ -571,7 +591,7 @@ def as_markdown(diff: Diff, details: Collection[str] = ()) -> str:
     tests = _sorted(diff.tests)
     steps = _steps_folder(diff)
     if tests:
-        lines += [*_overview(diff, tests, steps), "", _key(diff, steps), ""]
+        lines += [*_overview(diff, tests, steps), "", _key(diff, tests, steps), ""]
     else:
         lines += [_STORED_ONLY, ""]
     folded = [test for test in tests if test.model_id in details]
