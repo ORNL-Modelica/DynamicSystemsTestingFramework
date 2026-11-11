@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +77,7 @@ def build_verdicts(
         if s in STATUS_LABELS and (counts[s] or s in _ALWAYS)
     }
     return {
-        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "written_at": datetime.now(UTC).isoformat(timespec="seconds"),
         # The run these verdicts are of: status.json's provenance block
         # (backend, tool version, os), or null where there is none.
         "metadata": dict(metadata) if metadata else None,

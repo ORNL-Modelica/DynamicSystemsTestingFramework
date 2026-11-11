@@ -1,6 +1,6 @@
 [project]
 name = "dynamic-systems-testing-framework"
-version = "1.3.0"
+version = "1.4.0"
 description = "Dynamic Systems Testing Framework — regression & unit testing for time-dependent system behavior, with plug-in backends: Modelica (Dymola, OpenModelica), FMU (FMPy), Julia (ModelingToolkit) and Python to start"
 # What the package index shows: the README as the project page (its one image
 # is an absolute URL for that), the license by its SPDX name with the file
@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Testing",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "jinja2>=3.1",
     "numpy>=1.20",
@@ -118,7 +118,7 @@ asyncio_mode = "auto"
 # --- Quality floor (D88) ---------------------------------------------------
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.format]
@@ -144,6 +144,8 @@ ignore = [
     "SIM105",  # try/except/pass — deliberate best-effort cleanup in shutdown/parse
                # paths; contextlib.suppress is not clearer enough to justify churn
     "B905",    # zip() without strict= — not enforced yet; revisit when ratcheting
+    "UP042",   # (str, Enum) -> StrEnum changes str() and f"{x}" from "Cls.X" to the
+               # value: a behaviour change, not a modernization
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -155,7 +157,7 @@ ignore = [
 # Tiered adoption (D88): lenient baseline scoped to the typed-dataclass core.
 # The registry/strategy glue, Dymola-logger monkey-patching, and JSON-dict
 # flow have poor type signal and are left out of scope for now.
-python_version = "3.10"
+python_version = "3.12"
 files = [
     "src/dstf/authoring",
     "src/dstf/backends/pool.py",

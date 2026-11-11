@@ -6,7 +6,7 @@ follow [semantic versioning](https://semver.org/). DSTF is in beta: the command
 line and the `testing.json` keys may still change between minor versions, and
 this file says when they do.
 
-## [Unreleased]
+## [1.4.0] - 2026-11-11
 
 ### Added
 
@@ -18,6 +18,7 @@ this file says when they do.
 
 ### Changed
 
+- **DSTF needs Python 3.12 or newer;** 3.10 and 3.11 are no longer supported.
 - **A baseline's file is named from its model, not numbered:** `ref_0001.json`
   becomes `ref_<code>.json`. Convert a library's baselines as
   [How to convert your baseline names](#how-to-convert-your-baseline-names)
@@ -572,6 +573,7 @@ command is `dstf`. The code is 1.0.0's.
 
 The first tagged version. It was not published to PyPI.
 
+[1.4.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.0.1...v1.1.0

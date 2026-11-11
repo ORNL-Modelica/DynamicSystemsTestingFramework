@@ -4,7 +4,7 @@ call."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..backends.common.result_variables import criterion_variables, tracks
@@ -172,7 +172,7 @@ def _provenance(meta: dict | None, config: Config) -> dict:
         "library_versions": meta.get("library_versions"),
         "dstf_version": meta.get("dstf_version"),
         "os": meta.get("os") or config.os_name,
-        "run_started": datetime.fromtimestamp(started, timezone.utc).isoformat(
+        "run_started": datetime.fromtimestamp(started, UTC).isoformat(
             timespec="seconds"
         )
         if isinstance(started, (int, float))

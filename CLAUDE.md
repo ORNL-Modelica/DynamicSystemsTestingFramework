@@ -135,9 +135,9 @@ The suite is about 8,900 tests; CI's selection is about 8,450 of them. Add
 extra), as CI does.
 
 `uv sync` installs the project editable, exactly like `uv pip install -e`, but
-pins every dependency to the same `uv.lock` CI uses. (Not the same *versions* —
-the lock resolves different numpy/scipy on 3.10 than on 3.12, and neither the
-repo nor CI pins an interpreter.) `--locked` makes it fail rather than silently
+pins every dependency to the same `uv.lock` CI uses. (Not the same
+interpreter: nothing pins one. CI's `quality` job takes the newest Python and
+its `floor` job the oldest supported, 3.12.) `--locked` makes it fail rather than silently
 re-lock when `uv.lock` has drifted from `pyproject.toml`; if you change a
 dependency, run `uv lock` and commit `uv.lock`. Skip that and CI fails while you
 stay green: `uv run` re-locks silently where `uv sync --locked` refuses. In a

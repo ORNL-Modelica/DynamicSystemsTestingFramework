@@ -24,7 +24,9 @@ jobs:
         with:
           enable-cache: true
 
-      # `uv sync` provisions a Python matching requires-python (>=3.10),
+      # `uv sync` provisions a Python matching requires-python (>=3.12) —
+      # the newest it can, so this job tracks new Pythons; `floor` runs the
+      # oldest supported one —
       # creates .venv from uv.lock, and installs the project + the dev and
       # author extras (the authoring-shell tests run here; they carry no marker).
       # Tools are then run via `uv run` so they resolve against that venv —
@@ -57,6 +59,30 @@ jobs:
           uv run pytest -q -n 4
           -m "not playwright and not dymola and not fmpy and not ompython and not julia and not reference_fmus"
           --cov=dstf --cov-report=term-missing
+
+  # The oldest Python requires-python allows, on the same test selection, so
+  # dropping below it is caught here rather than by a user. No lint, types or
+  # coverage: the `quality` job measures those on the newest Python.
+  floor:
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --extra dev --extra author --locked
+
+      - name: Pytest on the oldest supported Python
+        run: >
+          uv run python -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version"
+          && uv run pytest -q -n 4
+          -m "not playwright and not dymola and not fmpy and not ompython and not julia and not reference_fmus"
 
   # The browser-driven tests (`-m playwright`): the authoring tool and the
   # HTML reports in a real Chromium. A job of its own, beside the tests, so
