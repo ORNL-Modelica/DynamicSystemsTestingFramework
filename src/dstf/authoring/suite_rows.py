@@ -69,7 +69,7 @@ def suite_row(
             comp,
             stats=result.statistics if result is not None else None,
             diagnostics=(result.diagnostics or []) if result is not None else (),
-            ref_id=baseline_stem(model_id) if comp.test_id else None,
+            ref_id=baseline_stem(model_id) if comp.baseline_path else None,
             field_sources=row.field_sources,
         )
         return replace(

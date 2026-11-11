@@ -54,7 +54,7 @@ from pathlib import Path
 
 from ..backends.types import raw_by_name, variable_name
 from ..storage.baseline import Baseline
-from ..storage.baseline_codec import read_reference, read_series
+from ..storage.baseline_codec import UndecodableBaseline, read_reference, read_series
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +208,7 @@ def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
                 continue
             try:
                 ref = read_reference(ref_file)
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, UndecodableBaseline, OSError):
                 continue
             if ref.model_id != model_id or ref.active_status not in STATUSES:
                 continue

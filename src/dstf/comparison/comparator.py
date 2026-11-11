@@ -41,7 +41,6 @@ from ..storage.baseline import (
     ReferenceFile,
     StoredVariable,
 )
-from ..storage.names import baseline_code
 from ..storage.reference_store import ReferenceStore
 from .algorithms import same_instant
 from .registry import metric as registry_metric
@@ -1206,15 +1205,13 @@ def compare_one(
         dataset_kind,
     )
     if reference is not None:
-        # The baseline it was scored against, named from ONE source: the
-        # code of the model id (`storage.names`), for a model whose file the
-        # store reads — never a number from inside the file, which an old
-        # file still holds. Its path beside it: one model has ONE name in
+        # The baseline it was scored against, by its path: its name is the
+        # model id's (`storage.names`), never a number from inside the file,
+        # which an old file still holds; and one model has ONE name in
         # every backend folder, so only the path tells the file this
         # comparison read from another backend's (`compare --backend`).
         ref_file = store.reference_file(test.model_id)
         if ref_file is not None:
-            comp.test_id = baseline_code(test.model_id)
             comp.baseline_path = str(ref_file)
     return comp
 

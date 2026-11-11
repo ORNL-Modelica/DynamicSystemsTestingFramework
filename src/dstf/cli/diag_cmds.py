@@ -132,32 +132,31 @@ def cmd_baseline_export(args: argparse.Namespace) -> int:
 
 
 def cmd_manifest_show(args: argparse.Namespace) -> int:
-    """List the partition's baselines — each one's file, status and model,
-    in model-id order — with the counts of active and skipped ones."""
+    """List the partition's baselines the index reads — each one's file,
+    status and model, in model-id order — and then each file the index
+    refuses with its sentence (`RefIndex.refused`), with the counts of both.
+    A refused file is listed under ``Refused:`` only: the table is what a
+    lookup reads."""
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-    entries = sorted(
-        (e["model_id"], baseline_file(e["model_id"]), e["status"])
-        for e in store.index.all_tests().values()
-    )
-    skipped = [(model, file) for model, file, status in entries if status == "skip"]
-    n_active = sum(status == "active" for _, _, status in entries)
+    models = sorted(store.index.active_tests().values())
+    refused = store.index.refused()
 
     print(f"References: {config.reference_dir}")
-    print(f"Active: {n_active}  Skip: {len(skipped)}\n")
+    print(f"Active: {len(models)}  Refused: {len(refused)}\n")
 
-    if entries:
+    if models:
         print(f"{'File':<21}  {'Status':<10}  {'Model ID'}")
         print("-" * 90)
-        for model, file, status in entries:
-            print(f"{file:<21}  {status:<10}  {model}")
+        for model in models:
+            print(f"{baseline_file(model):<21}  {'active':<10}  {model}")
 
-    if skipped:
-        print("\nSkipped:")
-        for model, file in skipped:
-            print(f"{file:<21}  {model}")
+    if refused:
+        print("\nRefused:")
+        for said in refused.values():
+            print(said)
 
     return 0
 

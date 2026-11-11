@@ -649,12 +649,20 @@ def test_the_pool_s_callbacks_reach_the_session_on_the_loop_only(h):
 
 def test_stopping_the_queue_leaves_no_simulation_behind(h):
     me = psutil.Process()
+    # Only the processes this test starts: a test worker can already hold a
+    # child of its own -- on Python 3.14 multiprocessing's resource tracker,
+    # started by an earlier test, which no stop of the queue should end.
+    before = {p.pid for p in me.children(recursive=True)}
     h.hold(A)
     a, b = h.session.enqueue([A, B])
     h.running(A)
 
     def simulations() -> list:
-        return [p for p in me.children(recursive=True) if p.is_running()]
+        return [
+            p
+            for p in me.children(recursive=True)
+            if p.pid not in before and p.is_running()
+        ]
 
     # RUNNING is said as the worker takes the item, a moment BEFORE its
     # process exists: 1 to 5 ms on a native file system, and long enough on

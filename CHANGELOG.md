@@ -18,30 +18,44 @@ this file says when they do.
 
 ### Changed
 
-- **A baseline's file is named from its model, not numbered.** `ref_0001.json`
-  becomes `ref_<code>.json`, the code the first 12 hex digits of the SHA-256 of
-  the model id (`MyLib.HeatExchanger` → `ref_ac8d62fff049.json`), the same name
-  in every `<Backend>/<os>/` folder; its `soft_checks/` and `companions/`
-  folders and its report page (`reports/ref_<code>/`) are named the same way.
-  A baseline no longer holds `"test_id"`, and `.id_high_water.json` is gone. A
-  reference folder that still holds numbered files is refused (`… holds
-  baselines under the old numbered names (ref_0001.json, …) — convert them with
-  scripts/convert_baseline_names.py, see CHANGELOG`, exit 2): see
-  [How to convert your baseline names](#how-to-convert-your-baseline-names).
-  The `obsolete` status is gone: a baseline is removed by deleting its file,
-  and a file still marked `obsolete` fails its test (`status "obsolete" is not
-  a status — delete the file to remove a baseline`). The console no longer
-  tags a test `[0001]` or `[new]`; `verdicts.json` names each test's baseline
-  in `ref_id` (`ref_<code>`, or null) where it held `test_id`; `dstf baseline
-  export --format csv` writes a `file` column where it wrote `test_id`; a
-  test's page loses its Test ID row; `dstf manifest show` lists each baseline's
-  file, status and model in model-id order, without `--show-obsolete`, and its
-  `Active` count counts `active` baselines only (it counted the skipped ones
-  too); and
-  `dstf manifest cleanup` does one job, the work directory's — what
-  `--orphans` did, plus the report pages no test is reported under — and
-  `--orphans` is gone. For a plug-in, `ReferenceFile.test_id` is gone and
-  `TestComparison.test_id` holds the code.
+- **A baseline's file is named from its model, not numbered:** `ref_0001.json`
+  becomes `ref_<code>.json`. Convert a library's baselines as
+  [How to convert your baseline names](#how-to-convert-your-baseline-names)
+  says.
+  - The code is the first 12 hex digits of the SHA-256 of the model id
+    (`MyLib.HeatExchanger` → `ref_ac8d62fff049.json`), the same in every
+    `<Backend>/<os>/` folder. The baseline's `soft_checks/` and `companions/`
+    folders and its report page (`reports/ref_<code>/`) take the same name.
+  - A baseline no longer holds `"test_id"`, and `.id_high_water.json` is gone.
+  - A folder that still holds numbered files is refused, exit 2: `<folder>
+    holds baselines under the old numbered names (ref_0001.json, …) — convert
+    them with scripts/convert_baseline_names.py, see CHANGELOG`. Only `ref_`
+    and 1 to 11 digits is such a name. Any other `ref_*.json` that is no
+    baseline name (`ref_<code> copy.json`, a code in capitals) is warned of
+    and left out: `<name> is not a baseline name (ref_ and 12 lowercase hex
+    digits) — rename or delete it`.
+  - The `obsolete` status is gone: a baseline is removed by deleting its file.
+    A file still marked `obsolete` fails its test (`ref_<code>.json: status
+    "obsolete" is not a status — delete the file to remove a baseline`).
+  - The console no longer tags a test `[0001]` or `[new]`, and a test's page
+    loses its Test ID row.
+  - `verdicts.json` names each test's baseline in `ref_id` (`ref_<code>`, or
+    null) where it held `test_id`; `dstf baseline export --format csv` writes
+    a `file` column where it wrote `test_id`.
+  - `dstf manifest cleanup` does one job, the work directory's: what
+    `--orphans` did, plus the report pages no test is reported under.
+    `--orphans` is gone.
+  - For a plug-in: `ReferenceFile.test_id` and `TestComparison.test_id` are
+    gone. `TestComparison.baseline_path` names the baseline file a test was
+    scored against (None when it read none).
+- **The baseline status `skip` is gone:** `active` is the only status. A file
+  still marked `skip` fails its test (`ref_<code>.json: status "skip" is not a
+  status — delete the file to remove a baseline`), as `obsolete` does.
+- **`dstf manifest show` lists the files it will not read:** it prints
+  `Active: N  Refused: K` where it printed `Active: N  Skip: K  Obsolete: M`,
+  then a table of the baselines a run reads, in model-id order, and under
+  `Refused:` each other file with the sentence that says why. The `Skipped:`
+  and `Obsolete:` lists and `--show-obsolete` are gone.
 - **A variable name has one spelling, and a name `variables` lists must be in
   the result.** An array index is written without spaces: Dymola's
   `T[1, 2]` is OpenModelica's `T[1,2]`, read that way from every result file,
@@ -59,6 +73,25 @@ this file says when they do.
 
 ### Fixed
 
+- A baseline file whose body cannot be read — `variables` not a list, an
+  entry with no name or values, a name that is not text, values that are not
+  numbers, `time` not a list of numbers, a `sampling` count that is not an
+  integer — no longer stops `dstf run` with a traceback. Its test fails with
+  `ref_<code>.json cannot be read (<why>) — fix or delete it`, an accept skips
+  it and leaves the file as it is, and every other test runs. A soft check's
+  file whose body cannot be read, or that is not UTF-8 text, is warned of
+  (`Skipping unreadable soft_check <path>: <why>`) and left out: its test is
+  scored without it. Two such bodies were read in 1.3.0 and are not now: a
+  diagnostic whose name is a number (`"name": 5`) and a `sampling` count
+  written as a fraction (`"source_points": 3.0`). A test that passed on such
+  a baseline now fails with the sentence above, and such a soft check is
+  left out.
+- `dstf soft-check add` reads its source by the same rule and refuses one it
+  cannot read before it writes anything: `Failed to read <source>: <why>`,
+  exit 1. In 1.3.0 a source with a variable that had no name was imported
+  and scored, and one whose `variables` was not a list, whose `sampling`
+  count was text, or that was not UTF-8 text stopped the command with a
+  traceback.
 - OpenModelica runs a test whose solver it does not know — Dymola's
   `Esdirk45a`, from a `__Dymola_Algorithm` annotation or `test_spec.json` —
   on dassl, where omc stopped with `unrecognized option -s esdirk45a`; `dstf
@@ -126,7 +159,10 @@ rewrites a companion's path to another library's baseline, and deletes
    ```
 
    It checks everything before it writes anything, and writes nothing at all
-   when it refuses.
+   when it refuses. On Linux or macOS it refuses an external companion whose
+   path to an old name is a Windows drive path (`D:\…\ref_0011.json`), which
+   it cannot rewrite there: run the convert on Windows, or make the path
+   relative to its baseline's folder.
 3. If it refuses a folder because two files hold one model (`<model> is held
    by ref_0011.json, ref_0326.json -- name the one to keep with --keep`),
    choose the one to keep and name it, relative to its root:

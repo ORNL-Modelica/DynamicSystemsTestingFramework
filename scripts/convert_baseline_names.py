@@ -31,7 +31,8 @@ It refuses -- and writes nothing at all, in any root -- when:
   * two model ids share a code;
   * a file holding a "test_id" is written on one line (only that line can be
     deleted; reformat the file with one key per line);
-  * a companion's path names a numbered baseline outside the roots given;
+  * a companion's path names a numbered baseline outside the roots given,
+    or one on a Windows drive (D:\\...) when it runs on another system;
   * a file is unreadable, holds no model id, or is named by another model's
     code; a role folder belongs to no baseline.
 
@@ -47,7 +48,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HIGH_WATER = ".id_high_water.json"
 ROLE_DIRS = ("soft_checks", "companions")
@@ -225,6 +226,18 @@ def plan_folder(
         plan.high_water.append(folder / HIGH_WATER)
 
 
+def on_a_windows_drive(path: str) -> bool:
+    """Whether ``path`` is a Windows drive or share path (``D:\\...``,
+    ``D:/...``, ``\\\\server\\share``) on a system that is not Windows: one this
+    run can neither resolve nor rewrite. A POSIX path never starts with a
+    drive, and one that starts with ``/`` is not taken for a share."""
+    return (
+        sys.platform != "win32"
+        and not path.startswith("/")
+        and bool(PureWindowsPath(path).drive)
+    )
+
+
 def under(path: Path, roots: list[Path]) -> bool:
     return any(path == r or r in path.parents for r in roots)
 
@@ -246,7 +259,20 @@ def plan_companion_paths(
             if not isinstance(entry, dict) or entry.get("kind") != "external":
                 continue
             path = entry.get("path")
-            if not isinstance(path, str) or not is_old_name(Path(path).name):
+            if not isinstance(path, str):
+                continue
+            if on_a_windows_drive(path):
+                # Read as POSIX, a `D:/` path is relative to the folder and a
+                # `D:\` one has no ref name: the companion was left naming
+                # the old file, said as a note or not at all.
+                if is_old_name(PureWindowsPath(path).name):
+                    plan.problems.append(
+                        f"{meta}: its path {path} is on a Windows drive -- run the "
+                        "convert on Windows, or make the path relative to its "
+                        "baseline's folder"
+                    )
+                continue
+            if not is_old_name(Path(path).name):
                 continue
             # DSTF reads a relative path against the baseline's folder.
             p = Path(path)

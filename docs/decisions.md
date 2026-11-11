@@ -9498,7 +9498,9 @@ three folders, and Dymola/windows held `PulseSine_Test` twice, as
 5. *One source.* `ReferenceFile.test_id` is deleted; a reader ignores an old
    file's `"test_id"` and no writer writes it. `compare_one` stamps the
    comparison with `baseline_code(model_id)` and the path of the file it
-   read. Every surface names the baseline from that code: the report dir,
+   read. (2026-11-11: `TestComparison.test_id` is gone; `compare_one`
+   stamps only the path, and a reader asks `baseline_path`, naming the
+   baseline by its model's code when it is set.) Every surface names the baseline from that code: the report dir,
    `verdicts.json`'s `ref_id`, the batch manifest, `reference_manifest.json`,
    a row's Reference. The dashboard keeps a run's reference link only when
    it is the very file the comparison read, compared by PATH: with one name

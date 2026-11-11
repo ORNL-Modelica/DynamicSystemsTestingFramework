@@ -23,15 +23,31 @@ logger = logging.getLogger(__name__)
 
 
 #: A baseline file's name today: ``ref_`` and the 12 lowercase hex digits of
-#: its model's code. Anything else under ``ref_*.json`` is the old numbered
-#: form (``ref_0001.json``). Never told apart by a digit pattern: a real code
-#: can be all digits (``ref_121677875640.json``, names.py).
+#: its model's code.
 _NAME = re.compile(r"^ref_[0-9a-f]{12}\.json$")
+
+#: The old numbered form (``ref_0001.json``): ``ref_`` and 1 to 11 digits —
+#: never 12, since a real code can be all digits (``ref_121677875640.json``,
+#: names.py). Any other ``ref_*.json`` that is not `_NAME` (a copy,
+#: ``ref_<code> copy.json``; a code in capitals) is a stray file, warned of
+#: and left out, not an old name: the folder is refused whole only for an old
+#: name.
+_OLD_NAME = re.compile(r"^ref_[0-9]{1,11}\.json$")
 
 #: The statuses a baseline may have. ``obsolete`` is not one (owner, Q5 of
 #: the plan of 2026-11-10): a baseline is removed by deleting its file, and a
 #: file still marked so is refused by name rather than silently skipped.
-STATUSES = ("active", "skip")
+#: Nor is ``skip`` (plan of 2026-11-11): nothing but ``manifest show``'s
+#: count read it, so a "skipped" baseline was compared all the same.
+STATUSES = ("active",)
+
+
+def _status_refusal(name: str, status: str) -> str:
+    """Why the file ``name`` is refused for its ``status``: the one sentence."""
+    return (
+        f"{name}: status {json.dumps(status)} is not a status — "
+        "delete the file to remove a baseline"
+    )
 
 
 class OldBaselineNames(ConfigError):
@@ -109,6 +125,10 @@ class RefIndex:
         #: ``ref_<code>.json`` -> why it cannot be read, for each file that
         #: is there and is no readable baseline: what its model is refused by.
         self._unreadable: dict[str, str] = {}
+        #: ``ref_<code>.json`` -> why a listing leaves it out, for each file
+        #: that holds a model whose name it is not, and each ``ref_*.json``
+        #: whose name is no baseline name (both found by a listing).
+        self._misnamed: dict[str, str] = {}
         self._loaded = False
         self._refuse_old_names()
 
@@ -122,7 +142,7 @@ class RefIndex:
         if not self.ref_dir.is_dir():
             return
         old = sorted(
-            p.name for p in self.ref_dir.glob("ref_*.json") if not _NAME.match(p.name)
+            p.name for p in self.ref_dir.glob("ref_*.json") if _OLD_NAME.match(p.name)
         )
         if old:
             more = ", …" if len(old) > 1 else ""
@@ -138,10 +158,13 @@ class RefIndex:
 
         A ``model_id`` that is no non-empty string is unreadable too: a
         listing computes each file's name from it, so a number there raised
-        out of every command that lists the folder."""
+        out of every command that lists the folder. So is a body the codec
+        cannot decode (`baseline_codec.check_body`): read as it was, it
+        raised out of the run that compared it (measured 2026-11-11,
+        ``"variables": "oops"``)."""
         # Imported here: the codec imports `_atomic_write_text` from this
         # module, so a module-level import would be a cycle.
-        from .baseline_codec import read_reference_header
+        from .baseline_codec import UndecodableBaseline, read_reference_header
 
         path = self.ref_dir / name
         if not path.is_file():
@@ -151,8 +174,8 @@ class RefIndex:
             model_id, status = read_reference_header(path)
         except json.JSONDecodeError as e:
             why = f"not JSON at line {e.lineno}, column {e.colno}"
-        except UnicodeDecodeError:
-            why = "not UTF-8 text"
+        except UndecodableBaseline as e:
+            why = str(e)
         except OSError as e:
             why = e.strerror or str(e)
         else:
@@ -178,22 +201,32 @@ class RefIndex:
 
     def _scan(self) -> None:
         """Read every ``ref_<code>.json`` of the folder. A file whose name is
-        not its model's code is warned of and left out: no lookup opens it,
-        so the model it holds reads as having no baseline."""
+        not its model's code, or no baseline name at all, is warned of and
+        left out: no lookup opens it, so the model it holds reads as having
+        no baseline."""
         self._files.clear()
         self._unreadable.clear()
+        self._misnamed.clear()
         if self.ref_dir.is_dir():
             for ref_file in sorted(self.ref_dir.glob("ref_*.json")):
                 if _NAME.match(ref_file.name):
                     self._files[ref_file.name] = self._read(ref_file.name)
+                else:
+                    # Not an old name: the folder would have been refused.
+                    said = (
+                        f"{ref_file.name} is not a baseline name (ref_ and 12 "
+                        "lowercase hex digits) — rename or delete it"
+                    )
+                    logger.warning("%s", said)
+                    self._misnamed[ref_file.name] = said
         for name, held in self._files.items():
             if held is not None and baseline_file(held[0]) != name:
-                logger.warning(
-                    "Ref file %s holds %s, whose baseline is %s — leaving it out",
-                    name,
-                    held[0],
-                    baseline_file(held[0]),
+                said = (
+                    f"{name} holds the baseline of {held[0]}, whose file is "
+                    f"{baseline_file(held[0])} — rename or delete it"
                 )
+                logger.warning("%s", said)
+                self._misnamed[name] = said
         self._loaded = True
 
     def ensure_loaded(self) -> None:
@@ -232,11 +265,21 @@ class RefIndex:
                 "two model ids share its code, or the file was copied by hand"
             )
         if status not in STATUSES:
-            return (
-                f"{name}: status {json.dumps(status)} is not a status — "
-                "delete the file to remove a baseline"
-            )
+            return _status_refusal(name, status)
         return None
+
+    def refused(self) -> dict[str, str]:
+        """``{file name: the sentence it is refused by}`` for every file of
+        the folder this index reads as no baseline, in name order: one that
+        cannot be read, one that holds a model whose name it is not, one
+        whose name is no baseline name, one whose status is none. The sentences are the ones a lookup refuses a
+        test by and a listing warns with — what ``manifest show`` lists."""
+        self.ensure_loaded()
+        out = {**self._unreadable, **self._misnamed}
+        for name, held in self._files.items():
+            if name not in out and held is not None and held[1] not in STATUSES:
+                out[name] = _status_refusal(name, held[1])
+        return dict(sorted(out.items()))
 
     def file(self, model_id: str) -> Path | None:
         """``model_id``'s baseline file, when it has one this index reads:

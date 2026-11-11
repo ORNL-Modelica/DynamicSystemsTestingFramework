@@ -2326,3 +2326,17 @@ do; every backend calls it as
 `diagnostic_names(test, self.config.diagnostic_variables)` (31 call sites).
 Whether it belongs on `Backend` as a method, and what else a plug-in author
 has to rebuild from internals, is reviewed in that session, not piecemeal.
+
+**A test that is skipped on purpose, or expected to fail (owner, 2026-11-11;
+not scheduled).** A test known not to work — a model that does not run on one
+simulator yet, or waits on a fix — is marked so that it is not simulated
+(skip) or is run but not counted (expected to fail), and still shows as its
+own state with its reason on every surface, so it is neither forgotten nor
+deleted. Why: a library's known failures (dozens of SIM_FAILs and 900 s
+timeouts on one simulator) are noise in every run and hide a new failure.
+It belongs to the TEST, not the baseline file: usually per backend, and the
+tests most worth skipping often have no baseline to carry a mark (the
+baseline's `skip` status, read by nothing, was deleted for that reason). A
+`test_spec.json` key with a required reason and the backends it applies to;
+an expected failure that starts passing says so, so the mark is removed. A UI
+question for the dashboard and `dstf author`: decide it from rendered options.

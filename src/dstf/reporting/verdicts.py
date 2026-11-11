@@ -46,7 +46,7 @@ def test_verdict(comp: TestComparison, test: Any, result: Any) -> dict:
     return {
         "model_id": comp.model_id,
         # The baseline it was scored against, by its name: ``ref_<code>``.
-        "ref_id": baseline_stem(comp.model_id) if comp.test_id else None,
+        "ref_id": baseline_stem(comp.model_id) if comp.baseline_path else None,
         "status": status_word(comp),
         "message": comp.error_message or None,
         "warnings": [w.text for w in comp.warnings],

@@ -254,26 +254,26 @@ def cmd_soft_check_add(args: argparse.Namespace) -> int:
     import dataclasses
     import json as json_mod
 
-    from ..storage.baseline_codec import decode_series, unread_variable_keys
+    from ..storage.baseline_codec import (
+        UndecodableBaseline,
+        decode_series,
+        read_body,
+        unread_variable_keys,
+    )
 
     store = _store(args)
     source = Path(args.source)
     if not source.exists():
         print(f"File not found: {source}")
         return 1
+    # Read by the rule a run reads the soft check by (read_soft_check): a
+    # source it would skip is refused here, before anything is written.
     try:
-        data = json_mod.loads(source.read_text(encoding="utf-8"))
-    except (json_mod.JSONDecodeError, OSError) as e:
+        data = read_body(source)
+    except (json_mod.JSONDecodeError, UndecodableBaseline, OSError) as e:
         print(f"Failed to read {source}: {e}")
         return 1
-    if not isinstance(data, dict):
-        kind = {list: "list", str: "string", bool: "boolean"}.get(
-            type(data), "null" if data is None else "number"
-        )
-        print(f"Failed to read {source}: it holds a JSON {kind}, not an object")
-        return 1
 
-    # Refused above while still a parsed value: the codec reads an object.
     baseline = decode_series(data, args.name)
     if not baseline.time or not baseline.variables:
         print("Source file missing 'time' or 'variables' — cannot import")
