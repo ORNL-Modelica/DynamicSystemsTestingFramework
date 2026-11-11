@@ -17,7 +17,12 @@ What counts as a change: the parts that score — ``time``, ``variables``,
 ``diagnostics``, ``simulation``, ``statistics``, ``sampling`` and
 ``comparison`` (its tolerance and overrides change the verdict). Dates, an
 old ``test_id`` and key order do not: such a file is unchanged, and counted
-in :attr:`Diff.metadata_only`.
+in :attr:`Diff.metadata_only`. ``sampling`` is compared only where both
+sides record it: a file written before it existed holds none, and the next
+accept writes it, so one side without it is old data
+(:attr:`BaselineDiff.sampling_first`), not a change. Of ``sampling``, the
+setting and the precision are settings; the point counts are what the run
+produced (:attr:`BaselineDiff.samples`).
 
 How much a variable changed (:func:`compare_series`): the largest
 ``|new - old|`` with new read on OLD's grid, at old's points inside new's
@@ -44,7 +49,7 @@ import numpy as np
 
 from ..comparison.algorithms import SAME_INSTANT, error_scale
 from ..reporting.stats_rows import StatRow, statistics_rows
-from .baseline import Baseline, ReferenceFile, StoredVariable
+from .baseline import Baseline, ReferenceFile, Sampling, StoredVariable
 from .baseline_codec import (
     decode_reference,
     model_id_of,
@@ -59,7 +64,8 @@ from .git_revisions import Commit, Repository
 Scale = Literal["range", "value", "absolute"]
 #: A baseline of one test in one backend/os folder.
 Status = Literal["changed", "new", "removed", "unreadable", "two baselines"]
-#: The parts of a stored baseline whose change is a change of the baseline.
+#: The parts of a stored baseline whose change is a change of the baseline
+#: (``sampling`` only where both sides record it).
 COMPARED_PARTS = (
     "time",
     "variables",
@@ -69,6 +75,9 @@ COMPARED_PARTS = (
     "sampling",
     "comparison",
 )
+#: Of ``sampling``, the keys that are settings; the others (the point
+#: counts) are what the run produced.
+SAMPLING_SETTINGS = ("setting", "precision")
 #: The statistic the overview's effort figure is read from (Dymola writes
 #: it; OpenModelica's statistics hold no step count).
 STEPS = ("simulation", "accepted_steps")
@@ -119,7 +128,8 @@ class VariableDiff:
 @dataclass(frozen=True)
 class SettingChange:
     """A setting that differs: ``section`` is simulation, sampling or
-    comparison; ``key`` is dotted below it; None is absent."""
+    comparison; ``key`` is dotted below it; None is absent. (Also a
+    sampling point count that differs, in :attr:`BaselineDiff.samples`.)"""
 
     section: str
     key: str
@@ -139,6 +149,12 @@ class BaselineDiff:
     note: str = ""
     variables: list[VariableDiff] = field(default_factory=list)
     settings: list[SettingChange] = field(default_factory=list)
+    #: the sampling point counts that differ (``source_points``,
+    #: ``stored_points``): what the run produced, no setting
+    samples: list[SettingChange] = field(default_factory=list)
+    #: the newer side's sampling where the older side records none (old
+    #: data, written before it existed): said, not compared
+    sampling_first: Sampling | None = None
     #: the solver statistics, old as the baseline side and new as the run
     #: side (`reporting.stats_rows`), text rows left out; a ``time`` row is
     #: machine-dependent (:func:`machine_dependent`)
@@ -494,7 +510,8 @@ def _baseline(
         return BaselineDiff(folder, "removed", old_file=old_file)
     a = decode_reference(parse_body(olds[0].raw))
     b = decode_reference(parse_body(news[0].raw))
-    if all(_same(x, y) for x, y in zip(_parts(a), _parts(b), strict=True)):
+    both = a.sampling is not None and b.sampling is not None
+    if all(_same(x, y) for x, y in zip(_parts(a, both), _parts(b, both), strict=True)):
         return None
     rows = statistics_rows(
         b.baseline.statistics,
@@ -514,6 +531,8 @@ def _baseline(
         new_file,
         variables=_variables(a.baseline, b.baseline),
         settings=_settings(a, b),
+        samples=_samples(a.sampling, b.sampling),
+        sampling_first=b.sampling if a.sampling is None else None,
         effort=[row for row in rows if row.kind != "text"],
         steps=_steps(a.baseline.statistics, b.baseline.statistics),
     )
@@ -523,8 +542,9 @@ def _count(n: int) -> str:
     return {2: "two", 3: "three"}.get(n, str(n))
 
 
-def _parts(ref: ReferenceFile) -> tuple:
-    """The compared parts (:data:`COMPARED_PARTS`), in that order."""
+def _parts(ref: ReferenceFile, sampling: bool) -> tuple:
+    """The compared parts (:data:`COMPARED_PARTS`), in that order;
+    ``sampling`` False (a side records none) leaves it out."""
     b = ref.baseline
     return (
         b.time,
@@ -532,7 +552,7 @@ def _parts(ref: ReferenceFile) -> tuple:
         b.diagnostics,
         b.simulation,
         b.statistics,
-        ref.sampling,
+        ref.sampling if sampling else None,
         ref.comparison,
     )
 
@@ -565,25 +585,45 @@ def _flat(section: Mapping, prefix: str = "") -> dict[str, Any]:
 
 
 def _settings(a: ReferenceFile, b: ReferenceFile) -> list[SettingChange]:
-    """The settings that differ: the simulation's, the sampling's and the
+    """The settings that differ: the simulation's, the sampling's (its
+    :data:`SAMPLING_SETTINGS`, where both sides record it) and the
     comparison's (each section's keys sorted)."""
+    sampled = a.sampling is not None and b.sampling is not None
     sections = (
         ("simulation", a.baseline.simulation, b.baseline.simulation),
         (
             "sampling",
-            asdict(a.sampling) if a.sampling else {},
-            asdict(b.sampling) if b.sampling else {},
+            _sampling_part(a.sampling, SAMPLING_SETTINGS) if sampled else {},
+            _sampling_part(b.sampling, SAMPLING_SETTINGS) if sampled else {},
         ),
         ("comparison", a.comparison, b.comparison),
     )
-    out = []
-    for section, old, new in sections:
-        o, n = _flat(old), _flat(new)
-        for key in sorted({*o, *n}):
-            if key in o and key in n and _same(o[key], n[key]):
-                continue
-            out.append(SettingChange(section, key, o.get(key), n.get(key)))
-    return out
+    return [c for section, old, new in sections for c in _changes(section, old, new)]
+
+
+def _samples(old: Sampling | None, new: Sampling | None) -> list[SettingChange]:
+    """The sampling point counts that differ, where both sides record it."""
+    if old is None or new is None:
+        return []
+    counts = tuple(k for k in asdict(old) if k not in SAMPLING_SETTINGS)
+    return _changes(
+        "sampling", _sampling_part(old, counts), _sampling_part(new, counts)
+    )
+
+
+def _sampling_part(sampling: Sampling | None, keys: tuple[str, ...]) -> dict:
+    got = asdict(sampling) if sampling is not None else {}
+    return {k: got[k] for k in keys if k in got}
+
+
+def _changes(section: str, old: Mapping, new: Mapping) -> list[SettingChange]:
+    """One section's keys that differ, sorted."""
+    o, n = _flat(old), _flat(new)
+    return [
+        SettingChange(section, key, o.get(key), n.get(key))
+        for key in sorted({*o, *n})
+        if not (key in o and key in n and _same(o[key], n[key]))
+    ]
 
 
 def _steps(old: Mapping, new: Mapping) -> tuple[float, float] | None:

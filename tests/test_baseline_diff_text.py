@@ -7,11 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from dstf.reporting.baseline_diff_text import LIMITS, as_json, as_markdown, percent
+from dstf.reporting.baseline_diff_text import (
+    LIMITS,
+    as_json,
+    as_markdown,
+    detailed,
+    percent,
+)
 from dstf.reporting.stats_rows import statistics_rows
+from dstf.storage.baseline import Sampling
 from dstf.storage.baseline_diff import (
     BaselineDiff,
     Diff,
+    DiffError,
     SeriesChange,
     SettingChange,
     TestDiff,
@@ -30,14 +38,17 @@ NEW = Commit("b" * 40, "bbbbbbb", "the new one")
         (2.3e-4, "2.3e-04 %"),
         (1.7654e-6, "1.8e-06 %"),
         (0.0088, "0.0088 %"),
+        (0.002, "0.0020 %"),
         (0.19045, "0.19 %"),
+        (1.0, "1.0 %"),
         (1.75051, "1.8 %"),
         (9.94, "9.9 %"),
+        (9.96, "10 %"),
         (23.4, "23 %"),
         (157.2, "157 %"),
     ],
 )
-def test_a_percent_has_two_digits_under_10_and_is_whole_above(value, text):
+def test_a_percent_has_two_significant_digits_under_10_and_is_whole_above(value, text):
     assert percent(value) == text
 
 
@@ -76,6 +87,11 @@ def _changed(folder, *variables, settings=(), effort=(), steps=None):
         effort=list(effort),
         steps=steps,
     )
+
+
+def _md(diff):
+    """The Markdown with every test's folded section."""
+    return as_markdown(diff, details=[t.model_id for t in diff.tests])
 
 
 def _overview(text):
@@ -163,9 +179,9 @@ def test_the_overview_has_a_row_per_test_sorted_by_its_largest_change():
     assert _overview(as_markdown(diff)) == [
         ["Test", "Dymola/linux", "OpenModelica/linux"],
         ["---", "---", "---"],
-        ["`Big`", "30 %", "0.01 % +1 new · settings"],
-        ["`Mid`", "3 %", "unchanged"],
-        ["`Small`", "0.5 %", ""],
+        ["`Big`", "30 %", "0.010 % +1 new · settings"],
+        ["`Mid`", "3.0 %", "unchanged"],
+        ["`Small`", "0.50 %", ""],
         ["`New`", "new", ""],
     ]
 
@@ -213,7 +229,7 @@ def test_a_non_finite_difference_sorts_first_and_is_said():
         ],
         folders=["Dymola/linux"],
     )
-    text = as_markdown(diff)
+    text = _md(diff)
     assert _overview(text)[2:] == [["`NaN`", "0 · not finite"], ["`Big`", "90 %"]]
     assert "| `x` | 0; 2 points not finite from 1.5 s |" in text
 
@@ -236,10 +252,10 @@ def test_against_adds_a_column_with_the_largest_and_where():
         folders=["Dymola/linux", "Dymola/windows", "OpenModelica/linux"],
         against="Dymola/linux",
     )
-    text = as_markdown(diff)
+    text = _md(diff)
     assert _overview(text)[0][-1] == "vs Dymola/linux"
     assert _overview(text)[2][-1] == "0.67 % OpenModelica/linux"
-    assert "| `x` | 1 % (1 s) | 0.001 % (1 s) | 0.67 % (99.8 s) |" in text
+    assert "| `x` | 1.0 % (1 s) | 0.0010 % (1 s) | 0.67 % (99.8 s) |" in text
     assert "| `w` |  |  | not in Dymola/linux |" in text
 
 
@@ -309,7 +325,7 @@ def test_the_detail_lists_each_variable_settings_and_solver_effort():
             )
         ]
     )
-    text = as_markdown(diff)
+    text = _md(diff)
     detail = text.split("<details>", 1)[1]
     assert detail.startswith(
         "\n<summary><code>A</code> — 0.19 %</summary>\n\n`Lib.pkg.A`\n"
@@ -349,7 +365,7 @@ def test_a_baseline_that_cannot_be_compared_says_why():
             )
         ]
     )
-    text = as_markdown(diff)
+    text = _md(diff)
     assert _overview(text)[2] == ["`P`", "two baselines", "cannot be read"]
     assert (
         "- **Dymola/linux**: two baselines at aaaaaaa: ref_1.json, ref_2.json" in text
@@ -436,7 +452,7 @@ def test_unchanged_translation_statistics_are_counted_not_listed():
             )
         ]
     )
-    text = as_markdown(diff)
+    text = _md(diff)
     assert "  - Solver effort, old → new: Translation constants 5 → 6" in text
     assert (
         "  - Unchanged: Accepted steps 10; States 4; 2 translation statistics" in text
@@ -459,7 +475,7 @@ def test_a_change_of_nothing_reads_0_with_no_time_or_scale():
         ],
         folders=["Dymola/linux"],
     )
-    assert "| `x` | 0 |" in as_markdown(diff)
+    assert "| `x` | 0 |" in _md(diff)
 
 
 def test_a_test_that_could_not_be_compared_is_not_counted_as_changed():
@@ -482,4 +498,208 @@ def test_a_test_that_could_not_be_compared_is_not_counted_as_changed():
     assert first.startswith(
         "**Baselines changed aaaaaaa..bbbbbbb**: 0 tests changed, 0 new, 0 removed, "
         "1 not compared (Dymola/linux: 1 two baselines). "
+    )
+
+
+# --- the overview's cells ---------------------------------------------------------
+
+
+def test_the_vs_cell_is_the_largest_change_and_says_a_non_finite_point():
+    """The folder is chosen by its largest change, as a cell's is; a
+    non-finite point anywhere is said beside it, never chosen over a
+    larger number (a NaN beside 0.1 % hid a 600 % change)."""
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.T",
+                {"A/linux": _changed("A/linux", _var("x", 1.0))},
+                against={
+                    "B/linux": [
+                        _var("x", 0.1),
+                        _var("y", 0.0, non_finite=1, non_finite_at=2.0),
+                    ],
+                    "C/linux": [_var("x", 600.0), _var("y", 0.0)],
+                },
+            )
+        ],
+        folders=["A/linux", "B/linux", "C/linux"],
+        against="A/linux",
+    )
+    assert _overview(as_markdown(diff))[2][-1] == "600 % C/linux · not finite"
+
+
+def test_a_cell_where_nothing_was_compared_reads_a_dash_not_0():
+    """An all-NaN newer side, or an empty time: no point compared is no
+    change of 0."""
+    nothing = SeriesChange(largest=None, scale="absolute", at=None, non_finite=3)
+    empty = SeriesChange(
+        largest=None, scale="absolute", at=None, note="no time in the old baseline"
+    )
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.N",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux", VariableDiff("x", "x", "changed", nothing)
+                    ),
+                    "OpenModelica/linux": _changed(
+                        "OpenModelica/linux", VariableDiff("x", "x", "changed", empty)
+                    ),
+                },
+            )
+        ]
+    )
+    assert _overview(as_markdown(diff))[2] == ["`N`", "– · not finite", "–"]
+
+
+def test_a_test_new_in_one_folder_but_held_in_another_is_not_a_new_test():
+    """A test is new only where no folder held it at the older revision
+    (removed likewise); the folder that gained it still reads `new`."""
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.E",
+                {"OpenModelica/linux": BaselineDiff("OpenModelica/linux", "new")},
+                unchanged=["Dymola/linux"],
+            ),
+            TestDiff(
+                "Lib.G",
+                {"OpenModelica/linux": BaselineDiff("OpenModelica/linux", "removed")},
+                unchanged=["Dymola/linux"],
+            ),
+            TestDiff(
+                "Lib.F",
+                {"OpenModelica/linux": BaselineDiff("OpenModelica/linux", "new")},
+            ),
+        ]
+    )
+    text = as_markdown(diff)
+    assert text.splitlines()[0].startswith(
+        "**Baselines changed aaaaaaa..bbbbbbb**: 2 tests changed, 1 new, 0 removed "
+        "(OpenModelica/linux: 2 new, 1 removed). "
+    )
+    assert _overview(text)[2:] == [
+        ["`E`", "unchanged", "new"],
+        ["`F`", "", "new"],
+        ["`G`", "unchanged", "removed"],
+    ]
+
+
+def test_the_steps_column_reads_unchanged_where_that_baseline_is():
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux", _var("x", 5.0), steps=(200.0, 150.0)
+                    )
+                },
+            ),
+            TestDiff(
+                "Lib.B",
+                {"OpenModelica/linux": _changed("OpenModelica/linux", _var("x", 1.0))},
+                unchanged=["Dymola/linux"],
+            ),
+            TestDiff(
+                "Lib.C",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux", _var("x", 0.5), steps=(0.0, 12.0)
+                    )
+                },
+            ),
+        ]
+    )
+    rows = _overview(as_markdown(diff))
+    assert [r[-1] for r in rows[2:]] == ["-25 %", "unchanged", "–"]
+
+
+def test_a_pipe_or_a_backtick_in_a_name_keeps_the_table_s_columns():
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A|B",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux", _var("a|b", 2.0), _var("c`d", 1.0)
+                    )
+                },
+            )
+        ],
+        folders=["Dymola/linux"],
+    )
+    text = _md(diff)
+    assert "| `A\\|B` | 2.0 % |" in text
+    assert "| `a\\|b` | 2.0 % (1 s) |" in text
+    assert "| `` c`d `` | 1.0 % (1 s) |" in text
+
+
+def test_a_sampling_first_recorded_is_said_in_the_detail_and_not_marked():
+    first = BaselineDiff(
+        "Dymola/linux",
+        "changed",
+        "ref_a.json",
+        "ref_a.json",
+        variables=[_var("x", 1.0)],
+        sampling_first=Sampling(500, 900, 300, "single"),
+        samples=[SettingChange("sampling", "stored_points", 250, 300)],
+    )
+    diff = _diff([TestDiff("Lib.A", {"Dymola/linux": first})], folders=["Dymola/linux"])
+    text = _md(diff)
+    assert _overview(text)[2] == ["`A`", "1.0 %"]
+    assert (
+        "- **Dymola/linux** `ref_a.json`: settings unchanged; "
+        "sampling first recorded (500, single)" in text
+    )
+    assert "  - Samples, old → new: stored_points 250 → 300" in text
+
+
+# --- which tests are folded out ----------------------------------------------------
+
+
+def _two_tests():
+    return _diff(
+        [
+            TestDiff(
+                "Lib.pkg.A", {"Dymola/linux": _changed("Dymola/linux", _var("x", 2.0))}
+            ),
+            TestDiff(
+                "Lib.other.B",
+                {"Dymola/linux": _changed("Dymola/linux", _var("x", 1.0))},
+            ),
+        ],
+        folders=["Dymola/linux"],
+    )
+
+
+def test_by_default_the_markdown_is_the_overview_and_the_limits():
+    text = as_markdown(_two_tests())
+    assert "<details>" not in text
+    assert "| `A` | 2.0 % |" in text
+    assert text.rstrip().endswith(LIMITS)
+
+
+def test_details_with_no_name_folds_out_every_test():
+    diff = _two_tests()
+    text = as_markdown(diff, details=detailed(diff, []))
+    assert text.count("<details>") == 2
+
+
+def test_details_by_short_name_or_model_id_folds_out_those_only():
+    diff = _two_tests()
+    assert detailed(diff, ["B"]) == ["Lib.other.B"]
+    assert detailed(diff, ["Lib.pkg.A", "B"]) == ["Lib.pkg.A", "Lib.other.B"]
+    text = as_markdown(diff, details=detailed(diff, ["B"]))
+    assert text.count("<details>") == 1
+    assert "<summary><code>B</code>" in text
+
+
+def test_details_naming_no_listed_test_is_refused_with_its_name():
+    with pytest.raises(DiffError) as got:
+        detailed(_two_tests(), ["B", "Nope"])
+    assert str(got.value) == (
+        "--details: no test this diff lists is named Nope "
+        "(a short name such as A, or a full model id)"
     )

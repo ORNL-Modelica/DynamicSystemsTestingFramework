@@ -3,25 +3,29 @@
 request (:func:`as_markdown`), or as strict JSON (:func:`as_json`).
 
 The Markdown, in order: one line of counts; the two revisions' subjects;
-an overview table, one row per test, sorted by its largest change; one
-``<details>`` per test with every variable, the settings that changed and
-the solver effort old → new; and the limits. A number is a percent with
-two significant digits under 10 %, whole above, in scientific notation
+an overview table, one row per test, sorted by its largest change; for the
+tests asked for (:func:`detailed`), one ``<details>`` each with every
+variable, the settings that changed and the solver effort old → new; and
+the limits. A number is a percent with two significant digits under 10 %
+(a trailing zero kept: ``1.0 %``), whole above, in scientific notation
 under 0.001 %; a time is ``%g`` seconds. Facts only: nothing here judges
-a change, and nothing knows a library.
+a change, and nothing knows a library. The JSON is always complete.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import re
 from collections import Counter
+from collections.abc import Collection
 from dataclasses import asdict
 from typing import Any
 
 from ..storage.baseline_diff import (
     BaselineDiff,
     Diff,
+    DiffError,
     SeriesChange,
     SettingChange,
     TestDiff,
@@ -42,8 +46,10 @@ LIMITS = (
 
 #: A cell of a folder where the test has no baseline on either side.
 _NONE = ""
-#: A figure that does not exist (no steps recorded).
+#: A figure that does not exist: no steps recorded, or no point compared.
 _DASH = "–"
+#: What a GitHub pull-request body or comment holds, in characters.
+GITHUB_LIMIT = 65_536
 
 
 # --- numbers ---------------------------------------------------------------
@@ -51,15 +57,16 @@ _DASH = "–"
 
 def percent(value: float) -> str:
     """A percent as it is printed: ``0``; ``2.3e-04 %`` under 0.001 %;
-    two significant digits under 10 % (``0.19 %``, ``1.8 %``); a whole
-    percent above (``157 %``)."""
+    two significant digits under 10 %, a trailing zero kept (``0.0020 %``,
+    ``0.19 %``, ``1.0 %``); a whole percent above (``157 %``)."""
     if value == 0:
         return "0"
     size = abs(value)
     if size < 1e-3:
         return f"{value:.1e} %"
     if size < 10:
-        return f"{value:.2g} %"
+        # '#' keeps the trailing zero; 9.96 rounds to "10.", a whole percent
+        return f"{value:#.2g}".removesuffix(".") + " %"
     return f"{value:.0f} %"
 
 
@@ -110,7 +117,7 @@ def _rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
     """How large a set of variable changes is, for sorting: any non-finite
     difference first, then the largest percent, then the largest absolute
     difference."""
-    non_finite = any(v.change and v.change.non_finite for v in variables)
+    non_finite = _non_finite(variables)
     pct = [
         v.change.largest
         for v in variables
@@ -124,19 +131,24 @@ def _rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
     return (int(non_finite), max(pct, default=-1.0), max(absolute, default=-1.0))
 
 
+def _size(change: SeriesChange) -> tuple[int, float]:
+    """How large a compared change is: any percent above any absolute
+    difference, then by its number."""
+    assert change.largest is not None
+    return (int(change.scale != "absolute"), change.largest)
+
+
 def _largest(variables: list[VariableDiff]) -> SeriesChange | None:
     """The change the rank puts first: the largest percent, else the
     largest absolute difference."""
-    best: tuple[int, float] | None = None
-    chosen = None
-    for v in variables:
-        c = v.change
-        if c is None or c.largest is None:
-            continue
-        key = (int(c.scale != "absolute"), c.largest)
-        if best is None or key > best:
-            best, chosen = key, c
-    return chosen
+    compared = [
+        v.change for v in variables if v.change and v.change.largest is not None
+    ]
+    return max(compared, key=_size, default=None)
+
+
+def _non_finite(variables: list[VariableDiff]) -> bool:
+    return any(v.change and v.change.non_finite for v in variables)
 
 
 def _test_rank(test: TestDiff) -> tuple[int, int, float, float]:
@@ -155,6 +167,16 @@ def _short(model_id: str) -> str:
     return model_id.rsplit(".", 1)[-1] if "/" not in model_id else model_id
 
 
+def _code(text: str) -> str:
+    """``text`` as a code span: fenced by one backtick more than the
+    longest run in it, padded where it holds any (``c`d`` reads
+    ```` `` c`d `` ````)."""
+    if "`" not in text:
+        return f"`{text}`"
+    fence = "`" * (max(len(run) for run in re.findall("`+", text)) + 1)
+    return f"{fence} {text} {fence}"
+
+
 _STATUS_CELL = {
     "new": "new",
     "removed": "removed",
@@ -167,7 +189,7 @@ def _cell(b: BaselineDiff) -> str:
     if b.status != "changed":
         return _STATUS_CELL[b.status]
     largest = _largest(b.variables)
-    text = _amount(largest) if largest is not None else "0"
+    text = _amount(largest) if largest is not None else _DASH
     added = sum(v.status == "new" for v in b.variables)
     gone = sum(v.status == "removed" for v in b.variables)
     if added:
@@ -176,23 +198,28 @@ def _cell(b: BaselineDiff) -> str:
         text += f" −{gone} removed"
     if b.settings:
         text += " · settings"
-    if any(v.change and v.change.non_finite for v in b.variables):
+    if _non_finite(b.variables):
         text += " · not finite"
     return text
 
 
 def _against_cell(test: TestDiff, several: bool) -> str:
-    best: tuple[tuple[int, float, float], str, SeriesChange] | None = None
+    """The largest change of any folder against ``--against``, chosen as a
+    cell's is (:func:`_largest`), and the folder it is in; `` · not
+    finite`` when any folder holds a non-finite difference."""
+    if not test.against:
+        return _NONE
+    best: tuple[tuple[int, float], str, SeriesChange] | None = None
     for folder, variables in test.against.items():
         largest = _largest(variables)
-        if largest is None:
-            continue
-        rank = _rank(variables)
-        if best is None or rank > best[0]:
-            best = (rank, folder, largest)
-    if best is None:
-        return _NONE
-    return _amount(best[2]) + (f" {best[1]}" if several else "")
+        if largest is not None and (best is None or _size(largest) > best[0]):
+            best = (_size(largest), folder, largest)
+    text = _DASH if best is None else _amount(best[2])
+    if best is not None and several:
+        text += f" {best[1]}"
+    if any(_non_finite(variables) for variables in test.against.values()):
+        text += " · not finite"
+    return text
 
 
 def _steps_folder(diff: Diff) -> str | None:
@@ -208,6 +235,8 @@ def _steps_folder(diff: Diff) -> str | None:
 
 def _steps_cell(test: TestDiff, folder: str) -> str:
     b = test.baselines.get(folder)
+    if b is None and folder in test.unchanged:
+        return "unchanged"
     if b is None or b.steps is None or b.steps[0] == 0:
         return _DASH
     old, new = b.steps
@@ -215,7 +244,9 @@ def _steps_cell(test: TestDiff, folder: str) -> str:
 
 
 def _row(cells: list[str]) -> str:
-    return "| " + " | ".join(cells) + " |"
+    """A table row; a ``|`` in a cell is escaped (inside a code span too,
+    as GitHub's tables read it), so a name holding one keeps the columns."""
+    return "| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |"
 
 
 def _overview(diff: Diff, tests: list[TestDiff]) -> list[str]:
@@ -228,7 +259,7 @@ def _overview(diff: Diff, tests: list[TestDiff]) -> list[str]:
     lines = [_row(header), _row(["---"] * len(header))]
     several = len(diff.folders) > 2
     for test in tests:
-        cells = [f"`{_short(test.model_id)}`"]
+        cells = [_code(_short(test.model_id))]
         for folder in diff.folders:
             b = test.baselines.get(folder)
             cells.append(
@@ -291,7 +322,7 @@ def _variable_table(diff: Diff, test: TestDiff) -> list[str]:
     ]
     for name, label in labels.items():
         lines.append(
-            _row([f"`{label}`", *(cells.get(name, "") for _, cells in columns)])
+            _row([_code(label), *(cells.get(name, "") for _, cells in columns)])
         )
     return lines
 
@@ -373,7 +404,18 @@ def _baseline_lines(b: BaselineDiff) -> list[str]:
         if b.settings
         else "settings unchanged"
     )
-    return [f"{head}: {settings}", *_effort(b.effort)]
+    if b.sampling_first is not None:
+        first = b.sampling_first
+        settings += (
+            f"; sampling first recorded ({_value(first.setting)}, {first.precision})"
+        )
+    samples = []
+    if b.samples:
+        samples.append(
+            "  - Samples, old → new: "
+            + "; ".join(f"{s.key} {_value(s.old)} → {_value(s.new)}" for s in b.samples)
+        )
+    return [f"{head}: {settings}", *samples, *_effort(b.effort)]
 
 
 def _detail(diff: Diff, test: TestDiff) -> list[str]:
@@ -421,7 +463,9 @@ def _counts(diff: Diff) -> str:
         statuses = {b.status for b in test.baselines.values()}
         if statuses <= {"unreadable", "two baselines"}:
             tests["not compared"] += 1
-        elif len(statuses) == 1 and statuses <= {"new", "removed"}:
+        elif statuses in ({"new"}, {"removed"}) and not test.unchanged:
+            # new: no folder held it at the older side; removed: none holds
+            # it at the newer. A folder that gained one is a changed test.
             tests[statuses.pop()] += 1
         else:
             tests["changed"] += 1
@@ -451,8 +495,44 @@ def _counts(diff: Diff) -> str:
     )
 
 
-def as_markdown(diff: Diff) -> str:
-    """The Markdown a reviewer pastes into a pull request."""
+def detailed(diff: Diff, names: list[str]) -> list[str]:
+    """The model ids of the tests ``--details`` names, in the order named:
+    every listed test for no name; else each test whose short name or full
+    model id is a name. Raises :class:`DiffError` naming every name that
+    matches no listed test."""
+    if not names:
+        return [t.model_id for t in diff.tests]
+    chosen: list[str] = []
+    unknown = []
+    for name in names:
+        got = [
+            t.model_id for t in diff.tests if name in (t.model_id, _short(t.model_id))
+        ]
+        if not got:
+            unknown.append(name)
+        chosen += [m for m in got if m not in chosen]
+    if unknown:
+        tests = _sorted(diff.tests)
+        such = (
+            f"a short name such as {_short(tests[0].model_id)}, or a full model id"
+            if tests
+            else "it lists none"
+        )
+        raise DiffError(
+            f"--details: no test this diff lists is named {', '.join(unknown)} ({such})"
+        )
+    return chosen
+
+
+def _sorted(tests: list[TestDiff]) -> list[TestDiff]:
+    """The overview's order: largest change first."""
+    return sorted(tests, key=lambda t: (_test_rank(t), t.model_id))
+
+
+def as_markdown(diff: Diff, details: Collection[str] = ()) -> str:
+    """The Markdown a reviewer pastes into a pull request: the counts, the
+    overview and the limits, and a folded section for each test whose
+    model id is in ``details`` (:func:`detailed`)."""
     new = diff.new.short if diff.new else "files on disk"
     lines = [f"**Baselines changed {diff.old.short}..{new}**: {_counts(diff)}", ""]
     old_said = f"`{diff.old.short}` {diff.old.subject}"
@@ -460,13 +540,14 @@ def as_markdown(diff: Diff) -> str:
         f"`{diff.new.short}` {diff.new.subject}" if diff.new else "the files on disk"
     )
     lines += [f"{old_said} → {new_said}", ""]
-    tests = sorted(diff.tests, key=lambda t: (_test_rank(t), t.model_id))
+    tests = _sorted(diff.tests)
     if not tests:
         lines += ["No baseline changed.", ""]
     else:
         lines += [*_overview(diff, tests), ""]
         for test in tests:
-            lines += [*_detail(diff, test), ""]
+            if test.model_id in details:
+                lines += [*_detail(diff, test), ""]
     lines.append(LIMITS)
     return "\n".join(lines) + "\n"
 
@@ -515,6 +596,8 @@ def _baseline_json(b: BaselineDiff) -> dict:
         "note": b.note,
         "variables": [asdict(v) for v in b.variables],
         "settings": [asdict(s) for s in b.settings],
+        "samples": [asdict(s) for s in b.samples],
+        "sampling_first": asdict(b.sampling_first) if b.sampling_first else None,
         "effort": [_stat_json(r) for r in b.effort],
         "steps": {"old": b.steps[0], "new": b.steps[1]} if b.steps else None,
     }

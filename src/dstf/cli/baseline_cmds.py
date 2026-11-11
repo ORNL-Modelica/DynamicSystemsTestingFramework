@@ -351,17 +351,32 @@ def _diff_root(args: argparse.Namespace) -> Path:
 def cmd_baseline_diff(args: argparse.Namespace) -> int:
     """Print (or write to --output) which baselines changed between two
     revisions of the reference root, as Markdown or JSON."""
-    from ..reporting.baseline_diff_text import as_json, as_markdown
+    from ..reporting.baseline_diff_text import (
+        GITHUB_LIMIT,
+        as_json,
+        as_markdown,
+        detailed,
+    )
     from ..storage.baseline_diff import DiffError, diff_baselines
     from ..storage.git_revisions import GitError
 
     try:
         root = _diff_root(args)
         diff = diff_baselines(root, args.rev1, args.rev2, against=args.against)
+        details = detailed(diff, args.details) if args.details is not None else []
     except (ConfigError, GitError, DiffError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
-    text = as_json(diff) if args.format == "json" else as_markdown(diff)
+    if args.format == "json":
+        text = as_json(diff)
+    else:
+        text = as_markdown(diff, details=details)
+        if len(text) > GITHUB_LIMIT:
+            print(
+                f"Note: this Markdown is {len(text):,} characters; a GitHub "
+                f"pull-request body or comment holds {GITHUB_LIMIT:,}.",
+                file=sys.stderr,
+            )
     if args.output is None:
         sys.stdout.write(text)
     else:

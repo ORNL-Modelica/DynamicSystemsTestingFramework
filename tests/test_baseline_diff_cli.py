@@ -149,3 +149,65 @@ def test_against_a_folder_with_no_baselines_is_refused(lib, capsys):
         "Error: --against OpenModelica/linux: no baselines in OpenModelica/linux "
         f"at {lib.two[:7]} (it holds Dymola/linux)"
     )
+
+
+def _diff_argv(lib, *more):
+    root = lib.top / "ReferenceResults"
+    return ["baseline", "diff", lib.one, lib.two, "--reference-root", str(root), *more]
+
+
+def test_by_default_only_the_overview_is_printed(lib, capsys):
+    assert main(_diff_argv(lib)) == 0
+    out = capsys.readouterr().out
+    assert "| `A` | 10 % |" in out
+    assert "<details>" not in out
+
+
+def test_details_with_no_name_folds_out_every_test(lib, capsys):
+    assert main(_diff_argv(lib, "--details")) == 0
+    out = capsys.readouterr().out
+    assert out.count("<details>") == 1
+    assert "<summary><code>A</code> — 10 %</summary>" in out
+
+
+def test_details_names_a_test_by_its_short_name_or_model_id(lib, capsys):
+    for name in ("A", "Lib.A"):
+        assert main(_diff_argv(lib, "--details", name)) == 0
+        assert capsys.readouterr().out.count("<details>") == 1
+
+
+def test_details_naming_no_listed_test_is_refused(lib, capsys):
+    said = _refused(_diff_argv(lib, "--details", "Nope"), capsys)
+    assert said == (
+        "Error: --details: no test this diff lists is named Nope "
+        "(a short name such as A, or a full model id)"
+    )
+
+
+def test_markdown_over_what_a_pull_request_holds_is_noted_on_stderr(tmp_path, capsys):
+    """A GitHub pull-request body holds 65,536 characters: past that one
+    note goes to stderr, and the Markdown itself is printed whole."""
+    repo = GitRepo(tmp_path / "big")
+    folder = repo.top / "ReferenceResults" / "Dymola" / "linux"
+    folder.mkdir(parents=True)
+    names = [f"Lib.M{i}_" + "x" * 3000 for i in range(25)]
+    for i, name in enumerate(names):
+        (folder / f"ref_{i}.json").write_text(_ref(name, [0, 5, 10]))
+    one = repo.commit("one")
+    for i, name in enumerate(names):
+        (folder / f"ref_{i}.json").write_text(_ref(name, [0, 6, 10]))
+    two = repo.commit("two")
+    root = repo.top / "ReferenceResults"
+    assert main(["baseline", "diff", one, two, "--reference-root", str(root)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.startswith("**Baselines changed")
+    assert len(captured.out) > 65_536
+    assert captured.err == (
+        f"Note: this Markdown is {len(captured.out):,} characters; a GitHub "
+        "pull-request body or comment holds 65,536.\n"
+    )
+
+
+def test_markdown_within_what_a_pull_request_holds_notes_nothing(lib, capsys):
+    assert main(_diff_argv(lib, "--details")) == 0
+    assert capsys.readouterr().err == ""

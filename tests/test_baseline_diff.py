@@ -12,7 +12,14 @@ import numpy as np
 import pytest
 
 from conftest import GitRepo
-from dstf.storage.baseline_diff import DiffError, compare_series, diff_baselines
+from dstf.reporting.stats_rows import report_text, statistics_rows
+from dstf.storage.baseline import DiagnosticSummary, Sampling
+from dstf.storage.baseline_diff import (
+    DiffError,
+    compare_series,
+    diff_baselines,
+    machine_dependent,
+)
 
 # --- one series against another ---------------------------------------------
 
@@ -298,9 +305,26 @@ def test_an_expression_that_changed_under_one_name_is_said(lib):
     assert x.expression == ("a.T", "b.T")
 
 
+def _sampling(setting=500, source=900, stored=3, precision="double"):
+    return {
+        "setting": setting,
+        "source_points": source,
+        "stored_points": stored,
+        "precision": precision,
+    }
+
+
 def test_settings_sampling_and_comparison_changes_are_listed(lib):
+    """Sampling's setting and precision are settings; its point counts are
+    what the run produced, listed apart (``samples``), never as a setting."""
     _write(
-        lib, "Dymola/linux/ref_a.json", _ref("Lib.A", comparison={"tolerance": 0.01})
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            comparison={"tolerance": 0.01},
+            sampling=_sampling(300, 800, 3, "single"),
+        ),
     )
     one = lib.commit("one")
     text = json.loads(
@@ -310,40 +334,154 @@ def test_settings_sampling_and_comparison_changes_are_listed(lib):
                 "tolerance": 0.02,
                 "variable_overrides": {"x": {"mode": "tube"}},
             },
+            sampling=_sampling(500, 900, 3, "double"),
         )
     )
     text["simulation"]["method"] = "Dassl"
-    text["sampling"] = {
-        "setting": 500,
-        "source_points": 900,
-        "stored_points": 3,
-        "precision": "double",
-    }
     _write(lib, "Dymola/linux/ref_a.json", json.dumps(text))
     two = lib.commit("two")
     (test,) = diff_baselines(lib.top / "refs", one, two).tests
-    got = {
-        (s.section, s.key): (s.old, s.new)
-        for s in test.baselines["Dymola/linux"].settings
-    }
+    base = test.baselines["Dymola/linux"]
+    got = {(s.section, s.key): (s.old, s.new) for s in base.settings}
     assert got == {
         ("simulation", "method"): ("dassl", "Dassl"),
         ("comparison", "tolerance"): (0.01, 0.02),
         ("comparison", "variable_overrides.x"): (None, {"mode": "tube"}),
-        ("sampling", "setting"): (None, 500),
-        ("sampling", "source_points"): (None, 900),
-        ("sampling", "stored_points"): (None, 3),
-        ("sampling", "precision"): (None, "double"),
+        ("sampling", "setting"): (300, 500),
+        ("sampling", "precision"): ("single", "double"),
     }
+    assert [(s.key, s.old, s.new) for s in base.samples] == [
+        ("source_points", 800, 900)
+    ]
+    assert base.sampling_first is None
 
 
-def test_only_a_date_that_changed_is_no_change(lib):
-    _write(lib, "Dymola/linux/ref_a.json", _ref("Lib.A", last_updated="2026-01-01"))
+def test_a_sampling_change_alone_is_a_change(lib):
+    _write(lib, "Dymola/linux/ref_a.json", _ref("Lib.A", sampling=_sampling(300)))
     one = lib.commit("one")
-    _write(lib, "Dymola/linux/ref_a.json", _ref("Lib.A", last_updated="2026-02-02"))
+    _write(lib, "Dymola/linux/ref_a.json", _ref("Lib.A", sampling=_sampling(500)))
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    base = test.baselines["Dymola/linux"]
+    assert [(s.section, s.key, s.old, s.new) for s in base.settings] == [
+        ("sampling", "setting", 300, 500)
+    ]
+
+
+def test_sampling_recorded_for_the_first_time_is_old_data_not_a_change(lib):
+    """A file written before ``sampling`` existed holds none; the next accept
+    writes it. That is no setting that changed: a file that only gained it
+    is unchanged, and a changed one says it was first recorded."""
+    _write(lib, "Dymola/linux/ref_a.json", _ref("Lib.A"))
+    _write(lib, "Dymola/linux/ref_b.json", _ref("Lib.B"))
+    one = lib.commit("one")
+    _write(lib, "Dymola/linux/ref_a.json", _ref("Lib.A", sampling=_sampling()))
+    _write(
+        lib,
+        "Dymola/linux/ref_b.json",
+        _ref("Lib.B", variables={"x": [0, 1, 3]}, sampling=_sampling(stored=3)),
+    )
+    two = lib.commit("two")
+    diff = diff_baselines(lib.top / "refs", one, two)
+    (test,) = diff.tests
+    assert (test.model_id, diff.unchanged, diff.metadata_only) == ("Lib.B", 1, 1)
+    base = test.baselines["Dymola/linux"]
+    assert (base.settings, base.samples) == ([], [])
+    assert base.sampling_first == Sampling(500, 900, 3, "double")
+
+
+@pytest.mark.parametrize("date", ["last_updated", "date_added"])
+def test_only_a_date_that_changed_is_no_change(lib, date):
+    _write(lib, "Dymola/linux/ref_a.json", _ref("Lib.A", **{date: "2026-01-01"}))
+    one = lib.commit("one")
+    _write(lib, "Dymola/linux/ref_a.json", _ref("Lib.A", **{date: "2026-02-02"}))
     two = lib.commit("two")
     diff = diff_baselines(lib.top / "refs", one, two)
     assert (diff.tests, diff.unchanged, diff.metadata_only) == ([], 1, 1)
+
+
+def test_the_same_nan_stored_on_both_sides_is_no_change(lib):
+    """NaN != NaN: equal parts that hold one are still equal. (A single-
+    precision file's values are read through float32, each NaN a float of
+    its own, so list equality's identity shortcut does not apply.)"""
+    single = _sampling(precision="single")
+    variables = {"x": [0, math.nan, 2]}
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=variables, sampling=single, last_updated="1"),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=variables, sampling=single, last_updated="2"),
+    )
+    two = lib.commit("two")
+    diff = diff_baselines(lib.top / "refs", one, two)
+    assert (diff.tests, diff.unchanged, diff.metadata_only) == ([], 1, 1)
+
+
+def test_every_time_row_is_machine_dependent_and_no_other():
+    """The `timing` section, `cpu_time*`, `simulation.wall_time` and the
+    listed name CPUtime measure the machine; a step count does not."""
+    stats = {
+        "simulation": {
+            "accepted_steps": 10,
+            "cpu_time": 1.5,
+            "cpu_time_integration": 1.0,
+            "wall_time": 2.0,
+        },
+        "timing": {"sim_wall": 3.0},
+    }
+    diagnostics = [DiagnosticSummary("CPUtime", 1.0, 0.0, 1.0)]
+    rows = statistics_rows(
+        stats,
+        stats,
+        listing=["CPUtime"],
+        run_diagnostics=diagnostics,
+        baseline_diagnostics=diagnostics,
+    )
+    assert {r.path for r in rows if machine_dependent(r)} == {
+        "simulation.cpu_time",
+        "simulation.cpu_time_integration",
+        "simulation.wall_time",
+        "timing.sim_wall",
+        "CPUtime",
+    }
+    assert {r.path for r in rows if not machine_dependent(r)} == {
+        "simulation.accepted_steps"
+    }
+
+
+def test_a_single_precision_newer_side_is_shown_at_its_own_digits(lib):
+    """The newer side is a stored baseline: its CPUtime final was written
+    through float32, and shown at 15 digits it reads 29.8774642944336."""
+    cpu = float(np.float32(29.877464))
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            diagnostics=[{"name": "CPUtime", "final": 20.5, "min": 0, "max": 20.5}],
+            sampling=_sampling(precision="double"),
+        ),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            variables={"x": [0, 1, 3]},
+            diagnostics=[{"name": "CPUtime", "final": cpu, "min": 0, "max": cpu}],
+            sampling=_sampling(precision="single"),
+        ),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    (row,) = [r for r in test.baselines["Dymola/linux"].effort if r.key == "CPUtime"]
+    assert report_text(row.kind, row.run, row.digits[0]) == "29.87746 s"
 
 
 def test_statistics_alone_make_a_change_and_list_the_solver_effort(lib):

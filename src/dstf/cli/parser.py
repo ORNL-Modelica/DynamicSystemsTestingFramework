@@ -1030,7 +1030,14 @@ READS: dict[str, tuple[str, ...]] = {
     "spec update": (*_ALL, "backend"),
     "spec schema": ("output",),
     "baseline export": (*_STORE, "format", "output", "backend", "work_dir"),
-    "baseline diff": ("config", "reference_root", "against", "format", "output"),
+    "baseline diff": (
+        "config",
+        "reference_root",
+        "against",
+        "details",
+        "format",
+        "output",
+    ),
     "soft-check add": (*_STORE, "backend"),
     "soft-check list": (*_STORE, "backend"),
     "soft-check remove": (*_STORE, "backend"),
@@ -1659,13 +1666,17 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
             Print which stored baselines changed between two git revisions
             of the reference root — or between REV1 and the files on disk,
             when REV2 is left out (what an accept leaves before `git add`).
-            For each test and <Backend>/<os> folder: each variable's largest
-            change, as a percent of the old baseline's range (of its value
-            where it is constant), and the time it happens; the settings
-            that changed; and the solver statistics, old → new, the
-            machine-dependent times on a line of their own. Baselines are
-            paired by model id, never by file name. Only the stored samples
-            are compared.
+            The Markdown is one line of counts and an overview table: a row
+            per test, a column per <Backend>/<os> folder, each cell the
+            largest change of a variable there, as a percent of the old
+            baseline's range (of its value where it is constant). Baselines
+            are paired by model id, never by file name. Only the stored
+            samples are compared.
+
+            --details adds a folded section per test: each variable's change
+            and the time it happens, the settings that changed, and the
+            solver statistics old → new, the machine-dependent times on a
+            line of their own. The JSON always holds all of it.
 
             The reference root is --reference-root; else the reference_root
             of the testing.json --config names (or the one in the current
@@ -1674,18 +1685,22 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
             references alone is enough.
 
             Markdown by default, to paste into a pull request; --format
-            json for the same facts as data. git is only read: nothing is
-            written to the repository.
+            json for the same facts as data. Markdown longer than a GitHub
+            pull-request body holds (65,536 characters) is printed whole,
+            with a note on stderr. git is only read: nothing is written to
+            the repository.
 
             Exit code: 0 when the difference is printed, whatever changed;
             2 when git cannot answer (no repository, an unknown revision),
-            no reference root is named, or --against names a folder the
-            newer side holds no baseline in.
+            no reference root is named, --against names a folder the newer
+            side holds no baseline in, or --details names a test the diff
+            does not list.
             """,
         examples=(
             "dstf baseline diff main --reference-root Resources/ReferenceResults",
             "dstf baseline diff v1.3.0 HEAD --config testing.json -o baselines.md",
             "dstf baseline diff HEAD~1 HEAD --config testing.json --against Dymola/linux",
+            "dstf baseline diff main HEAD --config testing.json --details NSSS_Test",
             "dstf baseline diff main --config testing.json --format json -o diff.json",
         ),
         own_help={
@@ -1718,6 +1733,17 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
         help="Also score each other folder's newer baseline of each listed "
         "test against this folder's newer one (Dymola/linux), by the same "
         "rule. Default: no such comparison.",
+    )
+    node.add_argument(
+        "--details",
+        metavar="NAME",
+        nargs="*",
+        default=None,
+        help="Add each test's folded section to the Markdown: with no NAME, "
+        "every listed test's; else only the named ones, each a short name "
+        "(NSSS_Test) or a full model id. A NAME that matches no listed test "
+        "is refused. Give it after REV1 and REV2. Default: the overview "
+        "alone. The JSON is always complete.",
     )
     _offer(
         node,
