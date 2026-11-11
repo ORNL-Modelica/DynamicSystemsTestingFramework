@@ -39,7 +39,7 @@ By default, three things:
   revision, and removed only when none holds one at the newer; a test that
   gained a baseline in one folder and kept it in another is a changed test.
   A file whose numbers are equal and whose dates or key order differ is
-  unchanged, and said apart when there is one (`2 only in metadata`).
+  unchanged, and said apart when there is one (`7 unchanged, 2 of them only in metadata`).
 - **An overview table:** one row per test, largest change first, a
   `Change, <Backend>/<os>` column per folder, then `Gap to <Backend>/<os>`
   with `--against`, then `Solver steps`: the change in accepted solver
@@ -156,7 +156,7 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
 - **A cell** is the tests that passed over the tests run (`2/3`), then in
   one parenthesis the other status words' counts (`1 SIM_FAIL`) and, with
   `--base` and a test not passing there, `N also fail on main`: how many of
-  the tests not passing there are not new. A test is not new when the base,
+  the tests not passing there also fail on the base. A test counts when the base,
   in the same backend/os, failed it too (FAIL or SIM_FAIL) or ended it with
   the same status; a base that had no baseline for it (NO_REF) or never ran
   it (NOT RUN) did not fail it. A label with no run of a backend/os reads

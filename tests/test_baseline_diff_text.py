@@ -128,7 +128,7 @@ def test_the_headline_counts_the_listed_tests_new_and_removed_apart():
     first = as_markdown(diff).splitlines()[0]
     assert first == (
         "**1 test changed, 1 new, 1 removed** (`aaaaaaa` → `bbbbbbb`). "
-        "7 unchanged, 2 only in metadata."
+        "7 unchanged, 2 of them only in metadata."
     )
 
 
@@ -149,7 +149,7 @@ def test_against_the_files_on_disk_the_headline_says_so():
     diff = _diff([], new=None)
     assert as_markdown(diff).splitlines()[0] == (
         "**No baseline changed** (`aaaaaaa` → files on disk). "
-        "7 unchanged, 2 only in metadata."
+        "7 unchanged, 2 of them only in metadata."
     )
 
 
@@ -592,7 +592,7 @@ def test_a_test_that_could_not_be_compared_is_not_counted_as_changed():
     )
     assert as_markdown(diff).splitlines()[0] == (
         "**1 test not compared** (`aaaaaaa` → `bbbbbbb`). "
-        "7 unchanged, 2 only in metadata."
+        "7 unchanged, 2 of them only in metadata."
     )
 
 

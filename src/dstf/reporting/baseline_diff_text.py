@@ -524,7 +524,7 @@ def _headline(diff: Diff) -> str:
     new = _code(diff.new.short) if diff.new else "files on disk"
     unchanged = f"{diff.unchanged} unchanged"
     if diff.metadata_only:
-        unchanged += f", {diff.metadata_only} only in metadata"
+        unchanged += f", {diff.metadata_only} of them only in metadata"
     return f"**{what}** ({_code(diff.old.short)} → {new}). {unchanged}."
 
 

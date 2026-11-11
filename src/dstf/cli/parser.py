@@ -1405,7 +1405,7 @@ def _add_summary(tree: _Tree, top) -> None:
             A LABEL may repeat: the Windows and the Linux work dirs of one
             change live in different places.
 
-            With --base, a test not passing in a cell is counted "not new"
+            With --base, a test not passing in a cell is counted as "also fails on <base>"
             when the base label's cell of the same backend/os failed it too
             (FAIL or SIM_FAIL) or ended it with the same status; a base
             NO_REF or NOT RUN did not fail it. Each list says the base's
@@ -1442,7 +1442,7 @@ def _add_summary(tree: _Tree, top) -> None:
         default=None,
         help="Count, in every other label's cells, the tests not passing "
         "that this label's cell of the same backend/os failed too, or ended "
-        "with the same status (not new). Default: no such count.",
+        'with the same status ("also fails on <base>"). Default: no such count.',
     )
     _offer(
         node,
