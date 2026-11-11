@@ -368,6 +368,19 @@ def parse_body(raw: bytes) -> dict:
     return data
 
 
+def model_id_of(raw: bytes) -> str | None:
+    """The model id a reference file's bytes name, read whether or not its
+    body decodes (:func:`parse_body`): what pairs a file that cannot be
+    read with the same test's file at another revision. ``None`` where the
+    bytes hold no JSON object with a non-empty text ``model_id``."""
+    try:
+        data = _parse_json(raw)
+    except (UndecodableBaseline, ValueError, RecursionError):
+        return None
+    model_id = data.get("model_id") if isinstance(data, dict) else None
+    return model_id if isinstance(model_id, str) and model_id else None
+
+
 def read_body(path: Path) -> dict:
     """``path``'s body (:func:`parse_body`): what a reader that scores a
     file (:func:`read_reference`, :func:`read_soft_check`) decodes, and what

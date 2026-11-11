@@ -372,6 +372,7 @@ def statistics_rows(
     baseline_diagnostics: Sequence = (),
     extra_paths: Iterable[str] = (),
     baseline_digits: int = DOUBLE_SHOWN,
+    run_digits: int | None = None,
 ) -> list[StatRow]:
     """Every statistic the run or its baseline recorded, and the final of
     every listed name (:func:`listed_names` over ``listing``, the test's
@@ -384,7 +385,9 @@ def statistics_rows(
     :func:`read_summary` (a baseline's empty ``nonlinear`` gives
     ``nonlinear_count`` 0). ``baseline_digits`` is the precision the
     baseline's file says it was recorded with
-    (`~dstf.storage.baseline_codec.shown_digits`); a run's is its array's.
+    (`~dstf.storage.baseline_codec.shown_digits`); a run's is its array's,
+    or ``run_digits`` where the run side is itself a stored baseline (``baseline
+    diff``'s newer one), whose summaries hold no array to read it from.
     Never writes into its inputs."""
     run, baseline = run or {}, baseline or {}
     names: list[str] = []
@@ -415,6 +418,11 @@ def statistics_rows(
     ordered = [n for n in _PREFERRED if n in names]
     ordered += [n for n in names if n not in _PREFERRED]
 
+    def run_side_digits(samples: np.ndarray | None) -> int:
+        if run_digits is not None:
+            return run_digits
+        return recorded_digits(samples) if samples is not None else DOUBLE_SHOWN
+
     def top_row(key: str) -> StatRow:
         if key not in listed:
             return _row(
@@ -429,10 +437,7 @@ def statistics_rows(
             diagnostic_final(baseline_diagnostics, key),
             top_level=True,
             kind=listed_kind(key),
-            digits=(
-                recorded_digits(samples) if samples is not None else DOUBLE_SHOWN,
-                baseline_digits,
-            ),
+            digits=(run_side_digits(samples), baseline_digits),
         )
 
     rows: list[StatRow] = []
@@ -475,12 +480,7 @@ def statistics_rows(
                     _summary(baseline_diagnostics, name, field_name),
                     top_level=True,
                     kind=listed_kind(name),
-                    digits=(
-                        recorded_digits(samples)
-                        if samples is not None
-                        else DOUBLE_SHOWN,
-                        baseline_digits,
-                    ),
+                    digits=(run_side_digits(samples), baseline_digits),
                 )
             )
         else:
