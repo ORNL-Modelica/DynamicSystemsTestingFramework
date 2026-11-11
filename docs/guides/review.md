@@ -3,7 +3,9 @@
 A pull request that accepts new baselines changes files of numbers nobody
 reads line by line. `dstf baseline diff` reads them for the reviewer: which
 baselines changed between two revisions of the reference root, and by how
-much. Its Markdown is written to be pasted into the pull request.
+much. `dstf summary` puts the test results of several runs side by side: the
+branch against the main line, on each simulator and OS. Both print Markdown
+written to be pasted into the pull request.
 
 ## What changed between two revisions
 
@@ -121,6 +123,51 @@ scored against that folder's newer one, by the same rule.
 
 `--format json` writes every fact, every test's detail included, with a
 number that is not finite written as `null` beside a flag that says which.
+
+## The results of several runs
+
+A scoring `dstf run` or `dstf compare` writes `verdicts.json` in its work
+dir. `dstf summary` reads one or more of them, each named `LABEL=DIR`, and
+prints a matrix: a row per `<Backend>/<os>`, a column per label, in the
+order given.
+
+```console
+$ dstf summary main=../main/testing_output branch=testing_output --base main
+```
+
+Each DIR is searched for `verdicts.json` files (those under `reports/` are
+not runs), and each file is one cell, its backend and OS the ones the file
+names. A label may repeat: a change run on Windows and on Linux has its work
+dirs in two places, and `branch=out/linux branch=winout` makes one column.
+
+- **A cell** is the tests that passed over the tests run (`2/3`), the other
+  status words' counts beside it (`1 SIM_FAIL`), and with `--base`, `· N not
+  new`: how many of the tests not passing there do not pass on the base
+  either, in the same backend/os. A label with no run of a backend/os reads
+  `–`. NOT RUN is counted in the total and is not a pass.
+- **A folded list per cell** names each test that did not pass, its status,
+  and what failed: the first failing criterion that is not advisory, else the
+  last line of its message (a failed simulation's message is a traceback).
+  With `--base` the base's status is beside it, or `not in main`. Its summary
+  line reads `Python/linux, branch: 2 not passing, 1 also fail on main`. A
+  list with a failure the base does not have is open; the others, and the
+  base's own lists, are folded. Where the base has no run of that
+  backend/os, the line says so and nothing is counted.
+
+A short example:
+
+```text
+| Backend/os | main | branch |
+| --- | --- | --- |
+| Python/linux | 2/3 (1 SIM_FAIL) | 1/3 (1 FAIL, 1 SIM_FAIL) · 1 not new |
+```
+
+The command is refused, with one sentence and exit code 2, when an argument
+is not `LABEL=DIR`, a DIR holds no `verdicts.json`, a file names no backend
+and OS, one label holds two files of one backend/os (two libraries in one
+work dir: pass each work dir as its own `LABEL=DIR`), or `--base` names no
+label. It prints facts: whether a failure blocks the change is the
+reviewer's call. `--format json` writes the same facts as data.
 
 ## Next
 

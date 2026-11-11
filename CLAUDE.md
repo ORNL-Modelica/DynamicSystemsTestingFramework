@@ -16,7 +16,7 @@
 DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli/                      # CLI package. parser.py: the command tree (build_arg_parser) — every command, the flags each reads
-│   │                             #      and its help; main.py: the dispatch table. Commands: discover, run, compare, author,
+│   │                             #      and its help; main.py: the dispatch table. Commands: discover, run, compare, summary, author,
 │   │                             #      check (where each backend is on this machine, and whether the project's is ready), and the
 │   │                             #      groups spec (add / update / schema), baseline (export / diff), soft-check (add / list / remove),
 │   │                             #      companion (add / list / freeze / remove), manifest (show / dump / cleanup)
@@ -87,6 +87,7 @@ DynamicSystemsTestingFramework/
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
 │       │                         #      + stats_rows.py (the Statistics rows both tiers render: the report's table and the card; one "changed")
 │       │                         #      + baseline_diff_text.py (`baseline diff`'s Markdown and JSON)
+│       │                         #      + results_summary.py (`summary`'s facts: several runs' verdicts.json by backend/os and label, against a base) + results_summary_text.py (its Markdown and JSON)
 │       │                         #      + console/junit + context_builder + report_suite + dashboard_render + overlay_loader (companion / soft-check overlays) + schema_export (`spec schema`) + theme.py (the token tables both tiers render, one per bundled theme: default and dark)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)
 │                                 #      + vendor/plotly.min.js (offline-capable reports)

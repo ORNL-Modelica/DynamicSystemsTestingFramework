@@ -14,8 +14,13 @@ this file says when they do.
   git revisions of the reference root (or the files on disk), and by how much —
   each variable's largest change as a percent of the old baseline's scale and
   when, the settings that changed, and the solver statistics old → new — as
-  Markdown to paste into a pull request, or JSON.
+  Markdown to paste into a pull request (an overview; `--details` adds each
+  test's section), or JSON.
   The guide "Summarize a change for review" says how.
+- `dstf summary LABEL=DIR...`: several runs' results side by side, a row per
+  backend/os and a column per label, passed over run; with `--base`, which
+  tests not passing also do not pass on the base — as Markdown for a pull
+  request, or JSON.
 
 ## [1.4.0] - 2026-11-11
 
