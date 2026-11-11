@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -203,6 +204,45 @@ class TestSoftCheckStorage:
         )
         assert store.get_reference(test.model_id) is not None
         assert set(store.get_soft_checks(test.model_id)) == {"experiment"}
+
+    @pytest.mark.parametrize(
+        ("text", "why"),
+        [
+            (
+                b"{ nope",
+                "Expecting property name enclosed in double quotes: "
+                "line 1 column 3 (char 2)",
+            ),
+            (b'{"time": [0, 1], "variables": [], "x": "\xff"}', "not UTF-8 text"),
+            (b'{"time": [0, 1], "variables": "oops"}', "variables is not a list"),
+        ],
+        ids=["not-json", "not-utf8", "variables-not-a-list"],
+    )
+    def test_a_soft_check_that_cannot_be_read_is_warned_of_and_skipped(
+        self, store_with_primary, caplog, text, why
+    ):
+        """Beside a good soft check, one whose file is no readable soft
+        check: the good one is read, the other warned of by its file and
+        left out — not raised out of the run that scores the test."""
+        store, test = store_with_primary
+        store.add_soft_check(
+            test.model_id,
+            series(
+                "good",
+                time=[0.0, 1.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            ),
+        )
+        bad = store.ref_dir / "soft_checks" / STEM / "bad.json"
+        bad.write_bytes(text)
+
+        with caplog.at_level(logging.WARNING, logger="dstf.storage.roles"):
+            checks = store.get_soft_checks(test.model_id)
+
+        assert list(checks) == ["good"]
+        assert [r.getMessage() for r in caplog.records] == [
+            f"Skipping unreadable soft_check {bad}: {why}"
+        ]
 
     def test_remove(self, store_with_primary):
         store, test = store_with_primary

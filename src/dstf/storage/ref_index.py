@@ -174,8 +174,6 @@ class RefIndex:
             model_id, status = read_reference_header(path)
         except json.JSONDecodeError as e:
             why = f"not JSON at line {e.lineno}, column {e.colno}"
-        except UnicodeDecodeError:
-            why = "not UTF-8 text"
         except UndecodableBaseline as e:
             why = str(e)
         except OSError as e:

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from .baseline import PRIMARY_BASELINE, Baseline
-from .baseline_codec import read_series, write_soft_check
+from .baseline_codec import UndecodableBaseline, read_soft_check, write_soft_check
 from .ref_index import _atomic_write_text
 
 logger = logging.getLogger(__name__)
@@ -198,7 +198,9 @@ class _RolesMixin:
         """Return all soft_checks registered for a model.
 
         Empty dict if the model has no primary baseline or no
-        soft_checks are registered.
+        soft_checks are registered. A file that cannot be read — not
+        JSON, not UTF-8, or a body `check_body` refuses — is warned of by
+        its path and left out.
         """
         sc_dir = self._soft_check_dir_for(model_id)
         if sc_dir is None or not sc_dir.is_dir():
@@ -208,9 +210,13 @@ class _RolesMixin:
             name = sc_file.stem
             try:
                 # The codec reads it: a soft check is reference-shape, and a
-                # `single` file's numbers are its run's only through it.
-                out[name] = read_series(sc_file, name)
-            except (json.JSONDecodeError, OSError) as e:
+                # `single` file's numbers are its run's only through it. A
+                # body it cannot decode is refused by the one rule a
+                # reference file is (`check_body`): the test is scored
+                # without it, where it raised out of the run (measured
+                # 2026-11-11, ``"variables": "oops"``).
+                out[name] = read_soft_check(sc_file, name)
+            except (json.JSONDecodeError, UndecodableBaseline, OSError) as e:
                 logger.warning("Skipping unreadable soft_check %s: %s", sc_file, e)
                 continue
         return out

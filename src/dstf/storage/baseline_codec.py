@@ -139,8 +139,10 @@ def check_body(data: dict) -> None:
     (:func:`_name`). Run where a reference file's JSON enters — by the index
     on every file it reads (:func:`read_reference_header`) and by
     :func:`read_reference` — so the file a comparison decodes is a file the
-    index let through. A soft check's or companion's file is not held to it:
-    its readers skip what they cannot draw, entry by entry."""
+    index let through — and by :func:`read_soft_check` on every soft check
+    a comparison reads, which skips one it refuses. A JSON companion's file
+    is not held to it: it is drawn, never scored, and its loader catches
+    every failure of its decode and marks the companion invalid."""
     time = data.get("time")
     if time is not None and not _numbers(time):
         raise UndecodableBaseline("time is not a list of numbers")
@@ -315,20 +317,47 @@ def decode_reference(data: dict) -> ReferenceFile:
     )
 
 
+def _load(path: Path) -> Any:
+    """``path``'s parsed JSON; a file that is not UTF-8 text raises
+    :class:`UndecodableBaseline` (``not UTF-8 text``), so a reader that
+    catches it beside ``json.JSONDecodeError`` and ``OSError`` catches
+    every file it cannot read."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise UndecodableBaseline("not UTF-8 text") from e
+    return json.loads(text)
+
+
+def _checked(path: Path) -> dict:
+    """``path``'s parsed JSON, its body held to :func:`check_body`."""
+    data = _load(path)
+    if not isinstance(data, dict):
+        raise UndecodableBaseline("not a JSON object")
+    check_body(data)
+    return data
+
+
 def read_reference(path: Path) -> ReferenceFile:
     """``path`` decoded. ``OSError``, ``json.JSONDecodeError`` and
     :class:`UndecodableBaseline` are the caller's: each says its own thing
     about a file it could not read."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise UndecodableBaseline("not a JSON object")
-    check_body(data)
-    return decode_reference(data)
+    return decode_reference(_checked(path))
+
+
+def read_soft_check(path: Path, name: str) -> Baseline:
+    """A soft check's file decoded, its body held to :func:`check_body` as
+    a reference file's is: a soft check is scored, so a body a decode
+    cannot read is refused here rather than raised out of the comparison
+    (errors as above)."""
+    return decode_series(_checked(path), name)
 
 
 def read_series(path: Path, name: str) -> Baseline:
-    """A soft check's or JSON companion's file decoded (errors as above)."""
-    return decode_series(json.loads(path.read_text(encoding="utf-8")), name)
+    """A JSON companion's file decoded (errors as above, and whatever a
+    body :func:`check_body` would refuse raises: the companion's loader
+    catches every failure and marks the companion invalid)."""
+    return decode_series(_load(path), name)
 
 
 def read_reference_header(path: Path) -> tuple[str | None, str]:
@@ -338,7 +367,7 @@ def read_reference_header(path: Path) -> tuple[str | None, str]:
     whose body cannot be decoded raises :class:`UndecodableBaseline` here,
     so the index refuses it before any reader decodes it. ``status``
     absent reads as ``"active"``."""
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _load(path)
     if not isinstance(data, dict):
         return None, "active"
     check_body(data)

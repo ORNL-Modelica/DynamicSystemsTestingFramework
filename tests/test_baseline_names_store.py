@@ -171,6 +171,14 @@ def _id_five(path) -> None:
     path.write_text('{"model_id": 5, "status": "active"}', encoding="utf-8")
 
 
+def _not_utf8(path) -> None:
+    """A's baseline with one byte that is no UTF-8 in a text."""
+    _hand_written(path, A)
+    path.write_bytes(
+        path.read_bytes().replace(b'"expression": ""', b'"expression": "\xff"')
+    )
+
+
 def _body(**changed):
     """A's baseline with parts of its body replaced as a hand edit leaves it."""
 
@@ -187,6 +195,7 @@ def _body(**changed):
     ("leave", "why"),
     [
         (_conflicted, "not JSON at line 1, column 1"),
+        (_not_utf8, "not UTF-8 text"),
         (_id_five, "model_id 5 is not a string"),
         (_body(variables="oops", time=None), "variables is not a list"),
         (_body(time="0 to 10"), "time is not a list of numbers"),
@@ -207,6 +216,7 @@ def _body(**changed):
     ],
     ids=[
         "conflict-markers",
+        "not-utf8",
         "model-id-5",
         "variables-not-a-list",
         "time-not-numbers",
@@ -413,6 +423,61 @@ def test_a_run_over_a_baseline_whose_body_is_broken_fails_that_test_alone(
     assert accept_code == 1
     assert f"Skipped 1 test(s):\n  {POINTS}: {said}\n" in out.getvalue()
     assert path.read_bytes() == before
+
+
+def test_a_run_over_a_soft_check_whose_body_is_broken_scores_the_test_without_it(
+    tmp_path, caplog
+):
+    """Over the Python example, SimpleRamp scored by a tree, with a soft
+    check ``other`` whose file holds ``"variables": "oops"`` (measured
+    2026-11-11: the run exited 1 with a traceback from the codec). The run
+    completes, every test passes, and the soft check is warned of by its
+    file."""
+    lib = tmp_path / "lib"
+    shutil.copytree(
+        PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
+        lib,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    ref_root = lib / "Resources" / "ReferenceResults"
+    spec_path = ref_root / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    (entry,) = [e for e in spec["tests"] if e["model"] == RAMP]
+    entry["metrics"] = {"metric": "nrmse", "variable": "x"}
+    spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
+    soft = ref_root / "Python" / "linux" / "soft_checks" / "ref_9bbf24e6f8aa"
+    soft.mkdir(parents=True)
+    (soft / "other.json").write_text(
+        '{"time": [0, 1], "variables": "oops"}', encoding="utf-8"
+    )
+    work = tmp_path / "work"
+
+    with (
+        redirect_stdout(io.StringIO()),
+        redirect_stderr(io.StringIO()),
+        caplog.at_level(logging.WARNING, logger="dstf.storage.roles"),
+    ):
+        code = main(
+            [
+                "--config",
+                str(ref_root / "testing.json"),
+                "run",
+                "--no-browser",
+                "--work-dir",
+                str(work),
+            ]
+        )
+
+    assert code == 0
+    verdicts = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
+    assert sorted((t["model_id"], t["status"]) for t in verdicts["tests"]) == [
+        ("PythonTestingLib.Examples.ConstantCsv", "PASS"),
+        (POINTS, "PASS"),
+        (RAMP, "PASS"),
+    ]
+    assert {r.getMessage() for r in caplog.records} == {
+        f"Skipping unreadable soft_check {soft / 'other.json'}: variables is not a list"
+    }
 
 
 def test_a_folder_of_numbered_names_is_refused_with_the_way_to_convert_it(
