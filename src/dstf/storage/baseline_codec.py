@@ -135,8 +135,11 @@ def check_body(data: dict) -> None:
     :class:`UndecodableBaseline` with the reason for the first part of the
     parsed file that :func:`decode_reference` cannot turn into a baseline a
     comparison reads. An absent or ``null`` array or section reads as empty,
-    as decoding reads it; a name that is no text is left to its readers
-    (:func:`_name`). Run where a reference file's JSON enters — by the index
+    as decoding reads it. A variable's or diagnostic's name is non-empty
+    text: one that is a list cannot be looked up, and a number raised out of
+    an accept after it had rewritten the file (measured 2026-11-11). A
+    ``sampling`` object holds its two counts as integers, as decoding reads
+    them (``"source_points": "many"`` raised out of the run). Run where a reference file's JSON enters — by the index
     on every file it reads (:func:`read_reference_header`) and by
     :func:`read_reference` — so the file a comparison decodes is a file the
     index let through — and by :func:`read_soft_check` on every soft check
@@ -153,6 +156,8 @@ def check_body(data: dict) -> None:
         name = entry.get("name") if isinstance(entry, dict) else None
         if name is None or name == "":
             raise UndecodableBaseline(f"variable {i} has no name")
+        if not isinstance(name, str):
+            raise UndecodableBaseline(f"variable {i}: name is not text")
         if entry.get("values") is None:
             raise UndecodableBaseline(f"variable {name} has no values")
         if not _numbers(entry["values"]):
@@ -166,6 +171,8 @@ def check_body(data: dict) -> None:
         name = entry.get("name") if isinstance(entry, dict) else None
         if name is None or name == "":
             raise UndecodableBaseline(f"diagnostic {i} has no name")
+        if not isinstance(name, str):
+            raise UndecodableBaseline(f"diagnostic {i}: name is not text")
         if not all(_number_or_null(entry.get(k)) for k in ("final", "min", "max")):
             raise UndecodableBaseline(
                 f"diagnostic {name}: final, min or max is not a number"
@@ -174,7 +181,13 @@ def check_body(data: dict) -> None:
             raise UndecodableBaseline(
                 f"diagnostic {name}: values is not a list of numbers"
             )
-    # `sampling` is not here: one that is no object reads as absent.
+    # A `sampling` that is no object reads as absent (`_sampling`).
+    sampling = data.get("sampling")
+    if isinstance(sampling, dict):
+        for key in ("source_points", "stored_points"):
+            count = sampling.get(key)
+            if count is not None and type(count) is not int:
+                raise UndecodableBaseline(f"sampling: {key} is not an integer")
     for section in ("simulation", "statistics", "provenance", "comparison"):
         raw = data.get(section)
         if raw is not None and not isinstance(raw, dict):

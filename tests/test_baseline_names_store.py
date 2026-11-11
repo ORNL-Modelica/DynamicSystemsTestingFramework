@@ -203,6 +203,14 @@ def _body(**changed):
             _body(variables=[{"index": 1, "values": [0.0]}]),
             "variable 1 has no name",
         ),
+        (
+            _body(variables=[{"index": 1, "name": ["x"], "values": [0.0]}]),
+            "variable 1: name is not text",
+        ),
+        (
+            _body(variables=[{"index": 1, "name": 5, "values": [0.0]}]),
+            "variable 1: name is not text",
+        ),
         (_body(variables=[{"index": 1, "name": "x"}]), "variable x has no values"),
         (
             _body(variables=[{"name": "x", "values": [0.0, "1.5", None]}]),
@@ -211,6 +219,22 @@ def _body(**changed):
         (
             _body(diagnostics=[{"name": "CPUtime", "final": "fast"}]),
             "diagnostic CPUtime: final, min or max is not a number",
+        ),
+        (
+            _body(diagnostics=[{"name": ["CPUtime"], "final": 1.0}]),
+            "diagnostic 1: name is not text",
+        ),
+        (
+            _body(diagnostics=[{"name": 5, "final": 1.0}]),
+            "diagnostic 1: name is not text",
+        ),
+        (
+            _body(sampling={"setting": "all", "source_points": "many"}),
+            "sampling: source_points is not an integer",
+        ),
+        (
+            _body(sampling={"source_points": 11, "stored_points": 1.5}),
+            "sampling: stored_points is not an integer",
         ),
         (_body(simulation="dassl"), "simulation is not an object"),
     ],
@@ -221,9 +245,15 @@ def _body(**changed):
         "variables-not-a-list",
         "time-not-numbers",
         "variable-no-name",
+        "variable-name-a-list",
+        "variable-name-a-number",
         "variable-no-values",
         "values-not-numbers",
         "diagnostic-final-text",
+        "diagnostic-name-a-list",
+        "diagnostic-name-a-number",
+        "sampling-count-text",
+        "sampling-count-fraction",
         "simulation-text",
     ],
 )

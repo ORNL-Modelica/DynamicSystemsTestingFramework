@@ -215,8 +215,22 @@ class TestSoftCheckStorage:
             ),
             (b'{"time": [0, 1], "variables": [], "x": "\xff"}', "not UTF-8 text"),
             (b'{"time": [0, 1], "variables": "oops"}', "variables is not a list"),
+            (
+                b'{"time": [0], "variables": [{"name": ["x"], "values": [0]}]}',
+                "variable 1: name is not text",
+            ),
+            (
+                b'{"time": [0], "variables": [], "sampling": {"source_points": "9"}}',
+                "sampling: source_points is not an integer",
+            ),
         ],
-        ids=["not-json", "not-utf8", "variables-not-a-list"],
+        ids=[
+            "not-json",
+            "not-utf8",
+            "variables-not-a-list",
+            "name-a-list",
+            "sampling-text",
+        ],
     )
     def test_a_soft_check_that_cannot_be_read_is_warned_of_and_skipped(
         self, store_with_primary, caplog, text, why
