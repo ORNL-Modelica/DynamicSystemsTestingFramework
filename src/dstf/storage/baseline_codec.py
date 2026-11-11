@@ -204,13 +204,13 @@ def unread_variable_keys(data: dict) -> dict[str, list[str]]:
     is not one of `VARIABLE_KEYS` — which decoding drops — with the names
     of the variables that carry it, both in the document's order. The codec
     says nothing of what it drops; a caller that should (``soft-check
-    add``) asks this. A name is given as text, whatever the document held:
-    the caller joins them, after the file is written."""
+    add``) asks this, of a document :func:`check_body` let through — each
+    entry an object whose name is text."""
     out: dict[str, list[str]] = {}
     for entry in data.get("variables") or []:
         for key in entry:
             if key not in VARIABLE_KEYS:
-                out.setdefault(key, []).append(str(entry.get("name") or ""))
+                out.setdefault(key, []).append(entry["name"])
     return out
 
 
@@ -342,11 +342,22 @@ def _load(path: Path) -> Any:
     return json.loads(text)
 
 
-def _checked(path: Path) -> dict:
-    """``path``'s parsed JSON, its body held to :func:`check_body`."""
+def _json_kind(value: Any) -> str:
+    """What JSON type a parsed value that is no object is, in words."""
+    return {list: "list", str: "string", bool: "boolean"}.get(
+        type(value), "null" if value is None else "number"
+    )
+
+
+def read_body(path: Path) -> dict:
+    """``path``'s parsed JSON, its body held to :func:`check_body`: what a
+    reader that scores a file (:func:`read_reference`,
+    :func:`read_soft_check`) decodes, and what ``soft-check add`` reads its
+    source by, so it never writes a soft check a run then skips. Raises
+    ``OSError``, ``json.JSONDecodeError`` or :class:`UndecodableBaseline`."""
     data = _load(path)
     if not isinstance(data, dict):
-        raise UndecodableBaseline("not a JSON object")
+        raise UndecodableBaseline(f"it holds a JSON {_json_kind(data)}, not an object")
     check_body(data)
     return data
 
@@ -355,7 +366,7 @@ def read_reference(path: Path) -> ReferenceFile:
     """``path`` decoded. ``OSError``, ``json.JSONDecodeError`` and
     :class:`UndecodableBaseline` are the caller's: each says its own thing
     about a file it could not read."""
-    return decode_reference(_checked(path))
+    return decode_reference(read_body(path))
 
 
 def read_soft_check(path: Path, name: str) -> Baseline:
@@ -363,7 +374,7 @@ def read_soft_check(path: Path, name: str) -> Baseline:
     a reference file's is: a soft check is scored, so a body a decode
     cannot read is refused here rather than raised out of the comparison
     (errors as above)."""
-    return decode_series(_checked(path), name)
+    return decode_series(read_body(path), name)
 
 
 def read_series(path: Path, name: str) -> Baseline:

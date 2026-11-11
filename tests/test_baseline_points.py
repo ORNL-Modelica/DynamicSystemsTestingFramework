@@ -666,14 +666,76 @@ def test_soft_check_add_names_all_three_variables_of_a_key_carried_by_three(
     assert said == [_DROPPED + "unit (v1, v2, v3)"]
 
 
-def test_soft_check_add_names_a_variable_whose_name_is_no_text(tmp_path, capsys):
-    """A name the source gives as a number is said as its text: the warning
-    comes after the file is written, and a crash there exits 1 on an import
-    that was stored."""
-    _written, said = _soft_check_add_warnings(
-        tmp_path, capsys, lambda x: [{**x, "name": 7, "unit": "m"}]
+_X = {"name": "x", "values": [0, 1]}
+
+
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        ({"variables": [_X, {"values": [0, 1]}]}, "variable 2 has no name"),
+        ({"variables": [_X, {"name": "", "values": [0, 1]}]}, "variable 2 has no name"),
+        (
+            {"variables": [{"name": 7, "values": [0, 1]}]},
+            "variable 1: name is not text",
+        ),
+        (
+            {"variables": [{"name": ["x"], "values": [0, 1]}]},
+            "variable 1: name is not text",
+        ),
+        (
+            {"variables": [_X], "diagnostics": [{"final": 1.0}]},
+            "diagnostic 1 has no name",
+        ),
+        (
+            {"variables": [{"name": "x", "values": ["a", "b"]}]},
+            "variable x: values is not a list of numbers",
+        ),
+        ({"time": "01", "variables": [_X]}, "time is not a list of numbers"),
+        ({"variables": "oops"}, "variables is not a list"),
+        (
+            {"variables": [_X], "sampling": {"source_points": "many"}},
+            "sampling: source_points is not an integer",
+        ),
+        (
+            b'{"time": [0, 1], "variables": [{"name": "x\xe9", "values": [0, 1]}]}',
+            "not UTF-8 text",
+        ),
+    ],
+    ids=[
+        "unnamed",
+        "name-empty",
+        "name-a-number",
+        "name-a-list",
+        "diagnostic-unnamed",
+        "values-text",
+        "time-text",
+        "variables-text",
+        "sampling-text",
+        "not-utf8",
+    ],
+)
+def test_soft_check_add_refuses_a_source_dstf_cannot_read(tmp_path, capsys, body, why):
+    """A source whose body a run cannot read was imported (`Imported …`,
+    exit 0) and every later run skipped the soft check with a warning — or
+    the command ended in a traceback. It is refused by the rule a run reads
+    a soft check by, before anything is written: exit 1, one line."""
+    config, _path = _single_reference(tmp_path)
+    source = tmp_path / "from-elsewhere.json"
+    if isinstance(body, bytes):
+        source.write_bytes(body)
+    else:
+        source.write_text(json.dumps({"time": [0, 1], **body}), encoding="utf-8")
+    before = sorted(config.reference_dir.rglob("*"))
+    capsys.readouterr()
+    rc = main(
+        ["--config", str(config.config_file), "soft-check", "add", M, "other"]
+        + [str(source)]
     )
-    assert said == [_DROPPED + "unit (7)"]
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == f"Failed to read {source}: {why}\n"
+    assert sorted(config.reference_dir.rglob("*")) == before
+    assert not (config.reference_dir / "soft_checks").exists()
 
 
 def test_a_sibling_partitions_reference_overlays_the_runs_own_numbers(tmp_path):

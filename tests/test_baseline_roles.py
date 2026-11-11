@@ -223,6 +223,7 @@ class TestSoftCheckStorage:
                 b'{"time": [0], "variables": [], "sampling": {"source_points": "9"}}',
                 "sampling: source_points is not an integer",
             ),
+            (b"[1, 2]", "it holds a JSON list, not an object"),
         ],
         ids=[
             "not-json",
@@ -230,6 +231,7 @@ class TestSoftCheckStorage:
             "variables-not-a-list",
             "name-a-list",
             "sampling-text",
+            "not-an-object",
         ],
     )
     def test_a_soft_check_that_cannot_be_read_is_warned_of_and_skipped(
