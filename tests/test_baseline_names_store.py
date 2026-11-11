@@ -299,8 +299,9 @@ def test_a_file_named_for_another_code_is_warned_and_left_out(
 
 def test_a_misnamed_file_leaves_its_test_without_a_baseline_or_a_page(tmp_path):
     """Over the Python example: SimpleRamp's file renamed to a code that is
-    not its own. Its run reads NO_REF, and the report writes no page under
-    either name."""
+    not its own. Its run reads NO_REF with no baseline named in
+    ``verdicts.json``, the other two name theirs, and the report writes no
+    page under either name."""
     lib = tmp_path / "lib"
     shutil.copytree(
         PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
@@ -325,8 +326,11 @@ def test_a_misnamed_file_leaves_its_test_without_a_baseline_or_a_page(tmp_path):
         )
 
     verdicts = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
-    status = {t["model_id"]: t["status"] for t in verdicts["tests"]}
-    assert status[RAMP] == "NO_REF"
+    assert {t["model_id"]: (t["status"], t["ref_id"]) for t in verdicts["tests"]} == {
+        "PythonTestingLib.Examples.ConstantCsv": ("PASS", "ref_f612690ea655"),
+        POINTS: ("PASS", "ref_8cb5c68dba3b"),
+        RAMP: ("NO_REF", None),
+    }
     # The other two under their own names; SimpleRamp under its test key.
     pages = {p.name for p in (work / "reports").iterdir() if p.is_dir()}
     assert pages == {"ref_f612690ea655", "ref_8cb5c68dba3b", "test_0003"}
@@ -624,6 +628,20 @@ def test_a_sibling_overlay_is_the_file_named_for_the_model_once(
 def test_a_sibling_file_of_another_model_is_no_overlay(sample_models_dir, tmp_path):
     root = tmp_path / "refs"
     _hand_written(root / "Other" / "linux" / A_FILE, OTHER)
+    _hand_written(root / "Third" / "linux" / A_FILE, A, values=[3.0] * 11)
+
+    overlays = load_sibling_backend_overlays(_config(sample_models_dir, root), A)
+
+    assert [ov.name for ov in overlays] == ["Third/linux"]
+
+
+def test_a_sibling_file_that_cannot_be_read_is_no_overlay(sample_models_dir, tmp_path):
+    """Siblings' files under the model's name whose body cannot be decoded,
+    or that are not UTF-8: no overlay, and the report goes on with the
+    good one."""
+    root = tmp_path / "refs"
+    _body(variables="oops")(root / "Broken" / "linux" / A_FILE)
+    _not_utf8(root / "Latin1" / "linux" / A_FILE)
     _hand_written(root / "Third" / "linux" / A_FILE, A, values=[3.0] * 11)
 
     overlays = load_sibling_backend_overlays(_config(sample_models_dir, root), A)
