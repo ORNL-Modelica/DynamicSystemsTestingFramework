@@ -6,6 +6,7 @@ import sys
 from ..config import ConfigError
 from .author_cmd import cmd_author
 from .baseline_cmds import (
+    cmd_baseline_diff,
     cmd_companion_add,
     cmd_companion_freeze,
     cmd_companion_list,
@@ -41,6 +42,7 @@ _COMMANDS = {
     "spec update": cmd_spec_update,
     "spec schema": cmd_spec_schema,
     "baseline export": cmd_baseline_export,
+    "baseline diff": cmd_baseline_diff,
     "soft-check add": cmd_soft_check_add,
     "soft-check list": cmd_soft_check_list,
     "soft-check remove": cmd_soft_check_remove,

@@ -1,10 +1,12 @@
-"""Baseline-role commands (D66): the `companion` and `soft-check` groups,
-one handler per action."""
+"""Baseline commands: `baseline diff`, and the baseline-role groups (D66)
+`companion` and `soft-check`, one handler per action."""
 
 import argparse
+import sys
 from pathlib import Path
 
 from ..backends.types import variable_name
+from ..config import CONFIG_FILENAME, ConfigError, config_file_named, load_config_file
 from .common import _build_config
 
 #: What `soft-check add` records as a soft_check's origin when its source
@@ -309,3 +311,60 @@ def _first_names(names: list[str], shown: int = 3) -> str:
     """Up to *shown* of *names*, then ``and N more``."""
     out = ", ".join(names[:shown])
     return out + (f" and {len(names) - shown} more" if len(names) > shown else "")
+
+
+# --- baseline diff -------------------------------------------------------------
+
+
+def _diff_root(args: argparse.Namespace) -> Path:
+    """The reference root `baseline diff` reads: ``--reference-root``; else
+    the ``reference_root`` of the testing.json ``--config`` names (or the one
+    in the current directory), relative to its directory, or that directory
+    itself when it is named ReferenceResults. The library is never resolved:
+    a checkout of the references alone (a pull request's CI) holds none."""
+    named = getattr(args, "reference_root", None)
+    if named is not None:
+        return Path(named)
+    config = getattr(args, "config", None)
+    if config is not None:
+        path = config_file_named(Path(config))
+        if not path.is_file():
+            raise ConfigError(f"Config file not found: {path}")
+    else:
+        path = Path.cwd() / CONFIG_FILENAME
+        if not path.is_file():
+            raise ConfigError(
+                "no reference root: pass --reference-root DIR, or --config "
+                "naming a testing.json"
+            )
+    data = load_config_file(path)
+    if data.get("reference_root"):
+        return path.parent / data["reference_root"]
+    if path.parent.name == "ReferenceResults":
+        return path.parent
+    raise ConfigError(
+        f"{path} names no reference_root and is not in a ReferenceResults "
+        "folder: pass --reference-root DIR"
+    )
+
+
+def cmd_baseline_diff(args: argparse.Namespace) -> int:
+    """Print (or write to --output) which baselines changed between two
+    revisions of the reference root, as Markdown or JSON."""
+    from ..reporting.baseline_diff_text import as_json, as_markdown
+    from ..storage.baseline_diff import DiffError, diff_baselines
+    from ..storage.git_revisions import GitError
+
+    try:
+        root = _diff_root(args)
+        diff = diff_baselines(root, args.rev1, args.rev2, against=args.against)
+    except (ConfigError, GitError, DiffError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    text = as_json(diff) if args.format == "json" else as_markdown(diff)
+    if args.output is None:
+        sys.stdout.write(text)
+    else:
+        Path(args.output).write_text(text, encoding="utf-8")
+        print(f"Wrote {args.output}")
+    return 0

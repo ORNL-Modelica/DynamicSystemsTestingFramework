@@ -416,6 +416,12 @@ UNREAD: tuple[Unread, ...] = (
         ("config",),
         "check reads it only to look for testing.json in it",
     ),
+    Unread(
+        "baseline diff",
+        ("config",),
+        ("reference_root",),
+        "baseline diff reads testing.json only for its reference root",
+    ),
 )
 
 
@@ -911,12 +917,13 @@ class _Tree:
         examples,
         creates: bool = False,
         spec_use: str = "this command reads",
-        config_help: str | None = None,
+        own_help: dict[str, str] | None = None,
     ):
         """A command that runs. The project flags it reads (:data:`READS`)
         are offered here, and ONLY they are accepted before it.
         ``spec_use`` is this command's word in those flags' help,
-        ``config_help`` its own help for ``--config``.
+        ``own_help`` its own help for a project flag, by dest, where the
+        shared one would say what this command does not do.
 
         ``creates`` is the command's declaration that it may create a file
         of the project — a baseline, a spec entry, a soft check, a
@@ -933,7 +940,7 @@ class _Tree:
         no_config = _NO_CONFIG_WRITES if creates else _NO_CONFIG_READS
         project = [dest for dest in PROJECT_FLAGS if dest in READS[path]]
         for dest in project:
-            own = {"help": config_help} if dest == "config" and config_help else {}
+            own = {"help": own_help[dest]} if own_help and dest in own_help else {}
             # SUPPRESS is load-bearing: a sub-parser parses into a fresh
             # namespace and copies EVERY attribute of it onto the top-level
             # one, so a plain default here would erase a value given before
@@ -960,6 +967,7 @@ COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "baselines and the data beside them",
         (
             "baseline export",
+            "baseline diff",
             "soft-check add",
             "soft-check list",
             "soft-check remove",
@@ -1022,6 +1030,7 @@ READS: dict[str, tuple[str, ...]] = {
     "spec update": (*_ALL, "backend"),
     "spec schema": ("output",),
     "baseline export": (*_STORE, "format", "output", "backend", "work_dir"),
+    "baseline diff": ("config", "reference_root", "against", "format", "output"),
     "soft-check add": (*_STORE, "backend"),
     "soft-check list": (*_STORE, "backend"),
     "soft-check remove": (*_STORE, "backend"),
@@ -1394,10 +1403,12 @@ def _add_author(tree: _Tree, top) -> None:
         ),
         # Its own words: no testing.json is searched for, and the other
         # three flags are not this command's.
-        config_help="The project's testing.json. Required: the tool reads "
-        "the library, the reference results and test_spec.json from it and "
-        "saves the spec it names, so none of the three can be named here "
-        "instead.",
+        own_help={
+            "config": "The project's testing.json. Required: the tool reads "
+            "the library, the reference results and test_spec.json from it and "
+            "saves the spec it names, so none of the three can be named here "
+            "instead.",
+        },
     )
     _offer_selection(node)
     node.add_argument(
@@ -1588,14 +1599,17 @@ def _add_baseline(tree: _Tree, top) -> None:
     group, sub = tree.group(
         top,
         "baseline",
-        summary="Stored baselines: export them to one file",
+        summary="Stored baselines: export them, diff two revisions",
         description="""
             Commands over the stored baselines of one partition of the
             reference root (<reference_root>/<Backend>/<os>/). Baselines
             are written by `dstf run --accept`, `dstf compare --accept`
             and the authoring tool's Accept.
             """,
-        examples=("dstf baseline export --config testing.json -o references.json",),
+        examples=(
+            "dstf baseline export --config testing.json -o references.json",
+            "dstf baseline diff main --reference-root Resources/ReferenceResults",
+        ),
     )
     node = tree.command(
         sub,
@@ -1631,6 +1645,93 @@ def _add_baseline(tree: _Tree, top) -> None:
         node,
         "work_dir",
         fill={"work_dir_use": "Where the file is written when --output names none."},
+    )
+
+    _add_baseline_diff(tree, sub)
+
+
+def _add_baseline_diff(tree: _Tree, sub) -> None:
+    node = tree.command(
+        sub,
+        "baseline diff",
+        summary="Show which baselines changed between two revisions",
+        description="""
+            Print which stored baselines changed between two git revisions
+            of the reference root — or between REV1 and the files on disk,
+            when REV2 is left out (what an accept leaves before `git add`).
+            For each test and <Backend>/<os> folder: each variable's largest
+            change, as a percent of the old baseline's range (of its value
+            where it is constant), and the time it happens; the settings
+            that changed; and the solver statistics, old → new, the
+            machine-dependent times on a line of their own. Baselines are
+            paired by model id, never by file name. Only the stored samples
+            are compared.
+
+            The reference root is --reference-root; else the reference_root
+            of the testing.json --config names (or the one in the current
+            directory), or that file's own directory when it is named
+            ReferenceResults. The library is not read: a checkout of the
+            references alone is enough.
+
+            Markdown by default, to paste into a pull request; --format
+            json for the same facts as data. git is only read: nothing is
+            written to the repository.
+
+            Exit code: 0 when the difference is printed, whatever changed;
+            2 when git cannot answer (no repository, an unknown revision),
+            no reference root is named, or --against names a folder the
+            newer side holds no baseline in.
+            """,
+        examples=(
+            "dstf baseline diff main --reference-root Resources/ReferenceResults",
+            "dstf baseline diff v1.3.0 HEAD --config testing.json -o baselines.md",
+            "dstf baseline diff HEAD~1 HEAD --config testing.json --against Dymola/linux",
+            "dstf baseline diff main --config testing.json --format json -o diff.json",
+        ),
+        own_help={
+            "config": "A testing.json, or the directory holding it, read for "
+            "its reference root alone: its reference_root, else its own "
+            "directory when that is named ReferenceResults. Default: the "
+            "testing.json in the current directory; with none there and no "
+            "--reference-root, the command is refused. The library is not read.",
+            "reference_root": "The reference root whose revisions are "
+            "compared: a folder of a git repository's work tree. Default: "
+            "read from testing.json (--config).",
+        },
+    )
+    node.add_argument(
+        "rev1",
+        metavar="REV1",
+        help="The older revision: a commit, branch or tag (main, HEAD~1, v1.3.0).",
+    )
+    node.add_argument(
+        "rev2",
+        metavar="REV2",
+        nargs="?",
+        default=None,
+        help="The newer revision. Default: the files on disk, tracked or not.",
+    )
+    node.add_argument(
+        "--against",
+        metavar="BACKEND/OS",
+        default=None,
+        help="Also score each other folder's newer baseline of each listed "
+        "test against this folder's newer one (Dymola/linux), by the same "
+        "rule. Default: no such comparison.",
+    )
+    _offer(
+        node,
+        "format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="markdown (to paste into a pull request) or json (the same facts "
+        "as data, non-finite numbers as null beside a flag). Default: markdown.",
+    )
+    _offer(
+        node,
+        "output",
+        default=None,
+        help="The file to write. Default: printed.",
     )
 
 
