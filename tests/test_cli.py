@@ -2834,7 +2834,8 @@ _ORPHAN_NOTE = (
 
 def test_manifest_show_lists_each_file_in_model_id_order(run_env, capsys):
     """Each baseline by its file, status and model, sorted by model id (the
-    files' own order is by code); no id column, no obsolete count."""
+    files' own order is by code); no id column, and no count of a status
+    that is none (``skip``)."""
     ref_dir = run_env.ref_root / FAKE / detect_os()
     ref_dir.mkdir(parents=True)
     for name, model, status in [
@@ -2849,16 +2850,13 @@ def test_manifest_show_lists_each_file_in_model_id_order(run_env, capsys):
     assert main(["--config", str(run_env.config_dir), "manifest", "show"]) == 0
     assert capsys.readouterr().out.splitlines() == [
         f"References: {ref_dir}",
-        "Active: 2  Skip: 1",
+        "Active: 2",
         "",
         "File                   Status      Model ID",
         "-" * 90,
         "ref_882df898287f.json  active      Lib.Apple",
         "ref_e33c83ca7b0e.json  skip        Lib.Banana",
         "ref_2fea06fb17ef.json  active      Lib.Cherry",
-        "",
-        "Skipped:",
-        "ref_e33c83ca7b0e.json  Lib.Banana",
     ]
 
 

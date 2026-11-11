@@ -99,10 +99,8 @@ whose result was accepted (a baseline accepted before this was recorded gains
 it at its next accept). `run_started` is when that run began: a `dstf run`'s
 start, or, for a test run on its own from `dstf author`'s queue, that test's
 own start. Its
-`status` is `active` or `skip`. `dstf manifest show` lists the baselines —
-each one's file, status and model — and counts the skipped ones apart;
-nothing else reads `skip`, so a skipped baseline is still compared. To
-remove a baseline, delete its file.
+`status` is `active`. `dstf manifest show` lists the baselines — each one's
+file, status and model. To remove a baseline, delete its file.
 
 dstf checks each file it reads against its name:
 
@@ -112,7 +110,7 @@ dstf checks each file it reads against its name:
 - A file whose name is not its model's code is warned of and left out: its
   model reads `NO_REF`.
 - A file named for a model that holds another model's baseline, or whose
-  `status` is neither `active` nor `skip`, fails that test with a sentence
+  `status` is not `active`, fails that test with a sentence
   that names the file, and an accept skips the test.
 - A file named for a model that cannot be read — not JSON, such as a merge's
   conflict markers, a `model_id` that is not a string, or a body that is not

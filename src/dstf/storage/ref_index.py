@@ -31,7 +31,9 @@ _NAME = re.compile(r"^ref_[0-9a-f]{12}\.json$")
 #: The statuses a baseline may have. ``obsolete`` is not one (owner, Q5 of
 #: the plan of 2026-11-10): a baseline is removed by deleting its file, and a
 #: file still marked so is refused by name rather than silently skipped.
-STATUSES = ("active", "skip")
+#: Nor is ``skip`` (plan of 2026-11-11): nothing but ``manifest show``'s
+#: count read it, so a "skipped" baseline was compared all the same.
+STATUSES = ("active",)
 
 
 class OldBaselineNames(ConfigError):

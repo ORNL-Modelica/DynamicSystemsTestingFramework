@@ -114,7 +114,7 @@
 - A model's file is `ref_<code>.json`, the code computed from its model id (`storage/names.py`, D165); it contains `model_id`, `status`, `date_added`, `last_updated`
 - `RefIndex` opens a model's file by that computed name and lists the folder only for commands that walk every baseline — no number to allocate, no manifest to maintain or sync
 - `date_added` is set once on first store, preserved on updates; `last_updated` changes every store
-- `status` field: `active` or `skip` (`manifest show` counts it apart; nothing else reads it). Any other status refuses the test by name; a baseline is removed by deleting its file
+- `status` field: `active`, always written. Any other status (an old `skip` or `obsolete`) refuses the test by name; a baseline is removed by deleting its file
 - The listed names are `diagnostic_variables` in `testing.json` (default: `["CPUtime", "EventCounter"]`) plus a test entry's own (`diagnostic_names`)
 
 ### Reference JSON values use precision-aware rounding

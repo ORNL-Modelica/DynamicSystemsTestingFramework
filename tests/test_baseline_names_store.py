@@ -132,15 +132,19 @@ def test_a_file_of_another_model_under_the_name_refuses_the_test(
     )
 
 
+@pytest.mark.parametrize("status", ["obsolete", "skip"])
 def test_a_baseline_whose_status_is_no_status_is_refused_by_name(
-    sample_models_dir, tmp_path
+    sample_models_dir, tmp_path, status
 ):
+    """``active`` is the one status. ``skip`` was one, read by nothing but
+    ``manifest show``'s count, so a skipped baseline was compared all the
+    same; a file still marked so is refused, as ``obsolete`` is."""
     store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
     path = store.ref_dir / A_FILE
-    _hand_written(path, A, status="obsolete")
+    _hand_written(path, A, status=status)
     before = path.read_bytes()
     said = (
-        'ref_6e187be76792.json: status "obsolete" is not a status — '
+        f'ref_6e187be76792.json: status "{status}" is not a status — '
         "delete the file to remove a baseline"
     )
 
@@ -234,12 +238,6 @@ def test_an_unreadable_file_under_the_name_refuses_the_test_untouched(
     assert (stored, skipped) == ([], [(A, said)])
     assert path.read_bytes() == before
     assert sorted(p.name for p in store.ref_dir.iterdir()) == [A_FILE]
-
-
-def test_a_skipped_baseline_is_read(sample_models_dir, tmp_path):
-    store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
-    _hand_written(store.ref_dir / A_FILE, A, status="skip")
-    assert store.get_reference(A).model_id == A
 
 
 def test_a_file_named_for_another_code_is_warned_and_left_out(

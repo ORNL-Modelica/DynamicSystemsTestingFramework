@@ -133,8 +133,9 @@ def cmd_baseline_export(args: argparse.Namespace) -> int:
 
 def cmd_manifest_show(args: argparse.Namespace) -> int:
     """List the partition's baselines — each one's file, status and model,
-    in model-id order — with the counts of active and skipped ones."""
+    in model-id order — with the count of active ones."""
     config = _build_config(args)
+    from ..storage.ref_index import STATUSES
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
@@ -142,22 +143,16 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
         (e["model_id"], baseline_file(e["model_id"]), e["status"])
         for e in store.index.all_tests().values()
     )
-    skipped = [(model, file) for model, file, status in entries if status == "skip"]
-    n_active = sum(status == "active" for _, _, status in entries)
+    n_active = sum(status in STATUSES for _, _, status in entries)
 
     print(f"References: {config.reference_dir}")
-    print(f"Active: {n_active}  Skip: {len(skipped)}\n")
+    print(f"Active: {n_active}\n")
 
     if entries:
         print(f"{'File':<21}  {'Status':<10}  {'Model ID'}")
         print("-" * 90)
         for model, file, status in entries:
             print(f"{file:<21}  {status:<10}  {model}")
-
-    if skipped:
-        print("\nSkipped:")
-        for model, file in skipped:
-            print(f"{file:<21}  {model}")
 
     return 0
 
