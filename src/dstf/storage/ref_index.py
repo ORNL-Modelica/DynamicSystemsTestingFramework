@@ -138,10 +138,13 @@ class RefIndex:
 
         A ``model_id`` that is no non-empty string is unreadable too: a
         listing computes each file's name from it, so a number there raised
-        out of every command that lists the folder."""
+        out of every command that lists the folder. So is a body the codec
+        cannot decode (`baseline_codec.check_body`): read as it was, it
+        raised out of the run that compared it (measured 2026-11-11,
+        ``"variables": "oops"``)."""
         # Imported here: the codec imports `_atomic_write_text` from this
         # module, so a module-level import would be a cycle.
-        from .baseline_codec import read_reference_header
+        from .baseline_codec import UndecodableBaseline, read_reference_header
 
         path = self.ref_dir / name
         if not path.is_file():
@@ -153,6 +156,8 @@ class RefIndex:
             why = f"not JSON at line {e.lineno}, column {e.colno}"
         except UnicodeDecodeError:
             why = "not UTF-8 text"
+        except UndecodableBaseline as e:
+            why = str(e)
         except OSError as e:
             why = e.strerror or str(e)
         else:

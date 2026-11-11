@@ -34,6 +34,7 @@ HEXE, HEXE_FILE = (
     "ref_121677875640.json",
 )
 RAMP, RAMP_FILE = "PythonTestingLib.Examples.SimpleRamp", "ref_9bbf24e6f8aa.json"
+POINTS, POINTS_FILE = "PythonTestingLib.Examples.PointsCheck", "ref_8cb5c68dba3b.json"
 
 
 def _model(model_id: str) -> TestModel:
@@ -166,13 +167,51 @@ def _id_five(path) -> None:
     path.write_text('{"model_id": 5, "status": "active"}', encoding="utf-8")
 
 
+def _body(**changed):
+    """A's baseline with parts of its body replaced as a hand edit leaves it."""
+
+    def leave(path) -> None:
+        _hand_written(path, A)
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc.update(changed)
+        path.write_text(json.dumps(doc), encoding="utf-8")
+
+    return leave
+
+
 @pytest.mark.parametrize(
     ("leave", "why"),
     [
         (_conflicted, "not JSON at line 1, column 1"),
         (_id_five, "model_id 5 is not a string"),
+        (_body(variables="oops", time=None), "variables is not a list"),
+        (_body(time="0 to 10"), "time is not a list of numbers"),
+        (
+            _body(variables=[{"index": 1, "values": [0.0]}]),
+            "variable 1 has no name",
+        ),
+        (_body(variables=[{"index": 1, "name": "x"}]), "variable x has no values"),
+        (
+            _body(variables=[{"name": "x", "values": [0.0, "1.5", None]}]),
+            "variable x: values is not a list of numbers",
+        ),
+        (
+            _body(diagnostics=[{"name": "CPUtime", "final": "fast"}]),
+            "diagnostic CPUtime: final, min or max is not a number",
+        ),
+        (_body(simulation="dassl"), "simulation is not an object"),
     ],
-    ids=["conflict-markers", "model-id-5"],
+    ids=[
+        "conflict-markers",
+        "model-id-5",
+        "variables-not-a-list",
+        "time-not-numbers",
+        "variable-no-name",
+        "variable-no-values",
+        "values-not-numbers",
+        "diagnostic-final-text",
+        "simulation-text",
+    ],
 )
 def test_an_unreadable_file_under_the_name_refuses_the_test_untouched(
     sample_models_dir, tmp_path, leave, why
@@ -318,6 +357,61 @@ def test_a_run_over_a_file_whose_model_id_is_no_name_scores_every_test(
         "ref_aaaaaaaaaaaa.json cannot be read (model_id 5 is not a string) — "
         "fix or delete it"
     }
+
+
+def test_a_run_over_a_baseline_whose_body_is_broken_fails_that_test_alone(
+    tmp_path, caplog
+):
+    """Over the Python example, PointsCheck's file with ``"variables":
+    "oops"`` and ``"time": null`` (measured 2026-11-11: the run exited 1 with
+    a traceback from the codec). The run completes: PointsCheck FAILS with
+    the sentence that names its file, the other two pass, and an accept
+    leaves the file's bytes as they were."""
+    lib = tmp_path / "lib"
+    shutil.copytree(
+        PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
+        lib,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    path = lib / "Resources" / "ReferenceResults" / "Python" / "linux" / POINTS_FILE
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc.update(variables="oops", time=None)
+    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    before = path.read_bytes()
+    said = "ref_8cb5c68dba3b.json cannot be read (variables is not a list) — fix or delete it"
+    work = tmp_path / "work"
+    config = str(lib / "Resources" / "ReferenceResults" / "testing.json")
+
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        code = main(
+            ["--config", config, "run", "--no-browser", "--work-dir", str(work)]
+        )
+    verdicts = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
+    out = io.StringIO()
+    with redirect_stdout(out), redirect_stderr(io.StringIO()):
+        accept_code = main(
+            [
+                "--config",
+                config,
+                "run",
+                "--no-browser",
+                "--accept",
+                "--work-dir",
+                str(tmp_path / "work-accept"),
+            ]
+        )
+
+    assert code == 1
+    assert sorted(
+        (t["model_id"], t["status"], t["message"]) for t in verdicts["tests"]
+    ) == [
+        ("PythonTestingLib.Examples.ConstantCsv", "PASS", None),
+        (POINTS, "FAIL", said),
+        (RAMP, "PASS", None),
+    ]
+    assert accept_code == 1
+    assert f"Skipped 1 test(s):\n  {POINTS}: {said}\n" in out.getvalue()
+    assert path.read_bytes() == before
 
 
 def test_a_folder_of_numbered_names_is_refused_with_the_way_to_convert_it(

@@ -103,6 +103,82 @@ def _as_written(values: list[float], single: bool) -> list[float]:
 # --- decode ----------------------------------------------------------------
 
 
+class UndecodableBaseline(ValueError):
+    """A reference file whose body cannot be decoded; its text is the short
+    reason (``variables is not a list``). The index refuses the file with it
+    exactly as a file that is not JSON, and every reader of a reference file
+    catches it beside ``json.JSONDecodeError`` — this type, never a bare
+    ``ValueError`` or ``AttributeError``, so a fault in DSTF's own code is
+    never read as "the file cannot be read"."""
+
+
+#: The types a JSON number is parsed as. ``bool`` is not one (``type(True)``
+#: is ``bool``), so ``true`` in an array is refused.
+_NUMBER_TYPES = frozenset((int, float))
+
+
+def _numbers(raw: Any) -> bool:
+    """Whether ``raw`` is a JSON array of numbers only. One C-level pass over
+    the element types: measured 2026-11-11 over a copy of 335 real baselines
+    (1.1 M stored points, TRANSFORM's Dymola/linux), the check took a full
+    scan of the folder from 0.110 s to 0.116-0.128 s (best of 10, warm,
+    four runs), where a full decode in the scan added 60 %."""
+    return isinstance(raw, list) and set(map(type, raw)) <= _NUMBER_TYPES
+
+
+def _number_or_null(raw: Any) -> bool:
+    return raw is None or type(raw) in _NUMBER_TYPES
+
+
+def check_body(data: dict) -> None:
+    """THE rule for "does this reference file's body decode": raise
+    :class:`UndecodableBaseline` with the reason for the first part of the
+    parsed file that :func:`decode_reference` cannot turn into a baseline a
+    comparison reads. An absent or ``null`` array or section reads as empty,
+    as decoding reads it; a name that is no text is left to its readers
+    (:func:`_name`). Run where a reference file's JSON enters — by the index
+    on every file it reads (:func:`read_reference_header`) and by
+    :func:`read_reference` — so the file a comparison decodes is a file the
+    index let through. A soft check's or companion's file is not held to it:
+    its readers skip what they cannot draw, entry by entry."""
+    time = data.get("time")
+    if time is not None and not _numbers(time):
+        raise UndecodableBaseline("time is not a list of numbers")
+    variables = data.get("variables")
+    if variables is not None and not isinstance(variables, list):
+        raise UndecodableBaseline("variables is not a list")
+    for i, entry in enumerate(variables or [], start=1):
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if name is None or name == "":
+            raise UndecodableBaseline(f"variable {i} has no name")
+        if entry.get("values") is None:
+            raise UndecodableBaseline(f"variable {name} has no values")
+        if not _numbers(entry["values"]):
+            raise UndecodableBaseline(
+                f"variable {name}: values is not a list of numbers"
+            )
+    diagnostics = data.get("diagnostics")
+    if diagnostics is not None and not isinstance(diagnostics, list):
+        raise UndecodableBaseline("diagnostics is not a list")
+    for i, entry in enumerate(diagnostics or [], start=1):
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if name is None or name == "":
+            raise UndecodableBaseline(f"diagnostic {i} has no name")
+        if not all(_number_or_null(entry.get(k)) for k in ("final", "min", "max")):
+            raise UndecodableBaseline(
+                f"diagnostic {name}: final, min or max is not a number"
+            )
+        if entry.get("values") is not None and not _numbers(entry["values"]):
+            raise UndecodableBaseline(
+                f"diagnostic {name}: values is not a list of numbers"
+            )
+    # `sampling` is not here: one that is no object reads as absent.
+    for section in ("simulation", "statistics", "provenance", "comparison"):
+        raw = data.get(section)
+        if raw is not None and not isinstance(raw, dict):
+            raise UndecodableBaseline(f"{section} is not an object")
+
+
 #: The keys of a stored variable's entry, in the order they are written:
 #: all a reader of DSTF reads of one. Any other key is dropped on decode.
 VARIABLE_KEYS = ("index", "name", "expression", "values")
@@ -240,9 +316,14 @@ def decode_reference(data: dict) -> ReferenceFile:
 
 
 def read_reference(path: Path) -> ReferenceFile:
-    """``path`` decoded. ``OSError`` and ``json.JSONDecodeError`` are the
-    caller's: each says its own thing about a file it could not read."""
-    return decode_reference(json.loads(path.read_text(encoding="utf-8")))
+    """``path`` decoded. ``OSError``, ``json.JSONDecodeError`` and
+    :class:`UndecodableBaseline` are the caller's: each says its own thing
+    about a file it could not read."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise UndecodableBaseline("not a JSON object")
+    check_body(data)
+    return decode_reference(data)
 
 
 def read_series(path: Path, name: str) -> Baseline:
@@ -252,11 +333,15 @@ def read_series(path: Path, name: str) -> Baseline:
 
 def read_reference_header(path: Path) -> tuple[str | None, str]:
     """``(model_id, status)`` of a reference file — what the index needs.
-    A whole-file parse (JSON has no partial read; idea #64). ``status``
+    A whole-file parse (JSON has no partial read; idea #64), and the body
+    checked by the one rule a decode applies (:func:`check_body`): a file
+    whose body cannot be decoded raises :class:`UndecodableBaseline` here,
+    so the index refuses it before any reader decodes it. ``status``
     absent reads as ``"active"``."""
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         return None, "active"
+    check_body(data)
     return data.get("model_id") or None, data.get("status") or "active"
 
 

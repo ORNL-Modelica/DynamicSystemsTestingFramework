@@ -37,6 +37,7 @@ from .baseline import (
 from .baseline_codec import (
     DOUBLE,
     SINGLE,
+    UndecodableBaseline,
     read_reference,
     reference_to_json,
     stored_numbers,
@@ -97,7 +98,7 @@ class ReferenceStore(_RolesMixin):
             return None
         try:
             return read_reference(ref_file)
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, UndecodableBaseline, OSError) as e:
             logger.error("Failed to read reference %s: %s", ref_file, e)
             return None
 
@@ -168,7 +169,7 @@ class ReferenceStore(_RolesMixin):
         if ref_file.exists():
             try:
                 existing = read_reference(ref_file)
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, UndecodableBaseline, OSError):
                 pass
 
         # Build the reference file
