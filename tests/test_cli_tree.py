@@ -176,6 +176,7 @@ _SUMMARY_WORDS = {
     "spec schema": "schema",
     "baseline export": "every stored baseline",
     "baseline diff": "between two revisions",
+    "baseline plot": "across revisions",
     "soft-check add": "as a soft check",
     "soft-check list": "soft checks",
     "soft-check remove": "Remove a soft check",
@@ -734,6 +735,7 @@ READS: dict[str, set[str]] = {
     # the reference root alone, named or read from testing.json — never the
     # library: a checkout of the references holds none
     "baseline diff": {"--config", "--reference-root"},
+    "baseline plot": {"--config", "--reference-root"},
     "soft-check add": _STORE | {"--backend"},
     "soft-check list": _STORE | {"--backend"},
     "soft-check remove": _STORE | {"--backend"},
@@ -757,6 +759,7 @@ ARGV: dict[str, list[str]] = {
     "spec add": ["Lib.M"],
     "spec update": ["patch.json"],
     "baseline diff": ["HEAD"],
+    "baseline plot": ["HEAD~1", "HEAD", "-o", "out"],
     "summary": ["head=."],
     "soft-check add": ["Lib.M", "other", "ref.json"],
     "soft-check remove": ["Lib.M", "other"],
@@ -1395,6 +1398,7 @@ def test_output_has_its_short_form_everywhere():
         "spec schema",
         "baseline export",
         "baseline diff",
+        "baseline plot",
     ]
     for path, action in found:
         assert action.option_strings == ["-o", "--output"], path
@@ -1654,9 +1658,22 @@ def _unread_cases():
 def test_a_flag_that_will_not_be_read_beside_another_is_refused(
     row, dest, beside, capsys
 ):
-    # the positionals the command needs, and none of ARGV's flags
-    positionals = [w for w in ARGV.get(row.command, []) if not w.startswith("-")]
-    words = row.command.split() + positionals
+    # the positionals the command needs, and of ARGV's flags only a
+    # required one (`baseline plot -o DIR`) with its value
+    node = NODES[row.command]
+    required = {
+        s
+        for a in node._actions
+        if a.required and a.option_strings
+        for s in a.option_strings
+    }
+    given, needed = ARGV.get(row.command, []), []
+    for i, word in enumerate(given):
+        if word in required:
+            needed += given[i : i + 2]
+        elif not word.startswith("-") and (i == 0 or given[i - 1] not in required):
+            needed.append(word)
+    words = row.command.split() + needed
     with_ = _given(row.command, beside) if beside else []
     argv = [*words, *with_, *_given(row.command, dest, bare=not row.with_)]
     text = _parse(argv, capsys)
@@ -1769,6 +1786,7 @@ IN_A_LIBRARY = {
     "spec update": ["{file}"],
     "baseline export": [],
     "baseline diff": ["HEAD"],
+    "baseline plot": ["HEAD~1", "HEAD", "-o", "out"],
     "soft-check add": ["Lib.A", "om", "{file}"],
     "soft-check list": [],
     "soft-check remove": ["Lib.A", "om"],
@@ -1831,7 +1849,7 @@ def test_a_command_that_creates_nothing_of_a_project_writes_no_config(
 
 #: The commands that read testing.json for one setting and are refused
 #: without it: no project is read on defaults.
-REFUSED_WITHOUT_ONE = {"baseline diff"}
+REFUSED_WITHOUT_ONE = {"baseline diff", "baseline plot"}
 
 
 @pytest.mark.parametrize("path", sorted(IN_A_LIBRARY))

@@ -1,5 +1,6 @@
-"""Baseline commands: `baseline diff`, and the baseline-role groups (D66)
-`companion` and `soft-check`, one handler per action."""
+"""Baseline commands: `baseline diff` and `baseline plot`, and the
+baseline-role groups (D66) `companion` and `soft-check`, one handler per
+action."""
 
 import argparse
 import sys
@@ -317,7 +318,7 @@ def _first_names(names: list[str], shown: int = 3) -> str:
 
 
 def _diff_root(args: argparse.Namespace) -> Path:
-    """The reference root `baseline diff` reads: ``--reference-root``; else
+    """The reference root `baseline diff` and `baseline plot` read: ``--reference-root``; else
     the ``reference_root`` of the testing.json ``--config`` names (or the one
     in the current directory), relative to its directory, or that directory
     itself when it is named ReferenceResults. The library is never resolved:
@@ -382,4 +383,76 @@ def cmd_baseline_diff(args: argparse.Namespace) -> int:
     else:
         Path(args.output).write_text(text, encoding="utf-8")
         print(f"Wrote {args.output}")
+    return 0
+
+
+# --- baseline plot -------------------------------------------------------------
+
+#: The most images `baseline plot` draws without --test: a migration commit
+#: touches hundreds of tests.
+MAX_IMAGES = 300
+
+
+def _size(n: int) -> str:
+    return f"{n / 1e6:.1f} MB" if n >= 1e6 else f"{max(1, round(n / 1e3))} kB"
+
+
+def cmd_baseline_plot(args: argparse.Namespace) -> int:
+    """Draw the baselines of the tests asked for at each revision: a PNG per
+    variable and one gallery.html, into the --output directory. Every check
+    runs before the directory is created or a file in it removed."""
+    from ..reporting.baseline_gallery import (
+        GALLERY,
+        OutputRefused,
+        clear,
+        gallery_html,
+        plan_images,
+        stale_files,
+        write_marker,
+    )
+    from ..reporting.images import ImagesUnavailable, Renderer
+    from ..storage.baseline_diff import DiffError
+    from ..storage.baseline_history import baseline_history
+    from ..storage.git_revisions import GitError
+
+    out = Path(args.output)
+    pngs: dict[str, bytes] = {}
+    try:
+        if len(args.revisions) < 2:
+            raise DiffError(
+                "baseline plot draws two revisions or more; it was given one"
+            )
+        root = _diff_root(args)
+        history = baseline_history(
+            root, args.revisions, tests=args.test, folders=args.folder
+        )
+        images = plan_images(history)
+        if args.test is None and len(images) > MAX_IMAGES:
+            raise DiffError(
+                f"{len(images)} images to draw, over {MAX_IMAGES}: name the "
+                "tests (--test) or the folders (--folder) to draw"
+            )
+        stale = stale_files(out)
+        if images:
+            with Renderer() as renderer:
+                clear(out, stale)
+                for image in images:
+                    png = renderer.png(image.figure)
+                    path = out / image.path
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(png)
+                    pngs[image.path] = png
+        else:
+            clear(out, stale)
+    except (ConfigError, GitError, DiffError, OutputRefused, ImagesUnavailable) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    out.mkdir(parents=True, exist_ok=True)
+    page = out / GALLERY
+    page.write_text(gallery_html(history, images, pngs), encoding="utf-8")
+    write_marker(out, [*pngs, GALLERY])
+    print(
+        f"Wrote {len(images)} image{'s' * (len(images) != 1)} and {page} "
+        f"({_size(page.stat().st_size)})"
+    )
     return 0
