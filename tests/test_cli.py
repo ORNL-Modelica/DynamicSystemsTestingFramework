@@ -250,7 +250,9 @@ def test_a_header_starts_with_the_model_id(monkeypatch, tmp_path, capsys):
     """No `[<code>]` before a test with a baseline, no `[new]` before one
     without: the model id is the name a person reads (owner, 2026-11-10)."""
     comps = [
-        TestComparison("L.A", passed=False, test_id="0da1bdf4cf2f"),
+        TestComparison(
+            "L.A", passed=False, baseline_path="/refs/ref_b58a2eaf2676.json"
+        ),
         TestComparison("L.B", passed=False, has_reference=False),
     ]
     config, store = _review_env(tmp_path)
@@ -1598,7 +1600,6 @@ class _FakeComp:
     warnings: list = field(default_factory=list)
     error_message: str | None = None
     variables: list = field(default_factory=list)
-    test_id: int | None = None
     metric_tree: object = None
     ran: bool = True
     # What `reporting.status.classify` reads, which the review asks for a

@@ -837,7 +837,7 @@ def _build_per_test_args(
 
     ref_file = store.reference_file(model_id)
 
-    if comp.test_id:
+    if comp.baseline_path:
         report_id = baseline_stem(model_id)
     elif test_key:
         report_id = test_key
@@ -862,7 +862,7 @@ def _build_per_test_args(
         "test_key": test_key,
         "status_text": status_text,
         "status_class": status_class,
-        "ref_id": baseline_stem(model_id) if comp.test_id else stored,
+        "ref_id": baseline_stem(model_id) if comp.baseline_path else stored,
         "last_run_at": last_run_at,
         "comparison": comp,
         "comp_variables": comp.variables,

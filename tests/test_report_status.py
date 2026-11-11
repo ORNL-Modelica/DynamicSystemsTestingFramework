@@ -55,26 +55,29 @@ def _mixed():
     """One test per bucket, plus the two edge cases the findings were about."""
     return [
         TestComparison(
-            model_id="Lib.Ex.Pass", passed=True, test_id="0001", variables=[_var()]
+            model_id="Lib.Ex.Pass",
+            passed=True,
+            baseline_path="/refs/ref_9c519181098e.json",
+            variables=[_var()],
         ),
         TestComparison(
             model_id="Lib.Ex.Fail",
             passed=False,
-            test_id="0002",
+            baseline_path="/refs/ref_cbd590c248d5.json",
             variables=[_var(passed=False), _var(name="v", index=1)],
         ),
         TestComparison(
             model_id="Lib.Ex.SimFail",
             passed=False,
             sim_success=False,
-            test_id="0003",
+            baseline_path="/refs/ref_4aee74af60a1.json",
             error_message="translation failed",
         ),
         TestComparison(model_id="Lib.Ex.NoRef", passed=True, has_reference=False),
         TestComparison(
             model_id="Lib.Ex.WarnOnly",
             passed=True,
-            test_id="0005",
+            baseline_path="/refs/ref_9e4a3ce717e8.json",
             variables=[_var()],
             warnings=[
                 StructuralWarning(
@@ -231,7 +234,7 @@ def _simulate_only_comparison(passed: bool = True) -> TestComparison:
     return TestComparison(
         model_id="Lib.Ex.SimulateOnly",
         passed=passed,
-        test_id="0007",
+        baseline_path="/refs/ref_7ea79c282646.json",
         variables=[],
         has_reference=False,
         simulate_only=True,

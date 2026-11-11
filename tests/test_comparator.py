@@ -4768,7 +4768,7 @@ class TestABaseToleranceIsANumber:
         comp = compare_one(test, result, _Store())
         assert comp.error_message == _said(self.SPEC, bad)
         assert classify(comp) == "FAIL" and comp.variables == []
-        assert comp.has_reference is False and comp.test_id is None
+        assert comp.has_reference is False and comp.baseline_path is None
         from dstf.reporting.status import refusal
 
         assert refusal(comp) == comp.error_message

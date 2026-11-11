@@ -1050,7 +1050,9 @@ def _cancelled_comparisons() -> list:
 
     return [
         compare_one(make_test_model("Lib.A"), None, None),
-        TestComparison(model_id="Lib.B", passed=True, test_id="0002"),
+        TestComparison(
+            model_id="Lib.B", passed=True, baseline_path="/refs/ref_452b135a045c.json"
+        ),
     ]
 
 
@@ -1105,8 +1107,12 @@ def test_a_cancelled_test_that_then_ran_reads_its_verdict(tmp_path):
 
     _cancelled_snapshot(tmp_path)
     comparisons = [
-        TestComparison(model_id="Lib.A", passed=True, test_id="0001"),
-        TestComparison(model_id="Lib.B", passed=True, test_id="0002"),
+        TestComparison(
+            model_id="Lib.A", passed=True, baseline_path=f"/refs/{A_REF}.json"
+        ),
+        TestComparison(
+            model_id="Lib.B", passed=True, baseline_path="/refs/ref_452b135a045c.json"
+        ),
     ]
     render_final(tmp_path, comparisons=comparisons)
     html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
@@ -1153,7 +1159,9 @@ def test_a_final_page_without_sidecars_shows_verdicts(tmp_path):
     }
     _write_status_json(tmp_path, snapshot)
     comparisons = [
-        TestComparison(model_id="Lib.A", passed=True, test_id=A_CODE),
+        TestComparison(
+            model_id="Lib.A", passed=True, baseline_path=f"/refs/{A_REF}.json"
+        ),
         TestComparison(model_id="Lib.B", passed=False),
         TestComparison(model_id="Lib.C", passed=True),
     ]
@@ -1219,7 +1227,9 @@ def test_a_test_with_no_result_reads_not_run_in_grey(tmp_path):
     }
     _write_status_json(tmp_path, snapshot)
     comparisons = [
-        TestComparison(model_id="Lib.A", passed=True, test_id="0001"),
+        TestComparison(
+            model_id="Lib.A", passed=True, baseline_path=f"/refs/{A_REF}.json"
+        ),
         compare_one(make_test_model("Lib.B"), None, None),
         compare_one(make_test_model("Lib.C"), None, None),
     ]
@@ -1316,7 +1326,7 @@ def test_a_page_without_sidecars_keeps_what_the_live_row_knows(tmp_path):
     snapshot["tests"][0]["field_sources"] = {"stop_time": "annotation"}
     _write_status_json(tmp_path, snapshot)
     comp = TestComparison(
-        model_id="Lib.A", passed=True, test_id=None, warnings=[_warning()]
+        model_id="Lib.A", passed=True, baseline_path=None, warnings=[_warning()]
     )
     render_final(tmp_path, comparisons=[comp])
     (tr,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
@@ -1407,7 +1417,6 @@ def test_the_comparisons_reference_wins_over_the_sidecars(tmp_path):
         model_id="Lib.A",
         passed=False,
         variables=[_failing_var()],
-        test_id=A_CODE,
         baseline_path=str(openmodelica),
     )
     (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
@@ -1446,7 +1455,9 @@ def test_the_first_place_holding_a_sidecar_is_the_one_read(tmp_path):
         return row.report_page, row.total_wall
 
     _one_row(tmp_path, report_dir="test_0001")
-    comp = TestComparison(model_id="Lib.A", passed=True, test_id=A_CODE)
+    comp = TestComparison(
+        model_id="Lib.A", passed=True, baseline_path=f"/refs/{A_REF}.json"
+    )
     sidecar("test_0001", 1.0)
     assert read() == ("test_0001", 1.0)
     assert read([comp]) == ("test_0001", 1.0)  # none under the baseline compared

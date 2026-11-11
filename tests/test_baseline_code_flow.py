@@ -79,7 +79,7 @@ def test_the_comparisons_code_is_its_models_even_beside_an_old_number(
 
     comp = compare_one(_model(PULSE), _result(PULSE), store)
 
-    assert (comp.test_id, comp.baseline_path) == (PULSE_CODE, str(path))
+    assert comp.baseline_path == str(path)
 
 
 def test_a_simulate_only_test_with_no_baseline_names_no_code(
@@ -94,4 +94,4 @@ def test_a_simulate_only_test_with_no_baseline_names_no_code(
     comp = compare_one(simulate_only, _result("Lib.SimOnly"), store)
 
     assert comp.passed
-    assert (comp.test_id, comp.baseline_path) == (None, None)
+    assert comp.baseline_path is None

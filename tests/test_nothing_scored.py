@@ -111,9 +111,11 @@ def test_a_result_holding_nothing_the_test_tracks_fails_and_says_so(route, basel
     comp = compare_one(test, _result(*names), _Store(REFERENCE if baseline else None))
     assert classify(comp) == FAIL and comp.passed is False
     assert comp.has_reference is baseline and comp.sim_success is True
-    # The baseline's code: a refused test with one is named by it on the
+    # The baseline's file: a refused test with one is named by it on the
     # dashboard (`ref_0b4da9e81e2e`), as any other test.
-    assert comp.test_id == ("0b4da9e81e2e" if baseline else None)
+    assert comp.baseline_path == (
+        str(Path("/refs/ref_0b4da9e81e2e.json")) if baseline else None
+    )
     # The sentence stands where a failing criterion would be named.
     assert refusal(comp) == f"{NONE_OF} {tracked}{NOTHING}"
     assert comp.variables == [] and comp.metric_tree is None

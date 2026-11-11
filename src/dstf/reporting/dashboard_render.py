@@ -346,16 +346,13 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     """
     summary = summary_fields(comp)
     ref_id, ref_file = row.ref_id, row.ref_file
-    if comp.test_id:
+    if comp.baseline_path:
         ref_id = baseline_stem(comp.model_id)
         # The row's link survives only when it IS the file this comparison
         # read, by path: a model's baseline has one name in every backend
         # folder, so after `compare --backend <other>` the names agree and
         # a name check kept a link to the other backend's file.
-        if (
-            comp.baseline_path is None
-            or Path(comp.baseline_path).as_uri() != row.ref_file
-        ):
+        if Path(comp.baseline_path).as_uri() != row.ref_file:
             ref_file = None
     return replace(
         row,
@@ -483,7 +480,9 @@ def build_dashboard_context(
         # it is a guess made before either was known: a test accepted
         # since has a baseline its run did not name.
         compared = (
-            baseline_stem(comp.model_id) if comp is not None and comp.test_id else None
+            baseline_stem(comp.model_id)
+            if comp is not None and comp.baseline_path
+            else None
         )
         places = dict.fromkeys(d for d in (compared, row.report_dir, row.test_key) if d)
         for place in places if mode == "final" else ():
