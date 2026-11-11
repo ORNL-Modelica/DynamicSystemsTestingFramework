@@ -26,6 +26,7 @@ from .diag_cmds import (
 from .parser import build_arg_parser, command_path
 from .run_cmds import cmd_compare, cmd_run
 from .spec_cmds import cmd_spec_add, cmd_spec_schema, cmd_spec_update
+from .summary_cmd import cmd_summary
 
 # Command → handler dispatch table, keyed by the command as it is typed
 # (`cli.parser.command_path`). Lives at module scope so tests can assert the
@@ -36,6 +37,7 @@ _COMMANDS = {
     "discover": cmd_discover,
     "run": cmd_run,
     "compare": cmd_compare,
+    "summary": cmd_summary,
     "author": cmd_author,
     "check": cmd_check,
     "spec add": cmd_spec_add,

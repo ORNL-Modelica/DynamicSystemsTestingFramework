@@ -168,6 +168,7 @@ _SUMMARY_WORDS = {
     "discover": "List the tests",
     "run": "Simulate",
     "compare": "without simulating",
+    "summary": "several runs",
     "author": "authoring tool",
     "check": "backends",
     "spec add": "Add a test",
@@ -717,6 +718,8 @@ READS: dict[str, set[str]] = {
     "discover": _PROJECT,
     "run": _PROJECT | _AFTER_ONLY,
     "compare": _PROJECT | _AFTER_ONLY,
+    # its runs are named by LABEL=DIR: no project
+    "summary": set(),
     # the Session builds its Config from testing.json alone
     "author": {"--config", "--backend", "--work-dir"},
     # the search for a testing.json; never the spec, a partition or a work dir
@@ -754,6 +757,7 @@ ARGV: dict[str, list[str]] = {
     "spec add": ["Lib.M"],
     "spec update": ["patch.json"],
     "baseline diff": ["HEAD"],
+    "summary": ["head=."],
     "soft-check add": ["Lib.M", "other", "ref.json"],
     "soft-check remove": ["Lib.M", "other"],
     "companion add": ["Lib.M", "rig", "rig.csv"],
@@ -1244,6 +1248,7 @@ _OUTPUTS = {
     "spec schema": [],
     "baseline export": [],
     "baseline diff": ["HEAD"],
+    "summary": ["head=."],
 }
 
 
@@ -1386,6 +1391,7 @@ def test_output_has_its_short_form_everywhere():
     assert [path for path, _ in found] == [
         "run",
         "compare",
+        "summary",
         "spec schema",
         "baseline export",
         "baseline diff",
@@ -1397,6 +1403,7 @@ def test_output_has_its_short_form_everywhere():
 def test_format_lists_its_choices_in_one_order():
     found = _actions("--format")
     assert [path for path, _ in found] == [
+        "summary",
         "baseline export",
         "baseline diff",
         "companion add",
@@ -1406,6 +1413,7 @@ def test_format_lists_its_choices_in_one_order():
     assert choices == {
         "baseline export": ("json", "csv"),
         "baseline diff": ("markdown", "json"),
+        "summary": ("markdown", "json"),
         "companion add": ("json", "csv"),
     }
 
@@ -1749,8 +1757,9 @@ CREATES = {
     "companion freeze",
 }
 
-#: A command line for each command that looks for a project (`author` and
-#: `spec schema` look for none), run in a directory that holds only a library.
+#: A command line for each command that looks for a project (`author`,
+#: `spec schema` and `summary` look for none), run in a directory that holds
+#: only a library.
 IN_A_LIBRARY = {
     "discover": [],
     "check": [],
@@ -1783,7 +1792,7 @@ PAST_ITS_CHECKS = {"compare", "spec add"}
 
 
 def test_every_command_says_whether_it_may_create_the_project_s_files():
-    assert sorted({*IN_A_LIBRARY, "author", "spec schema"}) == COMMANDS
+    assert sorted({*IN_A_LIBRARY, "author", "spec schema", "summary"}) == COMMANDS
     assert PARSER.creates == CREATES
 
 

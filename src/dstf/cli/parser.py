@@ -961,7 +961,7 @@ class _Tree:
 
 #: The top-level help's listing: the commands by what they are for.
 COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("run and score", ("discover", "run", "compare")),
+    ("run and score", ("discover", "run", "compare", "summary")),
     ("write criteria", ("author", "spec add", "spec update", "spec schema")),
     (
         "baselines and the data beside them",
@@ -1030,6 +1030,7 @@ READS: dict[str, tuple[str, ...]] = {
     "spec update": (*_ALL, "backend"),
     "spec schema": ("output",),
     "baseline export": (*_STORE, "format", "output", "backend", "work_dir"),
+    "summary": ("base", "format", "output"),
     "baseline diff": (
         "config",
         "reference_root",
@@ -1108,6 +1109,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     _add_discover(tree, top)
     _add_run(tree, top)
     _add_compare(tree, top)
+    _add_summary(tree, top)
     _add_author(tree, top)
     _add_check(tree, top)
     _add_spec(tree, top)
@@ -1381,6 +1383,73 @@ def _add_compare(tree: _Tree, top) -> None:
         "the run recorded as failed or timed out is skipped and named, and "
         "the exit code is then 1.",
     )
+
+
+def _add_summary(tree: _Tree, top) -> None:
+    node = tree.command(
+        top,
+        "summary",
+        summary="Tabulate several runs' verdicts by backend/os",
+        description="""
+            Print a matrix of several runs' results, to paste into a pull
+            request: a row per <Backend>/<os>, a column per LABEL, each cell
+            the tests that passed over the tests run (NOT RUN included),
+            read from the verdicts.json a scoring `dstf run` or `dstf
+            compare` writes in its work dir. Then, per cell, a folded list
+            of the tests that did not pass, each with its status and what
+            failed: the first failing criterion that is not advisory, else
+            the last line of its message.
+
+            Each DIR is searched for verdicts.json files (not under
+            reports/), each one cell; its backend and os are the file's.
+            A LABEL may repeat: the Windows and the Linux work dirs of one
+            change live in different places.
+
+            With --base, a test not passing in a cell that does not pass in
+            the base label's cell of the same backend/os either is counted
+            "not new", and each list says the base's status beside it. Lists
+            with a new failure are open, the others folded.
+
+            Markdown by default; --format json for the same facts as data.
+            Nothing is judged: the status words are the files'.
+
+            Exit code: 0 when the matrix is printed, whatever the runs
+            say; 2 when an argument is not LABEL=DIR, a DIR holds no
+            verdicts.json, a verdicts.json names no backend and os, a label
+            holds two files of one backend/os, or --base names no label.
+            """,
+        examples=(
+            "dstf summary main=../main/testing_output branch=testing_output "
+            "--base main",
+            "dstf summary linux=out/linux windows=win/out --format json "
+            "-o summary.json",
+        ),
+    )
+    node.add_argument(
+        "runs",
+        metavar="LABEL=DIR",
+        nargs="+",
+        help="A run's label and a directory holding its verdicts.json "
+        "(a work dir, or a folder of work dirs). Columns follow the labels' "
+        "order; a label may repeat.",
+    )
+    node.add_argument(
+        "--base",
+        metavar="LABEL",
+        default=None,
+        help="Count, in every other label's cells, the tests not passing "
+        "that do not pass in this label's cell of the same backend/os "
+        "either (not new). Default: no such count.",
+    )
+    _offer(
+        node,
+        "format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="markdown (to paste into a pull request) or json (the same facts "
+        "as data). Default: markdown.",
+    )
+    _offer(node, "output", default=None, help="The file to write. Default: printed.")
 
 
 # ---------------------------------------------------------------------------
