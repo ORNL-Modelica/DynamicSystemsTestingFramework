@@ -133,7 +133,8 @@ def cmd_baseline_export(args: argparse.Namespace) -> int:
 
 def cmd_manifest_show(args: argparse.Namespace) -> int:
     """List the partition's baselines — each one's file, status and model,
-    in model-id order — with the count of active ones."""
+    in model-id order — and then each file the index refuses with its
+    sentence (`RefIndex.refused`), with the counts of both."""
     config = _build_config(args)
     from ..storage.ref_index import STATUSES
     from ..storage.reference_store import ReferenceStore
@@ -144,15 +145,21 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
         for e in store.index.all_tests().values()
     )
     n_active = sum(status in STATUSES for _, _, status in entries)
+    refused = store.index.refused()
 
     print(f"References: {config.reference_dir}")
-    print(f"Active: {n_active}\n")
+    print(f"Active: {n_active}  Refused: {len(refused)}\n")
 
     if entries:
         print(f"{'File':<21}  {'Status':<10}  {'Model ID'}")
         print("-" * 90)
         for model, file, status in entries:
             print(f"{file:<21}  {status:<10}  {model}")
+
+    if refused:
+        print("\nRefused:")
+        for said in refused.values():
+            print(said)
 
     return 0
 

@@ -1873,8 +1873,11 @@ def _add_manifest(tree: _Tree, top) -> None:
         summary="List the stored references and the status of each",
         description="""
             List the references of the partition, in model-id order: each
-            one's file, status and model, with the counts of active and
-            skipped ones. Nothing is written.
+            one's file, status and model. Then each file of the folder that
+            is read as no baseline, with the sentence it is refused by: a
+            file that cannot be read, one named for another model than the
+            one it holds, one whose status is not active. Nothing is
+            written.
             """,
         examples=(
             "dstf manifest show --config testing.json",

@@ -100,7 +100,8 @@ it at its next accept). `run_started` is when that run began: a `dstf run`'s
 start, or, for a test run on its own from `dstf author`'s queue, that test's
 own start. Its
 `status` is `active`. `dstf manifest show` lists the baselines — each one's
-file, status and model. To remove a baseline, delete its file.
+file, status and model — and, under `Refused:`, each file it will not read
+with the sentence that says why. To remove a baseline, delete its file.
 
 dstf checks each file it reads against its name:
 

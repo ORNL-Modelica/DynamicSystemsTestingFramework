@@ -2834,14 +2834,18 @@ _ORPHAN_NOTE = (
 
 def test_manifest_show_lists_each_file_in_model_id_order(run_env, capsys):
     """Each baseline by its file, status and model, sorted by model id (the
-    files' own order is by code); no id column, and no count of a status
-    that is none (``skip``)."""
+    files' own order is by code); no id column. Then every file the folder's
+    index will not read, in name order, each with the sentence it is refused
+    by: a status that is none (``skip``), a file that cannot be read, and a
+    file named for another code than its model's."""
     ref_dir = run_env.ref_root / FAKE / detect_os()
     ref_dir.mkdir(parents=True)
     for name, model, status in [
         ("ref_2fea06fb17ef.json", "Lib.Cherry", "active"),
         ("ref_882df898287f.json", "Lib.Apple", "active"),
         ("ref_e33c83ca7b0e.json", "Lib.Banana", "skip"),
+        ("ref_000000000000.json", "Lib.A", "active"),
+        ("ref_aaaaaaaaaaaa.json", 5, "active"),
     ]:
         (ref_dir / name).write_text(
             json.dumps({"model_id": model, "status": status}), encoding="utf-8"
@@ -2850,13 +2854,21 @@ def test_manifest_show_lists_each_file_in_model_id_order(run_env, capsys):
     assert main(["--config", str(run_env.config_dir), "manifest", "show"]) == 0
     assert capsys.readouterr().out.splitlines() == [
         f"References: {ref_dir}",
-        "Active: 2",
+        "Active: 2  Refused: 3",
         "",
         "File                   Status      Model ID",
         "-" * 90,
         "ref_882df898287f.json  active      Lib.Apple",
         "ref_e33c83ca7b0e.json  skip        Lib.Banana",
         "ref_2fea06fb17ef.json  active      Lib.Cherry",
+        "",
+        "Refused:",
+        "ref_000000000000.json holds the baseline of Lib.A, whose file is "
+        "ref_6e187be76792.json — rename or delete it",
+        "ref_aaaaaaaaaaaa.json cannot be read (model_id 5 is not a string) — "
+        "fix or delete it",
+        'ref_e33c83ca7b0e.json: status "skip" is not a status — '
+        "delete the file to remove a baseline",
     ]
 
 
