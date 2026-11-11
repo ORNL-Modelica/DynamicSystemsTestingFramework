@@ -34,6 +34,7 @@ guides/testing-json
 guides/add-a-test
 guides/results
 guides/baselines
+guides/review
 guides/criteria
 guides/ci
 guides/simulators

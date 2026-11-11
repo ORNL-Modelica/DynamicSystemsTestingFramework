@@ -6,6 +6,17 @@ follow [semantic versioning](https://semver.org/). DSTF is in beta: the command
 line and the `testing.json` keys may still change between minor versions, and
 this file says when they do.
 
+## [Unreleased]
+
+### Added
+
+- `dstf baseline diff REV1 [REV2]`: which stored baselines changed between two
+  git revisions of the reference root (or the files on disk), and by how much —
+  each variable's largest change as a percent of the old baseline's scale and
+  when, the settings that changed, and the solver statistics old → new — as
+  Markdown to paste into a pull request, or JSON.
+  The guide "Summarize a change for review" says how.
+
 ## [1.4.0] - 2026-11-11
 
 ### Added
