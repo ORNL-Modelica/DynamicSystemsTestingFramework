@@ -17,11 +17,11 @@ install of this project can be found at all; if one exists under a different
 name, that is drift and it fails.
 """
 
+import tomllib
 from importlib.metadata import PackageNotFoundError, distributions, version
 from pathlib import Path
 
 import pytest
-import tomllib
 
 import dstf
 from dstf.backends.run_metadata import _dstf_version

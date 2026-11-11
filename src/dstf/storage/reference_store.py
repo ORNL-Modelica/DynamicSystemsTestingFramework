@@ -17,7 +17,7 @@ import io
 import json
 import logging
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -202,7 +202,7 @@ class ReferenceStore(_RolesMixin):
                 )
             )
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         date_added = now
         if existing is not None and existing.date_added is not None:
             date_added = existing.date_added
