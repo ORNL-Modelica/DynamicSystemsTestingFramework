@@ -197,6 +197,29 @@ def test_an_image_says_what_was_skipped_renamed_and_not_finite(lib):
     assert image.figure["layout"]["annotations"][-1]["text"] == "<br>".join(image.notes)
 
 
+def test_a_variable_at_one_revision_or_gone_at_one_says_so(lib):
+    revs = _two(
+        lib,
+        {
+            f"{LINUX}/ref_a.json": (
+                "Lib.A",
+                [("x", "", [0, 1, 2]), ("gone", "", [5, 5, 5])],
+                [("x", "", [0, 1, 3]), ("added", "", [1, 2, 3])],
+            )
+        },
+    )
+    images = {i.label: i for i in plan_images(baseline_history(lib.top / "refs", revs))}
+    one, two = (r[:7] for r in revs)
+    assert images["added"].notes == [f"Only at {two}: nothing to measure against."]
+    assert images["gone"].notes == [
+        f"Not stored at {two}.",
+        f"Only at {one}: nothing to measure against.",
+    ]
+    # its panel is drawn empty, under the same x axis
+    panel = [t for t in images["added"].figure["data"] if t["yaxis"] == "y2"]
+    assert [t["x"] for t in panel] == [[]]
+
+
 def test_the_gallery_is_one_file_with_no_script_and_nothing_fetched(lib):
     revs = _two(
         lib,

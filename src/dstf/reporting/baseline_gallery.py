@@ -214,7 +214,8 @@ def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
     if missing:
         notes.append(f"Not stored at {_shorts(missing)}.")
     if len(variable.lines) == 1:
-        notes.append("Stored at one revision drawn: nothing to measure against.")
+        only = variable.lines[0].revision.commit.short
+        notes.append(f"Only at {only}: nothing to measure against.")
     for line in variable.lines[1:]:
         change, short = line.change, line.revision.commit.short
         assert change is not None
