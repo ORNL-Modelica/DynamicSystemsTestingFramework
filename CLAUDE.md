@@ -18,7 +18,7 @@ DynamicSystemsTestingFramework/
 │   ├── cli/                      # CLI package. parser.py: the command tree (build_arg_parser) — every command, the flags each reads
 │   │                             #      and its help; main.py: the dispatch table. Commands: discover, run, compare, summary, author,
 │   │                             #      check (where each backend is on this machine, and whether the project's is ready), and the
-│   │                             #      groups spec (add / update / schema), baseline (export / diff), soft-check (add / list / remove),
+│   │                             #      groups spec (add / update / schema), baseline (export / diff / plot), soft-check (add / list / remove),
 │   │                             #      companion (add / list / freeze / remove), manifest (show / dump / cleanup)
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, which backend a project runs with
 │   ├── config_shape.py           # testing.json's keys — type, default, description: the ONE table Config refuses an unknown key by,
@@ -53,7 +53,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      names.py (a baseline's name: ref_<code> from its model id — the ONE rule every baseline name is built from, D165),
 │   │                             #      baseline_codec (THE reader/writer of a baseline file; the rest sees storage.baseline types),
 │   │                             #      git_revisions.py (the ONE place DSTF reads git: a folder's files and blobs at a revision; never writes the repository),
-│   │                             #      baseline_diff.py (`baseline diff`'s facts: baselines paired by model id across two revisions, each variable's largest change)
+│   │                             #      baseline_diff.py (`baseline diff`'s facts: baselines paired by model id across two revisions, a variable by name then label, each variable's largest change — the max of its difference_series),
+│   │                             #      baseline_history.py (`baseline plot`'s facts: a test's baseline at several revisions, each later line minus the first)
 │   ├── authoring/                # Session, capability contract, spec document (its pending ops, counted by act: edit_counts, D155) — the tool's core;
 │   │                             #      layout.py (the plot extras' edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
@@ -83,10 +84,13 @@ DynamicSystemsTestingFramework/
 │   │                             #      actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit family + edit tree + accept + enqueue + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + palette.py (what a figure takes from a theme, by name) + LTTB decimate; both tiers draw from it
+│   │                             #      + history.py (`baseline plot`'s figure: a variable's revisions overlaid, the change from the first under them)
 │   └── reporting/                # status.py (the classifier + every status word and class, a refusal's reason, and failed_criteria — the one reading of a failing criterion the console's blocks and JUnit's lines are written from) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
 │       │                         #      + stats_rows.py (the Statistics rows both tiers render: the report's table and the card; one "changed")
 │       │                         #      + baseline_diff_text.py (`baseline diff`'s Markdown and JSON)
+│       │                         #      + baseline_gallery.py (`baseline plot`'s images, their paths and notes, gallery.html, and its output directory's marker)
+│       │                         #      + images.py (PNGs of figure dicts: the vendored plotly.js in one headless Chromium; the ONE import of Playwright outside tests)
 │       │                         #      + results_summary.py (`summary`'s facts: several runs' verdicts.json by backend/os and label, against a base) + results_summary_text.py (its Markdown and JSON)
 │       │                         #      + console/junit + context_builder + report_suite + dashboard_render + overlay_loader (companion / soft-check overlays) + schema_export (`spec schema`) + theme.py (the token tables both tiers render, one per bundled theme: default and dark)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)

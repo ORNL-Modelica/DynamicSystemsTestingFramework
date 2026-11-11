@@ -5,7 +5,8 @@ reads line by line. `dstf baseline diff` reads them for the reviewer: which
 baselines changed between two revisions of the reference root, and by how
 much. `dstf summary` puts the test results of several runs side by side: the
 branch against the main line, on each simulator and OS. Both print Markdown
-written to be pasted into the pull request.
+written to be pasted into the pull request. `dstf baseline plot` draws the
+changed baselines as images, in one page to send.
 
 ## What changed between two revisions
 
@@ -113,7 +114,12 @@ Change = the biggest move of a tracked variable, old → new, as % of its range.
 ## How a change is measured
 
 Baselines are paired by model id inside each folder, never by file name, so
-a renamed file holding the same data is no change. For each variable the
+a renamed file holding the same data is no change. A baseline's variables
+are paired by name; the ones left over on both sides are then paired by
+label (the expression, else the name) where one variable of each side holds
+it, so a variable renamed with what it reads kept (`PHS.p` becoming
+`unitTests.x[1]` with `PHS.p` as its expression) is compared across the
+rename, and the detail says `renamed PHS.p → unitTests.x[1]`. For each variable the
 change is the largest difference between the two baselines, |new − old|,
 with the new one read on the old one's time grid, as a percent of the old
 baseline's range (of its value where the old baseline is constant: the scale
@@ -137,6 +143,66 @@ baseline scored against that folder's newer one, by the same rule.
 
 `--format json` writes every fact, every test's detail included, with a
 number that is not finite written as `null` beside a flag that says which.
+
+## Plots across commits
+
+`dstf baseline plot` draws what the numbers say: a test's stored baseline at
+two revisions or more, one PNG image per variable, and one `gallery.html`
+that holds every image, to send to a reviewer who is not at the machine.
+
+```console
+$ dstf baseline plot main HEAD --config testing.json -o plots
+$ dstf baseline plot v1.2.0 v1.3.0 HEAD --test NSSS_Test --folder Dymola/linux -o nsss
+```
+
+![A variable at two revisions: on top, the old baseline in grey and the new one in blue; under it, the new minus the old as a percent of the old one's range, peaking near 100 % at 4.7 s; the legend names each revision's date, hash and subject](../img/baseline-plot.png)
+
+On top, the baseline at each revision: the first in grey, the later ones in
+blues, the newest heaviest. Under it, each later revision minus the FIRST,
+read on the first's time grid, as a percent of the first's range: the
+measure `baseline diff` prints as `Change`, so with two revisions the
+panel's peak is that number (of the value for a constant, `% of value`; the
+difference itself where the first is all zero). A point where the difference
+is not finite is a gap in the line and an `×` on the panel's zero line.
+
+Which images:
+
+- **The tests:** by default, those `baseline diff` from the first to the
+  last revision lists as changed or new; `--test` names them instead, each a
+  short name or a full model id. A test it names that did not change between
+  the first and the last revision is drawn too, last in the gallery and
+  without a row.
+- **The folders:** each `<Backend>/<os>` where two revisions hold different
+  values; `--folder` chooses. `--test` and `--folder` come after the
+  revisions.
+- **The revisions:** one where the folder holds no baseline of the test, or
+  one that cannot be read, is skipped, and one whose values equal the
+  revision before it is skipped too. Variables are paired as `baseline diff`
+  pairs them, so a revision that only renamed them is skipped, and a renamed
+  variable is one image. Over 12 revisions in a folder, the first, the last
+  and the 10 that moved most are drawn. Each image's notes say what was
+  skipped or left out, each rename, and the points not finite.
+
+The gallery lists the revisions with their subjects, then each test,
+largest change first, with its row of `baseline diff`'s overview and its
+images. Every image is inside the file and nothing is fetched: it opens
+offline, and it is the one file to attach.
+
+The images are drawn by the plotly.js DSTF ships, in a headless Chromium
+that Playwright starts. Install the `browser` extra and its Chromium once:
+
+```console
+$ pip install 'dynamic-systems-testing-framework[browser]'
+$ python -m playwright install chromium
+```
+
+`-o DIR` is created when it is not there. A directory that holds anything
+this command did not write is refused, so it never mixes into a folder of
+yours (`-o .` included); one it wrote before is written again, its old
+images removed. Without `--test`, more than 300 images are refused: a
+commit that re-accepts a whole library is drawn a test at a time. Each
+refusal is one sentence, exit code 2, before anything is written. git is
+only read.
 
 ## The results of several runs
 
