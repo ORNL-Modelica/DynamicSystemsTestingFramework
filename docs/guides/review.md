@@ -54,7 +54,7 @@ What a `Change` cell can say:
 | `1.8 %` | the largest change of a variable there, as a percent of the old baseline's range |
 | `2.9e-05 % of value` | the old series is constant: the change is a percent of its value |
 | `0.004 absolute` | the old series is zero: the change is the difference itself |
-| `0` | compared, and no stored sample moved |
+| `0 %` | the file changed, but no compared sample of a tracked variable moved; the key line says so when no value turned non-finite and no old point fell outside the new run |
 | `–` | nothing compared: no finite point on either side, or no time |
 | `(+N variables)`, `(−N variables)` | N variables only the newer, or only the older, baseline holds |
 | `(settings)` | the simulation settings, the sampling setting or precision, or the comparison settings changed |
@@ -71,9 +71,10 @@ The `Gap` column holds the largest change of any other folder against the
 `--against` one, chosen as a `Change` cell's is (the largest percent, else
 the largest absolute difference), with the folder it is in when there are
 more than two folders, and `not finite` when any of them holds a
-non-finite point: `0.47 % (OpenModelica/linux)`. The `Solver steps` column
-reads `=` where that folder's baseline did not change, and `–` where it
-records no steps.
+non-finite point: `0.47 % (OpenModelica/linux)`, or `0 % (OpenModelica/linux)`
+where the tools agree on every stored sample. The `Solver steps` column
+reads `±0 %` where the count of steps did not change, `=` where that
+folder's baseline did not change, and `–` where it records no steps.
 
 A baseline written before DSTF recorded its sampling holds none: when the
 newer one does, nothing is compared there, and the detail says `sampling
@@ -163,8 +164,11 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   `–`. NOT RUN is counted in the total and is not a pass. One key line under
   the matrix says this short.
 - **A folded list per cell** names each test that did not pass, its status,
-  and what failed: the first failing criterion that is not advisory, else the
-  last line of its message (a failed simulation's message is a traceback).
+  and what failed: the first failing criterion that is not advisory, else
+  the message from its first OpenModelica error tag (`[translation:error:63]
+  Internal error …`, not the call omc echoes before it), else the message's
+  last line that is not a repeated warning (a failed simulation's message is
+  often a traceback, and its reason comes last).
   With `--base` the base's status is beside it, or `not in main`. Its summary
   line reads `Python/linux, branch: 2 not passing, 1 also fails on main`. A
   list holding a test that is new is open; the others, and the base's own

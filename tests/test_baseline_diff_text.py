@@ -34,7 +34,7 @@ NEW = Commit("b" * 40, "bbbbbbb", "the new one")
 @pytest.mark.parametrize(
     ("value", "text"),
     [
-        (0.0, "0"),
+        (0.0, "0 %"),
         (2.3e-4, "2.3e-04 %"),
         (1.7654e-6, "1.8e-06 %"),
         (0.0088, "0.0088 %"),
@@ -292,8 +292,8 @@ def test_a_non_finite_difference_sorts_first_and_is_said():
         folders=["Dymola/linux"],
     )
     text = _md(diff)
-    assert _overview(text)[2:] == [["`NaN`", "0 (not finite)"], ["`Big`", "90 %"]]
-    assert "| `x` | 0; 2 points not finite from 1.5 s |" in text
+    assert _overview(text)[2:] == [["`NaN`", "0 % (not finite)"], ["`Big`", "90 %"]]
+    assert "| `x` | 0 %; 2 points not finite from 1.5 s |" in text
 
 
 def test_against_adds_a_column_with_the_largest_and_where():
@@ -477,6 +477,68 @@ def test_one_key_line_under_the_table_names_only_the_columns_it_has():
     assert "_" not in lines[-1]
 
 
+KEY_ZERO = "0 % = the file changed but no tracked value moved."
+
+
+def test_a_change_of_exactly_zero_reads_0_percent_and_the_key_line_says_it():
+    """A bare 0 beside = read alike, and the key line did not say it."""
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {"Dymola/linux": _changed("Dymola/linux", _var("x", 0.0))},
+            ),
+            TestDiff(
+                "Lib.B",
+                {"Dymola/linux": _changed("Dymola/linux", _var("x", 2.0))},
+            ),
+        ],
+        folders=["Dymola/linux"],
+    )
+    text = as_markdown(diff)
+    assert _overview(text)[2:] == [["`B`", "2.0 %"], ["`A`", "0 %"]]
+    assert text.rstrip().splitlines()[-1] == f"{KEY_CHANGE} {KEY_ZERO} {KEY_END}"
+
+
+def test_a_gap_of_exactly_zero_reads_0_percent_with_its_folder():
+    """A zero gap is the tools agreeing, not a file that changed: the key
+    line's 0 % sentence is for a Change cell only."""
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {"A/linux": _changed("A/linux", _var("x", 1.0))},
+                against={"B/linux": [_var("x", 0.0)], "C/linux": [_var("x", 0.0)]},
+            )
+        ],
+        folders=["A/linux", "B/linux", "C/linux"],
+        against="A/linux",
+    )
+    text = as_markdown(diff)
+    assert _overview(text)[2][-1] == "0 % (B/linux)"
+    assert KEY_ZERO not in text
+
+
+def test_the_steps_cell_of_an_unchanged_count_reads_plus_minus_0_percent():
+    """``Solver steps 0`` read as zero steps."""
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux", _var("x", 5.0), steps=(200.0, 200.0)
+                    )
+                },
+            )
+        ],
+        folders=["Dymola/linux"],
+    )
+    text = as_markdown(diff)
+    assert _overview(text)[2] == ["`A`", "5.0 %", "±0 %"]
+    assert KEY_ZERO not in text
+
+
 # --- JSON -----------------------------------------------------------------------
 
 
@@ -555,7 +617,7 @@ def test_unchanged_translation_statistics_are_counted_not_listed():
     )
 
 
-def test_a_change_of_nothing_reads_0_with_no_time_or_scale():
+def test_a_change_of_nothing_reads_0_percent_with_no_time_or_scale():
     diff = _diff(
         [
             TestDiff(
@@ -571,7 +633,7 @@ def test_a_change_of_nothing_reads_0_with_no_time_or_scale():
         ],
         folders=["Dymola/linux"],
     )
-    assert "| `x` | 0 |" in _md(diff)
+    assert "| `x` | 0 % |" in _md(diff)
 
 
 def test_a_test_that_could_not_be_compared_is_not_counted_as_changed():
@@ -816,3 +878,34 @@ def test_details_naming_no_listed_test_is_refused_with_its_name():
         "--details: no test this diff lists is named Nope "
         "(a short name such as A, or a full model id)"
     )
+
+
+def _zero_cell_with(*others):
+    """One test whose Dymola/linux cell has x at 0 % beside ``others``."""
+    return _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {"Dymola/linux": _changed("Dymola/linux", _var("x", 0.0), *others)},
+            )
+        ],
+        folders=["Dymola/linux"],
+    )
+
+
+def test_a_move_on_the_absolute_scale_outranks_a_zero_percent():
+    """y went 0 → 0.5 (no range to take a percent of): the cell names that
+    move, not x's 0 %, and the key line does not say nothing moved."""
+    text = as_markdown(_zero_cell_with(_var("y", 0.5, scale="absolute")))
+    assert _overview(text)[2] == ["`A`", "0.5 absolute"]
+    assert KEY_ZERO not in text
+
+
+def test_a_value_that_turned_not_finite_is_no_unmoved_file():
+    text = as_markdown(_zero_cell_with(_var("y", 0.0, non_finite=1, non_finite_at=2.0)))
+    assert KEY_ZERO not in text
+
+
+def test_old_points_outside_the_new_span_are_no_unmoved_file():
+    text = as_markdown(_zero_cell_with(_var("y", 0.0, outside=5)))
+    assert KEY_ZERO not in text

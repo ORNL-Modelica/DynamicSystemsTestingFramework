@@ -505,6 +505,36 @@ class TestWorkerRunTest:
         low = result.error_message.lower()
         assert "not found" in low or "does not exist" in low
 
+    def test_a_failure_whose_warning_repeats_keeps_its_last_line(self, tmp_path):
+        """A large library's run repeated one solver warning past the
+        2,048 characters a message keeps: the line after it, the reason,
+        was cut away."""
+        warning = (
+            "LOG_STDOUT        | warning | The default linear solver fails, "
+            "the fallback solver with total pivoting is started at time "
+            "0.000000. That might raise performance issues, for more "
+            "information use -lv LOG_LS."
+        )
+        reason = "LOG_STDOUT        | error   | the reason the run stopped"
+        messages = "\n".join(
+            ["Simulation execution failed for model: Demo.Example.A"]
+            + [warning] * 40
+            + [reason]
+        )
+        test = _make_test()
+
+        def fake_simulate(expr: str):
+            return {"resultFile": "", "messages": messages, "timeTotal": 0.0}
+
+        worker, _, _ = self._bootstrap_worker(
+            tmp_path, responses={"simulate(": fake_simulate}
+        )
+        result = worker.run_test(test, "test_0001")
+
+        assert result.success is False
+        assert result.error_message.endswith(f"{reason} | no result file produced")
+        assert f"{warning} (repeated 40 times)\n{reason}" in result.error_message
+
     def test_session_exception_triggers_disk_fallback(self, tmp_path):
         """If sendExpression raises but result_res.mat exists + reaches
         stop_time, disk-fallback salvages the success."""

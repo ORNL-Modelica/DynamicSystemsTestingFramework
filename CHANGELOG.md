@@ -22,6 +22,16 @@ this file says when they do.
   tests not passing the base failed too — as Markdown for a pull request, or
   JSON.
 
+### Fixed
+
+- An OpenModelica failure keeps its reason: a line the simulator repeated is
+  said once with its count, and a message still over 2,048 characters keeps
+  its end as well as its beginning. Kept head-first, a run that repeated one
+  solver warning lost the line saying why it stopped.
+- `dstf summary`'s "What failed" names an OpenModelica error from its tag
+  (`[translation:error:63] …`) instead of the call omc echoes before it, and
+  passes over a repeated warning to the line that says why.
+
 ## [1.4.0] - 2026-11-11
 
 ### Added

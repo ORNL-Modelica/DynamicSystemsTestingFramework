@@ -22,6 +22,7 @@ file's.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -163,19 +164,35 @@ def failing_criterion(tree: Any) -> str:
     return ""
 
 
-def _last_line(message: Any) -> str:
+#: An OpenModelica error's tag: ``[translation:error:63]``. What precedes
+#: it is the call omc echoes (``sendExpression(simulate(…), False)']: ``),
+#: which names the model and its settings, never why it failed.
+_ERROR_TAG = re.compile(r"\[\w+:error:\d+\]")
+#: A line said once for a run of it (``backends.common.failure_message``):
+#: a warning repeated on the way, seldom the reason.
+_REPEATED = re.compile(r"\(repeated \d+ times\)$")
+
+
+def _message_reason(message: Any) -> str:
+    """The piece of a failed run's message that says why: from its first
+    OpenModelica error tag to that line's end; else its last non-empty
+    line that is not a repeated one (a traceback's first line says
+    nothing), a repeated line only when nothing else is."""
     if not isinstance(message, str):
         return ""
+    tag = _ERROR_TAG.search(message)
+    if tag:
+        return message[tag.start() :].splitlines()[0].strip()
     lines = [line.strip() for line in message.splitlines() if line.strip()]
-    return lines[-1] if lines else ""
+    said = [line for line in lines if not _REPEATED.search(line)] or lines
+    return said[-1] if said else ""
 
 
 def reason(test: dict) -> str:
     """What a list row says failed, at most :data:`REASON_LENGTH`
-    characters: the first failing criterion; else the message's last
-    non-empty line (a failed simulation's message is a traceback, whose
-    first line says nothing)."""
-    text = failing_criterion(test.get("tree")) or _last_line(test.get("message"))
+    characters from its start: the first failing criterion; else what the
+    message says of why (:func:`_message_reason`)."""
+    text = failing_criterion(test.get("tree")) or _message_reason(test.get("message"))
     if len(text) > REASON_LENGTH:
         text = text[: REASON_LENGTH - 1] + "…"
     return text
