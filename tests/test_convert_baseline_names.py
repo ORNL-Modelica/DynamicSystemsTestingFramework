@@ -161,7 +161,12 @@ def test_second_run_has_nothing_to_do(roots):
     before = _tree(a.parent.parent)
     again = _run(a, b)
     assert again.returncode == 0, again.stderr
-    assert "nothing to do" in again.stdout
+    assert again.stdout.splitlines() == [
+        "0 files renamed, 0 test_id lines deleted, 0 second files deleted, "
+        "0 role folders renamed, 0 companion paths rewritten, "
+        "0 .id_high_water.json deleted",
+        "nothing to do",
+    ]
     assert _tree(a.parent.parent) == before
 
 
@@ -170,7 +175,26 @@ def test_dry_run_writes_nothing(roots):
     before = _tree(a.parent.parent)
     out = _run(a, b, *KEEP, "--dry-run")
     assert out.returncode == 0, out.stderr
-    assert "nothing written" in out.stdout
+    dl, dw, om = a / "Dymola/linux", a / "Dymola/windows", b / "OpenModelica/linux"
+    assert out.stdout.splitlines() == [
+        "4 files renamed, 4 test_id lines deleted, 1 second files deleted, "
+        "3 role folders renamed, 1 companion paths rewritten, "
+        "3 .id_high_water.json deleted",
+        f"  delete {dw}/ref_0005.json (a second file of Lib.A; ref_0001.json is kept)",
+        f"  rename {dl}/ref_0001.json -> ref_6e187be76792.json",
+        f"  rename {dl}/ref_0002.json -> ref_452b135a045c.json",
+        f"  rename {dw}/ref_0001.json -> ref_6e187be76792.json",
+        f"  rename {om}/ref_0003.json -> ref_121677875640.json",
+        f"  rename {dl}/soft_checks/ref_0001 -> ref_6e187be76792",
+        f"  rename {dl}/companions/ref_0002 -> ref_452b135a045c",
+        f"  rename {om}/companions/ref_0003 -> ref_121677875640",
+        f"  edit   {dl}/companions/ref_0002/om.json: path {INTO_B}ref_0003.json "
+        f"-> {INTO_B}ref_121677875640.json",
+        f"  delete {dl}/.id_high_water.json",
+        f"  delete {dw}/.id_high_water.json",
+        f"  delete {om}/.id_high_water.json",
+        "dry run: nothing written",
+    ]
     assert _tree(a.parent.parent) == before
 
 
@@ -179,8 +203,11 @@ def test_a_duplicate_no_keep_names_is_refused(roots):
     before = _tree(a.parent.parent)
     out = _run(a, b)
     assert out.returncode == 1
-    assert "ref_0001.json" in out.stderr and "ref_0005.json" in out.stderr
-    assert "--keep" in out.stderr
+    assert out.stderr.splitlines() == [
+        "REFUSED -- 1 problem(s); nothing written:",
+        f"  {a / 'Dymola/windows'}: Lib.A is held by ref_0001.json, ref_0005.json "
+        "-- name the one to keep with --keep",
+    ]
     assert _tree(a.parent.parent) == before
 
 
@@ -189,8 +216,12 @@ def test_a_companion_path_outside_the_roots_is_refused(roots):
     before = _tree(a.parent.parent)
     out = _run(a, *KEEP)  # libB, which the companion points into, not given
     assert out.returncode == 1
-    assert "companions/ref_0002/om.json" in out.stderr
-    assert "outside the roots given" in out.stderr
+    assert out.stderr.splitlines() == [
+        "REFUSED -- 1 problem(s); nothing written:",
+        f"  {a / 'Dymola/linux/companions/ref_0002/om.json'}: its path "
+        f"{INTO_B}ref_0003.json names a baseline outside the roots given -- give that baseline's root "
+        "in the same run",
+    ]
     assert _tree(a.parent.parent) == before
 
 
@@ -229,5 +260,9 @@ def test_a_one_line_file_is_refused(roots):
     before = _tree(a.parent.parent)
     out = _run(a, b, *KEEP)
     assert out.returncode == 1
-    assert "ref_0004.json" in out.stderr and "one line" in out.stderr
+    assert out.stderr.splitlines() == [
+        "REFUSED -- 1 problem(s); nothing written:",
+        f"  {b / 'OpenModelica/linux/ref_0004.json'}: is one line -- its test_id "
+        "cannot be deleted as a line; reformat the file with one key per line",
+    ]
     assert _tree(a.parent.parent) == before

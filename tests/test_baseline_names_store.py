@@ -250,7 +250,10 @@ def test_a_file_named_for_another_code_is_warned_and_left_out(
         listed = store.list_models()
 
     assert listed == []
-    assert "ref_000000000000.json" in caplog.text and A_FILE in caplog.text
+    assert [r.getMessage() for r in caplog.records] == [
+        f"ref_000000000000.json holds the baseline of {A}, whose file is "
+        f"{A_FILE} — rename or delete it"
+    ]
     assert classify(compare_one(_model(A), _result(A), store)) == NO_REF
 
 
@@ -284,9 +287,9 @@ def test_a_misnamed_file_leaves_its_test_without_a_baseline_or_a_page(tmp_path):
     verdicts = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
     status = {t["model_id"]: t["status"] for t in verdicts["tests"]}
     assert status[RAMP] == "NO_REF"
+    # The other two under their own names; SimpleRamp under its test key.
     pages = {p.name for p in (work / "reports").iterdir() if p.is_dir()}
-    assert "ref_9bbf24e6f8aa" not in pages
-    assert "ref_000000000000" not in pages
+    assert pages == {"ref_f612690ea655", "ref_8cb5c68dba3b", "test_0003"}
 
 
 def test_a_file_whose_model_id_is_no_name_is_warned_and_left_out(
@@ -449,8 +452,10 @@ def test_a_command_over_a_numbered_folder_exits_with_the_sentence(tmp_path):
             ]
         )
     assert code == 2
-    assert "(ref_0003.json) — convert them with scripts/convert_baseline_names.py" in (
-        err.getvalue()
+    assert err.getvalue() == (
+        f"Config error: {folder} holds baselines under the old numbered names "
+        "(ref_0003.json) — convert them with scripts/convert_baseline_names.py, "
+        "see CHANGELOG\n"
     )
 
 
