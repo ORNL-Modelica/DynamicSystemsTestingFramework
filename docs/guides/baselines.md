@@ -109,7 +109,8 @@ dstf checks each file it reads against its name:
   refused whole; convert it first, as the [changelog](../changelog.md)'s
   "How to convert your baseline names" says.
 - A file whose name is not its model's code is warned of and left out: its
-  model reads `NO_REF`.
+  model reads `NO_REF`. So is a file whose name is no baseline name at all,
+  such as a copy left as `ref_<code> copy.json`.
 - A file named for a model that holds another model's baseline, or whose
   `status` is not `active`, fails that test with a sentence
   that names the file, and an accept skips the test.

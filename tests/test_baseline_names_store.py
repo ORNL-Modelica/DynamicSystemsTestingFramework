@@ -454,6 +454,47 @@ def test_a_command_over_a_numbered_folder_exits_with_the_sentence(tmp_path):
     )
 
 
+def test_a_stray_file_name_is_warned_and_left_out_not_called_numbered(
+    sample_models_dir, tmp_path, caplog
+):
+    """Only ``ref_`` and 1 to 11 digits is the old numbered form. A copy
+    left beside a baseline, or a code in capitals, is no baseline name: the
+    folder is read, the good baseline is found, and each stray file is
+    warned of by name and listed as refused."""
+    store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
+    _hand_written(store.ref_dir / A_FILE, A)
+    _hand_written(store.ref_dir / "ref_6e187be76792 copy.json", A)
+    _hand_written(store.ref_dir / "ref_6E187BE76792.json", A)
+    fresh = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
+
+    with caplog.at_level(logging.WARNING, logger="dstf.storage.ref_index"):
+        listed = fresh.list_models()
+
+    said = {
+        name: f"{name} is not a baseline name (ref_ and 12 lowercase hex digits)"
+        " — rename or delete it"
+        for name in ("ref_6E187BE76792.json", "ref_6e187be76792 copy.json")
+    }
+    assert listed == [A]
+    assert fresh.reference_file(A) == store.ref_dir / A_FILE
+    assert [r.getMessage() for r in caplog.records] == list(said.values())
+    assert fresh.index.refused() == said
+
+
+def test_eleven_digits_are_an_old_number(sample_models_dir, tmp_path):
+    config = _config(sample_models_dir, tmp_path / "refs")
+    _hand_written(config.reference_dir / "ref_12345678901.json", A)
+
+    with pytest.raises(ConfigError) as caught:
+        ReferenceStore(config)
+
+    assert str(caught.value) == (
+        f"{config.reference_dir} holds baselines under the old numbered names "
+        "(ref_12345678901.json) — convert them with "
+        "scripts/convert_baseline_names.py, see CHANGELOG"
+    )
+
+
 def test_a_code_of_digits_alone_is_a_name_not_a_number(sample_models_dir, tmp_path):
     store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
     _hand_written(store.ref_dir / HEXE_FILE, HEXE)

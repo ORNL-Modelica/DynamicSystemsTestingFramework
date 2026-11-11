@@ -23,10 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 #: A baseline file's name today: ``ref_`` and the 12 lowercase hex digits of
-#: its model's code. Anything else under ``ref_*.json`` is the old numbered
-#: form (``ref_0001.json``). Never told apart by a digit pattern: a real code
-#: can be all digits (``ref_121677875640.json``, names.py).
+#: its model's code.
 _NAME = re.compile(r"^ref_[0-9a-f]{12}\.json$")
+
+#: The old numbered form (``ref_0001.json``): ``ref_`` and 1 to 11 digits —
+#: never 12, since a real code can be all digits (``ref_121677875640.json``,
+#: names.py). Any other ``ref_*.json`` that is not `_NAME` (a copy,
+#: ``ref_<code> copy.json``; a code in capitals) is a stray file, warned of
+#: and left out, not an old name: the folder is refused whole only for an old
+#: name.
+_OLD_NAME = re.compile(r"^ref_[0-9]{1,11}\.json$")
 
 #: The statuses a baseline may have. ``obsolete`` is not one (owner, Q5 of
 #: the plan of 2026-11-10): a baseline is removed by deleting its file, and a
@@ -120,7 +126,8 @@ class RefIndex:
         #: is there and is no readable baseline: what its model is refused by.
         self._unreadable: dict[str, str] = {}
         #: ``ref_<code>.json`` -> why a listing leaves it out, for each file
-        #: that holds a model whose name it is not (found by a listing).
+        #: that holds a model whose name it is not, and each ``ref_*.json``
+        #: whose name is no baseline name (both found by a listing).
         self._misnamed: dict[str, str] = {}
         self._loaded = False
         self._refuse_old_names()
@@ -135,7 +142,7 @@ class RefIndex:
         if not self.ref_dir.is_dir():
             return
         old = sorted(
-            p.name for p in self.ref_dir.glob("ref_*.json") if not _NAME.match(p.name)
+            p.name for p in self.ref_dir.glob("ref_*.json") if _OLD_NAME.match(p.name)
         )
         if old:
             more = ", …" if len(old) > 1 else ""
@@ -196,8 +203,9 @@ class RefIndex:
 
     def _scan(self) -> None:
         """Read every ``ref_<code>.json`` of the folder. A file whose name is
-        not its model's code is warned of and left out: no lookup opens it,
-        so the model it holds reads as having no baseline."""
+        not its model's code, or no baseline name at all, is warned of and
+        left out: no lookup opens it, so the model it holds reads as having
+        no baseline."""
         self._files.clear()
         self._unreadable.clear()
         self._misnamed.clear()
@@ -205,6 +213,14 @@ class RefIndex:
             for ref_file in sorted(self.ref_dir.glob("ref_*.json")):
                 if _NAME.match(ref_file.name):
                     self._files[ref_file.name] = self._read(ref_file.name)
+                else:
+                    # Not an old name: the folder would have been refused.
+                    said = (
+                        f"{ref_file.name} is not a baseline name (ref_ and 12 "
+                        "lowercase hex digits) — rename or delete it"
+                    )
+                    logger.warning("%s", said)
+                    self._misnamed[ref_file.name] = said
         for name, held in self._files.items():
             if held is not None and baseline_file(held[0]) != name:
                 said = (
@@ -258,7 +274,7 @@ class RefIndex:
         """``{file name: the sentence it is refused by}`` for every file of
         the folder this index reads as no baseline, in name order: one that
         cannot be read, one that holds a model whose name it is not, one
-        whose status is none. The sentences are the ones a lookup refuses a
+        whose name is no baseline name, one whose status is none. The sentences are the ones a lookup refuses a
         test by and a listing warns with — what ``manifest show`` lists."""
         self.ensure_loaded()
         out = {**self._unreadable, **self._misnamed}
