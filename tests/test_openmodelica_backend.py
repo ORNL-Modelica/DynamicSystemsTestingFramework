@@ -285,6 +285,64 @@ class TestOpenModelicaBackendUnit:
         low = result.error_message.lower()
         assert "not found" in low or "does not exist" in low
 
+    def test_a_failure_whose_warning_repeats_keeps_its_last_line(
+        self, tmp_path, monkeypatch
+    ):
+        """A large library's run repeated one solver warning past the
+        2,048 characters a message keeps: the line after it, the reason,
+        was cut away."""
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            backend_name="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        backend = OpenModelicaBackend(cfg)
+        backend.om_config = dataclasses.replace(backend.om_config, omc_path="omc")
+        test = TestModel(
+            model_id="Lib.A",
+            source_file=None,
+            n_vars=0,
+            variable_patterns=[],
+            stop_time=1.0,
+            tolerance=1e-6,
+        )
+        warning = (
+            "LOG_STDOUT        | warning | The default linear solver fails, "
+            "the fallback solver with total pivoting is started at time "
+            "0.000000. That might raise performance issues, for more "
+            "information use -lv LOG_LS."
+        )
+        reason = "LOG_STDOUT        | error   | the reason the run stopped"
+        messages = "\n".join(
+            ["Simulation execution failed for model: Lib.A"] + [warning] * 40 + [reason]
+        )
+        stdout_synth = (
+            "record SimulationResult\n"
+            '    resultFile = "",\n'
+            f'    messages = "{messages}",\n'
+            "    timeTotal = 0.0\n"
+            "end SimulationResult;\n"
+        )
+
+        def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
+            return CompletedProcess(
+                args=cmd, returncode=0, stdout=stdout_synth, stderr=""
+            )
+
+        monkeypatch.setattr(
+            "dstf.backends.openmodelica.backend.subprocess.run", fake_run
+        )
+
+        result = backend.run_single_test(test, test_key="test_0001", index=1, total=1)
+
+        assert result.success is False
+        assert result.error_message.endswith(f"{reason} | no result file produced")
+        assert f"{warning} (repeated 40 times)\n{reason}" in result.error_message
+
 
 # ---------------------------------------------------------------------------
 # A timed-out run read back by a later process (no omc needed)

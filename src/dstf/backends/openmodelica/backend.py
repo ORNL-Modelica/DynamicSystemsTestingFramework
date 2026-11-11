@@ -35,6 +35,7 @@ from ...discovery.test_registry import TestModel, diagnostic_names
 from .. import register
 from ..base import Backend, Diagnosis
 from ..common import result_files
+from ..common.failure_message import failure_message
 from ..common.mat_reader import mat_reaches_time, read_result_mat
 from ..common.proc_output import decode_output
 from ..common.result_variables import (
@@ -361,7 +362,10 @@ class OpenModelicaBackend(Backend):
             err_parts.append(parsed.messages.strip())
         if not parsed.result_file:
             err_parts.append("no result file produced")
-        msg = " | ".join(p for p in err_parts if p)[:2048] or "omc simulation failed"
+        msg = (
+            failure_message(" | ".join(p for p in err_parts if p))
+            or "omc simulation failed"
+        )
 
         # If MSL wasn't installed, surface a clear hint.
         if any("Failed to load package Modelica" in n for n in parsed.error_notices):

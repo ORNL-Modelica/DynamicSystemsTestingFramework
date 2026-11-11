@@ -38,6 +38,7 @@ from pathlib import Path
 from ...config import Config
 from ...discovery.library_state import LibraryChanges, dependency_root, under
 from ...discovery.test_registry import TestModel, diagnostic_names
+from ..common.failure_message import failure_message
 from ..common.mat_reader import mat_reaches_time
 from ..common.proc_kill import live_children
 from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
@@ -887,7 +888,10 @@ class OpenModelicaWorker(Worker):
             err_parts.append(parsed.messages.strip())
         if not parsed.result_file:
             err_parts.append("no result file produced")
-        msg = " | ".join(p for p in err_parts if p)[:2048] or "omc simulation failed"
+        msg = (
+            failure_message(" | ".join(p for p in err_parts if p))
+            or "omc simulation failed"
+        )
 
         if any("Failed to load package Modelica" in n for n in error_notices):
             msg = (
