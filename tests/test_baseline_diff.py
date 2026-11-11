@@ -305,6 +305,84 @@ def test_an_expression_that_changed_under_one_name_is_said(lib):
     assert x.expression == ("a.T", "b.T")
 
 
+def test_a_variable_renamed_with_its_label_kept_is_paired_as_a_rename(lib):
+    """A library renamed every UnitTests variable at one commit (`PHS.p`
+    became `unitTests.x[1]`, its old name now the expression): paired by
+    name, no number crossed that commit. Left over on both sides with one
+    label, the two are one variable."""
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables={"PHS.p": [0, 5, 10], "y": [1, 2, 3]}),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            variables=[
+                ("unitTests.x[1]", "PHS.p", [0, 5.5, 10]),
+                ("y", "", [1, 2, 3]),
+            ],
+        ),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    p, y = test.baselines["Dymola/linux"].variables
+    assert (p.name, p.label, p.status) == ("unitTests.x[1]", "PHS.p", "changed")
+    assert p.renamed == ("PHS.p", "unitTests.x[1]")
+    assert (p.change.largest, p.change.at) == (pytest.approx(5.0), 1.0)
+    # the rename says it: no expression change beside it
+    assert p.expression is None
+    assert (y.name, y.renamed) == ("y", None)
+
+
+def test_a_label_two_variables_of_a_side_share_pairs_nothing(lib):
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("a", "T", [0, 1, 2]), ("b", "T", [0, 1, 3])]),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("c", "T", [0, 1, 2])]),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    got = [(v.name, v.status) for v in test.baselines["Dymola/linux"].variables]
+    assert got == [("a", "removed"), ("b", "removed"), ("c", "new")]
+
+
+def test_a_name_pairs_before_a_label_does(lib):
+    """The name is the identity (D132): `a` is paired by its name although
+    its label moved to `c`; the leftovers `b` and `c` hold other labels."""
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("a", "p", [0, 1, 2]), ("b", "q", [0, 1, 2])]),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("a", "q", [0, 1, 2]), ("c", "p", [0, 1, 2])]),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    got = [
+        (v.name, v.status, v.renamed, v.expression)
+        for v in test.baselines["Dymola/linux"].variables
+    ]
+    assert got == [
+        ("a", "changed", None, ("p", "q")),
+        ("b", "removed", None, None),
+        ("c", "new", None, None),
+    ]
+
+
 def _sampling(setting=500, source=900, stored=3, precision="double"):
     return {
         "setting": setting,

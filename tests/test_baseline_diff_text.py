@@ -909,3 +909,24 @@ def test_a_value_that_turned_not_finite_is_no_unmoved_file():
 def test_old_points_outside_the_new_span_are_no_unmoved_file():
     text = as_markdown(_zero_cell_with(_var("y", 0.0, outside=5)))
     assert KEY_ZERO not in text
+
+
+def test_a_renamed_variable_says_so_in_the_detail_and_only_it_in_json():
+    renamed = VariableDiff(
+        "unitTests.x[1]",
+        "PHS.p",
+        "changed",
+        _change(3.9, at=2.0),
+        renamed=("PHS.p", "unitTests.x[1]"),
+    )
+    kept = _var("y", 1.0)
+    base = BaselineDiff("Dymola/linux", "changed", variables=[renamed, kept])
+    diff = _diff([TestDiff("Lib.A", {"Dymola/linux": base})])
+    text = as_markdown(diff, details=["Lib.A"])
+    assert "| `PHS.p` | 3.9 % (2 s); renamed PHS.p → unitTests.x[1] |" in text
+    assert "| `y` | 1.0 % (1 s) |" in text
+    data = json.loads(as_json(diff))
+    got = data["tests"][0]["baselines"]["Dymola/linux"]["variables"]
+    assert got[0]["renamed"] == ["PHS.p", "unitTests.x[1]"]
+    # a variable paired by its name keeps the JSON it had
+    assert "renamed" not in got[1]

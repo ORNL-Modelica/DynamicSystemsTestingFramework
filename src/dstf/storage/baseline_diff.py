@@ -13,6 +13,13 @@ choosing one is a guess. A file whose body cannot be read is said
 (``cannot be read at <rev> (<why>)``) and the run goes on; it is paired by
 the model id its JSON names, or else by its path.
 
+A baseline's variables are paired by NAME, the variable's identity (D132);
+the ones left over on each side are then paired by label (``expression or
+name``) where that label is held by one variable on each side: a library
+that renamed a variable and kept what it reads (``PHS.p`` became
+``unitTests.x[1]`` with ``PHS.p`` as its expression) is compared across
+the rename, which is said (:attr:`VariableDiff.renamed`).
+
 What counts as a change: the parts that score — ``time``, ``variables``,
 ``diagnostics``, ``simulation``, ``statistics``, ``sampling`` and
 ``comparison`` (its tolerance and overrides change the verdict). Dates, an
@@ -39,7 +46,7 @@ stored samples are compared: what happened between them is not seen.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
@@ -123,6 +130,9 @@ class VariableDiff:
     change: SeriesChange | None = None
     #: (old, new) when the expression under this name changed
     expression: tuple[str, str] | None = None
+    #: (old name, new name) of a variable paired by its label (``name`` is
+    #: the new one); None for one paired by its name
+    renamed: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -344,15 +354,50 @@ def _unreadable_series(time: np.ndarray, values: np.ndarray, side: str) -> str:
     return ""
 
 
+def pair_variables(
+    olds: list[StoredVariable], news: list[StoredVariable]
+) -> list[tuple[StoredVariable | None, StoredVariable | None]]:
+    """Every variable of either side as (old, new), None on the side that
+    lacks it: old's order, then new's. Paired by name; then each left over
+    on both sides with a label (``expression or name``) that one variable
+    of each side holds. A pair of two names is a rename."""
+    old_by, new_by = _by_name(olds), _by_name(news)
+    old_labels = Counter(_label(v) for v in old_by.values())
+    new_labels = Counter(_label(v) for v in new_by.values())
+    left = {
+        _label(v): v
+        for name, v in new_by.items()
+        if name not in old_by and new_labels[_label(v)] == 1
+    }
+    partner: dict[str, StoredVariable] = {}
+    for name, v in old_by.items():
+        label = _label(v)
+        if name not in new_by and old_labels[label] == 1 and label in left:
+            partner[name] = left.pop(label)
+    taken = {v.name for v in partner.values()}
+    out: list[tuple[StoredVariable | None, StoredVariable | None]] = [
+        (v, new_by[name] if name in new_by else partner.get(name))
+        for name, v in old_by.items()
+    ]
+    out += [
+        (None, v)
+        for name, v in new_by.items()
+        if name not in old_by and name not in taken
+    ]
+    return out
+
+
 def _variables(old: Baseline, new: Baseline) -> list[VariableDiff]:
-    """Every variable of either side, by name: old's order, then new's."""
-    olds = _by_name(old.variables)
-    news = _by_name(new.variables)
+    """Every variable of either side, paired by :func:`pair_variables`:
+    old's order, then new's."""
     out: list[VariableDiff] = []
-    for name, ov in olds.items():
-        nv = news.get(name)
+    for ov, nv in pair_variables(old.variables, new.variables):
         if nv is None:
-            out.append(VariableDiff(name, _label(ov), "removed"))
+            assert ov is not None
+            out.append(VariableDiff(ov.name, _label(ov), "removed"))
+            continue
+        if ov is None:
+            out.append(VariableDiff(nv.name, _label(nv), "new"))
             continue
         change = compare_series(
             np.asarray(old.time, float),
@@ -360,17 +405,18 @@ def _variables(old: Baseline, new: Baseline) -> list[VariableDiff]:
             np.asarray(new.time, float),
             np.asarray(nv.values, float),
         )
+        renamed = (ov.name, nv.name) if ov.name != nv.name else None
         said = (ov.expression or "", nv.expression or "")
         out.append(
             VariableDiff(
-                name,
+                nv.name,
                 _label(nv),
                 "changed",
                 change,
-                expression=said if said[0] != said[1] else None,
+                expression=said if said[0] != said[1] and renamed is None else None,
+                renamed=renamed,
             )
         )
-    out += [VariableDiff(n, _label(v), "new") for n, v in news.items() if n not in olds]
     return out
 
 

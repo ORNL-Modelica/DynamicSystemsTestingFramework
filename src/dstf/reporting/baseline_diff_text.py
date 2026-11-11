@@ -354,6 +354,8 @@ def _variable_cell(v: VariableDiff) -> str:
     text = _change_text(v.change)
     if v.expression is not None:
         text += f"; expression {v.expression[0] or '–'} → {v.expression[1] or '–'}"
+    if v.renamed is not None:
+        text += f"; renamed {v.renamed[0]} → {v.renamed[1]}"
     return text
 
 
@@ -665,13 +667,21 @@ def _stat_json(row: StatRow) -> dict:
     }
 
 
+def _variable_json(v: VariableDiff) -> dict:
+    """A variable's facts; ``renamed`` only for a pair made by its label."""
+    out = asdict(v)
+    if v.renamed is None:
+        del out["renamed"]
+    return out
+
+
 def _baseline_json(b: BaselineDiff) -> dict:
     return {
         "status": b.status,
         "old_file": b.old_file,
         "new_file": b.new_file,
         "note": b.note,
-        "variables": [asdict(v) for v in b.variables],
+        "variables": [_variable_json(v) for v in b.variables],
         "settings": [asdict(s) for s in b.settings],
         "samples": [asdict(s) for s in b.samples],
         "sampling_first": asdict(b.sampling_first) if b.sampling_first else None,
@@ -694,7 +704,9 @@ def as_json(diff: Diff) -> str:
             {
                 "model_id": t.model_id,
                 "baselines": {f: _baseline_json(b) for f, b in t.baselines.items()},
-                "against": {f: [asdict(v) for v in vs] for f, vs in t.against.items()},
+                "against": {
+                    f: [_variable_json(v) for v in vs] for f, vs in t.against.items()
+                },
                 "unchanged_in": t.unchanged,
             }
             for t in diff.tests
