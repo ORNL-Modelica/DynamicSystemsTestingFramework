@@ -240,6 +240,58 @@ commit that re-accepts a whole library is drawn a test at a time. Each
 refusal is one sentence, exit code 2, before anything is written. git is
 only read.
 
+## Plots of two runs
+
+`dstf plot` draws two runs or more of the library, test by test, as
+`baseline plot` draws revisions: a fix that still passes the stored
+baselines adds nothing to git to plot, yet a reviewer wants main's run
+beside the branch's. Name each run's work dir with a label, the reference
+first:
+
+```console
+$ dstf plot main=../main/testing_output/MyLib/Dymola/linux branch=testing_output/MyLib/Dymola/linux -o plots
+$ dstf plot main=main-dymola main=main-om fix=fix-dymola fix=fix-om --test NSSS_Test -o nsss
+```
+
+![A variable in two runs: on top, main's run in grey and the branch's in blue; under it, the branch minus main as a percent of main's range, rising to 12 % at 5 s; the legend names each run's label and work dir](../img/run-plot.png)
+
+Each image is one variable: on top, its series in each run, the first in
+grey; under it, each later run minus the FIRST, on the first's time grid,
+as `baseline diff` measures a change. The gallery has a section per test
+and `<Backend>/<os>`, largest change first, each with its `Change`, its
+images, its table of constants and one line naming the variables not
+drawn.
+
+How the runs are read:
+
+- **A run** is a work dir, read as `dstf compare` reads one and never
+  written: its `batch_manifest.json` holds the tests it ran, its
+  `status.json` the backend and os that ran them, and that backend reads the
+  results under the CURRENT `testing.json` and spec — the tests discovery
+  finds and the variables they track. A directory with no
+  `batch_manifest.json`, a `status.json` that names no backend and os, or a
+  run of another library is refused.
+- **Pairing:** runs pair only within one `<Backend>/<os>`, in the order their
+  labels are first given; the first is the one each later run is measured
+  against. A label may repeat, once per `<Backend>/<os>`: one change run on
+  two backends. Every run is a line; none is skipped or left out.
+- **A failed run** is no line, whatever its result file holds, and the
+  section says why (`branch: the run failed (Run recorded timed_out).`). A
+  run that holds no result of the test says `not run`.
+- **The tests:** by default, those with a variable that moved or a run that
+  failed; the others are named in one line (`Nothing moved in 12 tests:
+  …`). `--test` draws the tests it names in full, tables included, even
+  where nothing moved: that is how a passing fix's values are seen.
+- **The variables:** a variable that holds one value at every point of each
+  run is a row of the section's table, never an image: its value in each
+  run at the digits that run holds, and its `Change` from the first run to
+  the last. A variable one run holds is named (`Not drawn, only in main:
+  y.`). A run's numbers are its own, so nothing is read as the rounding of
+  saved digits.
+
+The images, the `-o DIR` rules, the 300-image limit without `--test` and
+the browser it needs are `baseline plot`'s.
+
 ## The results of several runs
 
 A scoring `dstf run` or `dstf compare` writes `verdicts.json` in its work

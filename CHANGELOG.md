@@ -30,6 +30,12 @@ this file says when they do.
   the detail and the JSON (`renamed`) say. Across a library's rename of its
   UnitTests variables, a test read "+N variables, −N variables" and no
   change.
+- `dstf plot LABEL=DIR LABEL=DIR [...] -o DIR`: two runs or more of the
+  library — main's run beside a branch's — as PNG images, one per variable
+  that moved, each later run minus the first as `baseline diff` measures a
+  change, and one `gallery.html` with a table of each test's constants.
+  The runs are only read. The guide "Summarize a change for review" says
+  how.
 - `dstf summary LABEL=DIR...`: several runs' results side by side, a row per
   backend/os and a column per label, passed over run; with `--base`, which
   tests not passing the base failed too — as Markdown for a pull request, or
