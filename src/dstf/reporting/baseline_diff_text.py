@@ -536,7 +536,7 @@ def _plural(n: int, word: str) -> str:
 def _headline(diff: Diff) -> str:
     """The first line: the tests the table lists — all changed, they "have
     new baselines"; else changed, new, removed and not compared apart — the
-    two revisions, and the baselines unchanged."""
+    two revisions, and the baseline files unchanged."""
     tests: Counter[str] = Counter()
     for test in diff.tests:
         statuses = {b.status for b in test.baselines.values()}
@@ -567,7 +567,8 @@ def _headline(diff: Diff) -> str:
                 parts.append(f"{_plural(n, 'test')} {kind}")
         what = ", ".join(parts)
     new = _code(diff.new.short) if diff.new else "files on disk"
-    unchanged = f"{diff.unchanged} unchanged"
+    # files, not tests: one test is a baseline in each of its folders
+    unchanged = f"{_plural(diff.unchanged, 'baseline file')} unchanged"
     if diff.metadata_only:
         unchanged += f", {diff.metadata_only} of them only in metadata"
     return f"**{what}** ({_code(diff.old.short)} → {new}). {unchanged}."

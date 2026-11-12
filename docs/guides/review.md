@@ -33,14 +33,16 @@ git is only read: the command writes nothing to the repository.
 By default, three things:
 
 - **A headline:** how many tests the table lists, the two revisions, and
-  how many baselines did not change. When every listed test changed, it
+  how many baseline files did not change (a file per test and folder, so not
+  a count of tests). When every listed test changed, it
   reads `20 tests have new baselines`; otherwise the new, removed and not
   compared tests are counted apart (`20 tests changed, 2 new, 1 removed`).
   A test is new only when no folder held a baseline of it at the older
   revision, and removed only when none holds one at the newer; a test that
   gained a baseline in one folder and kept it in another is a changed test.
   A file whose numbers are equal and whose dates or key order differ is
-  unchanged, and said apart when there is one (`7 unchanged, 2 of them only in metadata`).
+  unchanged, and said apart when there is one (`7 baseline files unchanged, 2
+  of them only in metadata`).
 - **An overview table:** one row per test, largest change first, a
   `Change, <Backend>/<os>` column per folder, then `Gap to <Backend>/<os>`
   with `--against`, then `Solver steps`: the change in accepted solver
@@ -101,7 +103,7 @@ Markdown is still printed whole, and a note on stderr says its length.
 A short example, two tests of a library in two folders:
 
 ```text
-**2 tests have new baselines** (`ca9352b` → `06bc0b1`). 1 unchanged.
+**2 tests have new baselines** (`ca9352b` → `06bc0b1`). 1 baseline file unchanged.
 
 | Test | Change, Dymola/linux | Change, OpenModelica/linux | Gap to Dymola/linux | Solver steps |
 | --- | --- | --- | --- | --- |
