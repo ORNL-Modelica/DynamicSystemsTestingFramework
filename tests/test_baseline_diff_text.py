@@ -911,6 +911,19 @@ def test_old_points_outside_the_new_span_are_no_unmoved_file():
     assert KEY_ZERO not in text
 
 
+def test_old_points_of_an_event_new_stores_otherwise_are_said_and_no_unmoved_file():
+    """The middle samples of an event the new run stores another number of
+    times are not compared: the detail counts them, and a 0 % beside them
+    is no file whose values did not move."""
+    diff = _zero_cell_with(_var("y", 0.0, uneven=2))
+    assert KEY_ZERO not in as_markdown(diff)
+    text = as_markdown(diff, details=["Lib.A"])
+    assert (
+        "| `y` | 0 %; 2 old points inside an event the new run stores another "
+        "number of times, not compared |"
+    ) in text
+
+
 def test_a_renamed_variable_says_so_in_the_detail_and_only_it_in_json():
     renamed = VariableDiff(
         "unitTests.x[1]",

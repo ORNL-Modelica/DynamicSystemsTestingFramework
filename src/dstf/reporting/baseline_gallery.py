@@ -234,6 +234,11 @@ def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
                 f"{short}: {_points(change.outside)} of the first outside its "
                 "time span, not compared."
             )
+        if change.uneven:
+            notes.append(
+                f"{short}: {_points(change.uneven)} of the first inside an event "
+                "it stores another number of times, not compared."
+            )
     return [cut(note, _NOTE_CHARS) for note in notes]
 
 

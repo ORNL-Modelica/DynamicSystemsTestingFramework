@@ -47,7 +47,9 @@ LIMITS = (
     "new baseline read on the old one's time grid, as a percent of the old "
     "baseline's range (of its value where it is constant; the absolute "
     "difference where it is zero); the old baseline's points outside the "
-    "new one's time span are counted, not compared._"
+    "new one's time span are counted, not compared, and so are the middle "
+    "samples of an event (a time stored three times or more) the new one "
+    "stores another number of times._"
 )
 
 #: A cell of a folder where the test has no baseline on either side.
@@ -126,6 +128,11 @@ def _change_text(change: SeriesChange) -> str:
         )
     if change.outside:
         parts.append(f"{change.outside} old points outside the new time span")
+    if change.uneven:
+        parts.append(
+            f"{change.uneven} old points inside an event the new run stores "
+            "another number of times, not compared"
+        )
     return "; ".join(parts) or "nothing compared"
 
 
@@ -308,14 +315,16 @@ def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]
 def _unmoved(tests: list[TestDiff]) -> bool:
     """Whether a Change cell says a changed file whose tracked values did
     not move (its other bytes did): every compared variable 0, none with a
-    value no longer finite and no old point outside the new span."""
+    value no longer finite and no old point left uncompared (outside the
+    new span, or inside an event the new run stores otherwise)."""
     for test in tests:
         for b in test.baselines.values():
             if b.status != "changed":
                 continue
             changes = [v.change for v in b.variables if v.change is not None]
             if changes and all(
-                c.largest == 0 and not c.non_finite and not c.outside for c in changes
+                c.largest == 0 and not c.non_finite and not c.outside and not c.uneven
+                for c in changes
             ):
                 return True
     return False

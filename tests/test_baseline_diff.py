@@ -102,6 +102,49 @@ def test_at_an_event_old_s_samples_meet_new_s_before_and_after_it():
     assert got.at == 2.0
 
 
+@pytest.mark.parametrize(
+    ("t", "y"),
+    [
+        # one time stored three times, its middle sample at the old value
+        ((0, 1, 2, 2, 2, 3), (0, 0, 0, 0, 1, 1)),
+        # ... and its middle at a value of its own
+        ((0, 1, 2, 2, 2, 3), (0, 0, 0, 7, 1, 1)),
+        # four times, at the start and at the end
+        ((0, 0, 0, 0, 1, 2), (5, 6, 7, 8, 8, 8)),
+        ((0, 1, 2, 2, 2, 2), (0, 1, 2, 3, 4, 5)),
+        # an event of two beside one of three
+        ((0, 1, 1, 2, 2, 2, 3), (0, 0, 1, 1, 4, 2, 2)),
+    ],
+)
+def test_identical_series_with_a_time_stored_three_times_change_by_nothing(t, y):
+    """A time stored three times or more: old's middle samples there met
+    new's value just after it, so an identical series read 100 %."""
+    got = compare_series(_t(*t), _t(*y), _t(*t), _t(*y))
+    assert (got.largest, got.compared, got.outside, got.uneven) == (0.0, len(t), 0, 0)
+
+
+def test_a_middle_sample_of_an_event_meets_new_s_of_the_same_position():
+    # new stores three samples at t=2 too: old's middle meets new's middle
+    t = _t(0, 1, 2, 2, 2, 3)
+    old = _t(0, 0, 0, 5, 10, 10)
+    new = _t(0, 0, 0, 6, 10, 10)
+    got = compare_series(t, old, t, new)
+    assert (got.largest, got.at, got.compared) == (pytest.approx(10.0), 2.0, 6)
+
+
+def test_middle_samples_new_stores_another_number_of_times_are_not_compared():
+    """new stores t=2 twice, old three times: old's first and last there
+    meet new's before and after; its middle has no sample to meet, and is
+    counted, not compared."""
+    got = compare_series(
+        _t(0, 1, 2, 2, 2, 3),
+        _t(0, 0, 0, 5, 10, 10),
+        _t(0, 1, 2, 2, 3),
+        _t(0, 0, 0, 10, 10),
+    )
+    assert (got.largest, got.compared, got.uneven, got.outside) == (0.0, 5, 1, 0)
+
+
 def test_an_event_new_does_not_have_reads_new_s_line():
     # new has no event at t=1: both of old's samples there meet new's 5
     got = compare_series(_t(0, 1, 1, 2), _t(0, 0, 10, 10), _t(0, 2), _t(0, 10))

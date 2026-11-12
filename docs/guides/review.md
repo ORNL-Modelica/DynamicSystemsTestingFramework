@@ -124,9 +124,12 @@ change is the largest difference between the two baselines, |new − old|,
 with the new one read on the old one's time grid, as a percent of the old
 baseline's range (of its value where the old baseline is constant: the scale
 the `nrmse` score divides by; the absolute difference where it is zero), and
-the time it happens. At an event, a time stored twice, the value
+the time it happens. At an event, a time stored twice or more, the value
 just before is compared with the value just before, and the one after with the
-one after.
+one after; a sample between them, at a time stored three times or more, is
+compared with the new one's sample of the same place there when the new
+baseline stores that time as many times, and is otherwise counted, not
+compared.
 
 `--against Dymola/linux` adds the `Gap` column: every other folder's newer
 baseline scored against that folder's newer one, by the same rule.
@@ -136,7 +139,8 @@ baseline scored against that folder's newer one, by the same rule.
 - Only the stored samples are compared: what a run did between two of them
   is not seen.
 - The old baseline's points outside the new one's time span are counted, not
-  compared.
+  compared, and so are the middle samples of an event the new one stores
+  another number of times.
 - A baseline that cannot be read at one revision, or a model held by two
   files of one folder, is named and not compared.
 - It prints facts. Whether a change is acceptable is the reviewer's call.

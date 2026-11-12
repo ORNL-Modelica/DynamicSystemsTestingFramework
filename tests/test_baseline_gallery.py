@@ -220,6 +220,28 @@ def test_a_variable_at_one_revision_or_gone_at_one_says_so(lib):
     assert [t["x"] for t in panel] == [[]]
 
 
+def test_an_image_says_the_points_of_an_event_stored_otherwise_and_leaves_a_gap(lib):
+    _write(
+        lib,
+        f"{LINUX}/ref_a.json",
+        _ref("Lib.A", [("x", "", [0, 0, 5, 10, 10])], time=(0, 1, 1, 1, 2)),
+    )
+    one = lib.commit("an event stored three times")
+    _write(
+        lib,
+        f"{LINUX}/ref_a.json",
+        _ref("Lib.A", [("x", "", [0, 0, 10, 11])], time=(0, 1, 1, 2)),
+    )
+    two = lib.commit("twice")
+    (image,) = plan_images(baseline_history(lib.top / "refs", [one, two]))
+    assert image.notes == [
+        f"{two[:7]}: 1 point of the first inside an event it stores another "
+        "number of times, not compared."
+    ]
+    (panel,) = [t for t in image.figure["data"] if t["yaxis"] == "y2"]
+    assert panel["y"] == [0.0, 0.0, None, 0.0, 10.0]
+
+
 def test_the_gallery_is_one_file_with_no_script_and_nothing_fetched(lib):
     revs = _two(
         lib,

@@ -109,6 +109,10 @@ class SeriesChange:
     compared: int = 0
     #: old's points outside new's time span: counted, not compared
     outside: int = 0
+    #: old's samples in the middle of an event (a time it stores three
+    #: times or more) that new stores another number of times there: no
+    #: sample of new's to meet, so counted, not compared
+    uneven: int = 0
     #: points where a side is NaN or infinite and the two differ
     non_finite: int = 0
     #: old's time of the first of those
@@ -245,12 +249,16 @@ class Difference:
     #: old's points inside new's time span (within one instant)
     inside: np.ndarray
     #: of those, the points where both sides are finite: the compared ones
+    #: (an :attr:`uneven` point is none)
     finite: np.ndarray
     #: of those inside, the points where a side is NaN or infinite and the
     #: two differ
     differs: np.ndarray
     #: why nothing was compared; "" otherwise
     note: str = ""
+    #: of those inside, the middle samples of an event that new stores
+    #: another number of times (:attr:`SeriesChange.uneven`); None: none
+    uneven: np.ndarray | None = None
 
     @property
     def scaled(self) -> np.ndarray:
@@ -268,11 +276,13 @@ def difference_series(
     new_values: np.ndarray,
 ) -> Difference:
     """``new - old`` on old's grid (the module docstring's rule). An event
-    is two samples at one time: old's first sample there meets new's value
-    just before the event, its second new's value just after (a straight
-    line through the step reads a 0.1 % move as 100 %). A point where
-    either side is NaN or infinite is a non-finite difference, unless both
-    hold the same one."""
+    is two samples or more at one time: old's first sample there meets
+    new's value just before the event, its last new's value just after (a
+    straight line through the step reads a 0.1 % move as 100 %), and one
+    between them new's sample of the same place at that time where new
+    stores it as many times — else that one is not compared
+    (:attr:`Difference.uneven`). A point where either side is NaN or
+    infinite is a non-finite difference, unless both hold the same one."""
     to, yo = np.asarray(old_time, float), np.asarray(old_values, float)
     tn, yn = np.asarray(new_time, float), np.asarray(new_values, float)
     note = _unreadable_series(to, yo, "old") or _unreadable_series(tn, yn, "new")
@@ -290,15 +300,33 @@ def difference_series(
         repeats_prev = np.concatenate(([False], np.diff(to) == 0))
         first_of_event = repeats_next & ~repeats_prev
         on_old[first_of_event] = np.interp(to[first_of_event], tn[pre], yn[pre])
+    # Between old's first and last sample at a time stored three times or
+    # more: new's sample of the same place there, else nothing to meet. By
+    # new's value just after, an identical series read 100 %.
+    uneven = np.zeros(to.size, bool)
+    middle = repeats_next & repeats_prev
+    if middle.any():
+        new_runs = dict(zip(*_runs(tn)))
+        for at, (start, count) in zip(*_runs(to)):
+            if count < 3:
+                continue
+            between = slice(start + 1, start + count - 1)
+            partner = new_runs.get(at)
+            if partner is not None and partner[1] == count:
+                on_old[between] = yn[partner[0] + 1 : partner[0] + count - 1]
+            else:
+                uneven[between] = True
 
     # A time within one instant of new's ends is inside its span: a
     # single-precision run ends at float32(11.9) = 11.8999996, and old's
     # samples at 11.9 are that instant, not outside it.
     reach = SAME_INSTANT * max(float(tn[-1] - tn[0]), abs(tn[0]), abs(tn[-1]))
     inside = (to >= tn[0] - reach) & (to <= tn[-1] + reach)
-    finite = inside & np.isfinite(yo) & np.isfinite(on_old)
+    uneven &= inside
+    met = inside & ~uneven
+    finite = met & np.isfinite(yo) & np.isfinite(on_old)
     same = (yo == on_old) | (np.isnan(yo) & np.isnan(on_old))
-    differs = inside & ~finite & ~same
+    differs = met & ~finite & ~same
 
     finite_old = yo[np.isfinite(yo)]
     if finite_old.size:
@@ -311,8 +339,21 @@ def difference_series(
         scale_value, scale = 1.0, "absolute"
 
     with np.errstate(invalid="ignore"):  # inf - inf
-        delta = np.where(inside, on_old - yo, np.nan)
-    return Difference(to, delta, scale, float(scale_value), inside, finite, differs)
+        delta = np.where(met, on_old - yo, np.nan)
+    return Difference(
+        to, delta, scale, float(scale_value), inside, finite, differs, uneven=uneven
+    )
+
+
+def _runs(time: np.ndarray) -> tuple[list[float], list[tuple[int, int]]]:
+    """Each time of ``time`` once, and where its samples start and how many
+    there are (``time`` in order)."""
+    starts = np.flatnonzero(np.concatenate(([True], np.diff(time) != 0)))
+    counts = np.diff(np.append(starts, time.size))
+    return (
+        [float(time[s]) for s in starts],
+        [(int(s), int(c)) for s, c in zip(starts, counts)],
+    )
 
 
 def series_change(d: Difference) -> SeriesChange:
@@ -336,6 +377,7 @@ def series_change(d: Difference) -> SeriesChange:
         at=at,
         compared=int(d.finite.sum()),
         outside=int((~d.inside).sum()),
+        uneven=0 if d.uneven is None else int(d.uneven.sum()),
         non_finite=int(d.differs.sum()),
         non_finite_at=float(d.time[d.differs][0]) if d.differs.any() else None,
     )
