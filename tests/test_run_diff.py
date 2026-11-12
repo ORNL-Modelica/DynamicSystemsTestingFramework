@@ -141,16 +141,18 @@ def test_a_later_run_over_a_longer_span_differs_in_either_order(tmp_path, capsys
     runs = _pair(tmp_path, short, long)
     lines = _diff(capsys, *runs, "--details")
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (time points differ) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (time points differ: 5 in main, 9 in "
+        "fix; 0–4 s vs 0–8 s) | none |"
     )
     assert "Differs in 1 of 1 test: `A`." in lines
     assert (
-        "- Variables: 1 in main, 1 in fix; points: 5 in main (0–4 s), 9 in fix "
-        "(0–8 s); a Change is measured on main's points only"
+        "- Variables: 1 in main, 1 in fix; time points differ: 5 in main, 9 in "
+        "fix; 0–4 s vs 0–8 s; a Change is measured on main's points only"
     ) in lines
     lines = _diff(capsys, f"fix={runs[1][4:]}", f"main={runs[0][5:]}", "--details")
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (time points differ) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (time points differ: 9 in fix, 5 in "
+        "main; 0–8 s vs 0–4 s) | none |"
     )
     assert "| `x` | 0 %; 4 old points outside the new time span |" in lines
 
@@ -164,7 +166,8 @@ def test_a_finer_grid_moved_between_the_reference_s_points_is_not_identical(
     new = {"time": fine, "trajectories": {"x": spiked}}
     lines = _diff(capsys, *_pair(tmp_path, old, new))
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (time points differ) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (time points differ: 5 in main, 9 in "
+        "fix; both 0–4 s) | none |"
     )
 
 
@@ -173,13 +176,57 @@ def test_the_same_point_count_on_a_shifted_grid_is_not_identical(tmp_path, capsy
     new = {"time": [0.0, 1.5, 2.0, 3.0, 4.0], "trajectories": {"x": RAMP}}
     lines = _diff(capsys, *_pair(tmp_path, old, new), "--details")
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (8.3 % of range) (time points differ) "
-        "| none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (8.3 % of range, `x`) (time points "
+        "differ: 1 of 5, by up to 0.5 s) | none |"
     )
     assert (
-        "- Variables: 1 in main, 1 in fix; points: 5 in main (0–4 s), 5 in fix "
-        "(0–4 s); a Change is measured on main's points only"
+        "- Variables: 1 in main, 1 in fix; time points differ: 1 of 5, by up to "
+        "0.5 s; a Change is measured on main's points only"
     ) in lines
+
+
+def test_times_moved_by_a_sliver_are_counted_and_sized(tmp_path, capsys):
+    """As many points over the same span, two of them at another time: the
+    row and the detail say how many and by how much."""
+    t = [0.0, 1e-10, 1.0, 2.0, 3.0, 4.0]
+    moved = [0.0, 1.0025e-10, 1.0, 2.0, 3.0 + 1e-12, 4.0]
+    x = [0.0, 0.0, 1.0, 2.0, 2.0, 2.0]
+    old = {"dtype": "<f8", "time": t, "trajectories": {"x": x}}
+    new = {"dtype": "<f8", "time": moved, "trajectories": {"x": x}}
+    runs = _pair(tmp_path, old, new)
+    lines = _diff(capsys, *runs, "--details")
+    assert _row(lines) == (
+        "| Dymola/linux | 1 of 1 | 1 changed (time points differ: 2 of 6, by up to "
+        "1e-12 s) | none |"
+    )
+    assert (
+        "- Variables: 1 in main, 1 in fix; time points differ: 2 of 6, by up to "
+        "1e-12 s; a Change is measured on main's points only"
+    ) in lines
+    data = json.loads("\n".join(_diff(capsys, *runs, "--format", "json")))
+    points = data["folders"][0]["tests"][0]["points"]
+    assert (points["old"], points["new"], points["times_moved"]) == (6, 6, 2)
+    assert points["moved_by"] == pytest.approx(1e-12, rel=1e-3)
+
+
+def test_time_points_that_differ_in_several_tests_are_counted_by_test(tmp_path, capsys):
+    """The row is the folder's: it counts the tests, and each test's summary
+    line says its own."""
+    old = {"trajectories": {"x": RAMP}}
+    new = {"time": [0.0, 1.5, 2.0, 3.0, 4.0], "trajectories": {"x": RAMP}}
+    a = _run(tmp_path / "main", {A: old, B: old})
+    b = _run(tmp_path / "fix", {A: new, B: new})
+    lines = _diff(capsys, f"main={a}", f"fix={b}", "--details")
+    assert _row(lines) == (
+        "| Dymola/linux | 2 of 2 | 2 changed (8.3 % of range, `x`) (time points "
+        "differ in 2 tests) | none |"
+    )
+    summaries = [line for line in lines if line.startswith("<summary>")]
+    assert summaries == [
+        f"<summary><code>{name}</code> · Dymola/linux — 1 changed (8.3 % of range, "
+        "<code>x</code>) (time points differ: 1 of 5, by up to 0.5 s)</summary>"
+        for name in ("A", "B")
+    ]
 
 
 # --- rounding ----------------------------------------------------------------
@@ -206,7 +253,7 @@ def test_the_same_move_in_a_double_precision_file_is_a_change(tmp_path, capsys):
     new = {"dtype": "<f8", "trajectories": {"x": moved}}
     lines = _diff(capsys, *_pair(tmp_path, old, new))
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (6.0e-06 % of range) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (6.0e-06 % of range, `x`) | none |"
     )
     one_step = [0.0, 1.0, float(np.nextafter(2.0, 3.0)), 3.0, 4.0]
     new = {"dtype": "<f8", "trajectories": {"x": one_step}}
@@ -272,7 +319,7 @@ def test_near_zero_is_a_class_only_with_the_flag(tmp_path, capsys):
     )
     lines = _diff(capsys, *runs)
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (12 % of range) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (12 % of range, `x`) | none |"
     )
     lines = _diff(capsys, *runs, "--near-zero", "1e-4", "--details")
     assert _row(lines) == (
@@ -284,7 +331,7 @@ def test_near_zero_is_a_class_only_with_the_flag(tmp_path, capsys):
     # under a cut the values reach, it is a change again
     lines = _diff(capsys, *runs, "--near-zero", "3e-5")
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (12 % of range) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (12 % of range, `x`) | none |"
     )
 
 
@@ -317,10 +364,13 @@ def test_a_value_not_finite_in_one_run_is_changed_and_listed_first(tmp_path, cap
     runs = _pair(tmp_path, old, new)
     lines = _diff(capsys, *runs, "--details", "--near-zero", "100")
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 near zero; 1 changed (not finite) | none |"
+        "| Dymola/linux | 1 of 1 | 1 near zero; 1 changed (not finite, `der(x)`) "
+        "| none |"
     )
     lines = _diff(capsys, *runs, "--details")
-    assert _row(lines) == ("| Dymola/linux | 1 of 1 | 2 changed (not finite) | none |")
+    assert _row(lines) == (
+        "| Dymola/linux | 1 of 1 | 2 changed (not finite, `der(x)`) | none |"
+    )
     table = lines[lines.index("| Changed | Change |") + 2 :][:2]
     assert table == [
         "| `der(x)` | 0 %; 1 point not finite from 2 s |",
@@ -336,6 +386,25 @@ def test_aliases_that_split_in_the_later_run_are_two_groups(tmp_path, capsys):
     lines = _diff(capsys, *_pair(tmp_path, old, new), "--details")
     assert "- Signals (2 groups): 1 identical, 1 changed" in lines
     assert "| `b` | 12 % of range (2 s) |" in lines
+
+
+def test_the_row_names_the_group_behind_its_change(tmp_path, capsys):
+    """A range of almost nothing in main makes a huge percent: the row says
+    which group it is, by its whole name, and writes the size as a power of
+    ten. The group ranked first is the largest Change, not the first name."""
+    tiny = [0.0, 1e-8, 2e-8, 3e-8, 4e-8]
+    old = {"trajectories": {"b.x": RAMP, "pipe.port_b.dp": tiny}}
+    new = {
+        "trajectories": {
+            "b.x": [1.1 * v for v in RAMP],
+            "pipe.port_b.dp": [0.0, 0.5, 1.0, 1.5, 2.0],
+        }
+    }
+    lines = _diff(capsys, *_pair(tmp_path, old, new))
+    assert _row(lines) == (
+        "| Dymola/linux | 1 of 1 | 2 changed (5.0e+09 % of range, "
+        "`pipe.port_b.dp`) | none |"
+    )
 
 
 # --- parameters ------------------------------------------------------------------
@@ -527,12 +596,12 @@ def test_the_first_label_given_is_the_reference(tmp_path, capsys):
     lines = _diff(capsys, f"main={a}", f"fix={b}")
     assert lines[0] == "**Every variable, main → fix** (1 test)"
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (100 % of range) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (100 % of range, `x`) | none |"
     )
     lines = _diff(capsys, f"fix={b}", f"main={a}")
     assert lines[0] == "**Every variable, fix → main** (1 test)"
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (50 % of range) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (50 % of range, `x`) | none |"
     )
 
 
@@ -624,7 +693,8 @@ def test_test_narrows_the_tests_and_details_with_no_name_folds_the_ones_that_dif
     lines = _diff(capsys, f"main={a}", f"fix={b}", "--details")
     summaries = [line for line in lines if line.startswith("<summary>")]
     assert summaries == [
-        "<summary><code>A</code> · Dymola/linux — 1 changed (100 % of range)</summary>"
+        "<summary><code>A</code> · Dymola/linux — 1 changed (100 % of range, "
+        "<code>x</code>)</summary>"
     ]
     lines = _diff(capsys, f"main={a}", f"fix={b}", "--test", "B")
     assert _row(lines) == "| Dymola/linux | 1 of 1 | all identical | none |"

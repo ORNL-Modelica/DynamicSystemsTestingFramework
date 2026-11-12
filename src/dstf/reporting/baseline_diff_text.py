@@ -80,11 +80,13 @@ GITHUB_LIMIT = 65_536
 def percent(value: float) -> str:
     """A percent as it is printed: ``0 %``; ``2.3e-04 %`` under 0.001 %;
     two significant digits under 10 %, a trailing zero kept (``0.0020 %``,
-    ``0.19 %``, ``1.0 %``); a whole percent above (``157 %``)."""
+    ``0.19 %``, ``1.0 %``); a whole percent above (``157 %``), up to a
+    million percent, from which a power of ten again (``5.1e+09 %``: a
+    first range of almost nothing, and ten digits no one reads)."""
     if value == 0:
         return "0 %"
     size = abs(value)
-    if size < 1e-3:
+    if size < 1e-3 or size >= 1e6:
         return f"{value:.1e} %"
     if size < 10:
         # '#' keeps the trailing zero; 9.96 rounds to "10.", a whole percent

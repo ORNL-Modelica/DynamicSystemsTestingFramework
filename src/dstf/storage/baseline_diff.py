@@ -457,11 +457,16 @@ def agrees_within(old: np.ndarray, new: np.ndarray, step: np.ndarray) -> bool:
     or within ``step`` there, with a subtraction's noise of slack — the
     rounding rule of :func:`with_rounding`, and of ``dstf diff`` with a
     storage step for ``step``. Arrays of one length."""
+    return bool(np.all(agree_at(old, new, step)))
+
+
+def agree_at(old: np.ndarray, new: np.ndarray, step: np.ndarray) -> np.ndarray:
+    """:func:`agrees_within`'s rule at each index: where the two agree."""
     old, new = np.asarray(old, float), np.asarray(new, float)
     with np.errstate(invalid="ignore"):  # inf - inf
         near = np.abs(new - old) <= step * _ONE_STEP
     same = (old == new) | (np.isnan(old) & np.isnan(new))
-    return bool(np.all(near | same))
+    return near | same
 
 
 def compare_series(

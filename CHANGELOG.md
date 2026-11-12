@@ -14,9 +14,22 @@ this file says when they do.
   over EVERY variable of each test's result file, not only the tracked ones —
   per backend/os, the alias groups of signals as identical, within rounding,
   near zero (`--near-zero`), derivatives or changed (by `baseline diff`'s
-  Change), the parameters that differ and the solver's statistics old → new —
-  as Markdown for a pull request or JSON. Reads no testing.json and no
-  library. The guide "Summarize a change for review" says how.
+  Change, the overview naming the group behind the largest), the parameters
+  that differ, how the time points differ (`2 of 1,103, by up to 2.5e-13 s`)
+  and the solver's statistics old → new — as Markdown for a pull request or
+  JSON. Reads no testing.json and no library. The guide "Summarize a change
+  for review" says how.
+
+### Changed
+
+- `dstf baseline diff` (and `dstf diff`) write a percent of a million or more
+  as a power of ten, as they write a tiny one: `5.1e+09 %`, not
+  `5083409191 %`.
+- `dstf summary` with `--base`: a test with no baseline (NO_REF) is no
+  failure. A cell counts it as `no baseline`, never among those that `also
+  fail on` the base, and says how many the base has none of either (`1 also
+  has none on main`); its list names it on a line under the table, not in
+  it. The JSON's `not_new` no longer counts it; `none_on_base` is new.
 
 ### Fixed
 

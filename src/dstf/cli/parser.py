@@ -1451,7 +1451,9 @@ def _add_summary(tree: _Tree, top) -> None:
             failed: the first failing criterion that is not advisory, else
             its message from the first OpenModelica error tag
             ([translation:error:63]), else the message's last line that is
-            not a repeated warning.
+            not a repeated warning. A test with no baseline (NO_REF) is no
+            failure: a cell counts it as "no baseline", and its list names
+            it on a line of its own.
 
             Each DIR is searched for verdicts.json files (not under
             reports/), each one cell; its backend and os are the file's.
@@ -1461,9 +1463,11 @@ def _add_summary(tree: _Tree, top) -> None:
             With --base, a test not passing in a cell is counted as "also fails on <base>"
             when the base label's cell of the same backend/os failed it too
             (FAIL or SIM_FAIL) or ended it with the same status; a base
-            NO_REF or NOT RUN did not fail it. Each list says the base's
-            status beside it. Lists holding a new one are open, the others
-            folded.
+            NO_REF or NOT RUN did not fail it. A test with no baseline is
+            never one that also fails; "also has none on <base>" counts
+            those the base has no baseline for either. Each list says the base's
+            status beside it. Lists holding a new failure are open, the
+            others folded.
 
             Markdown by default; --format json for the same facts as data.
             Nothing is judged: the status words are the files'.

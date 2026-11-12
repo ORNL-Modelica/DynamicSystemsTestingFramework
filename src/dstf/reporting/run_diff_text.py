@@ -16,10 +16,11 @@ JSON is always complete; identical groups are in it as counts.
 
 from __future__ import annotations
 
+import html
 import json
 import math
 from collections import Counter
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import asdict
 from typing import Any
 
@@ -158,10 +159,12 @@ def _largest_changed(tests: list[TestRunDiff]) -> Signal | None:
     return min(changed, key=signal_order, default=None)
 
 
-def signals_cell(tests: list[TestRunDiff]) -> str:
+def signals_cell(tests: list[TestRunDiff], code: Callable[[str], str] = _code) -> str:
     """The varying groups said: ``none``, ``all identical``; else near
     zero, derivatives and rounding counted, then the changed ones with the
-    largest Change (``changed: none`` beside the others)."""
+    largest Change and the group it is of, by its name in ``code``
+    (``3 changed (57 % of range, `a.dp`)``; ``changed: none`` beside the
+    others)."""
     counts = _signal_counts(tests)
     if not tests:
         return _DASH
@@ -189,7 +192,9 @@ def signals_cell(tests: list[TestRunDiff]) -> str:
         and any(not t.same_points for t in tests)
     )
     if not unmeasured:
-        changed += f" ({_size(largest.change)})"
+        # the group named: a huge percent is a range of almost nothing, and
+        # the reader asks of which variable first
+        changed += f" ({_size(largest.change)}, {code(largest.name)})"
     return "; ".join([", ".join(parts), changed]) if parts else changed
 
 
@@ -210,9 +215,28 @@ def constants_cell(tests: list[TestRunDiff]) -> str:
     return ", ".join(parts) or "all identical"
 
 
+def _times_differ(test: TestRunDiff, f: FolderDiff) -> str:
+    """How a test's runs hold other time points: of as many points, how
+    many are at another time and by how much at most (``2 of 1,103, by up
+    to 2.5e-13 s``); else each run's count and the spans (``5 in main, 9 in
+    fix; 0–4 s vs 0–8 s``)."""
+    moved, by = test.times_moved
+    if test.points[0] == test.points[1]:
+        return f"{_count(moved)} of {_count(test.points[0])}, by up to {by:.2g} s"
+    counts = (
+        f"{_count(test.points[0])} in {f.old.label}, "
+        f"{_count(test.points[1])} in {f.new.label}"
+    )
+    (a0, a1), (b0, b1) = test.spans
+    if (a0, a1) == (b0, b1):
+        return f"{counts}; both {a0:g}–{a1:g} s"
+    return f"{counts}; {a0:g}–{a1:g} s vs {b0:g}–{b1:g} s"
+
+
 def _names_mark(tests: list[TestRunDiff], f: FolderDiff) -> list[str]:
     """The names one run's files hold only, counted per side, and whether
-    the runs' files hold other time points."""
+    the runs' files hold other time points: how, for one test; in how many
+    tests, for more."""
     old = sum(len(t.only_old) for t in tests)
     new = sum(len(t.only_new) for t in tests)
     marks = []
@@ -220,8 +244,11 @@ def _names_mark(tests: list[TestRunDiff], f: FolderDiff) -> list[str]:
         marks.append(f"{_plural(old, 'name')} only in {f.old.label}")
     if new:
         marks.append(f"{_plural(new, 'name')} only in {f.new.label}")
-    if any(not t.same_points for t in tests):
-        marks.append("time points differ")
+    moved = [t for t in tests if not t.same_points]
+    if len(moved) == 1:
+        marks.append(f"time points differ: {_times_differ(moved[0], f)}")
+    elif moved:
+        marks.append(f"time points differ in {_count(len(moved))} tests")
     return marks
 
 
@@ -338,7 +365,9 @@ def _group_name(names: list[str]) -> str:
 def _what(test: TestRunDiff, f: FolderDiff) -> str:
     """A test's summary line: its signals, then its parameters where any
     is not identical (``signals all identical; parameters: 1 differs``)."""
-    signals, constants = signals_cell([test]), constants_cell([test])
+    # a <summary> is HTML: a name in it is <code>, as the test's is
+    signals = signals_cell([test], _html_code)
+    constants = constants_cell([test])
     if constants in ("all identical", NONE):
         said = signals
     elif signals in ("all identical", NONE):
@@ -361,14 +390,19 @@ def _count_line(title: str, counts: dict[str, int], always: str) -> str:
     return f"- {title} ({_count(n)} group{'s' * (n != 1)}): {classes}"
 
 
-def _points(test: TestRunDiff, side: int, label: str) -> str:
-    """A run's time points, and their span where the runs' times differ
-    beyond rounding."""
-    said = f"{_count(test.points[side])} in {label}"
-    if not test.same_points:
-        first, last = test.spans[side]
-        said += f" ({first:g}–{last:g} s)"
-    return said
+def _html_code(text: str) -> str:
+    return f"<code>{html.escape(text)}</code>"
+
+
+def _points(test: TestRunDiff, f: FolderDiff) -> str:
+    """The runs' time points: each run's count; where their times differ
+    beyond rounding, the words of the overview's mark."""
+    if test.same_points:
+        return (
+            f"points: {_count(test.points[0])} in {f.old.label}, "
+            f"{_count(test.points[1])} in {f.new.label}"
+        )
+    return f"time points differ: {_times_differ(test, f)}"
 
 
 def _measured_on(test: TestRunDiff, label: str) -> str:
@@ -442,8 +476,8 @@ def _detail(f: FolderDiff, test: TestRunDiff) -> list[str]:
         f"`{test.model_id}`",
         "",
         f"- Variables: {_count(test.variables[0])} in {old}, "
-        f"{_count(test.variables[1])} in {new}; points: {_points(test, 0, old)}, "
-        f"{_points(test, 1, new)}{_measured_on(test, old)}",
+        f"{_count(test.variables[1])} in {new}; {_points(test, f)}"
+        f"{_measured_on(test, old)}",
     ]
     if test.only_old:
         lines.append(f"- Only in {old}: {_list(test.only_old)}")
@@ -573,7 +607,14 @@ def _test_json(t: TestRunDiff) -> dict:
     return {
         "model_id": t.model_id,
         "variables": {"old": t.variables[0], "new": t.variables[1]},
-        "points": {"old": t.points[0], "new": t.points[1]},
+        "points": {
+            "old": t.points[0],
+            "new": t.points[1],
+            # of as many points: how many times differ beyond rounding, and
+            # by how much at most (s)
+            "times_moved": t.times_moved[0],
+            "moved_by": t.times_moved[1],
+        },
         "only_old": t.only_old,
         "only_new": t.only_new,
         "signals": {
