@@ -153,8 +153,9 @@ number that is not finite written as `null` beside a flag that says which.
 ## Plots across commits
 
 `dstf baseline plot` draws what the numbers say: a test's stored baseline at
-two revisions or more, one PNG image per variable, and one `gallery.html`
-that holds every image, to send to a reviewer who is not at the machine.
+two revisions or more, one PNG image per variable that moved, and one
+`gallery.html` that holds every image, to send to a reviewer who is not at
+the machine.
 
 ```console
 $ dstf baseline plot main HEAD --config testing.json -o plots
@@ -182,12 +183,21 @@ Which images:
   values; `--folder` chooses. `--test` and `--folder` come after the
   revisions.
 - **The revisions:** one where the folder holds no baseline of the test, or
-  one that cannot be read, is skipped, and one whose values equal the
-  revision before it is skipped too. Variables are paired as `baseline diff`
-  pairs them, so a revision that only renamed them is skipped, and a renamed
-  variable is one image. Over 12 revisions in a folder, the first, the last
-  and the 10 that moved most are drawn. Each image's notes say what was
-  skipped or left out, each rename, and the points not finite.
+  one that cannot be read, is skipped, and one whose values equal the last
+  revision drawn is skipped too (`Skipped: 999ddfb (equal to 6ad1765)`).
+  Variables are paired as `baseline diff` pairs them, so a revision that
+  only renamed them is skipped, and a renamed variable is one image, its
+  rename said at the revision that made it. Over 12 revisions in a folder,
+  the first, the last and the 10 that moved most are drawn. Each image's
+  notes say what was skipped or left out, each rename, where a variable
+  added later was first stored, and the points not compared or not finite.
+- **The variables:** each one that moved: at some later revision its change
+  against the first revision that holds it is not nothing (a point that
+  moved, a difference not finite, or a point not compared). A variable added
+  or removed between the revisions moved only where it then changed. The
+  others are named in one line under the folder (`Not drawn, unchanged: a,
+  b, c`, cut past ten names), and a folder where nothing moved draws
+  nothing.
 
 The gallery lists the revisions with their subjects, then each test,
 largest change first, with its row of `baseline diff`'s overview and its
@@ -205,7 +215,8 @@ $ python -m playwright install chromium
 `-o DIR` is created when it is not there. A directory that holds anything
 this command did not write is refused, so it never mixes into a folder of
 yours (`-o .` included); one it wrote before is written again, its old
-images removed. Without `--test`, more than 300 images are refused: a
+images removed. Without `--test`, more than 300 images (of the variables
+that moved) are refused: a
 commit that re-accepts a whole library is drawn a test at a time. Each
 refusal is one sentence, exit code 2, before anything is written. git is
 only read.

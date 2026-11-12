@@ -20,7 +20,8 @@ from dstf.reporting.baseline_gallery import (
     stale_files,
     write_marker,
 )
-from dstf.storage.baseline_history import Revision, baseline_history
+from dstf.storage.baseline_diff import diff_baselines
+from dstf.storage.baseline_history import MAX_KEPT, Revision, baseline_history
 from dstf.storage.git_revisions import Commit
 
 LINUX = "Dymola/linux"
@@ -82,7 +83,7 @@ def test_an_image_per_variable_at_a_safe_path_named_by_its_label(lib):
             f"{LINUX}/ref_a.json": (
                 "Lib.Pkg.A",
                 [("unitTests.x[1]", "pipe.T[3]", [0, 1, 2]), ("y", "", [1, 2, 3])],
-                [("unitTests.x[1]", "pipe.T[3]", [0, 1, 3]), ("y", "", [1, 2, 3])],
+                [("unitTests.x[1]", "pipe.T[3]", [0, 1, 3]), ("y", "", [1, 2, 4])],
             )
         },
     )
@@ -189,35 +190,181 @@ def test_an_image_says_what_was_skipped_renamed_and_not_finite(lib):
     history = _history_with_notes(lib)
     (image,) = plan_images(history)
     rev = history.revisions
+    # the rename is the skipped revision's: it renamed and changed nothing
     assert image.notes == [
-        f"Skipped: {rev[1].commit.short} (values equal to the revision before).",
-        f"Renamed PHS.p → unitTests.x[1] at {rev[2].commit.short}.",
+        f"Skipped: {rev[1].commit.short} (equal to {rev[0].commit.short}).",
+        f"Renamed PHS.p → unitTests.x[1] at {rev[1].commit.short}.",
         f"{rev[2].commit.short}: 1 point not finite from 1 s (× on the panel).",
     ]
     assert image.figure["layout"]["annotations"][-1]["text"] == "<br>".join(image.notes)
 
 
-def test_a_variable_at_one_revision_or_gone_at_one_says_so(lib):
+def test_skipped_revisions_are_said_with_the_revision_each_equals(lib):
+    _write(lib, f"{LINUX}/ref_a.json", _ref("Lib.A", [("x", "", [0, 1, 2])]))
+    revs = [lib.commit("one")]
+    for values in ([0, 1, 2], [0, 1, 3], [0, 1, 3], [0, 1, 3], [0, 1, 4]):
+        _write(lib, f"{LINUX}/ref_a.json", _ref("Lib.A", [("x", "", values)]))
+        revs.append(lib.commit(f"x {values}"))
+    (image,) = plan_images(baseline_history(lib.top / "refs", revs))
+    one, two, three, four, five, _ = (r[:7] for r in revs)
+    assert image.notes[0] == (
+        f"Skipped: {two} (equal to {one}); {four}, {five} (equal to {three})."
+    )
+
+
+def test_only_a_variable_that_moved_is_drawn_the_rest_named_in_one_line(lib):
+    """A variable that is the same at every revision, or is stored at one
+    only, is no image: the gallery names them under the folder."""
     revs = _two(
         lib,
         {
             f"{LINUX}/ref_a.json": (
                 "Lib.A",
-                [("x", "", [0, 1, 2]), ("gone", "", [5, 5, 5])],
-                [("x", "", [0, 1, 3]), ("added", "", [1, 2, 3])],
+                [
+                    ("x", "", [0, 1, 2]),
+                    ("same", "", [1, 2, 3]),
+                    ("gone", "", [5, 5, 5]),
+                ],
+                [
+                    ("x", "", [0, 1, 3]),
+                    ("same", "", [1, 2, 3]),
+                    ("added", "", [1, 2, 3]),
+                ],
             )
         },
     )
-    images = {i.label: i for i in plan_images(baseline_history(lib.top / "refs", revs))}
-    one, two = (r[:7] for r in revs)
-    assert images["added"].notes == [f"Only at {two}: nothing to measure against."]
-    assert images["gone"].notes == [
-        f"Not stored at {two}.",
-        f"Only at {one}: nothing to measure against.",
+    history = baseline_history(lib.top / "refs", revs)
+    images = plan_images(history)
+    assert [i.path for i in images] == ["A/Dymola-linux/01-x.png"]
+    page = gallery_html(history, images, {i.path: b"png" for i in images})
+    assert '<p class="said">Not drawn, unchanged: same, gone, added</p>' in page
+
+
+def test_the_unchanged_line_is_cut_past_ten_names(lib):
+    names = [f"v{i:02d}" for i in range(13)]
+    revs = _two(
+        lib,
+        {
+            f"{LINUX}/ref_a.json": (
+                "Lib.A",
+                [("x", "", [0, 1, 2])] + [(n, "", [1, 2, 3]) for n in names],
+                [("x", "", [0, 1, 3])] + [(n, "", [1, 2, 3]) for n in names],
+            )
+        },
+    )
+    history = baseline_history(lib.top / "refs", revs)
+    images = plan_images(history)
+    page = gallery_html(history, images, {i.path: b"png" for i in images})
+    shown = ", ".join(names[:10])
+    assert f'<p class="said">Not drawn, unchanged: {shown} … and 3 more</p>' in page
+
+
+def test_a_folder_where_nothing_moved_draws_nothing_and_says_so(lib):
+    """A variable added is a new baseline, and the folder holds two
+    revisions of different values; but nothing it held moved."""
+    revs = _two(
+        lib,
+        {
+            f"{LINUX}/ref_a.json": (
+                "Lib.A",
+                [("x", "", [0, 1, 2])],
+                [("x", "", [0, 1, 2]), ("added", "", [1, 2, 3])],
+            )
+        },
+    )
+    history = baseline_history(lib.top / "refs", revs)
+    assert plan_images(history) == []
+    page = gallery_html(history, [], {})
+    section = page[page.index("<h3>Dymola/linux</h3>") :]
+    assert section.startswith(
+        '<h3>Dymola/linux</h3>\n<p class="said">Not drawn, unchanged: x, added</p>'
+    )
+
+
+def test_a_test_with_no_folder_drawn_says_none_holds_two_different_values(lib):
+    """Named with --folder, a test that changed only in another folder: no
+    folder DRAWN holds two revisions of different values (the other does)."""
+    _write(lib, f"{LINUX}/ref_a.json", _ref("Lib.A", [("x", "", [0, 1, 2])]))
+    _write(lib, "Dymola/windows/ref_a.json", _ref("Lib.A", [("x", "", [0, 1, 2])]))
+    one = lib.commit("one")
+    _write(lib, "Dymola/windows/ref_a.json", _ref("Lib.A", [("x", "", [0, 1, 5])]))
+    two = lib.commit("two")
+    history = baseline_history(lib.top / "refs", [one, two], folders=[LINUX])
+    page = gallery_html(history, plan_images(history), {})
+    assert (
+        '<p class="said">No folder drawn holds two revisions with different values.</p>'
+    ) in page
+
+
+def test_a_variable_first_stored_later_is_measured_from_there_and_says_so(lib):
+    _write(lib, f"{LINUX}/ref_a.json", _ref("Lib.A", [("x", "", [0, 1, 2])]))
+    one = lib.commit("one")
+    _write(
+        lib,
+        f"{LINUX}/ref_a.json",
+        _ref("Lib.A", [("x", "", [0, 1, 3]), ("y", "", [0, 5, 10])]),
+    )
+    two = lib.commit("two")
+    _write(
+        lib,
+        f"{LINUX}/ref_a.json",
+        _ref("Lib.A", [("x", "", [0, 1, 3]), ("y", "", [0, 6, 10])]),
+    )
+    three = lib.commit("three")
+    images = {
+        i.label: i
+        for i in plan_images(baseline_history(lib.top / "refs", [one, two, three]))
+    }
+    assert images["y"].notes == [
+        f"First stored at {two[:7]}; nothing earlier to measure against."
     ]
-    # its panel is drawn empty, under the same x axis
-    panel = [t for t in images["added"].figure["data"] if t["yaxis"] == "y2"]
-    assert [t["x"] for t in panel] == [[]]
+
+
+def test_a_variable_first_stored_at_a_revision_left_out_says_so(lib):
+    """Over twelve kept, y first appears at one that is left out (its step
+    is the smallest): its first line is a later revision's."""
+    ends = [100, 110, 110.001, *(110 + 50 * k for k in range(1, MAX_KEPT - 1))]
+    revs = []
+    for k, end in enumerate(ends):
+        variables = [("x", "", [0, 100, end])]
+        if k >= 2:
+            variables.append(("y", "", [0, 1, 2 + k]))
+        _write(lib, f"{LINUX}/ref_a.json", _ref("Lib.A", variables))
+        revs.append(lib.commit(f"step {k}"))
+    history = baseline_history(lib.top / "refs", revs)
+    (folder,) = history.tests[0].folders
+    assert [r.commit.sha for r in folder.thinned] == [revs[2]]
+    images = {i.label: i for i in plan_images(history)}
+    assert (
+        f"First stored at {revs[2][:7]}, which is left out; measured from "
+        f"{revs[3][:7]}."
+    ) in images["y"].notes
+
+
+def test_the_panel_drawn_peaks_at_the_change_and_marks_each_point_not_finite(lib):
+    """The figure plan_images builds, read where it is drawn (the y2
+    traces): its line peaks at the Change baseline diff prints, and its
+    markers sit at the times the difference is not finite."""
+    time = (0.0, 1.0, 2.0, 3.0)
+    _write(lib, f"{LINUX}/ref_a.json", _ref("Lib.A", [("x", "", [0, 5, 10, 10])], time))
+    one = lib.commit("one")
+    _write(
+        lib,
+        f"{LINUX}/ref_a.json",
+        _ref("Lib.A", [("x", "", [0, 6, float("nan"), 10])], time),
+    )
+    two = lib.commit("two")
+    root = lib.top / "refs"
+    ((x,),) = [
+        b.variables for b in diff_baselines(root, one, two).tests[0].baselines.values()
+    ]
+    (image,) = plan_images(baseline_history(root, [one, two]))
+    panel = [t for t in image.figure["data"] if t["yaxis"] == "y2"]
+    (line,) = [t for t in panel if t["mode"] == "lines"]
+    (marks,) = [t for t in panel if t["mode"] == "markers"]
+    assert max(abs(y) for y in line["y"] if y is not None) == x.change.largest == 10.0
+    assert marks["x"] == [2.0]
+    assert x.change.non_finite_at == 2.0
 
 
 def test_an_image_says_the_points_of_an_event_stored_otherwise_and_leaves_a_gap(lib):

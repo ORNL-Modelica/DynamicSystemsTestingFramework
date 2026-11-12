@@ -1857,20 +1857,23 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
         summary="Draw baselines across revisions as images and a page",
         description="""
             Draw a test's stored baseline at two git revisions of the
-            reference root or more, one PNG image per variable: on top, the
-            baseline at each revision; under it, each later revision minus
-            the FIRST, on the first's time grid, as a percent of the first's
-            range — the measure `baseline diff` prints as Change, so for two
-            revisions a panel's peak is that number. Every image is also
-            inline in one gallery.html, with each test's row of `baseline
-            diff`'s overview: one file to send to a reviewer.
+            reference root or more, one PNG image per variable that moved:
+            on top, the baseline at each revision; under it, each later
+            revision minus the FIRST, on the first's time grid, as a percent
+            of the first's range (% of value where the first is constant;
+            the absolute difference where it is all zero) — the measure
+            `baseline diff` prints as Change, so for two revisions a panel's
+            peak is that number. Every image is also inline in one
+            gallery.html, with each test's row of `baseline diff`'s overview
+            and, per folder, one line naming the variables not drawn because
+            they did not change: one file to send to a reviewer.
 
             By default the tests are those `baseline diff` REV1 to the last
             revision lists as changed or new, in every <Backend>/<os> folder
             where two revisions hold different values; --test and --folder
             choose. A revision where the baseline is absent, cannot be read,
-            or holds the values of the one before is skipped, and each image
-            says so. Variables are paired by name, then by label, so a
+            or holds the values of the last one drawn is skipped, and each
+            image says so. Variables are paired by name, then by label, so a
             renamed variable is one line. Over 12 revisions in a folder, the
             first, the last and the 10 that moved most are drawn.
 
@@ -1881,7 +1884,8 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
             -o DIR is created when it is not there. A directory holding
             anything this command did not write is refused; one it wrote
             before is rewritten, its old images removed. Without --test,
-            over 300 images are refused. git is only read.
+            over 300 images (of the variables that moved) are refused. git
+            is only read.
 
             Exit code: 0 when the images and the page are written; 2 when
             git cannot answer, no reference root is named, a --test or

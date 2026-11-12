@@ -177,7 +177,97 @@ def test_a_revision_equal_in_values_to_the_last_kept_is_skipped(lib):
     )
     _, folder = _one(baseline_history(lib.top / "refs", revs))
     assert [r.commit.sha for r in folder.kept] == [revs[0], revs[2]]
-    assert [r.commit.sha for r in folder.equal] == [revs[1]]
+    assert [(r.commit.sha, to.commit.sha) for r, to in folder.equal] == [
+        (revs[1], revs[0])
+    ]
+
+
+def test_a_revision_is_skipped_as_equal_to_the_last_kept_one(lib):
+    """Measured against the last revision KEPT: not the first (the third
+    equals the second, not the first), and not the revision just before
+    (the fifth follows one that cannot be read)."""
+    revs = _commits(
+        lib, [("x", "", [0, 1, 2])], [("x", "", [0, 1, 3])], [("x", "", [0, 1, 3])]
+    )
+    _write(lib, "{ not json")
+    broken = lib.commit("broken")
+    revs += [broken, *_commits(lib, [("x", "", [0, 1, 3])])]
+    _, folder = _one(baseline_history(lib.top / "refs", revs))
+    assert [r.commit.sha for r in folder.kept] == revs[:2]
+    assert [(r.commit.sha, to.commit.sha) for r, to in folder.equal] == [
+        (revs[2], revs[1]),
+        (revs[4], revs[1]),
+    ]
+
+
+def test_a_rename_at_a_skipped_revision_is_said_at_that_revision(lib):
+    """The revision that only renamed is skipped as equal; the rename is
+    its, not the next drawn revision's."""
+    revs = _commits(
+        lib,
+        [("PHS.p", "", [0, 1, 2])],
+        [("unitTests.x[1]", "PHS.p", [0, 1, 2])],
+        [("unitTests.x[1]", "PHS.p", [0, 1, 3])],
+    )
+    _, folder = _one(baseline_history(lib.top / "refs", revs))
+    (p,) = folder.variables
+    assert p.renames == [(revs[1][:7], "PHS.p", "unitTests.x[1]")]
+    assert [line.name for line in p.lines] == ["PHS.p", "unitTests.x[1]"]
+
+
+def test_a_rename_at_a_revision_left_out_is_said_at_that_revision(lib):
+    """Over twelve kept, the ones left out are followed too: a rename at
+    one of them is its own."""
+    # 100, 110, then a step of 0.001 at the rename (the smallest move: the
+    # one left out), then steps of 50
+    ends = [100, 110, 110.001, *(110 + 50 * k for k in range(1, MAX_KEPT - 1))]
+    steps = [
+        [("PHS.p", "", [0, 100, end])]
+        if k < 2
+        else [("unitTests.x[1]", "PHS.p", [0, 100, end])]
+        for k, end in enumerate(ends)
+    ]
+    revs = _commits(lib, *steps)
+    _, folder = _one(baseline_history(lib.top / "refs", revs))
+    assert [r.commit.sha for r in folder.thinned] == [revs[2]]
+    (p,) = folder.variables
+    assert p.renames == [(revs[2][:7], "PHS.p", "unitTests.x[1]")]
+
+
+def test_a_variable_moved_only_where_a_later_line_differs_from_its_first(lib):
+    """What `baseline plot` draws: a variable whose change against its
+    first line is not nothing at some later line, or whose difference is
+    not finite. One added, removed or equal throughout did not move."""
+    revs = _commits(
+        lib,
+        [("same", "", [1, 2, 3]), ("gone", "", [1, 1, 1]), ("back", "", [0, 1, 2])],
+        [("same", "", [1, 2, 3]), ("new", "", [5, 5, 5]), ("back", "", [0, 1, 9])],
+        [
+            ("same", "", [1, 2, 3]),
+            ("new", "", [5, 5, 5]),
+            ("back", "", [0, 1, 2]),
+            ("nan", "", [math.nan, 1, 1]),
+        ],
+    )
+    history = baseline_history(lib.top / "refs", revs)
+    _, folder = _one(history)
+    moved = {v.label: v.moved for v in folder.variables}
+    # back moved at the second and moved back at the third: it moved
+    assert moved == {
+        "same": False,
+        "gone": False,
+        "back": True,
+        "new": False,
+        "nan": False,
+    }
+    assert history.images == 1
+
+
+def test_a_value_turned_not_finite_is_a_move(lib):
+    revs = _commits(lib, [("x", "", [0, 1, 2])], [("x", "", [0, math.nan, 2])])
+    _, folder = _one(baseline_history(lib.top / "refs", revs))
+    (x,) = folder.variables
+    assert (x.lines[1].change.largest, x.moved) == (0.0, True)
 
 
 def test_a_folder_with_one_distinct_revision_draws_nothing(lib):

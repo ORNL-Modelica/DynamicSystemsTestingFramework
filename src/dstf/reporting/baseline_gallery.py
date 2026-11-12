@@ -1,6 +1,7 @@
 """``dstf baseline plot``'s images and page, from the facts of
-:mod:`dstf.storage.baseline_history`: one figure per variable of each
-folder drawn (:func:`plan_images`, at a path safe on every OS), and one
+:mod:`dstf.storage.baseline_history`: one figure per variable that moved,
+of each folder drawn (:func:`plan_images`, at a path safe on every OS; the
+others named in one line of the page), and one
 self-contained ``gallery.html`` (:func:`gallery_html`) — every PNG inline
 as a data URI, no script, nothing fetched — to send to a reviewer.
 
@@ -52,6 +53,8 @@ SUBJECT_CHARS, LABEL_CHARS, TEST_CHARS = 48, 40, 100
 _FOLDER_CHARS = 40
 #: One note under an image.
 _NOTE_CHARS = 150
+#: The most variables the line of those not drawn names.
+_UNCHANGED_SHOWN = 10
 #: Names no file may have on Windows, whatever its extension.
 _RESERVED = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
@@ -119,7 +122,8 @@ def _test_folders(model_ids: Iterable[str]) -> dict[str, str]:
 
 
 def plan_images(history: History) -> list[Image]:
-    """Every image of the history, with its figure and its notes."""
+    """Every image of the history — one per variable that moved — with its
+    figure and its notes."""
     folders = _test_folders(t.model_id for t in history.tests)
     out = []
     for test in history.tests:
@@ -127,8 +131,9 @@ def plan_images(history: History) -> list[Image]:
             where = f"{folders[test.model_id]}/" + _safe(
                 folder.folder.replace("/", "-"), _FOLDER_CHARS, dots=False
             )
-            width = max(2, len(str(len(folder.variables))))
-            for n, variable in enumerate(folder.variables, start=1):
+            moved = [v for v in folder.variables if v.moved]
+            width = max(2, len(str(len(moved))))
+            for n, variable in enumerate(moved, start=1):
                 name = f"{n:0{width}d}-{_safe(variable.label, LABEL_CHARS, dots=False)}"
                 notes = _notes(folder, variable)
                 out.append(
@@ -185,14 +190,20 @@ def _points(n: int) -> str:
 
 
 def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
-    """What the image does not show by itself: the revisions skipped or
-    left out, a rename, a revision that stores no such variable, and each
-    line's points not compared."""
+    """What the image does not show by itself: the revisions skipped (each
+    with the one it equals) or left out, a rename, a revision that stores
+    no such variable, where it was first stored, and each line's points not
+    compared."""
     notes = []
     if folder.equal:
-        notes.append(
-            f"Skipped: {_shorts(folder.equal)} (values equal to the revision before)."
+        groups: dict[Revision, list[Revision]] = {}
+        for skipped, kept in folder.equal:
+            groups.setdefault(kept, []).append(skipped)
+        said = "; ".join(
+            f"{_shorts(skipped)} (equal to {kept.commit.short})"
+            for kept, skipped in groups.items()
         )
+        notes.append(f"Skipped: {said}.")
     if folder.absent:
         notes.append(f"No baseline at {_shorts(folder.absent)}.")
     notes += [
@@ -209,13 +220,20 @@ def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
         f"Renamed {old} → {new} at {short}." for short, old, new in variable.renames
     ]
     held = {line.revision for line in variable.lines}
-    first = folder.kept.index(variable.lines[0].revision)
-    missing = [r for r in folder.kept[first:] if r not in held]
+    start = variable.lines[0].revision
+    after_first = folder.kept.index(start)
+    missing = [r for r in folder.kept[after_first:] if r not in held]
     if missing:
         notes.append(f"Not stored at {_shorts(missing)}.")
-    if len(variable.lines) == 1:
-        only = variable.lines[0].revision.commit.short
-        notes.append(f"Only at {only}: nothing to measure against.")
+    if variable.first_stored not in (None, start):
+        notes.append(
+            f"First stored at {variable.first_stored.commit.short}, which is left "
+            f"out; measured from {start.commit.short}."
+        )
+    elif after_first:
+        notes.append(
+            f"First stored at {start.commit.short}; nothing earlier to measure against."
+        )
     for line in variable.lines[1:]:
         change, short = line.change, line.revision.commit.short
         assert change is not None
@@ -326,11 +344,14 @@ def _section(test, row, header, diff, steps, images, pngs) -> list[str]:
         )
     if not test.folders:
         out.append(
-            '<p class="said">No folder holds two different baselines of it at '
-            "these revisions.</p>"
+            '<p class="said">No folder drawn holds two revisions with different '
+            "values.</p>"
         )
     for folder in test.folders:
         out.append(f"<h3>{_e(folder.folder)}</h3>")
+        unchanged = [v.label for v in folder.variables if not v.moved]
+        if unchanged:
+            out.append(f'<p class="said">{_e(_not_drawn(unchanged))}</p>')
         for image in images:
             if image.test != test.model_id or image.folder != folder.folder:
                 continue
@@ -344,6 +365,15 @@ def _section(test, row, header, diff, steps, images, pngs) -> list[str]:
             )
     out.append("</section>")
     return out
+
+
+def _not_drawn(labels: list[str]) -> str:
+    """The one line naming a folder's variables that did not move."""
+    shown = ", ".join(labels[:_UNCHANGED_SHOWN])
+    more = len(labels) - _UNCHANGED_SHOWN
+    return f"Not drawn, unchanged: {shown}" + (
+        f" … and {more} more" if more > 0 else ""
+    )
 
 
 # --- the output directory --------------------------------------------------------

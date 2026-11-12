@@ -12,16 +12,19 @@ variable by name, then by label (:func:`~.baseline_diff.keyed_many`,
 Per test and folder, a revision is skipped where the baseline is absent;
 where it cannot be read, or the folder holds two baselines of the test, it
 is skipped with its reason; and where its time and values equal the last
-kept revision's (variables paired by the same rule) it is skipped and
-counted. A folder is drawn only where two or more revisions are kept. Over
-:data:`MAX_KEPT`, the first, the last and the ones that moved most against
-the revision before them are kept, and the others are said.
+kept revision's (variables paired by the same rule) it is skipped, with
+the revision it equals. A folder is drawn only where two or more revisions
+are kept. Over :data:`MAX_KEPT`, the first, the last and the ones that
+moved most against the revision before them are kept, and the others are
+said.
 
 Per variable: its series at each kept revision that holds it, and each
 later one's :func:`~.baseline_diff.difference_series` against the first
 that holds it — ``baseline diff``'s Change measure itself, so for two
 revisions the largest finite point of a variable's difference is the
-Change that command prints.
+Change that command prints. A variable is followed through every revision
+read, the skipped ones too, so a rename is said at the revision that made
+it. Only a variable that moved is drawn (:attr:`VariableHistory.moved`).
 """
 
 from __future__ import annotations
@@ -86,13 +89,41 @@ class VariableHistory:
     """One variable across the kept revisions that hold it."""
 
     lines: list[Line]
-    #: (revision's short hash, old name, new name) of each rename
+    #: (revision's short hash, old name, new name) of each rename, at the
+    #: revision that made it (one skipped or left out included)
     renames: list[tuple[str, str, str]] = field(default_factory=list)
+    #: the first revision read that stores it: a revision left out (over
+    #: :data:`MAX_KEPT`) before its first line, else its first line's
+    first_stored: Revision | None = None
 
     @property
     def label(self) -> str:
         """The newest line's label."""
         return self.lines[-1].label
+
+    @property
+    def moved(self) -> bool:
+        """Whether a later line differs from its first: a change that is
+        not nothing — a compared point that moved, a difference not finite,
+        a point not compared, or a series that cannot be. A variable added
+        or removed between revisions moved only where it then changed."""
+        return any(
+            line.change is not None and not unchanged(line.change)
+            for line in self.lines[1:]
+        )
+
+
+def unchanged(change: SeriesChange) -> bool:
+    """A change of nothing: every point compared, none moved, no difference
+    that is not finite (``baseline diff``'s ``0 %`` of a file whose values
+    did not move)."""
+    return (
+        not change.note
+        and not change.non_finite
+        and not change.outside
+        and not change.uneven
+        and change.largest in (None, 0.0)
+    )
 
 
 @dataclass(frozen=True)
@@ -101,8 +132,8 @@ class FolderHistory:
 
     folder: str
     kept: list[Revision]
-    #: skipped: time and values equal to the last kept revision's
-    equal: list[Revision]
+    #: skipped, with the last kept revision its time and values equal
+    equal: list[tuple[Revision, Revision]]
     #: skipped: no baseline of the test in the folder
     absent: list[Revision]
     #: skipped, with the reason
@@ -133,8 +164,8 @@ class History:
 
     @property
     def images(self) -> int:
-        """One per variable of each folder drawn."""
-        return sum(len(f.variables) for t in self.tests for f in t.folders)
+        """One per variable that moved, of each folder drawn."""
+        return sum(v.moved for t in self.tests for f in t.folders for v in f.variables)
 
 
 def baseline_history(
@@ -225,7 +256,9 @@ def _folder(
     """One test's baseline in one folder across the revisions, or None
     where fewer than two revisions are kept."""
     kept: list[tuple[Revision, Baseline]] = []
-    equal: list[Revision] = []
+    #: every revision read, in order: what a variable is followed through
+    read: list[tuple[Revision, Baseline]] = []
+    equal: list[tuple[Revision, Revision]] = []
     absent: list[Revision] = []
     unreadable: list[tuple[Revision, str]] = []
     for revision, files in per_revision:
@@ -241,13 +274,15 @@ def _folder(
             if raw not in decoded:
                 decoded[raw] = decode_reference(parse_body(raw)).baseline
             baseline = decoded[raw]
+            read.append((revision, baseline))
             if kept and _same_values(kept[-1][1], baseline):
-                equal.append(revision)
+                equal.append((revision, kept[-1][0]))
             else:
                 kept.append((revision, baseline))
     if len(kept) < 2:
         return None
     kept, thinned = _thin(kept)
+    drawn = {revision for revision, _ in kept}
     return FolderHistory(
         folder=folder,
         kept=[revision for revision, _ in kept],
@@ -255,7 +290,7 @@ def _folder(
         absent=absent,
         unreadable=unreadable,
         thinned=thinned,
-        variables=_variables(kept),
+        variables=_variables([(r, b, r in drawn) for r, b in read]),
     )
 
 
@@ -317,34 +352,42 @@ def _move(a: Baseline, b: Baseline) -> tuple[int, float, float]:
 
 @dataclass
 class _Chain:
-    """A variable as it is followed across the kept revisions: its newest
-    stored entry, and its entries so far."""
+    """A variable as it is followed across the revisions read: its newest
+    stored entry, the first revision that stores it, and its entries at the
+    kept revisions so far."""
 
     newest: StoredVariable
+    first: Revision
     held: list[tuple[Revision, Baseline, StoredVariable]]
     renames: list[tuple[str, str, str]] = field(default_factory=list)
 
 
-def _variables(kept: list[tuple[Revision, Baseline]]) -> list[VariableHistory]:
-    """Each variable of any kept revision: each revision paired against the
-    newest entry of every variable seen so far (so a rename at any revision
-    is followed), in the order they first appear."""
+def _variables(
+    read: list[tuple[Revision, Baseline, bool]],
+) -> list[VariableHistory]:
+    """Each variable of any kept revision: each revision read — kept (True)
+    or skipped — paired against the newest entry of every variable seen so
+    far, so a rename is followed and said at the revision that made it, in
+    the order they first appear. A line is a kept revision's only."""
     chains: list[_Chain] = []
-    for revision, baseline in kept:
+    for revision, baseline, kept in read:
         newest = {id(c.newest): c for c in chains}
         pairs = pair_variables([c.newest for c in chains], baseline.variables)
         for old, new in pairs:
             if new is None:
                 continue
+            here = [(revision, baseline, new)] if kept else []
             if old is None:
-                chains.append(_Chain(new, [(revision, baseline, new)]))
+                chains.append(_Chain(new, revision, here))
                 continue
             chain = newest[id(old)]
             if old.name != new.name:
                 chain.renames.append((revision.commit.short, old.name, new.name))
             chain.newest = new
-            chain.held.append((revision, baseline, new))
-    return [VariableHistory(_lines(c.held), c.renames) for c in chains]
+            chain.held += here
+    return [
+        VariableHistory(_lines(c.held), c.renames, c.first) for c in chains if c.held
+    ]
 
 
 def _lines(held: list[tuple[Revision, Baseline, StoredVariable]]) -> list[Line]:

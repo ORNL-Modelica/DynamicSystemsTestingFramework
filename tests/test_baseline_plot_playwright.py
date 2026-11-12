@@ -73,7 +73,7 @@ def lib(tmp_path):
     (folder / "ref_b.json").write_text(_ref("Lib.B", [("z", [0, 1, 2])]))
     repo.one = repo.commit("one")
     (folder / "ref_a.json").write_text(
-        _ref("Lib.A", [("x", [0, 6, 10]), ("y", [1, 2, 3])])
+        _ref("Lib.A", [("x", [0, 6, 10]), ("y", [1, 2, 4])])
     )
     (folder / "ref_b.json").write_text(_ref("Lib.B", [("z", [0, 1, 3])]))
     repo.two = repo.commit("two")

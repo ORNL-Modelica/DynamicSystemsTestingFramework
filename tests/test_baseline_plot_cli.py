@@ -5,6 +5,8 @@ themselves are `test_baseline_plot_playwright.py`'s."""
 import json
 import sys
 
+import pytest
+
 from conftest import GitRepo
 from dstf.cli.main import main
 
@@ -23,15 +25,21 @@ def _ref(model_id, variables):
     )
 
 
-def _lib(tmp_path, variables=1):
-    """A repository whose ReferenceResults changed Lib.A between two commits."""
+def _lib(tmp_path, variables=1, unchanged=0):
+    """A repository whose ReferenceResults changed Lib.A between two commits:
+    ``variables`` that moved, and ``unchanged`` ones that did not."""
     repo = GitRepo(tmp_path / "lib")
     folder = repo.top / "ReferenceResults" / "Dymola" / "linux"
     folder.mkdir(parents=True)
     names = [f"x{i}" for i in range(variables)]
-    (folder / "ref_a.json").write_text(_ref("Lib.A", [(n, [0, 5, 10]) for n in names]))
+    same = [(f"same{i}", [1, 2, 3]) for i in range(unchanged)]
+    (folder / "ref_a.json").write_text(
+        _ref("Lib.A", [(n, [0, 5, 10]) for n in names] + same)
+    )
     repo.one = repo.commit("one")
-    (folder / "ref_a.json").write_text(_ref("Lib.A", [(n, [0, 6, 10]) for n in names]))
+    (folder / "ref_a.json").write_text(
+        _ref("Lib.A", [(n, [0, 6, 10]) for n in names] + same)
+    )
     repo.two = repo.commit("two")
     repo.root = repo.top / "ReferenceResults"
     return repo
@@ -68,6 +76,39 @@ def test_over_300_images_without_test_is_refused(tmp_path, capsys):
         "folders (--folder) to draw"
     )
     assert not out.exists()
+
+
+def test_over_300_images_in_the_folders_named_is_refused_too(tmp_path, capsys):
+    lib = _lib(tmp_path, variables=301)
+    out = tmp_path / "out"
+    assert _plot(lib, out, "--folder", "Dymola/linux") == 2
+    assert (
+        capsys.readouterr()
+        .err.strip()
+        .startswith("Error: 301 images to draw, over 300:")
+    )
+    assert not out.exists()
+
+
+def test_the_300_counted_are_the_images_drawn_not_the_variables(
+    tmp_path, capsys, monkeypatch
+):
+    """Only a variable that moved is drawn: 5 that moved beside 400 that
+    did not are 5 images, past the guard to the browser (none here)."""
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    lib = _lib(tmp_path, variables=5, unchanged=400)
+    assert _plot(lib, tmp_path / "out") == 2
+    assert "drawing images needs Playwright" in capsys.readouterr().err
+
+
+def test_the_help_names_every_scale_the_panel_may_read(capsys):
+    """A constant reads its change as % of its value, a series of zeros as
+    the difference itself: the help said only "% of range"."""
+    with pytest.raises(SystemExit):
+        main(["baseline", "plot", "--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    assert "% of value" in text
+    assert "the absolute difference" in text
 
 
 def test_a_directory_holding_a_user_s_file_is_refused_and_kept(tmp_path, capsys):

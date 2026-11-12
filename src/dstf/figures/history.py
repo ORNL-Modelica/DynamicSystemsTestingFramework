@@ -139,19 +139,6 @@ def history_figure(
                 }
             )
 
-    if not any(t["yaxis"] == "y2" for t in data):
-        # a variable at one revision: the panel is drawn empty, so the x
-        # axis stays under it
-        data.append(
-            {
-                "type": "scatter",
-                "x": [],
-                "y": [],
-                "xaxis": "x",
-                "yaxis": "y2",
-                "showlegend": False,
-            }
-        )
     legend_h = LEGEND_ROW * len(traces) + _LEGEND_PAD
     notes_h = _NOTE_LINE * len(notes)
     bottom = _X_AXIS + legend_h + notes_h + 12
