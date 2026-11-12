@@ -72,6 +72,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 64 | Header-only ref scan on index build | L | Low | `RefIndex` reads and `json.loads` a whole `ref_<code>.json` just to pull `model_id` + `status` off the top: one file per lookup, every file of the folder for a listing (`list_models`, which every run's `reference_manifest.json` calls). On a suite the size of TRANSFORM (~326 baselines, each carrying full trajectories) that is tens of MB parsed on every CLI invocation that touches the store. Options: a tiny sidecar index written on accept, or a streaming/partial parse that stops after the metadata keys (`json` has no partial-parse entry point, so this means a hand-rolled scan or `ijson`). Noticed during the D-7 docstring sweep (Phase C-ii) — the comment there claimed a first-few-KB read that the code never did. |
 | 65 | Baseline-history overlay (before/after across commits) | M | High | Owner, 2026-10-30, from TRANSFORM PR #118: one plot per variable overlaying a test's baseline as it was at several git revisions of the reference root (e.g. unfixed → after each fix commit → final). It made a multi-commit model fix reviewable at a glance, and the overlay surfaced a t=0 value (DRACS riser flow −502 kg/s, a start-up transient gone within 5 ms) that the per-commit pass/fail runs had not. Done that day by hand: a ~50-line matplotlib script reading `git show <rev>:ReferenceResults/.../ref_NNNN.json` (a revision before D165 names the file by that number; after, by `ref_<code>.json`), plus a `compare --reference-root <copy with old refs>`. Fits DSTF rather than a skill: the overlay loader (#50, #51) already renders companions and sibling-backend refs, so git revisions are one more overlay source. Sketch: `--overlay-rev REV[,REV...]` on `compare --report` / `author` (label = commit subject), and a `dstf plot --rev ...` that needs no run. Open: static PNG export for viewing away from the machine (per-test reports load Plotly from `reports/`). |
 | 66 | ~~Browser tests split across CI runners~~ | L | Medium | **DONE** — the `browser` job is a matrix of three runners, each running `--shard I/3`: every third selected test, dealt round-robin in collection order (`tests/_shard.py`), so no list of files has to be balanced or kept in step. See the entry below. |
+| 67 | `dstf plot`: a failed run's partial result | L | Medium | A failed run is never drawn today. It could be drawn up to where it stopped, labelled with the stop time, its Change measured only over the time both runs hold. **Deferred** by the owner, 2026-11-12. See the entry below. |
 
 **Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
 
@@ -2355,3 +2356,10 @@ a page can break from a change elsewhere.
 `tests/_shard.py` keeps every N-th test after `-m` has selected, so the slow
 tests, which sit together in a few files, spread over the three runners, and a
 new test file needs no edit to the workflow.)
+
+**`dstf plot` could draw a failed run's partial result (owner, 2026-11-12;
+deferred).** Today a run that failed is never a line: its result file may
+hold a partial run, and `dstf plot` names the failure and draws nothing of
+it. It could draw that partial result up to where the run stopped, the line
+labelled with the stop time, and measure its Change only over the time both
+runs hold. Status: deferred by the owner on 2026-11-12.
