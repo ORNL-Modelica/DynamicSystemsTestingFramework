@@ -128,7 +128,7 @@ def test_the_headline_counts_the_listed_tests_new_and_removed_apart():
     first = as_markdown(diff).splitlines()[0]
     assert first == (
         "**1 test changed, 1 new, 1 removed** (`aaaaaaa` → `bbbbbbb`). "
-        "7 unchanged, 2 of them only in metadata."
+        "7 baseline files unchanged, 2 of them only in metadata."
     )
 
 
@@ -141,7 +141,7 @@ def test_the_headline_of_changed_tests_only_says_they_have_new_baselines():
         metadata_only=0,
     )
     assert as_markdown(diff).splitlines()[0] == (
-        "**2 tests have new baselines** (`aaaaaaa` → `bbbbbbb`). 7 unchanged."
+        "**2 tests have new baselines** (`aaaaaaa` → `bbbbbbb`). 7 baseline files unchanged."
     )
 
 
@@ -149,7 +149,7 @@ def test_against_the_files_on_disk_the_headline_says_so():
     diff = _diff([], new=None)
     assert as_markdown(diff).splitlines()[0] == (
         "**No baseline changed** (`aaaaaaa` → files on disk). "
-        "7 unchanged, 2 of them only in metadata."
+        "7 baseline files unchanged, 2 of them only in metadata."
     )
 
 
@@ -654,7 +654,7 @@ def test_a_test_that_could_not_be_compared_is_not_counted_as_changed():
     )
     assert as_markdown(diff).splitlines()[0] == (
         "**1 test not compared** (`aaaaaaa` → `bbbbbbb`). "
-        "7 unchanged, 2 of them only in metadata."
+        "7 baseline files unchanged, 2 of them only in metadata."
     )
 
 
@@ -909,3 +909,37 @@ def test_a_value_that_turned_not_finite_is_no_unmoved_file():
 def test_old_points_outside_the_new_span_are_no_unmoved_file():
     text = as_markdown(_zero_cell_with(_var("y", 0.0, outside=5)))
     assert KEY_ZERO not in text
+
+
+def test_old_points_of_an_event_new_stores_otherwise_are_said_and_no_unmoved_file():
+    """The middle samples of an event the new run stores another number of
+    times are not compared: the detail counts them, and a 0 % beside them
+    is no file whose values did not move."""
+    diff = _zero_cell_with(_var("y", 0.0, uneven=2))
+    assert KEY_ZERO not in as_markdown(diff)
+    text = as_markdown(diff, details=["Lib.A"])
+    assert (
+        "| `y` | 0 %; 2 old points inside an event the new run stores another "
+        "number of times |"
+    ) in text
+
+
+def test_a_renamed_variable_says_so_in_the_detail_and_only_it_in_json():
+    renamed = VariableDiff(
+        "unitTests.x[1]",
+        "PHS.p",
+        "changed",
+        _change(3.9, at=2.0),
+        renamed=("PHS.p", "unitTests.x[1]"),
+    )
+    kept = _var("y", 1.0)
+    base = BaselineDiff("Dymola/linux", "changed", variables=[renamed, kept])
+    diff = _diff([TestDiff("Lib.A", {"Dymola/linux": base})])
+    text = as_markdown(diff, details=["Lib.A"])
+    assert "| `PHS.p` | 3.9 % (2 s); renamed PHS.p → unitTests.x[1] |" in text
+    assert "| `y` | 1.0 % (1 s) |" in text
+    data = json.loads(as_json(diff))
+    got = data["tests"][0]["baselines"]["Dymola/linux"]["variables"]
+    assert got[0]["renamed"] == ["PHS.p", "unitTests.x[1]"]
+    # a variable paired by its name keeps the JSON it had
+    assert "renamed" not in got[1]

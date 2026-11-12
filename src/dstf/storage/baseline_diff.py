@@ -13,6 +13,13 @@ choosing one is a guess. A file whose body cannot be read is said
 (``cannot be read at <rev> (<why>)``) and the run goes on; it is paired by
 the model id its JSON names, or else by its path.
 
+A baseline's variables are paired by NAME, the variable's identity (D132);
+the ones left over on each side are then paired by label (``expression or
+name``, read without white space) where that label is held by one variable
+on each side: a library that renamed a variable and kept what it reads
+(``PHS.p`` became ``unitTests.x[1]`` with ``PHS.p`` as its expression) is
+compared across the rename, which is said (:attr:`VariableDiff.renamed`).
+
 What counts as a change: the parts that score — ``time``, ``variables``,
 ``diagnostics``, ``simulation``, ``statistics``, ``sampling`` and
 ``comparison`` (its tolerance and overrides change the verdict). Dates, an
@@ -39,7 +46,7 @@ stored samples are compared: what happened between them is not seen.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
@@ -102,6 +109,10 @@ class SeriesChange:
     compared: int = 0
     #: old's points outside new's time span: counted, not compared
     outside: int = 0
+    #: old's samples in the middle of an event (a time it stores three
+    #: times or more) that new stores another number of times there: no
+    #: sample of new's to meet, so counted, not compared
+    uneven: int = 0
     #: points where a side is NaN or infinite and the two differ
     non_finite: int = 0
     #: old's time of the first of those
@@ -123,6 +134,9 @@ class VariableDiff:
     change: SeriesChange | None = None
     #: (old, new) when the expression under this name changed
     expression: tuple[str, str] | None = None
+    #: (old name, new name) of a variable paired by its label (``name`` is
+    #: the new one); None for one paired by its name
+    renamed: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -198,6 +212,17 @@ class Diff:
     metadata_only: int
 
 
+def short_name(model_id: str) -> str:
+    """A test's short name: the last part of its model id (a path, for a
+    file whose model id cannot be read, whole)."""
+    return model_id.rsplit(".", 1)[-1] if "/" not in model_id else model_id
+
+
+def folder_order(folder: str) -> tuple[str, ...]:
+    """The order folders are listed in: backends alphabetical, then OSes."""
+    return tuple(folder.split("/"))
+
+
 def machine_dependent(row: StatRow) -> bool:
     """A statistic that measures the machine, not the solver: every row the
     statistics rows class as a time (the ``timing`` section, ``cpu_time*``,
@@ -208,43 +233,100 @@ def machine_dependent(row: StatRow) -> bool:
 # --- one series against another ---------------------------------------------
 
 
-def compare_series(
+@dataclass(frozen=True)
+class Difference:
+    """``new - old`` at each of old's points, paired as :func:`compare_series`
+    pairs them: the series a change is the largest of, and what the change
+    panel of ``baseline plot`` draws."""
+
+    #: old's time
+    time: np.ndarray
+    #: new read on old's grid, minus old; NaN at old's points outside new's span
+    delta: np.ndarray
+    scale: Scale
+    #: what a percent is of: old's range or value (1.0 for ``absolute``)
+    scale_value: float
+    #: old's points inside new's time span (within one instant)
+    inside: np.ndarray
+    #: of those, the points where both sides are finite: the compared ones
+    #: (an :attr:`uneven` point is none)
+    finite: np.ndarray
+    #: of those inside, the points where a side is NaN or infinite and the
+    #: two differ
+    differs: np.ndarray
+    #: why nothing was compared; "" otherwise
+    note: str = ""
+    #: of those inside, the middle samples of an event that new stores
+    #: another number of times (:attr:`SeriesChange.uneven`); None: none
+    uneven: np.ndarray | None = None
+
+    @property
+    def scaled(self) -> np.ndarray:
+        """``delta`` as a change is said: a percent of the scale, or the
+        absolute difference."""
+        if self.scale == "absolute":
+            return self.delta
+        return self.delta / self.scale_value * 100
+
+
+def difference_series(
     old_time: np.ndarray,
     old_values: np.ndarray,
     new_time: np.ndarray,
     new_values: np.ndarray,
-) -> SeriesChange:
-    """How much ``new`` changed against ``old`` (the module docstring's
-    rule). An event is two samples at one time: old's first sample there
-    meets new's value just before the event, its second new's value just
-    after (a straight line through the step reads a 0.1 % move as 100 %).
-    A point where either side is NaN or infinite is a non-finite
-    difference, unless both hold the same one."""
+) -> Difference:
+    """``new - old`` on old's grid (the module docstring's rule). An event
+    is two samples or more at one time: old's first sample there meets
+    new's value just before the event, its last new's value just after (a
+    straight line through the step reads a 0.1 % move as 100 %), and one
+    between them new's sample of the same place at that time where new
+    stores it as many times — else that one is not compared
+    (:attr:`Difference.uneven`). A point where either side is NaN or
+    infinite is a non-finite difference, unless both hold the same one."""
     to, yo = np.asarray(old_time, float), np.asarray(old_values, float)
     tn, yn = np.asarray(new_time, float), np.asarray(new_values, float)
     note = _unreadable_series(to, yo, "old") or _unreadable_series(tn, yn, "new")
     if note:
-        return SeriesChange(largest=None, scale="absolute", at=None, note=note)
+        none = np.zeros(0, bool)
+        return Difference(to[:0], to[:0], "absolute", 1.0, none, none, none, note)
 
     # new on old's grid: after an event by default, before it for the first
     # of old's samples at a time it holds twice
     post = np.concatenate((np.diff(tn) != 0, [True]))
     pre = np.concatenate(([True], np.diff(tn) != 0))
-    on_old = np.interp(to, tn[post], yn[post])
-    repeats_next = np.concatenate((np.diff(to) == 0, [False]))
-    repeats_prev = np.concatenate(([False], np.diff(to) == 0))
-    first_of_event = repeats_next & ~repeats_prev
-    on_old[first_of_event] = np.interp(to[first_of_event], tn[pre], yn[pre])
+    with np.errstate(invalid="ignore"):  # a line to or from an infinity
+        on_old = np.interp(to, tn[post], yn[post])
+        repeats_next = np.concatenate((np.diff(to) == 0, [False]))
+        repeats_prev = np.concatenate(([False], np.diff(to) == 0))
+        first_of_event = repeats_next & ~repeats_prev
+        on_old[first_of_event] = np.interp(to[first_of_event], tn[pre], yn[pre])
+    # Between old's first and last sample at a time stored three times or
+    # more: new's sample of the same place there, else nothing to meet. By
+    # new's value just after, an identical series read 100 %.
+    uneven = np.zeros(to.size, bool)
+    middle = repeats_next & repeats_prev
+    if middle.any():
+        new_runs = dict(zip(*_runs(tn)))
+        for at, (start, count) in zip(*_runs(to)):
+            if count < 3:
+                continue
+            between = slice(start + 1, start + count - 1)
+            partner = new_runs.get(at)
+            if partner is not None and partner[1] == count:
+                on_old[between] = yn[partner[0] + 1 : partner[0] + count - 1]
+            else:
+                uneven[between] = True
 
     # A time within one instant of new's ends is inside its span: a
     # single-precision run ends at float32(11.9) = 11.8999996, and old's
     # samples at 11.9 are that instant, not outside it.
     reach = SAME_INSTANT * max(float(tn[-1] - tn[0]), abs(tn[0]), abs(tn[-1]))
     inside = (to >= tn[0] - reach) & (to <= tn[-1] + reach)
-    t, a, b = to[inside], yo[inside], on_old[inside]
-    finite = np.isfinite(a) & np.isfinite(b)
-    same = (a == b) | (np.isnan(a) & np.isnan(b))
-    differs = ~finite & ~same
+    uneven &= inside
+    met = inside & ~uneven
+    finite = met & np.isfinite(yo) & np.isfinite(on_old)
+    same = (yo == on_old) | (np.isnan(yo) & np.isnan(on_old))
+    differs = met & ~finite & ~same
 
     finite_old = yo[np.isfinite(yo)]
     if finite_old.size:
@@ -256,23 +338,60 @@ def compare_series(
     else:
         scale_value, scale = 1.0, "absolute"
 
+    with np.errstate(invalid="ignore"):  # inf - inf
+        delta = np.where(met, on_old - yo, np.nan)
+    return Difference(
+        to, delta, scale, float(scale_value), inside, finite, differs, uneven=uneven
+    )
+
+
+def _runs(time: np.ndarray) -> tuple[list[float], list[tuple[int, int]]]:
+    """Each time of ``time`` once, and where its samples start and how many
+    there are (``time`` in order)."""
+    starts = np.flatnonzero(np.concatenate(([True], np.diff(time) != 0)))
+    counts = np.diff(np.append(starts, time.size))
+    return (
+        [float(time[s]) for s in starts],
+        [(int(s), int(c)) for s, c in zip(starts, counts)],
+    )
+
+
+def series_change(d: Difference) -> SeriesChange:
+    """The change a difference series says: its largest compared point, as
+    a percent of the scale (or absolute), and what was not compared."""
+    if d.note:
+        return SeriesChange(largest=None, scale="absolute", at=None, note=d.note)
     largest = at = None
-    if finite.any():
-        d = np.abs(b[finite] - a[finite])
-        i = int(np.argmax(d))
+    if d.finite.any():
+        size = np.abs(d.delta[d.finite])
+        i = int(np.argmax(size))
         largest = (
-            float(d[i]) if scale == "absolute" else float(d[i] / scale_value * 100)
+            float(size[i])
+            if d.scale == "absolute"
+            else float(size[i] / d.scale_value * 100)
         )
-        at = float(t[finite][i])
+        at = float(d.time[d.finite][i])
     return SeriesChange(
         largest=largest,
-        scale=scale,
+        scale=d.scale,
         at=at,
-        compared=int(finite.sum()),
-        outside=int((~inside).sum()),
-        non_finite=int(differs.sum()),
-        non_finite_at=float(t[differs][0]) if differs.any() else None,
+        compared=int(d.finite.sum()),
+        outside=int((~d.inside).sum()),
+        uneven=0 if d.uneven is None else int(d.uneven.sum()),
+        non_finite=int(d.differs.sum()),
+        non_finite_at=float(d.time[d.differs][0]) if d.differs.any() else None,
     )
+
+
+def compare_series(
+    old_time: np.ndarray,
+    old_values: np.ndarray,
+    new_time: np.ndarray,
+    new_values: np.ndarray,
+) -> SeriesChange:
+    """How much ``new`` changed against ``old``: the largest point of their
+    :func:`difference_series`."""
+    return series_change(difference_series(old_time, old_values, new_time, new_values))
 
 
 def _unreadable_series(time: np.ndarray, values: np.ndarray, side: str) -> str:
@@ -288,15 +407,51 @@ def _unreadable_series(time: np.ndarray, values: np.ndarray, side: str) -> str:
     return ""
 
 
+def pair_variables(
+    olds: list[StoredVariable], news: list[StoredVariable]
+) -> list[tuple[StoredVariable | None, StoredVariable | None]]:
+    """Every variable of either side as (old, new), None on the side that
+    lacks it: old's order, then new's. Paired by name; then each left over
+    on both sides with a label (``expression or name``, read without white
+    space: :func:`_label_key`) that one variable of each side holds. A pair
+    of two names is a rename."""
+    old_by, new_by = _by_name(olds), _by_name(news)
+    old_labels = Counter(_label_key(v) for v in old_by.values())
+    new_labels = Counter(_label_key(v) for v in new_by.values())
+    left = {
+        _label_key(v): v
+        for name, v in new_by.items()
+        if name not in old_by and new_labels[_label_key(v)] == 1
+    }
+    partner: dict[str, StoredVariable] = {}
+    for name, v in old_by.items():
+        label = _label_key(v)
+        if name not in new_by and old_labels[label] == 1 and label in left:
+            partner[name] = left.pop(label)
+    taken = {v.name for v in partner.values()}
+    out: list[tuple[StoredVariable | None, StoredVariable | None]] = [
+        (v, new_by[name] if name in new_by else partner.get(name))
+        for name, v in old_by.items()
+    ]
+    out += [
+        (None, v)
+        for name, v in new_by.items()
+        if name not in old_by and name not in taken
+    ]
+    return out
+
+
 def _variables(old: Baseline, new: Baseline) -> list[VariableDiff]:
-    """Every variable of either side, by name: old's order, then new's."""
-    olds = _by_name(old.variables)
-    news = _by_name(new.variables)
+    """Every variable of either side, paired by :func:`pair_variables`:
+    old's order, then new's."""
     out: list[VariableDiff] = []
-    for name, ov in olds.items():
-        nv = news.get(name)
+    for ov, nv in pair_variables(old.variables, new.variables):
         if nv is None:
-            out.append(VariableDiff(name, _label(ov), "removed"))
+            assert ov is not None
+            out.append(VariableDiff(ov.name, _label(ov), "removed"))
+            continue
+        if ov is None:
+            out.append(VariableDiff(nv.name, _label(nv), "new"))
             continue
         change = compare_series(
             np.asarray(old.time, float),
@@ -304,17 +459,18 @@ def _variables(old: Baseline, new: Baseline) -> list[VariableDiff]:
             np.asarray(new.time, float),
             np.asarray(nv.values, float),
         )
+        renamed = (ov.name, nv.name) if ov.name != nv.name else None
         said = (ov.expression or "", nv.expression or "")
         out.append(
             VariableDiff(
-                name,
+                nv.name,
                 _label(nv),
                 "changed",
                 change,
-                expression=said if said[0] != said[1] else None,
+                expression=said if said[0] != said[1] and renamed is None else None,
+                renamed=renamed,
             )
         )
-    out += [VariableDiff(n, _label(v), "new") for n, v in news.items() if n not in olds]
     return out
 
 
@@ -330,11 +486,19 @@ def _label(v: StoredVariable) -> str:
     return v.expression or v.name
 
 
+def _label_key(v: StoredVariable) -> str:
+    """The label a variable is paired by: its label with no white space. A
+    library's rename wrote its old names as expressions in its own spelling
+    (``alphas[1,1]`` as ``alphas[1, 1]``, a ``cat(`` over several lines),
+    and white space changes nothing an expression reads."""
+    return "".join(_label(v).split())
+
+
 # --- what a side of the reference root holds ----------------------------------
 
 
 @dataclass
-class _File:
+class BaselineFile:
     """A baseline file at one side: its path inside the reference root,
     its bytes, and what its JSON says."""
 
@@ -361,33 +525,38 @@ def _is_baseline(path: str) -> bool:
     )
 
 
-def _file(path: str, raw: bytes) -> _File:
+def _file(path: str, raw: bytes) -> BaselineFile:
     try:
         body = parse_body(raw)
     except (ValueError, RecursionError) as e:  # JSONDecodeError, UndecodableBaseline
-        return _File(path, raw, model_id_of(raw), str(e) or type(e).__name__)
+        return BaselineFile(path, raw, model_id_of(raw), str(e) or type(e).__name__)
     model_id = body.get("model_id")
     if not isinstance(model_id, str) or not model_id:
-        return _File(path, raw, None, "it names no model id")
-    return _File(path, raw, model_id, "")
+        return BaselineFile(path, raw, None, "it names no model id")
+    return BaselineFile(path, raw, model_id, "")
 
 
-def _at_commit(
-    repo: Repository, commit: Commit, read: Callable[[str], bytes]
-) -> list[_File]:
-    parsed: dict[str, _File] = {}
-    out = []
-    for path, blob in sorted(repo.files(commit).items()):
-        if not _is_baseline(path):
-            continue
-        if blob not in parsed:
-            parsed[blob] = _file(path, read(blob))
-        known = parsed[blob]
-        out.append(_File(path, known.raw, known.model_id, known.why))
-    return out
+def files_at(
+    repo: Repository, commits: list[Commit], read: Callable[[str], bytes]
+) -> list[list[BaselineFile]]:
+    """Each commit's baseline files, one list per commit; a blob held at
+    several commits is read and parsed once."""
+    parsed: dict[str, BaselineFile] = {}
+    sides = []
+    for commit in commits:
+        out = []
+        for path, blob in sorted(repo.files(commit).items()):
+            if not _is_baseline(path):
+                continue
+            if blob not in parsed:
+                parsed[blob] = _file(path, read(blob))
+            known = parsed[blob]
+            out.append(BaselineFile(path, known.raw, known.model_id, known.why))
+        sides.append(out)
+    return sides
 
 
-def _on_disk(root: Path) -> list[_File]:
+def _on_disk(root: Path) -> list[BaselineFile]:
     out = []
     for path in sorted(root.glob("*/*/ref_*.json")):
         if path.is_file():
@@ -395,23 +564,26 @@ def _on_disk(root: Path) -> list[_File]:
     return out
 
 
-def _keyed(
-    olds: list[_File], news: list[_File]
-) -> dict[tuple[str, str], tuple[list[_File], list[_File]]]:
-    """Both sides' files by (folder, model id). A file whose model id
-    cannot be read takes the model id of the other side's file at its
-    path, or else its own path as its key."""
-    by_path = {
-        "old": {f.path: f.model_id for f in olds if f.model_id},
-        "new": {f.path: f.model_id for f in news if f.model_id},
-    }
-    out: dict[tuple[str, str], tuple[list[_File], list[_File]]] = defaultdict(
-        lambda: ([], [])
+def keyed_many(
+    sides: list[list[BaselineFile]],
+) -> dict[tuple[str, str], list[list[BaselineFile]]]:
+    """Every side's files by (folder, model id), one list per side. A file
+    whose model id cannot be read takes the model id another side's file
+    at its path names — the nearest side's, the earlier first on a tie —
+    or else its own path as its key."""
+    by_path = [{f.path: f.model_id for f in files if f.model_id} for files in sides]
+    out: dict[tuple[str, str], list[list[BaselineFile]]] = defaultdict(
+        lambda: [[] for _ in sides]
     )
-    for side, files, other in ((0, olds, "new"), (1, news, "old")):
+    for i, files in enumerate(sides):
+        others = sorted(
+            (j for j in range(len(sides)) if j != i), key=lambda j: abs(j - i)
+        )
         for f in files:
-            model_id = f.model_id or by_path[other].get(f.path) or f.path
-            out[(f.folder, model_id)][side].append(f)
+            model_id = f.model_id or next(
+                (by_path[j][f.path] for j in others if f.path in by_path[j]), f.path
+            )
+            out[(f.folder, model_id)][i].append(f)
     return out
 
 
@@ -430,17 +602,30 @@ def diff_baselines(
     old = repo.commit(rev1)
     new = repo.commit(rev2) if rev2 is not None else None
     with repo.reader() as read:
-        olds = _at_commit(repo, old, read)
-        news = _at_commit(repo, new, read) if new is not None else _on_disk(Path(root))
+        if new is None:
+            (olds,) = files_at(repo, [old], read)
+            news = _on_disk(Path(root))
+        else:
+            olds, news = files_at(repo, [old, new], read)
+    return diff_files(root, old, new, olds, news, against=against)
+
+
+def diff_files(
+    root: Path,
+    old: Commit,
+    new: Commit | None,
+    olds: list[BaselineFile],
+    news: list[BaselineFile],
+    *,
+    against: str | None = None,
+) -> Diff:
+    """:func:`diff_baselines` of files already read: ``olds`` at ``old``,
+    ``news`` at ``new`` (None: on disk)."""
     old_said = old.short
     new_said = new.short if new is not None else "the files on disk"
-    folders = sorted(
-        {f.folder for f in (*olds, *news)}, key=lambda f: tuple(f.split("/"))
-    )
+    folders = sorted({f.folder for f in (*olds, *news)}, key=folder_order)
     if against is not None and against not in {f.folder for f in news}:
-        held = ", ".join(
-            sorted({f.folder for f in news}, key=lambda f: tuple(f.split("/")))
-        )
+        held = ", ".join(sorted({f.folder for f in news}, key=folder_order))
         raise DiffError(
             f"--against {against}: no baselines in {against} at {new_said}"
             + (f" (it holds {held})" if held else "")
@@ -449,7 +634,7 @@ def diff_baselines(
     unchanged = metadata_only = 0
     changed: dict[str, dict[str, BaselineDiff]] = defaultdict(dict)
     same: dict[str, list[str]] = defaultdict(list)
-    keyed = _keyed(olds, news)
+    keyed = keyed_many([olds, news])
     for (folder, model_id), (o, n) in keyed.items():
         if len(o) == len(n) and sorted(f.raw for f in o) == sorted(f.raw for f in n):
             unchanged += 1
@@ -468,7 +653,7 @@ def diff_baselines(
         compared: dict[str, list[VariableDiff]] = {}
         if against is not None:
             compared = _against(model_id, against, keyed, folders)
-        unchanged_in = sorted(same.get(model_id, []), key=lambda f: tuple(f.split("/")))
+        unchanged_in = sorted(same.get(model_id, []), key=folder_order)
         tests.append(TestDiff(model_id, changed[model_id], compared, unchanged_in))
     return Diff(
         root=Path(root),
@@ -483,7 +668,11 @@ def diff_baselines(
 
 
 def _baseline(
-    folder: str, olds: list[_File], news: list[_File], old_said: str, new_said: str
+    folder: str,
+    olds: list[BaselineFile],
+    news: list[BaselineFile],
+    old_said: str,
+    new_said: str,
 ) -> BaselineDiff | None:
     """One test's baseline in one folder, or None where its compared parts
     are equal (it differs in metadata only)."""
@@ -643,26 +832,26 @@ def _steps(old: Mapping, new: Mapping) -> tuple[float, float] | None:
 def _against(
     model_id: str,
     against: str,
-    keyed: Mapping[tuple[str, str], tuple[list[_File], list[_File]]],
+    keyed: Mapping[tuple[str, str], list[list[BaselineFile]]],
     folders: list[str],
 ) -> dict[str, list[VariableDiff]]:
     """Each other folder's newer baseline of ``model_id`` scored against
     the ``against`` folder's newer one; a folder where either is not one
     readable file is left out."""
-    reference = _one_readable(keyed.get((against, model_id), ([], []))[1])
+    reference = _one_readable(keyed.get((against, model_id), [[], []])[1])
     if reference is None:
         return {}
     out = {}
     for folder in folders:
         if folder == against:
             continue
-        other = _one_readable(keyed.get((folder, model_id), ([], []))[1])
+        other = _one_readable(keyed.get((folder, model_id), [[], []])[1])
         if other is not None:
             out[folder] = _variables(reference.baseline, other.baseline)
     return out
 
 
-def _one_readable(files: list[_File]) -> ReferenceFile | None:
+def _one_readable(files: list[BaselineFile]) -> ReferenceFile | None:
     if len(files) != 1 or files[0].why:
         return None
     return decode_reference(parse_body(files[0].raw))

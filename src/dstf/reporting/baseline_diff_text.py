@@ -34,6 +34,7 @@ from ..storage.baseline_diff import (
     TestDiff,
     VariableDiff,
     machine_dependent,
+    short_name,
 )
 from .stats_rows import SECTION_TITLES, StatRow, report_text
 
@@ -46,7 +47,9 @@ LIMITS = (
     "new baseline read on the old one's time grid, as a percent of the old "
     "baseline's range (of its value where it is constant; the absolute "
     "difference where it is zero); the old baseline's points outside the "
-    "new one's time span are counted, not compared._"
+    "new one's time span are counted, not compared, and so are the middle "
+    "samples of an event (a time stored three times or more) the new one "
+    "stores another number of times._"
 )
 
 #: A cell of a folder where the test has no baseline on either side.
@@ -125,6 +128,11 @@ def _change_text(change: SeriesChange) -> str:
         )
     if change.outside:
         parts.append(f"{change.outside} old points outside the new time span")
+    if change.uneven:
+        parts.append(
+            f"{change.uneven} old points inside an event the new run stores "
+            "another number of times"
+        )
     return "; ".join(parts) or "nothing compared"
 
 
@@ -180,10 +188,6 @@ def _test_rank(test: TestDiff) -> tuple[int, int, float, float]:
 
 
 # --- the overview ------------------------------------------------------------
-
-
-def _short(model_id: str) -> str:
-    return model_id.rsplit(".", 1)[-1] if "/" not in model_id else model_id
 
 
 def _code(text: str) -> str:
@@ -247,7 +251,7 @@ def _against_cell(test: TestDiff, several: bool) -> str:
     return _marked(_DASH if best is None else _amount(best[2]), marks)
 
 
-def _steps_folder(diff: Diff) -> str | None:
+def steps_folder(diff: Diff) -> str | None:
     """The first folder, in column order, where a listed test records its
     steps on both sides."""
     for folder in diff.folders:
@@ -274,25 +278,36 @@ def _row(cells: list[str]) -> str:
     return "| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |"
 
 
-def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]:
+def overview_header(diff: Diff, steps: str | None) -> list[str]:
+    """The overview table's column titles."""
     header = ["Test", *(f"Change, {folder}" for folder in diff.folders)]
     if diff.against:
         header.append(f"Gap to {diff.against}")
     if steps:
         header.append("Solver steps")
-    lines = [_row(header), _row(["---"] * len(header))]
+    return header
+
+
+def overview_cells(diff: Diff, test: TestDiff, steps: str | None) -> list[str]:
+    """One test's overview cells after its name: each folder's change, then
+    the gap and the steps where the table has those columns."""
     several = len(diff.folders) > 2
+    cells = []
+    for folder in diff.folders:
+        b = test.baselines.get(folder)
+        cells.append(_cell(b) if b else _SAME if folder in test.unchanged else _NONE)
+    if diff.against:
+        cells.append(_against_cell(test, several))
+    if steps:
+        cells.append(_steps_cell(test, steps))
+    return cells
+
+
+def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]:
+    header = overview_header(diff, steps)
+    lines = [_row(header), _row(["---"] * len(header))]
     for test in tests:
-        cells = [_code(_short(test.model_id))]
-        for folder in diff.folders:
-            b = test.baselines.get(folder)
-            cells.append(
-                _cell(b) if b else _SAME if folder in test.unchanged else _NONE
-            )
-        if diff.against:
-            cells.append(_against_cell(test, several))
-        if steps:
-            cells.append(_steps_cell(test, steps))
+        cells = [_code(short_name(test.model_id)), *overview_cells(diff, test, steps)]
         lines.append(_row(cells))
     return lines
 
@@ -300,14 +315,16 @@ def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]
 def _unmoved(tests: list[TestDiff]) -> bool:
     """Whether a Change cell says a changed file whose tracked values did
     not move (its other bytes did): every compared variable 0, none with a
-    value no longer finite and no old point outside the new span."""
+    value no longer finite and no old point left uncompared (outside the
+    new span, or inside an event the new run stores otherwise)."""
     for test in tests:
         for b in test.baselines.values():
             if b.status != "changed":
                 continue
             changes = [v.change for v in b.variables if v.change is not None]
             if changes and all(
-                c.largest == 0 and not c.non_finite and not c.outside for c in changes
+                c.largest == 0 and not c.non_finite and not c.outside and not c.uneven
+                for c in changes
             ):
                 return True
     return False
@@ -341,6 +358,8 @@ def _variable_cell(v: VariableDiff) -> str:
     text = _change_text(v.change)
     if v.expression is not None:
         text += f"; expression {v.expression[0] or '–'} → {v.expression[1] or '–'}"
+    if v.renamed is not None:
+        text += f"; renamed {v.renamed[0]} → {v.renamed[1]}"
     return text
 
 
@@ -490,7 +509,7 @@ def _detail(diff: Diff, test: TestDiff) -> list[str]:
     )
     lines = [
         "<details>",
-        f"<summary><code>{_short(test.model_id)}</code> — {what}</summary>",
+        f"<summary><code>{short_name(test.model_id)}</code> — {what}</summary>",
         "",
         f"`{test.model_id}`",
         "",
@@ -517,7 +536,7 @@ def _plural(n: int, word: str) -> str:
 def _headline(diff: Diff) -> str:
     """The first line: the tests the table lists — all changed, they "have
     new baselines"; else changed, new, removed and not compared apart — the
-    two revisions, and the baselines unchanged."""
+    two revisions, and the baseline files unchanged."""
     tests: Counter[str] = Counter()
     for test in diff.tests:
         statuses = {b.status for b in test.baselines.values()}
@@ -548,7 +567,8 @@ def _headline(diff: Diff) -> str:
                 parts.append(f"{_plural(n, 'test')} {kind}")
         what = ", ".join(parts)
     new = _code(diff.new.short) if diff.new else "files on disk"
-    unchanged = f"{diff.unchanged} unchanged"
+    # files, not tests: one test is a baseline in each of its folders
+    unchanged = f"{_plural(diff.unchanged, 'baseline file')} unchanged"
     if diff.metadata_only:
         unchanged += f", {diff.metadata_only} of them only in metadata"
     return f"**{what}** ({_code(diff.old.short)} → {new}). {unchanged}."
@@ -565,15 +585,17 @@ def detailed(diff: Diff, names: list[str]) -> list[str]:
     unknown = []
     for name in names:
         got = [
-            t.model_id for t in diff.tests if name in (t.model_id, _short(t.model_id))
+            t.model_id
+            for t in diff.tests
+            if name in (t.model_id, short_name(t.model_id))
         ]
         if not got:
             unknown.append(name)
         chosen += [m for m in got if m not in chosen]
     if unknown:
-        tests = _sorted(diff.tests)
+        tests = sorted_tests(diff.tests)
         such = (
-            f"a short name such as {_short(tests[0].model_id)}, or a full model id"
+            f"a short name such as {short_name(tests[0].model_id)}, or a full model id"
             if tests
             else "it lists none"
         )
@@ -583,7 +605,7 @@ def detailed(diff: Diff, names: list[str]) -> list[str]:
     return chosen
 
 
-def _sorted(tests: list[TestDiff]) -> list[TestDiff]:
+def sorted_tests(tests: list[TestDiff]) -> list[TestDiff]:
     """The overview's order: largest change first."""
     return sorted(tests, key=lambda t: (_test_rank(t), t.model_id))
 
@@ -594,8 +616,8 @@ def as_markdown(diff: Diff, details: Collection[str] = ()) -> str:
     folded section for each test whose model id is in ``details``
     (:func:`detailed`)."""
     lines = [_headline(diff), ""]
-    tests = _sorted(diff.tests)
-    steps = _steps_folder(diff)
+    tests = sorted_tests(diff.tests)
+    steps = steps_folder(diff)
     if tests:
         lines += [*_overview(diff, tests, steps), "", _key(diff, tests, steps), ""]
     else:
@@ -650,13 +672,21 @@ def _stat_json(row: StatRow) -> dict:
     }
 
 
+def _variable_json(v: VariableDiff) -> dict:
+    """A variable's facts; ``renamed`` only for a pair made by its label."""
+    out = asdict(v)
+    if v.renamed is None:
+        del out["renamed"]
+    return out
+
+
 def _baseline_json(b: BaselineDiff) -> dict:
     return {
         "status": b.status,
         "old_file": b.old_file,
         "new_file": b.new_file,
         "note": b.note,
-        "variables": [asdict(v) for v in b.variables],
+        "variables": [_variable_json(v) for v in b.variables],
         "settings": [asdict(s) for s in b.settings],
         "samples": [asdict(s) for s in b.samples],
         "sampling_first": asdict(b.sampling_first) if b.sampling_first else None,
@@ -679,7 +709,9 @@ def as_json(diff: Diff) -> str:
             {
                 "model_id": t.model_id,
                 "baselines": {f: _baseline_json(b) for f, b in t.baselines.items()},
-                "against": {f: [asdict(v) for v in vs] for f, vs in t.against.items()},
+                "against": {
+                    f: [_variable_json(v) for v in vs] for f, vs in t.against.items()
+                },
                 "unchanged_in": t.unchanged,
             }
             for t in diff.tests

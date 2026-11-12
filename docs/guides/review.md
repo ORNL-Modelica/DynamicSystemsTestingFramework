@@ -5,7 +5,8 @@ reads line by line. `dstf baseline diff` reads them for the reviewer: which
 baselines changed between two revisions of the reference root, and by how
 much. `dstf summary` puts the test results of several runs side by side: the
 branch against the main line, on each simulator and OS. Both print Markdown
-written to be pasted into the pull request.
+written to be pasted into the pull request. `dstf baseline plot` draws the
+changed baselines as images, in one page to send.
 
 ## What changed between two revisions
 
@@ -32,14 +33,16 @@ git is only read: the command writes nothing to the repository.
 By default, three things:
 
 - **A headline:** how many tests the table lists, the two revisions, and
-  how many baselines did not change. When every listed test changed, it
+  how many baseline files did not change (a file per test and folder, so not
+  a count of tests). When every listed test changed, it
   reads `20 tests have new baselines`; otherwise the new, removed and not
   compared tests are counted apart (`20 tests changed, 2 new, 1 removed`).
   A test is new only when no folder held a baseline of it at the older
   revision, and removed only when none holds one at the newer; a test that
   gained a baseline in one folder and kept it in another is a changed test.
   A file whose numbers are equal and whose dates or key order differ is
-  unchanged, and said apart when there is one (`7 unchanged, 2 of them only in metadata`).
+  unchanged, and said apart when there is one (`7 baseline files unchanged, 2
+  of them only in metadata`).
 - **An overview table:** one row per test, largest change first, a
   `Change, <Backend>/<os>` column per folder, then `Gap to <Backend>/<os>`
   with `--against`, then `Solver steps`: the change in accepted solver
@@ -100,7 +103,7 @@ Markdown is still printed whole, and a note on stderr says its length.
 A short example, two tests of a library in two folders:
 
 ```text
-**2 tests have new baselines** (`ca9352b` → `06bc0b1`). 1 unchanged.
+**2 tests have new baselines** (`ca9352b` → `06bc0b1`). 1 baseline file unchanged.
 
 | Test | Change, Dymola/linux | Change, OpenModelica/linux | Gap to Dymola/linux | Solver steps |
 | --- | --- | --- | --- | --- |
@@ -113,14 +116,22 @@ Change = the biggest move of a tracked variable, old → new, as % of its range.
 ## How a change is measured
 
 Baselines are paired by model id inside each folder, never by file name, so
-a renamed file holding the same data is no change. For each variable the
-change is the largest difference between the two baselines, |new − old|,
+a renamed file holding the same data is no change. A baseline's variables
+are paired by name; the ones left over on both sides are then paired by
+label (the expression, else the name, read without white space: `a[1,1]` is
+`a[1, 1]`) where one variable of each side holds it, so a variable renamed
+with what it reads kept (`PHS.p` becoming `unitTests.x[1]` with `PHS.p` as
+its expression) is compared across the rename, and the detail says
+`renamed PHS.p → unitTests.x[1]`. For each variable the change is the largest difference between the two baselines, |new − old|,
 with the new one read on the old one's time grid, as a percent of the old
 baseline's range (of its value where the old baseline is constant: the scale
 the `nrmse` score divides by; the absolute difference where it is zero), and
-the time it happens. At an event, a time stored twice, the value
+the time it happens. At an event, a time stored twice or more, the value
 just before is compared with the value just before, and the one after with the
-one after.
+one after; a sample between them, at a time stored three times or more, is
+compared with the new one's sample of the same place there when the new
+baseline stores that time as many times, and is otherwise counted, not
+compared.
 
 `--against Dymola/linux` adds the `Gap` column: every other folder's newer
 baseline scored against that folder's newer one, by the same rule.
@@ -130,13 +141,85 @@ baseline scored against that folder's newer one, by the same rule.
 - Only the stored samples are compared: what a run did between two of them
   is not seen.
 - The old baseline's points outside the new one's time span are counted, not
-  compared.
+  compared, and so are the middle samples of an event the new one stores
+  another number of times.
 - A baseline that cannot be read at one revision, or a model held by two
   files of one folder, is named and not compared.
 - It prints facts. Whether a change is acceptable is the reviewer's call.
 
 `--format json` writes every fact, every test's detail included, with a
 number that is not finite written as `null` beside a flag that says which.
+
+## Plots across commits
+
+`dstf baseline plot` draws what the numbers say: a test's stored baseline at
+two revisions or more, one PNG image per variable that moved, and one
+`gallery.html` that holds every image, to send to a reviewer who is not at
+the machine.
+
+```console
+$ dstf baseline plot main HEAD --config testing.json -o plots
+$ dstf baseline plot v1.2.0 v1.3.0 HEAD --test NSSS_Test --folder Dymola/linux -o nsss
+```
+
+![A variable at two revisions: on top, the old baseline in grey and the new one in blue; under it, the new minus the old as a percent of the old one's range, peaking near 100 % at 4.7 s; the legend names each revision's date, hash and subject](../img/baseline-plot.png)
+
+On top, the baseline at each revision: the first in grey, the later ones in
+blues, the newest heaviest. Under it, each later revision minus the FIRST,
+read on the first's time grid, as a percent of the first's range: the
+measure `baseline diff` prints as `Change`, so with two revisions the
+panel's peak is that number (of the value for a constant, `% of value`; the
+difference itself where the first is all zero). A point where the difference
+is not finite is a gap in the line and an `×` on the panel's zero line.
+
+Which images:
+
+- **The tests:** by default, those `baseline diff` from the first to the
+  last revision lists as changed or new; `--test` names them instead, each a
+  short name or a full model id. A test it names that did not change between
+  the first and the last revision is drawn too, last in the gallery and
+  without a row.
+- **The folders:** each `<Backend>/<os>` where two revisions hold different
+  values; `--folder` chooses. `--test` and `--folder` come after the
+  revisions.
+- **The revisions:** one where the folder holds no baseline of the test, or
+  one that cannot be read, is skipped, and one whose values equal the last
+  revision drawn is skipped too (`Skipped: 999ddfb (equal to 6ad1765)`).
+  Variables are paired as `baseline diff` pairs them, so a revision that
+  only renamed them is skipped, and a renamed variable is one image, its
+  rename said at the revision that made it. Over 12 revisions in a folder,
+  the first, the last and the 10 that moved most are drawn. Each image's
+  notes say what was skipped or left out, each rename, where a variable
+  added later was first stored, and the points not compared or not finite.
+- **The variables:** each one that moved: at some later revision its change
+  against the first revision that holds it is not nothing (a point that
+  moved, a difference not finite, or a point not compared). A variable added
+  or removed between the revisions moved only where it then changed. The
+  others are named in one line under the folder (`Not drawn, unchanged: a,
+  b, c`, cut past ten names), and a folder where nothing moved draws
+  nothing.
+
+The gallery lists the revisions with their subjects, then each test,
+largest change first, with its row of `baseline diff`'s overview and its
+images. Every image is inside the file and nothing is fetched: it opens
+offline, and it is the one file to attach.
+
+The images are drawn by the plotly.js DSTF ships, in a headless Chromium
+that Playwright starts. Install the `browser` extra and its Chromium once:
+
+```console
+$ pip install 'dynamic-systems-testing-framework[browser]'
+$ python -m playwright install chromium
+```
+
+`-o DIR` is created when it is not there. A directory that holds anything
+this command did not write is refused, so it never mixes into a folder of
+yours (`-o .` included); one it wrote before is written again, its old
+images removed. Without `--test`, more than 300 images (of the variables
+that moved) are refused: a
+commit that re-accepts a whole library is drawn a test at a time. Each
+refusal is one sentence, exit code 2, before anything is written. git is
+only read.
 
 ## The results of several runs
 

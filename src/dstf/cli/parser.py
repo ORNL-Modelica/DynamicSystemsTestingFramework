@@ -422,6 +422,12 @@ UNREAD: tuple[Unread, ...] = (
         ("reference_root",),
         "baseline diff reads testing.json only for its reference root",
     ),
+    Unread(
+        "baseline plot",
+        ("config",),
+        ("reference_root",),
+        "baseline plot reads testing.json only for its reference root",
+    ),
 )
 
 
@@ -968,6 +974,7 @@ COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "baseline export",
             "baseline diff",
+            "baseline plot",
             "soft-check add",
             "soft-check list",
             "soft-check remove",
@@ -1039,6 +1046,7 @@ READS: dict[str, tuple[str, ...]] = {
         "format",
         "output",
     ),
+    "baseline plot": ("config", "reference_root", "test", "folder", "output"),
     "soft-check add": (*_STORE, "backend"),
     "soft-check list": (*_STORE, "backend"),
     "soft-check remove": (*_STORE, "backend"),
@@ -1680,7 +1688,7 @@ def _add_baseline(tree: _Tree, top) -> None:
     group, sub = tree.group(
         top,
         "baseline",
-        summary="Stored baselines: export them, diff two revisions",
+        summary="Stored baselines: export, diff or plot revisions",
         description="""
             Commands over the stored baselines of one partition of the
             reference root (<reference_root>/<Backend>/<os>/). Baselines
@@ -1690,6 +1698,7 @@ def _add_baseline(tree: _Tree, top) -> None:
         examples=(
             "dstf baseline export --config testing.json -o references.json",
             "dstf baseline diff main --reference-root Resources/ReferenceResults",
+            "dstf baseline plot main HEAD --config testing.json -o plots",
         ),
     )
     node = tree.command(
@@ -1729,6 +1738,21 @@ def _add_baseline(tree: _Tree, top) -> None:
     )
 
     _add_baseline_diff(tree, sub)
+    _add_baseline_plot(tree, sub)
+
+
+#: The project flags of a command that reads the reference root at git
+#: revisions, and nothing else of the project.
+_REVISIONS_HELP = {
+    "config": "A testing.json, or the directory holding it, read for "
+    "its reference root alone: its reference_root, else its own "
+    "directory when that is named ReferenceResults. Default: the "
+    "testing.json in the current directory; with none there and no "
+    "--reference-root, the command is refused. The library is not read.",
+    "reference_root": "The reference root whose revisions are "
+    "compared: a folder of a git repository's work tree. Default: "
+    "read from testing.json (--config).",
+}
 
 
 def _add_baseline_diff(tree: _Tree, sub) -> None:
@@ -1777,16 +1801,7 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
             "dstf baseline diff main HEAD --config testing.json --details NSSS_Test",
             "dstf baseline diff main --config testing.json --format json -o diff.json",
         ),
-        own_help={
-            "config": "A testing.json, or the directory holding it, read for "
-            "its reference root alone: its reference_root, else its own "
-            "directory when that is named ReferenceResults. Default: the "
-            "testing.json in the current directory; with none there and no "
-            "--reference-root, the command is refused. The library is not read.",
-            "reference_root": "The reference root whose revisions are "
-            "compared: a folder of a git repository's work tree. Default: "
-            "read from testing.json (--config).",
-        },
+        own_help=_REVISIONS_HELP,
     )
     node.add_argument(
         "rev1",
@@ -1832,6 +1847,92 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
         "output",
         default=None,
         help="The file to write. Default: printed.",
+    )
+
+
+def _add_baseline_plot(tree: _Tree, sub) -> None:
+    node = tree.command(
+        sub,
+        "baseline plot",
+        summary="Draw baselines across revisions as images and a page",
+        description="""
+            Draw a test's stored baseline at two git revisions of the
+            reference root or more, one PNG image per variable that moved:
+            on top, the baseline at each revision; under it, each later
+            revision minus the FIRST, on the first's time grid, as a percent
+            of the first's range (% of value where the first is constant;
+            the absolute difference where it is all zero) — the measure
+            `baseline diff` prints as Change, so for two revisions a panel's
+            peak is that number. Every image is also inline in one
+            gallery.html, with each test's row of `baseline diff`'s overview
+            and, per folder, one line naming the variables not drawn because
+            they did not change: one file to send to a reviewer.
+
+            By default the tests are those `baseline diff` REV1 to the last
+            revision lists as changed or new, in every <Backend>/<os> folder
+            where two revisions hold different values; --test and --folder
+            choose. A revision where the baseline is absent, cannot be read,
+            or holds the values of the last one drawn is skipped, and each
+            image says so. Variables are paired by name, then by label, so a
+            renamed variable is one line. Over 12 revisions in a folder, the
+            first, the last and the 10 that moved most are drawn.
+
+            The images are drawn by the plotly.js DSTF ships, in a headless
+            Chromium (Playwright): install the browser extra, then
+            `python -m playwright install chromium`. Nothing is fetched.
+
+            -o DIR is created when it is not there. A directory holding
+            anything this command did not write is refused; one it wrote
+            before is rewritten, its old images removed. Without --test,
+            over 300 images (of the variables that moved) are refused. git
+            is only read.
+
+            Exit code: 0 when the images and the page are written; 2 when
+            git cannot answer, no reference root is named, a --test or
+            --folder names nothing at these revisions, -o is refused, over
+            300 images are asked for without --test, or there is no browser
+            to draw with.
+            """,
+        examples=(
+            "dstf baseline plot main HEAD --config testing.json -o plots",
+            "dstf baseline plot v1.2.0 v1.3.0 HEAD --test NSSS_Test --folder "
+            "Dymola/linux -o nsss",
+        ),
+        own_help=_REVISIONS_HELP,
+    )
+    node.add_argument(
+        "revisions",
+        metavar="REV",
+        nargs="+",
+        help="Two revisions or more, oldest first: commits, branches or tags "
+        "(main, HEAD~1, v1.3.0). Each later one is measured against the first.",
+    )
+    node.add_argument(
+        "--test",
+        metavar="NAME",
+        nargs="+",
+        default=None,
+        help="Only these tests, each a short name (NSSS_Test) or a full model "
+        "id; a NAME that matches no baseline is refused. Give it after the "
+        "revisions. Default: every test baseline diff lists as changed or new "
+        "between the first and the last revision.",
+    )
+    node.add_argument(
+        "--folder",
+        metavar="BACKEND/OS",
+        nargs="+",
+        default=None,
+        help="Only these folders of the reference root (Dymola/linux). Give "
+        "it after the revisions. Default: every folder where two revisions "
+        "hold different values.",
+    )
+    node.add_argument(
+        "-o",
+        "--output",
+        metavar="DIR",
+        required=True,
+        help="The directory to write the images and gallery.html into: a new "
+        "or empty one, or one this command wrote before.",
     )
 
 

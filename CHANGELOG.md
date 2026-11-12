@@ -17,6 +17,19 @@ this file says when they do.
   Markdown to paste into a pull request (an overview; `--details` adds each
   test's section), or JSON.
   The guide "Summarize a change for review" says how.
+- `dstf baseline plot REV1 REV2 [REV...] -o DIR`: a test's stored baselines
+  at several git revisions as PNG images, one per variable that moved — the
+  revisions overlaid, and under them each later one minus the first, as
+  `baseline diff` measures a change — and one self-contained `gallery.html`
+  to send to a reviewer, which names the variables that did not. Needs the
+  `browser` extra and its Chromium. The guide "Summarize a change for
+  review" says how.
+- `dstf baseline diff` pairs a renamed variable by its label: a variable left
+  over on each side with one label (`expression`, else the name, read without
+  white space, so `a[1,1]` is `a[1, 1]`) is compared across the rename, which
+  the detail and the JSON (`renamed`) say. Across a library's rename of its
+  UnitTests variables, a test read "+N variables, −N variables" and no
+  change.
 - `dstf summary LABEL=DIR...`: several runs' results side by side, a row per
   backend/os and a column per label, passed over run; with `--base`, which
   tests not passing the base failed too — as Markdown for a pull request, or

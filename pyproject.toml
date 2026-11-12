@@ -66,9 +66,14 @@ om = ["OMPython>=3.5"]
 #   uv sync --extra docs --locked --inexact
 #   uv run sphinx-build -W --keep-going -b html docs docs/_build/html
 docs = ["sphinx>=8.1", "myst-parser>=4.0", "furo>=2024.8.6"]
-# The browser-driven tests (`pytest -m playwright`): Playwright's own API
-# through conftest's `playwright_browser` fixture, no pytest plugin. Chromium
-# comes separately:
+# Playwright and its headless Chromium: `dstf baseline plot` draws its images
+# with them (reporting/images.py), and the browser-driven tests
+# (`pytest -m playwright`) drive pages with Playwright's own API through
+# conftest's `playwright_browser` fixture, no pytest plugin. Chromium comes
+# separately:
+#   pip install 'dynamic-systems-testing-framework[browser]'
+#   python -m playwright install chromium
+# or, in this repository:
 #   uv sync --extra dev --extra author --extra browser --locked
 #   uv run --no-sync playwright install chromium
 browser = ["playwright>=1.64"]

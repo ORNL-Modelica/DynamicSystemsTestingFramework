@@ -102,6 +102,49 @@ def test_at_an_event_old_s_samples_meet_new_s_before_and_after_it():
     assert got.at == 2.0
 
 
+@pytest.mark.parametrize(
+    ("t", "y"),
+    [
+        # one time stored three times, its middle sample at the old value
+        ((0, 1, 2, 2, 2, 3), (0, 0, 0, 0, 1, 1)),
+        # ... and its middle at a value of its own
+        ((0, 1, 2, 2, 2, 3), (0, 0, 0, 7, 1, 1)),
+        # four times, at the start and at the end
+        ((0, 0, 0, 0, 1, 2), (5, 6, 7, 8, 8, 8)),
+        ((0, 1, 2, 2, 2, 2), (0, 1, 2, 3, 4, 5)),
+        # an event of two beside one of three
+        ((0, 1, 1, 2, 2, 2, 3), (0, 0, 1, 1, 4, 2, 2)),
+    ],
+)
+def test_identical_series_with_a_time_stored_three_times_change_by_nothing(t, y):
+    """A time stored three times or more: old's middle samples there met
+    new's value just after it, so an identical series read 100 %."""
+    got = compare_series(_t(*t), _t(*y), _t(*t), _t(*y))
+    assert (got.largest, got.compared, got.outside, got.uneven) == (0.0, len(t), 0, 0)
+
+
+def test_a_middle_sample_of_an_event_meets_new_s_of_the_same_position():
+    # new stores three samples at t=2 too: old's middle meets new's middle
+    t = _t(0, 1, 2, 2, 2, 3)
+    old = _t(0, 0, 0, 5, 10, 10)
+    new = _t(0, 0, 0, 6, 10, 10)
+    got = compare_series(t, old, t, new)
+    assert (got.largest, got.at, got.compared) == (pytest.approx(10.0), 2.0, 6)
+
+
+def test_middle_samples_new_stores_another_number_of_times_are_not_compared():
+    """new stores t=2 twice, old three times: old's first and last there
+    meet new's before and after; its middle has no sample to meet, and is
+    counted, not compared."""
+    got = compare_series(
+        _t(0, 1, 2, 2, 2, 3),
+        _t(0, 0, 0, 5, 10, 10),
+        _t(0, 1, 2, 2, 3),
+        _t(0, 0, 0, 10, 10),
+    )
+    assert (got.largest, got.compared, got.uneven, got.outside) == (0.0, 5, 1, 0)
+
+
 def test_an_event_new_does_not_have_reads_new_s_line():
     # new has no event at t=1: both of old's samples there meet new's 5
     got = compare_series(_t(0, 1, 1, 2), _t(0, 0, 10, 10), _t(0, 2), _t(0, 10))
@@ -303,6 +346,143 @@ def test_an_expression_that_changed_under_one_name_is_said(lib):
     (test,) = diff_baselines(lib.top / "refs", one, two).tests
     (x,) = test.baselines["Dymola/linux"].variables
     assert x.expression == ("a.T", "b.T")
+
+
+def test_a_variable_renamed_with_its_label_kept_is_paired_as_a_rename(lib):
+    """A library renamed every UnitTests variable at one commit (`PHS.p`
+    became `unitTests.x[1]`, its old name now the expression): paired by
+    name, no number crossed that commit. Left over on both sides with one
+    label, the two are one variable."""
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables={"PHS.p": [0, 5, 10], "y": [1, 2, 3]}),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            variables=[
+                ("unitTests.x[1]", "PHS.p", [0, 5.5, 10]),
+                ("y", "", [1, 2, 3]),
+            ],
+        ),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    p, y = test.baselines["Dymola/linux"].variables
+    assert (p.name, p.label, p.status) == ("unitTests.x[1]", "PHS.p", "changed")
+    assert p.renamed == ("PHS.p", "unitTests.x[1]")
+    assert (p.change.largest, p.change.at) == (pytest.approx(5.0), 1.0)
+    # the rename says it: no expression change beside it
+    assert p.expression is None
+    assert (y.name, y.renamed) == ("y", None)
+
+
+def test_a_label_two_variables_of_a_side_share_pairs_nothing(lib):
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("a", "T", [0, 1, 2]), ("b", "T", [0, 1, 3])]),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("c", "T", [0, 1, 2])]),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    got = [(v.name, v.status) for v in test.baselines["Dymola/linux"].variables]
+    assert got == [("a", "removed"), ("b", "removed"), ("c", "new")]
+
+
+def test_a_label_two_variables_of_the_new_side_share_pairs_nothing(lib):
+    """Unique on both sides: two new variables that read alike — once the
+    white space is gone — are no partner for the old one."""
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("a", "T[1,1]", [0, 1, 2])]),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A", variables=[("c", "T[1, 1]", [0, 1, 2]), ("d", "T[1,1]", [0, 1, 3])]
+        ),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    got = [(v.name, v.status) for v in test.baselines["Dymola/linux"].variables]
+    assert got == [("a", "removed"), ("c", "new"), ("d", "new")]
+
+
+def test_labels_that_differ_only_in_white_space_pair_as_a_rename(lib):
+    """A library's rename wrote the old names as expressions in its own
+    spelling: `alphas[1,1]` became `alphas[1, 1]`, a `cat(` lost its line
+    break. Read without white space, each is the one label it was."""
+    cat_old = "cat(\n    1,\n    a,\n    b)"
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            variables=[("alphas[1,1]", "", [0, 5, 10]), ("c", cat_old, [1, 2, 3])],
+        ),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            variables=[
+                ("unitTests.x[1]", "alphas[1, 1]", [0, 5, 10]),
+                ("unitTests.x[2]", "cat(1, a, b)", [1, 2, 3]),
+            ],
+        ),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    got = [
+        (v.renamed, v.status, v.change.largest)
+        for v in test.baselines["Dymola/linux"].variables
+    ]
+    assert got == [
+        (("alphas[1,1]", "unitTests.x[1]"), "changed", 0.0),
+        (("c", "unitTests.x[2]"), "changed", 0.0),
+    ]
+
+
+def test_a_name_pairs_before_a_label_does(lib):
+    """The name is the identity (D132): `a` is paired by its name although
+    its label moved to `c`; the leftovers `b` and `c` hold other labels."""
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("a", "p", [0, 1, 2]), ("b", "q", [0, 1, 2])]),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("a", "q", [0, 1, 2]), ("c", "p", [0, 1, 2])]),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    got = [
+        (v.name, v.status, v.renamed, v.expression)
+        for v in test.baselines["Dymola/linux"].variables
+    ]
+    assert got == [
+        ("a", "changed", None, ("p", "q")),
+        ("b", "removed", None, None),
+        ("c", "new", None, None),
+    ]
 
 
 def _sampling(setting=500, source=900, stored=3, precision="double"):
