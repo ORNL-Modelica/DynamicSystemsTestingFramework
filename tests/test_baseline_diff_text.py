@@ -46,9 +46,15 @@ NEW = Commit("b" * 40, "bbbbbbb", "the new one")
         (9.96, "10 %"),
         (23.4, "23 %"),
         (157.2, "157 %"),
+        (999_999.4, "999999 %"),
+        (1e6, "1.0e+06 %"),
+        (5_083_409_191.0, "5.1e+09 %"),
+        (-5_083_409_191.0, "-5.1e+09 %"),
     ],
 )
 def test_a_percent_has_two_significant_digits_under_10_and_is_whole_above(value, text):
+    """From a million percent on, a power of ten: a range of almost nothing
+    makes a ten-digit percent no one reads."""
     assert percent(value) == text
 
 

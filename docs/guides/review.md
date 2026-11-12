@@ -334,14 +334,14 @@ $ dstf diff main=runs/main fix=runs/fix --details SimpleRamp
 
 | Tool/OS | Result files | Signals | Parameters |
 | --- | --- | --- | --- |
-| Python/linux | 3 of 3 | 1 changed (2.5 % of range) | all identical |
+| Python/linux | 3 of 3 | 1 changed (2.5 % of range, `x`) | all identical |
 
 A group = the variables whose values are equal in both runs, counted once; a parameter holds one value throughout. Identical = the same time points, every value equal; rounding = point by point within one storage step of the coarser file's precision; derivative = a der( variable; changed = the rest, by its biggest move against main. Only stored points are compared.
 
 Differs in 1 of 3 tests: `SimpleRamp`.
 
 <details>
-<summary><code>SimpleRamp</code> · Python/linux — 1 changed (2.5 % of range)</summary>
+<summary><code>SimpleRamp</code> · Python/linux — 1 changed (2.5 % of range, <code>x</code>)</summary>
 
 `PythonTestingLib.Examples.SimpleRamp`
 
@@ -392,13 +392,21 @@ How the runs are read and compared:
   finite in one run only is always changed, and listed first. A changed
   signal's Change is `baseline diff`'s: the later run on the first run's time
   grid, as a percent of the first run's range (`of value` where it is
-  constant, `absolute` where it is zero), at the time it is largest.
+  constant, `absolute` where it is zero), at the time it is largest. The
+  row gives the largest one and the group it is of (`` 12 changed (5.1e+09 %
+  of range, `a.dp`) ``): a first run whose range is almost nothing makes a
+  huge percent, written from a million percent on as a power of ten, as
+  `baseline diff` writes it.
 - **Other time points** — another stop time, another output interval, a
-  shifted grid — make every signal at best changed, in either order: the row
-  says `time points differ`, and the detail gives each run's points and
-  span. The Change still reads the later run on the first run's grid, so a
-  move between the first run's points is not in it, and where it reads 0 %
-  the row gives no percent (`1 changed (time points differ)`).
+  shifted grid — make every signal at best changed, in either order. The
+  row and the detail say how: of as many points, how many are at another
+  time and by how much at most (`time points differ: 2 of 1,103, by up to
+  2.5e-13 s`); else each run's count and span (`time points differ: 5 in
+  main, 9 in fix; 0–4 s vs 0–8 s`). A row over several such tests counts
+  them (`time points differ in 2 tests`). The Change still reads the later
+  run on the first run's grid, so a move between the first run's points is
+  not in it, and where it reads 0 % the row gives no percent (`1 changed
+  (time points differ: …)`).
 - **Rounding is no difference:** a test whose groups and times differ only
   within rounding is counted with the tests where nothing differs (`Nothing
   differs beyond rounding in 3 tests.`), and `--details` with no name folds
@@ -444,6 +452,11 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   it (NOT RUN) did not fail it. A label with no run of a backend/os reads
   `–`. NOT RUN is counted in the total and is not a pass. One key line under
   the matrix says this short.
+- **No baseline is no failure.** A test with no stored baseline (NO_REF) was
+  scored against nothing: the cell counts it as `1 no baseline`, never among
+  those that also fail on the base, and with `--base`, `1 also has none on
+  main` counts those the base has no baseline for either
+  (`1/2 (1 no baseline; 1 also has none on main)`).
 - **A folded list per cell** names each test that did not pass, its status,
   and what failed: the first failing criterion that is not advisory, else
   the message from its first OpenModelica error tag (`[translation:error:63]
@@ -451,8 +464,10 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   last line that is not a repeated warning (a failed simulation's message is
   often a traceback, and its reason comes last).
   With `--base` the base's status is beside it, or `not in main`. Its summary
-  line reads `Python/linux, branch: 2 not passing, 1 also fails on main`. A
-  list holding a test that is new is open; the others, and the base's own
+  line reads `Python/linux, branch: 2 not passing, 1 also fails on main`, and
+  `; 1 no baseline` after it where a test has none: those are named on a
+  line under the table (`No baseline, nothing scored: …`), never in it. A
+  list holding a failure that is new is open; the others, and the base's own
   lists, are folded. Where the base has no run of that backend/os, the line
   says so, nothing is counted and the list is open.
 

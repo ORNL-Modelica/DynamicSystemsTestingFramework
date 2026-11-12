@@ -28,6 +28,17 @@ def _run_dir(folder, statuses, *, backend="Python", os_="linux", metadata=True):
     return folder
 
 
+def _list_of(lines, label):
+    """A label's folded list, from its ``<details>`` line to its end."""
+    (summary,) = [
+        i
+        for i, line in enumerate(lines)
+        if line.startswith(f"<summary>Python/linux, {label}:")
+    ]
+    end = lines.index("</details>", summary)
+    return lines[summary - 1 : end + 1]
+
+
 @pytest.fixture
 def runs(tmp_path):
     base = _run_dir(tmp_path / "base", {"Lib.A": "PASS", "Lib.B": "FAIL"})
@@ -55,13 +66,80 @@ def test_a_failure_where_the_base_had_no_baseline_is_new_and_open(tmp_path, caps
     assert main(argv) == 0
     out = capsys.readouterr().out
     assert (
-        "| Python/linux | 1/2 (1 NO_REF) | 1/2 (1 SIM_FAIL; 0 also fail on main) |"
+        "| Python/linux | 1/2 (1 no baseline) | 1/2 (1 SIM_FAIL; 0 also fail on main) |"
         in out
     )
     assert (
         "<details open>\n<summary>Python/linux, branch: 1 not passing, "
         "0 also fail on main</summary>" in out
     )
+
+
+def test_no_baseline_on_both_sides_is_no_failure(tmp_path, capsys):
+    """L.C has no baseline on main nor on the branch: no failure of the
+    branch, counted on its own, and listed apart from what failed."""
+    main_ = _run_dir(tmp_path / "main", {"L.C": "NO_REF", "L.P": "PASS"})
+    branch = _run_dir(tmp_path / "branch", {"L.C": "NO_REF", "L.P": "PASS"})
+    argv = ["summary", f"main={main_}", f"branch={branch}", "--base", "main"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert lines[2] == (
+        "| Python/linux | 1/2 (1 no baseline) | 1/2 (1 no baseline; 1 also has none "
+        "on main) |"
+    )
+    assert lines[4] == (
+        'Passed / run. "also fails on main" = the test fails on main too (or ends '
+        'there the same way). "no baseline" = NO_REF: nothing stored to score '
+        "against, so not a failure."
+    )
+    branch_list = _list_of(lines, "branch")
+    assert branch_list == [
+        "<details>",
+        "<summary>Python/linux, branch: 1 no baseline, 1 also has none on "
+        "main</summary>",
+        "",
+        'No baseline, nothing scored: <code title="L.C">C</code> (main: NO_REF).',
+        "",
+        "</details>",
+    ]
+    assert "What failed" not in out
+
+
+def test_no_baseline_on_the_branch_only_is_not_a_failure_the_base_shares(
+    tmp_path, capsys
+):
+    """Main failed L.C; the branch runs it and has no baseline for it. That is
+    no failure that also fails on main: only L.D, a SIM_FAIL on both, is."""
+    main_ = _run_dir(tmp_path / "main", {"L.C": "SIM_FAIL", "L.D": "SIM_FAIL"})
+    branch = _run_dir(tmp_path / "branch", {"L.C": "NO_REF", "L.D": "SIM_FAIL"})
+    argv = ["summary", f"main={main_}", f"branch={branch}", "--base", "main"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert lines[2] == (
+        "| Python/linux | 0/2 (2 SIM_FAIL) | 0/2 (1 SIM_FAIL, 1 no baseline; "
+        "1 also fails on main) |"
+    )
+    branch_list = _list_of(lines, "branch")
+    assert branch_list == [
+        "<details>",
+        "<summary>Python/linux, branch: 1 not passing, 1 also fails on main; "
+        "1 no baseline</summary>",
+        "",
+        "| Test | Status | main | What failed |",
+        "| --- | --- | --- | --- |",
+        '| <code title="L.D">D</code> | SIM_FAIL | SIM_FAIL |  |',
+        "",
+        'No baseline, nothing scored: <code title="L.C">C</code> (main: SIM_FAIL).',
+        "",
+        "</details>",
+    ]
+    out_file = tmp_path / "summary.json"
+    assert main([*argv, "--format", "json", "-o", str(out_file)]) == 0
+    cells = json.loads(out_file.read_text(encoding="utf-8"))["cells"]
+    branch_cell = [c for c in cells if c["label"] == "branch"][0]
+    assert (branch_cell["not_new"], branch_cell["none_on_base"]) == (1, 0)
 
 
 def test_a_base_run_cut_short_does_not_fold_the_branch_s_failures(tmp_path, capsys):

@@ -15,8 +15,10 @@ new" when the base label's cell of the SAME backend/os failed it too (FAIL
 or SIM_FAIL) or ended it with the same status word — a base NO_REF or NOT
 RUN scored nothing, so a failure over it is new; one the base cell does not
 hold is ``not in <base>``; and a backend/os the base label has no run of
-has no such count, said in the cell. Nothing is judged and nothing is recomputed: every word is the
-file's.
+has no such count, said in the cell. A test with no baseline (NO_REF) is
+no failure, new or not: it is counted apart, with how many of those the
+base has none of either. Nothing is judged and nothing is recomputed: every
+word is the file's.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .status import FAILURES, PASS
+from .status import FAILURES, NO_REF, PASS
 from .verdicts import VERDICTS_FILE
 
 #: The longest reason a list row holds, in characters.
@@ -53,11 +55,19 @@ class NotPassing:
     base: str | None = None
 
     @property
+    def no_baseline(self) -> bool:
+        """NO_REF: nothing stored to score it against. Not a failure."""
+        return self.status == NO_REF
+
+    @property
     def not_new(self) -> bool:
-        """The base failed it too, or ended it with the same status word
-        (NO_REF on both); False with no base to tell."""
-        return self.base is not None and (
-            self.base in FAILURES or self.base == self.status
+        """A failure the base failed too, or ended with the same status
+        word; False with no base to tell, and for a test with no baseline
+        (:attr:`no_baseline`), which failed nothing."""
+        return (
+            not self.no_baseline
+            and self.base is not None
+            and (self.base in FAILURES or self.base == self.status)
         )
 
 
@@ -77,9 +87,22 @@ class Cell:
     #: of those, the ones that are not new (:attr:`NotPassing.not_new`);
     #: None with no base, in the base's own cell, or with no base run of this backend/os
     not_new: int | None = None
+    #: of its tests with no baseline, those the base has none of either
+    #: (NO_REF there too); None where :attr:`not_new` is
+    none_on_base: int | None = None
     #: why there is no such count where there is a base ("no main run for
     #: Dymola/linux"); "" otherwise
     base_note: str = ""
+
+    @property
+    def failing(self) -> list[NotPassing]:
+        """Its tests not passing that have a baseline: what failed."""
+        return [r for r in self.not_passing if not r.no_baseline]
+
+    @property
+    def no_baseline(self) -> list[NotPassing]:
+        """Its tests with no baseline (NO_REF)."""
+        return [r for r in self.not_passing if r.no_baseline]
 
 
 @dataclass(frozen=True)
@@ -261,10 +284,11 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
             if base_tests is not None:
                 said = base_tests.get(model_id, f"not in {base}")
             rows.append(NotPassing(model_id, status, reason(t), said))
-        not_new = None
+        not_new = none_on_base = None
         note = ""
         if base_tests is not None:
             not_new = sum(r.not_new for r in rows)
+            none_on_base = sum(r.no_baseline and r.base == NO_REF for r in rows)
         elif base is not None and label != base:
             note = f"no {base} run for {folder}"
         cells[(label, folder)] = Cell(
@@ -276,6 +300,7 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
             totals={str(k): _count(v) for k, v in totals.items()},
             not_passing=rows,
             not_new=not_new,
+            none_on_base=none_on_base,
             base_note=note,
         )
     folders = sorted({folder for _, folder in read}, key=_folder_key)

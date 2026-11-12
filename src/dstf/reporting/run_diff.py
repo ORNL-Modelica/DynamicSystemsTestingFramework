@@ -61,6 +61,7 @@ import numpy as np
 from ..storage.baseline_diff import (
     SeriesChange,
     VariableDiff,
+    agree_at,
     agrees_within,
     difference_series,
     series_change,
@@ -141,6 +142,10 @@ class TestRunDiff:
     #: the two files hold as many points, each time within one storage step
     #: of the coarser file's (a float32 copy of a float64 run's times)
     same_points: bool
+    #: where the files hold as many points: how many of their times differ
+    #: beyond that step, and the largest |later − first| of those (s);
+    #: (0, 0.0) where the counts differ
+    times_moved: tuple[int, float]
     #: the names one run's file holds and the other's does not, statistics
     #: apart, sorted
     only_old: list[str]
@@ -380,9 +385,8 @@ def _test(
     same_grid = ta.shape == tb.shape and bool(np.array_equal(ta, tb))
     # the same points within a time step of the coarser file: what a group
     # must hold to be within rounding (float32 times are not float64 ones)
-    same_points = same_grid or (
-        ta.shape == tb.shape and agrees_within(ta, tb, _step_at(ta, tb))
-    )
+    times_moved = _times_moved(ta, tb)
+    same_points = same_grid or (ta.shape == tb.shape and not times_moved[0])
     signal_counts: Counter[str] = Counter({k: 0 for k in KINDS})
     constant_counts: Counter[str] = Counter({k: 0 for k in CONSTANT_KINDS})
     signals: list[Signal] = []
@@ -410,6 +414,7 @@ def _test(
             spans=(_span(ta), _span(tb)),
             same_grid=same_grid,
             same_points=same_points,
+            times_moved=times_moved,
             only_old=sorted(n for n in va if n not in vb),
             only_new=sorted(n for n in vb if n not in va),
             signal_counts=dict(signal_counts),
@@ -454,6 +459,19 @@ def _step_at(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     with np.errstate(invalid="ignore"):
         size = np.fmax(np.abs(np.asarray(x, float)), np.abs(np.asarray(y, float)))
     return _step(size, _coarser(x, y))
+
+
+def _times_moved(ta: np.ndarray, tb: np.ndarray) -> tuple[int, float]:
+    """Of two files' times, index by index where they hold as many: how
+    many differ beyond one storage step of the coarser file's, and by how
+    much at most (s); (0, 0.0) where they hold other counts."""
+    if ta.shape != tb.shape:
+        return 0, 0.0
+    off = ~agree_at(ta, tb, _step_at(ta, tb))
+    if not off.any():
+        return 0, 0.0
+    moved = np.abs(np.asarray(tb, float)[off] - np.asarray(ta, float)[off])
+    return int(off.sum()), float(np.max(moved))
 
 
 def _span(time: np.ndarray) -> tuple[float, float]:

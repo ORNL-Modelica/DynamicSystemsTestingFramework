@@ -159,35 +159,38 @@ def test_a_test_not_passing_on_the_base_too_is_not_new(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "on_base, failing, not_passing",
+    "on_base, failing, none_either",
     [
         # the base failed it too: not new, whatever it is here
-        ("FAIL", 1, 1),
-        ("SIM_FAIL", 1, 1),
+        ("FAIL", 1, 0),
+        ("SIM_FAIL", 1, 0),
         # it passed on the base, or the base does not hold it: new
         ("PASS", 0, 0),
         (None, 0, 0),
-        # nothing was scored on the base: new, unless it ends the same here
+        # nothing was scored on the base: new; with none here either, counted so
         ("NO_REF", 0, 1),
         ("NOT RUN", 0, 0),
     ],
 )
 def test_not_new_is_failed_on_the_base_too_or_the_same_status(
-    tmp_path, on_base, failing, not_passing
+    tmp_path, on_base, failing, none_either
 ):
     """A test is not new when the base failed it (FAIL or SIM_FAIL) or ended
     with the same word; a base with no baseline for it (NO_REF) or that never
-    ran it (NOT RUN) did not fail it, so a FAIL here is new."""
+    ran it (NOT RUN) did not fail it, so a FAIL here is new. A test with no
+    baseline here (NO_REF) is no failure, new or not, whatever the base did:
+    it is counted apart, as having none on the base either or not."""
     base_tests = [_test("Lib.Other", "PASS")]
     if on_base is not None:
         base_tests.append(_test("Lib.A", on_base))
     _write(tmp_path / "base", base_tests)
-    for here, expected in (("FAIL", failing), ("NO_REF", not_passing)):
+    for here, expected in (("FAIL", (failing, 0)), ("NO_REF", (0, none_either))):
         _write(tmp_path / here, [_test("Lib.A", here)])
         got = read_summary(
             [("base", tmp_path / "base"), ("head", tmp_path / here)], base="base"
         )
-        assert got.cells[("head", "Python/linux")].not_new == expected, here
+        cell = got.cells[("head", "Python/linux")]
+        assert (cell.not_new, cell.none_on_base) == expected, here
 
 
 def test_not_new_is_read_in_the_same_backend_os_only(tmp_path):
