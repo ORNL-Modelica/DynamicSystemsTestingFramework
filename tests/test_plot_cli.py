@@ -127,3 +127,36 @@ def test_over_300_images_are_refused_without_test_only(
     fake_playwright(monkeypatch)
     assert _plot(lib, out, f"a={a}", f"b={b}", "--test", "SimpleRamp") == 0
     assert len(list(out.rglob("*.png"))) == 301
+
+
+def test_a_named_test_one_run_holds_is_drawn_and_said(
+    lib, tmp_path, monkeypatch, capsys
+):
+    a = write_python_run(
+        tmp_path / "a", {RAMP: {"x": [0, 2, 4, 6, 8]}, CSV: {"x": [1.0] * 5}}
+    )
+    b = write_python_run(tmp_path / "b", {RAMP: {"x": [0, 2, 4, 6, 8]}})
+    out = tmp_path / "out"
+    fake_playwright(monkeypatch)
+    assert _plot(lib, out, f"a={a}", f"b={b}", "--test", "ConstantCsv") == 0
+    said = capsys.readouterr().out.splitlines()
+    assert (
+        said[0]
+        == "ConstantCsv · Python/linux: b: not run. No two runs of it to compare."
+    )
+    assert said[1].startswith(f"Wrote 0 images, 0 tables and {out / GALLERY} (")
+
+
+def test_a_backend_and_os_of_one_run_is_said_on_the_console(
+    lib, tmp_path, monkeypatch, capsys
+):
+    a = write_python_run(tmp_path / "a", {RAMP: {"x": [0, 2, 4, 6, 8]}})
+    b = write_python_run(tmp_path / "b", {RAMP: {"x": [0, 2, 4, 6, 9]}})
+    w = write_python_run(
+        tmp_path / "w", {RAMP: {"x": [0, 2, 4, 6, 9]}}, os_name="windows"
+    )
+    out = tmp_path / "out"
+    fake_playwright(monkeypatch)
+    assert _plot(lib, out, f"a={a}", f"b={b}", f"b={w}") == 0
+    said = capsys.readouterr().out.splitlines()
+    assert said[0] == "Python/windows: one run only (b), not drawn."

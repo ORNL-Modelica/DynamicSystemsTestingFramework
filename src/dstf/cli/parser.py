@@ -1499,11 +1499,12 @@ def _add_plot(tree: _Tree, top) -> None:
             failed or did not run in a run is no line there, and the page
             says so.
 
-            By default the tests are those with a variable that moved, or
-            a run that failed, in a <Backend>/<os> of two runs that hold
-            them; the others are named in one line ("Nothing moved in 12
-            tests: …"). --test names tests to draw in full, tables
-            included, even where nothing moved: how a passing fix's values
+            By default the tests are those with a variable that moved or
+            that only some runs hold, or a run that failed or holds no
+            result, in a <Backend>/<os> of two runs that hold them; the
+            others are named in one line ("Nothing moved in 12 tests: …").
+            --test names tests to draw in full, tables included, even where
+            nothing moved or one run holds them: how a passing fix's values
             are seen.
 
             The images are drawn as `baseline plot` draws them, by the
@@ -1545,7 +1546,8 @@ def _add_plot(tree: _Tree, top) -> None:
         help="Only these tests, each a short name (NSSS_Test) or a full model "
         "id, drawn in full even where nothing moved; a NAME that matches no "
         "run's test is refused. Give it after the runs. Default: every test "
-        "with a variable that moved or a run that failed.",
+        "with a variable that moved or that only some runs hold, or a run "
+        "that failed or holds no result.",
     )
     node.add_argument(
         "--folder",

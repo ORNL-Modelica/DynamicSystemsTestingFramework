@@ -201,25 +201,33 @@ def write_python_run(
     *,
     os_name="linux",
     failed=(),
+    pending=(),
     metadata=True,
 ):
     """A Python run's work dir as its backend leaves one (`dstf plot`'s
     tests): ``results`` maps a model id to its variables on
     :data:`RUN_TIME`; a model in ``failed`` is recorded as failed, its file
-    holding values (a partial run's)."""
+    holding values (a partial run's); one in ``pending`` was started and
+    never finished (a run stopped part way)."""
     where.mkdir(parents=True)
     manifest = {}
     rows = []
     for i, (model_id, variables) in enumerate(results.items(), start=1):
         key = f"test_{i:04d}"
-        status = "failed" if model_id in failed else "passed"
+        status = (
+            "failed"
+            if model_id in failed
+            else "pending"
+            if model_id in pending
+            else "passed"
+        )
         manifest[key] = {
             "model_id": model_id,
             "ref_id": None,
             "last_run_at": 1.0,
             "last_run_status": status,
         }
-        verdict = "SIM_FAIL" if model_id in failed else "PASS"
+        verdict = {"failed": "SIM_FAIL", "pending": None}.get(status, "PASS")
         rows.append(
             {
                 "test_key": key,

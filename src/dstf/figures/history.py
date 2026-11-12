@@ -47,8 +47,21 @@ _PANEL_SAID = {
     "value": "as % of the first's value (a constant)",
     "absolute": "the absolute difference (the first is all zero)",
 }
-#: The panel caption's words for what each line is.
-_EACH_LATER = {"baseline": "each later baseline", "run": "each later run"}
+#: The words for what each line is (``baseline plot``'s baselines, ``plot``'s
+#: runs): the panel's caption, and the notes naming a line not held or the
+#: first that holds one (``{}``: the line's short name).
+KIND_WORDS = {
+    "baseline": {
+        "each later": "each later baseline",
+        "not held": "Not stored at {}.",
+        "first held": "First stored at {}",
+    },
+    "run": {
+        "each later": "each later run",
+        "not held": "Not in run {}.",
+        "first held": "First in run {}",
+    },
+}
 _GRID = "#eeeeee"
 _MUTED = "#555555"
 
@@ -149,7 +162,7 @@ def history_figure(
     height = _TOP + _PLOT + bottom
     annotations = [
         {
-            "text": f"{_EACH_LATER[kind]} minus the first ({first}), "
+            "text": f"{KIND_WORDS[kind]['each later']} minus the first ({first}), "
             f"{_PANEL_SAID[unit]}: baseline diff's Change measure",
             "xref": "paper",
             "yref": "paper",

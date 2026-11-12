@@ -27,11 +27,13 @@ def cmd_plot(args: argparse.Namespace) -> int:
     from ..reporting.baseline_gallery import (
         GALLERY,
         OutputRefused,
+        alone_line,
         nothing_moved_line,
         plan_images,
         run_gallery_html,
         run_tables,
         stale_files,
+        uncompared_lines,
     )
     from ..reporting.images import ImagesUnavailable
     from ..reporting.run_history import run_history
@@ -57,6 +59,10 @@ def cmd_plot(args: argparse.Namespace) -> int:
         return 2
     page = out / GALLERY
     page.write_text(run_gallery_html(history, images, pngs), encoding="utf-8")
+    for folder, run in history.alone:
+        print(alone_line(folder, run))
+    for line in uncompared_lines(history):
+        print(line)
     if history.nothing_moved:
         print(nothing_moved_line(history.nothing_moved))
     print(wrote(len(images), run_tables(history), page))

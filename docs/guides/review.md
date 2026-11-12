@@ -278,10 +278,13 @@ How the runs are read:
 - **A failed run** is no line, whatever its result file holds, and the
   section says why (`branch: the run failed (Run recorded timed_out).`). A
   run that holds no result of the test says `not run`.
-- **The tests:** by default, those with a variable that moved or a run that
-  failed; the others are named in one line (`Nothing moved in 12 tests:
-  …`). `--test` draws the tests it names in full, tables included, even
-  where nothing moved: that is how a passing fix's values are seen.
+- **The tests:** by default, those with a variable that moved or that only
+  some runs hold, or a run that failed or holds no result; the others two
+  runs hold are named in one line (`Nothing moved in 12 tests: …`). `--test`
+  draws the tests it names in full, tables included, even where nothing
+  moved or one run holds the test: that is how a passing fix's values are
+  seen. A section with fewer than two runs to compare is said on the
+  console too, and so is a `<Backend>/<os>` given one run only.
 - **The variables:** a variable that holds one value at every point of each
   run is a row of the section's table, never an image: its value in each
   run at the digits that run holds, and its `Change` from the first run to

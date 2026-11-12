@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..figures.history import HistoryTrace, cut, history_figure
+from ..figures.history import KIND_WORDS, HistoryTrace, cut, history_figure
 from ..storage.baseline_diff import (
     BaselineDiff,
     VariableDiff,
@@ -246,18 +246,20 @@ def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
     ]
     held = {line.revision for line in variable.lines}
     start = variable.lines[0].revision
+    words = KIND_WORDS[start.kind]
     after_first = folder.kept.index(start)
     missing = [r for r in folder.kept[after_first:] if r not in held]
     if missing:
-        notes.append(f"Not stored at {_shorts(missing)}.")
+        notes.append(words["not held"].format(_shorts(missing)))
     if variable.first_stored not in (None, start):
         notes.append(
-            f"First stored at {variable.first_stored.short}, which is left "
-            f"out; measured from {start.short}."
+            words["first held"].format(variable.first_stored.short)
+            + f", which is left out; measured from {start.short}."
         )
     elif after_first:
         notes.append(
-            f"First stored at {start.short}; nothing earlier to measure against."
+            words["first held"].format(start.short)
+            + "; nothing earlier to measure against."
         )
     for line in variable.lines[1:]:
         change, short = line.change, line.revision.short
@@ -502,6 +504,31 @@ def run_sections(history: RunHistory) -> list[tuple[TestHistory, FolderHistory]]
     return sorted(((t, f) for t in history.tests for f in t.folders), key=key)
 
 
+def alone_line(folder: str, run: Run) -> str:
+    """The line naming a backend/os given one run only."""
+    return f"{folder}: one run only ({run.label}), not drawn."
+
+
+def _section_notes(folder: FolderHistory) -> list[str]:
+    """What a section says before its images: each run that is no line,
+    and that there is nothing to compare where fewer than two are."""
+    notes = _run_notes(folder)
+    if len(folder.kept) < 2:
+        notes.append("No two runs of it to compare.")
+    return notes
+
+
+def uncompared_lines(history: RunHistory) -> list[str]:
+    """One console line per section with fewer than two runs to compare:
+    its test, its folder and why."""
+    return [
+        f"{short_name(test.model_id)} · {folder.folder}: "
+        + " ".join(_section_notes(folder))
+        for test, folder in run_sections(history)
+        if len(folder.kept) < 2
+    ]
+
+
 def nothing_moved_line(model_ids: list[str]) -> str:
     """The one line naming the tests where nothing moved, cut past ten."""
     n = len(model_ids)
@@ -562,10 +589,7 @@ def run_gallery_html(
             f'<p class="said">{_e(nothing_moved_line(history.nothing_moved))}</p>'
         )
     for folder, run in history.alone:
-        parts.append(
-            f'<p class="said">{_e(folder)}: one run only ({_e(run.label)}), '
-            "not drawn.</p>"
-        )
+        parts.append(f'<p class="said">{_e(alone_line(folder, run))}</p>')
     for test, folder in sections:
         parts += _run_section(test, folder, images, pngs)
     parts.append("</body></html>")
@@ -589,9 +613,7 @@ def _run_section(
         f"<table><tr><th>Test</th><th>Change, {_e(folder.folder)}</th></tr>"
         f"<tr><td><code>{_e(short)}</code></td><td>{_e(cell)}</td></tr></table>",
     ]
-    out += [f'<p class="said">{_e(note)}</p>' for note in _run_notes(folder)]
-    if len(folder.kept) < 2:
-        out.append('<p class="said">No two runs of it to compare.</p>')
+    out += [f'<p class="said">{_e(note)}</p>' for note in _section_notes(folder)]
     for image in images:
         if image.test != test.model_id or image.folder != folder.folder:
             continue

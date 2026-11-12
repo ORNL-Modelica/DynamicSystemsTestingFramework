@@ -20,9 +20,11 @@ run holds no result of is "not run". A run's numbers are its own, so no
 rounding of saved digits is read into them. Every run is a line: none is
 skipped as equal to another, and none is left out.
 
-Which tests: those named, else every test with a variable that moved, or a
-run that failed, in a folder of two runs or more that hold it. Every other
-test two runs of a folder hold is named as one where nothing moved.
+Which tests: those named — drawn where any run holds them — else every test
+with a variable that moved or that only some runs hold, or a run that
+failed or holds no result, in a folder of two runs or more that hold it.
+Every other test two runs of a folder hold is named as one where nothing
+moved.
 """
 
 from __future__ import annotations
@@ -105,6 +107,11 @@ def _read_one(
         )
     held = _manifest_ids(given, directory / MANIFEST)
     status = read_status(directory)
+    if status is None and (directory / "status.json").exists():
+        raise RunError(
+            f"{given}: its status.json cannot be read, so the backend and os "
+            "that ran it are not known"
+        )
     if status is None:
         raise RunError(
             f"{given}: no status.json in it to say which backend and os ran it"
@@ -152,10 +159,16 @@ def _manifest_ids(given: str, path: Path) -> set[str]:
         raise RunError(f"{given}: its {MANIFEST} cannot be read ({e})") from e
     if not isinstance(data, dict):
         raise RunError(f"{given}: its {MANIFEST} holds no JSON object")
-    return {
-        str(entry.get("model_id") if isinstance(entry, dict) else entry)
-        for entry in data.values()
-    }
+    ids = set()
+    for key, entry in data.items():
+        # an old manifest names its model alone; a newer one in an object
+        model_id = entry.get("model_id") if isinstance(entry, dict) else entry
+        if not (isinstance(model_id, str) and model_id):
+            raise RunError(
+                f"{given}: its {MANIFEST} holds an entry with no model id ({key})"
+            )
+        ids.add(model_id)
+    return ids
 
 
 def _baseline(result) -> tuple[Baseline, dict[str, int]]:
@@ -206,6 +219,12 @@ def run_history(
             )
         seen[(label, folder)] = directory
         by_folder.setdefault(folder, []).append((run, results, held))
+    # Per folder, in the order the labels were first given: the reference
+    # is the run of the earliest label that has one there, whatever order
+    # the arguments name each folder's runs in.
+    order = list(dict.fromkeys(label for label, _ in runs))
+    for read in by_folder.values():
+        read.sort(key=lambda r: order.index(r[0].label))
 
     held_folders = sorted(by_folder, key=folder_order)
     unknown = [f for f in folders or [] if f not in by_folder]
@@ -236,14 +255,15 @@ def run_history(
         sections = [
             s
             for s in (
-                _section(folder, model_id, read) for folder, read in drawn.items()
+                _section(folder, model_id, read, named=named is not None)
+                for folder, read in drawn.items()
             )
             if s is not None
         ]
         if named is not None:
             out.append(TestHistory(model_id, True, sections))
             continue
-        shown = [s for s in sections if s.failed or any(v.moved for v in s.variables)]
+        shown = [s for s in sections if _differs(s)]
         if shown:
             out.append(TestHistory(model_id, True, shown))
         elif sections:
@@ -256,13 +276,27 @@ def run_history(
     )
 
 
+def _differs(section: FolderHistory) -> bool:
+    """Whether a section shows a difference: a run that failed or holds no
+    result, a variable that moved, or one some run drawn does not hold."""
+    return bool(
+        section.failed
+        or section.not_run
+        or any(v.moved or len(v.lines) < len(section.kept) for v in section.variables)
+    )
+
+
 def _section(
-    folder: str, model_id: str, read: list[tuple[Run, dict, set[str]]]
+    folder: str,
+    model_id: str,
+    read: list[tuple[Run, dict, set[str]]],
+    *,
+    named: bool,
 ) -> FolderHistory | None:
     """One test in one folder across its runs; None where fewer than two
-    of them hold it."""
+    of them hold it — or, for a test named, where none does."""
     holding = [(run, results) for run, results, held in read if model_id in held]
-    if len(holding) < 2:
+    if len(holding) < (1 if named else 2):
         return None
     lines: list[tuple[Source, Baseline]] = []
     shown: dict[tuple[Source, str], int] = {}

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 
+import numpy as np
 import pytest
 
 from conftest import python_example_copy, write_python_run
@@ -20,6 +21,7 @@ from dstf.reporting.baseline_gallery import (
 )
 from dstf.reporting.run_history import RunError, run_history
 from dstf.storage.baseline_diff import DiffError
+from mat4_files import write_result_mat
 
 RAMP = "PythonTestingLib.Examples.SimpleRamp"
 CSV = "PythonTestingLib.Examples.ConstantCsv"
@@ -102,6 +104,11 @@ def test_the_first_label_given_is_the_reference_for_every_later_run(lib, tmp_pat
         "<tr><td><code>x</code></td><td>1</td><td>2</td><td>4</td>"
         "<td>300 % of value</td></tr>"
     ) in lines
+    # the section's Change too: c against a (b against a is 100 %)
+    assert (
+        "<table><tr><th>Test</th><th>Change, Python/linux</th></tr><tr><td><code>"
+        "ConstantCsv</code></td><td>300 % of value</td></tr></table>"
+    ) in lines
 
 
 def _hashes(*dirs):
@@ -172,6 +179,37 @@ def test_a_test_one_run_holds_no_result_of_is_not_run_there(lib, tmp_path):
     ]
 
 
+def test_a_test_a_run_never_finished_has_its_section_not_nothing_moved(lib, tmp_path):
+    """A run stopped part way leaves its entry pending: that run has no
+    result, which is a difference — never "nothing moved"."""
+    main = write_python_run(tmp_path / "main", {RAMP: RAMP_MAIN, CSV: ONE})
+    fix = write_python_run(tmp_path / "fix", {RAMP: RAMP_MAIN, CSV: ONE}, pending={CSV})
+    history = _history(lib, [("main", main), ("fix", fix)])
+    assert history.nothing_moved == [RAMP]
+    _, page = _page(history)
+    section = page[page.index("<h2><code>ConstantCsv</code>") :]
+    assert section.splitlines()[3:6] == [
+        '<p class="said">fix: not run.</p>',
+        '<p class="said">No two runs of it to compare.</p>',
+        "</section>",
+    ]
+
+
+def test_a_named_test_one_run_holds_has_its_section(lib, tmp_path):
+    """--test names a test only one run ran: it is drawn as far as it can
+    be, never an empty page."""
+    main = write_python_run(tmp_path / "main", {RAMP: RAMP_MAIN, CSV: ONE})
+    fix = write_python_run(tmp_path / "fix", {RAMP: RAMP_MAIN})
+    history = _history(lib, [("main", main), ("fix", fix)], tests=["ConstantCsv"])
+    _, page = _page(history)
+    section = page[page.index("<h2><code>ConstantCsv</code> · Python/linux") :]
+    assert section.splitlines()[3:6] == [
+        '<p class="said">fix: not run.</p>',
+        '<p class="said">No two runs of it to compare.</p>',
+        "</section>",
+    ]
+
+
 def test_a_named_test_is_drawn_in_full_even_where_nothing_moved(lib, tmp_path):
     """How a reviewer sees a passing fix's values: its constants' table and
     the line of the variables that did not move."""
@@ -223,6 +261,46 @@ def test_runs_pair_only_within_one_backend_and_os(lib, tmp_path):
         "<ul><li>Python/linux: main (ml) → fix (fl)</li>"
         "<li>Python/windows: main (mw) → fix (fw)</li></ul>"
     ) in page.splitlines()
+
+
+def test_each_folder_s_reference_is_the_run_of_the_label_given_first(lib, tmp_path):
+    """The labels' order, not the arguments' per folder: fix's windows run
+    given before main's is still measured against main's."""
+    runs = [
+        ("main", write_python_run(tmp_path / "ml", {RAMP: RAMP_MAIN})),
+        ("fix", write_python_run(tmp_path / "fw", {RAMP: RAMP_FIX}, os_name="windows")),
+        ("fix", write_python_run(tmp_path / "fl", {RAMP: RAMP_FIX})),
+        (
+            "main",
+            write_python_run(tmp_path / "mw", {RAMP: RAMP_MAIN}, os_name="windows"),
+        ),
+    ]
+    history = _history(lib, runs)
+    assert {f: [r.label for r in got] for f, got in history.folders.items()} == {
+        "Python/linux": ["main", "fix"],
+        "Python/windows": ["main", "fix"],
+    }
+    images = plan_images(history.tests)
+    for image in images:
+        legend = [t["name"] for t in image.figure["data"] if t["yaxis"] == "y"]
+        assert legend[0].startswith("main ("), legend
+
+
+def test_a_folder_named_restricts_the_runs_drawn(lib, tmp_path):
+    runs = [
+        ("main", write_python_run(tmp_path / "ml", {RAMP: RAMP_MAIN})),
+        (
+            "main",
+            write_python_run(tmp_path / "mw", {RAMP: RAMP_MAIN}, os_name="windows"),
+        ),
+        ("fix", write_python_run(tmp_path / "fl", {RAMP: RAMP_FIX})),
+        ("fix", write_python_run(tmp_path / "fw", {RAMP: RAMP_FIX}, os_name="windows")),
+    ]
+    history = _history(lib, runs, folders=["Python/windows"])
+    assert list(history.folders) == ["Python/windows"]
+    assert [i.path for i in plan_images(history.tests)] == [
+        "SimpleRamp/Python-windows/01-x.png"
+    ]
 
 
 def test_a_backend_and_os_of_one_run_draws_nothing_and_is_said(lib, tmp_path):
@@ -279,6 +357,55 @@ def test_a_variable_one_run_holds_is_named_not_drawn(lib, tmp_path):
     assert '<p class="said">Not drawn, only in main: y1.</p>' in lines
     # a constant one run holds: in the table, a dash in the other column
     assert "<tr><td><code>yk</code></td><td>–</td><td>5</td><td>–</td></tr>" in lines
+
+
+def _track_y(lib):
+    spec = lib.parent / "test_spec.json"
+    data = json.loads(spec.read_text())
+    for entry in data["tests"]:
+        if entry["model"] == RAMP:
+            entry["variables"] = ["x", "y*"]
+    spec.write_text(json.dumps(data))
+
+
+def test_a_variable_only_one_run_holds_is_a_difference(lib, tmp_path):
+    """A variable renamed or added on the branch, nothing else moved: the
+    test has its section, never "nothing moved"."""
+    _track_y(lib)
+    main = write_python_run(
+        tmp_path / "main", {RAMP: {**RAMP_MAIN, "y1": [0, 1, 0, 1, 0]}}
+    )
+    fix = write_python_run(
+        tmp_path / "fix", {RAMP: {**RAMP_MAIN, "y2": [0, 1, 0, 1, 0]}}
+    )
+    history = _history(lib, [("main", main), ("fix", fix)])
+    assert history.nothing_moved == []
+    _, page = _page(history)
+    assert (
+        '<p class="said">Not drawn, unchanged: x. Not drawn, only in main: y1. '
+        "Not drawn, only in fix: y2.</p>"
+    ) in page.splitlines()
+
+
+def test_a_run_s_image_notes_say_run(lib, tmp_path):
+    """Three runs, y1 not in the second: the note says so in a run's words."""
+    _track_y(lib)
+    a = write_python_run(tmp_path / "a", {RAMP: {**RAMP_MAIN, "y1": [0, 1, 0, 1, 0]}})
+    b = write_python_run(tmp_path / "b", {RAMP: RAMP_MAIN})
+    c = write_python_run(tmp_path / "c", {RAMP: {**RAMP_MAIN, "y1": [0, 1, 0, 1, 2]}})
+    d = write_python_run(tmp_path / "d", {RAMP: {**RAMP_MAIN, "y2": [0, 1, 0, 1, 2]}})
+    images = plan_images(_history(lib, [("a", a), ("b", b), ("c", c)]).tests)
+    assert {i.label: i.notes for i in images} == {"y1": ["Not in run b."]}
+    images = plan_images(_history(lib, [("a", a), ("d", d), ("c", c)]).tests)
+    assert {i.label: i.notes for i in images} == {
+        "y1": ["Not in run d."],
+    }
+    e = write_python_run(tmp_path / "e", {RAMP: {**RAMP_MAIN, "y3": [0, 1, 0, 1, 0]}})
+    f = write_python_run(tmp_path / "f", {RAMP: {**RAMP_MAIN, "y3": [0, 1, 0, 1, 3]}})
+    images = plan_images(_history(lib, [("a", a), ("e", e), ("f", f)]).tests)
+    assert {i.label: i.notes for i in images} == {
+        "y3": ["First in run e; nothing earlier to measure against."]
+    }
 
 
 def test_a_constant_not_a_number_in_both_runs_did_not_change(lib, tmp_path):
@@ -362,6 +489,33 @@ def test_a_manifest_that_cannot_be_read_is_refused_and_left_where_it_is(lib, tmp
     assert (main / "batch_manifest.json").read_text() == "[1, 2]"
 
 
+def test_a_manifest_entry_with_no_model_id_is_refused_and_left_as_it_is(lib, tmp_path):
+    main = write_python_run(tmp_path / "main", {RAMP: RAMP_MAIN})
+    manifest = main / "batch_manifest.json"
+    data = json.loads(manifest.read_text())
+    data["test_0009"] = {"ref_id": None}
+    manifest.write_text(json.dumps(data))
+    before = manifest.read_bytes()
+    fix = write_python_run(tmp_path / "fix", {RAMP: RAMP_FIX})
+    got = _refused(lib, [("main", main), ("fix", fix)])
+    assert got == (
+        f"main={main}: its batch_manifest.json holds an entry with no model id "
+        "(test_0009)"
+    )
+    assert manifest.read_bytes() == before
+
+
+def test_a_status_json_that_cannot_be_read_is_refused_as_such(lib, tmp_path):
+    main = write_python_run(tmp_path / "main", {RAMP: RAMP_MAIN})
+    (main / "status.json").write_text("{not json")
+    fix = write_python_run(tmp_path / "fix", {RAMP: RAMP_FIX})
+    got = _refused(lib, [("main", main), ("fix", fix)])
+    assert got == (
+        f"main={main}: its status.json cannot be read, so the backend and os "
+        "that ran it are not known"
+    )
+
+
 def test_a_run_with_no_status_json_is_refused(lib, tmp_path):
     main = write_python_run(tmp_path / "main", {RAMP: RAMP_MAIN})
     (main / "status.json").unlink()
@@ -405,3 +559,47 @@ def test_one_directory_given_twice_is_refused(lib, tmp_path):
     one = write_python_run(tmp_path / "one", {RAMP: RAMP_MAIN})
     got = _refused(lib, [("main", one), ("fix", one)])
     assert got == f"fix={one}: this directory is given twice (also as main)"
+
+
+# --- a float32 run -------------------------------------------------------------
+
+
+def _dymola_run(where, value):
+    """A Dymola run's work dir: its result file float32, as Dymola writes."""
+    where.mkdir()
+    (where / "test_0001").mkdir()
+    write_result_mat(
+        where / "test_0001" / "dsres.mat",
+        time=np.array([0.0, 1.0, 2.0]),
+        trajectories={"x": np.array([value] * 3)},
+    )
+    (where / "batch_manifest.json").write_text(
+        json.dumps({"test_0001": {"model_id": "Lib.A", "last_run_status": "passed"}})
+    )
+    meta = {"backend": "Dymola", "backend_name": "Dymola", "os": "linux"}
+    (where / "status.json").write_text(json.dumps({"metadata": meta, "tests": []}))
+    return where
+
+
+def test_a_float32_run_s_constant_is_shown_at_7_digits(tmp_path):
+    lib = tmp_path / "Lib"
+    lib.mkdir()
+    (lib / "package.mo").write_text(
+        "within ;\npackage Lib\n  model A\n    Real x = 1;\n  end A;\nend Lib;\n"
+    )
+    config = tmp_path / "testing.json"
+    config.write_text(
+        json.dumps(
+            {"source_path": "Lib", "test_spec": "test_spec.json", "backend": "Dymola"}
+        )
+    )
+    (tmp_path / "test_spec.json").write_text(
+        json.dumps({"tests": [{"model": "Lib.A", "variables": ["x"]}]})
+    )
+    a = _dymola_run(tmp_path / "a", 2.233511e10)
+    b = _dymola_run(tmp_path / "b", 1.548207e10)
+    _, page = _page(_history(config, [("main", a), ("fix", b)]))
+    assert (
+        "<tr><td><code>x</code></td><td>2.233511e+10</td><td>1.548207e+10</td>"
+        "<td>31 % of value</td></tr>"
+    ) in page.splitlines()
