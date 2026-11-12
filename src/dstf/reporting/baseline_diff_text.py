@@ -131,7 +131,7 @@ def _change_text(change: SeriesChange) -> str:
     if change.uneven:
         parts.append(
             f"{change.uneven} old points inside an event the new run stores "
-            "another number of times, not compared"
+            "another number of times"
         )
     return "; ".join(parts) or "nothing compared"
 

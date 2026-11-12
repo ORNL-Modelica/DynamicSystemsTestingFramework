@@ -920,7 +920,7 @@ def test_old_points_of_an_event_new_stores_otherwise_are_said_and_no_unmoved_fil
     text = as_markdown(diff, details=["Lib.A"])
     assert (
         "| `y` | 0 %; 2 old points inside an event the new run stores another "
-        "number of times, not compared |"
+        "number of times |"
     ) in text
 
 
