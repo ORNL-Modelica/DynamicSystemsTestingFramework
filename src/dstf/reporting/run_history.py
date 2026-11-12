@@ -11,7 +11,9 @@ ran, its ``status.json`` metadata the backend that ran them and the
 ``summary``'s rule), and that backend's ``read_last_results`` reads them,
 under the CURRENT ``testing.json`` and spec — the tests discovery finds, the
 variables they track, each run's verdict applied. Nothing is written into a
-run: no default ``testing.json``, no wipe, no stamp.
+run: no default ``testing.json``, no wipe, no stamp. What is read of a run
+with no configuration (:func:`read_run`, :func:`read_runs`,
+:func:`paired_folders`) is ``dstf diff``'s too (:mod:`.run_diff`).
 
 Runs pair only within one backend/os folder, in the order their labels were
 first given; the first is the one every later run is measured against. A
