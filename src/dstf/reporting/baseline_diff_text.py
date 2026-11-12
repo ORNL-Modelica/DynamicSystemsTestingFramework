@@ -176,7 +176,7 @@ def constant_change(change: SeriesChange) -> str:
 # --- ranking ---------------------------------------------------------------
 
 
-def _rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
+def change_rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
     """How large a set of variable changes is, for sorting: any non-finite
     difference first, then the largest percent, then the largest absolute
     difference."""
@@ -221,7 +221,7 @@ def _test_rank(test: TestDiff) -> tuple[int, int, float, float]:
     if not compared:
         return (1, 0, 0.0, 0.0)
     variables = [v for b in compared for v in b.variables]
-    nf, pct, absolute = _rank(variables)
+    nf, pct, absolute = change_rank(variables)
     return (0, -nf, -pct, -absolute)
 
 
@@ -252,7 +252,9 @@ def _marked(text: str, marks: list[str]) -> str:
     return f"{text} ({', '.join(marks)})" if marks else text
 
 
-def _cell(b: BaselineDiff) -> str:
+def change_cell(b: BaselineDiff) -> str:
+    """A changed baseline's Change cell: its largest change, with its marks
+    (variables added or removed, settings, a value not finite)."""
     if b.status != "changed":
         return _STATUS_CELL[b.status]
     largest = _largest(b.variables)
@@ -333,7 +335,9 @@ def overview_cells(diff: Diff, test: TestDiff, steps: str | None) -> list[str]:
     cells = []
     for folder in diff.folders:
         b = test.baselines.get(folder)
-        cells.append(_cell(b) if b else _SAME if folder in test.unchanged else _NONE)
+        cells.append(
+            change_cell(b) if b else _SAME if folder in test.unchanged else _NONE
+        )
     if diff.against:
         cells.append(_against_cell(test, several))
     if steps:

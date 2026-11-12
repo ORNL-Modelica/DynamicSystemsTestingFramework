@@ -437,20 +437,22 @@ def cmd_baseline_plot(args: argparse.Namespace) -> int:
         history = baseline_history(
             root, args.revisions, tests=args.test, folders=args.folder
         )
-        images = plan_images(history)
+        images = plan_images(history.tests)
         if args.test is None and len(images) > MAX_IMAGES:
             raise DiffError(
                 f"{len(images)} images to draw, over {MAX_IMAGES}: name the "
                 "tests (--test) or the folders (--folder) to draw"
             )
-        stale = stale_files(out)
+        stale = stale_files(out, "baseline plot")
 
         def begin() -> None:
             # The marker before the first image: a run stopped part way
             # (Ctrl-C, a crash) leaves a directory the next run may write.
             clear(out, stale)
             out.mkdir(parents=True, exist_ok=True)
-            write_marker(out, [*(image.path for image in images), GALLERY])
+            write_marker(
+                out, [*(image.path for image in images), GALLERY], "baseline plot"
+            )
 
         if images:
             with Renderer() as renderer:

@@ -135,13 +135,13 @@ def _test_folders(model_ids: Iterable[str]) -> dict[str, str]:
 # --- the images ----------------------------------------------------------------
 
 
-def plan_images(history: History) -> list[Image]:
+def plan_images(tests: list[TestHistory]) -> list[Image]:
     """Every image of the history — one per variable that moved and is no
     constant (:attr:`~.VariableHistory.drawn`) — with its figure and its
     notes."""
-    folders = _test_folders(t.model_id for t in history.tests)
+    folders = _test_folders(t.model_id for t in tests)
     out = []
-    for test in history.tests:
+    for test in tests:
         for folder in test.folders:
             where = f"{folders[test.model_id]}/" + _safe(
                 folder.folder.replace("/", "-"), _FOLDER_CHARS, dots=False
@@ -193,6 +193,7 @@ def _figure(
         unit=scales[0] if scales else "range",
         first=first.first,
         notes=notes,
+        kind=first.kind,
     )
 
 
@@ -479,11 +480,12 @@ def _listed(out: Path) -> set[str]:
     return listed
 
 
-def stale_files(out: Path) -> list[Path]:
+def stale_files(out: Path, command: str) -> list[Path]:
     """The files a run into ``out`` replaces: none for a directory that is
     not there or is empty; every file of one the last run wrote, its
     marker included. Raises :class:`OutputRefused` for a file, or for a
-    directory that holds anything else (a user's folder, ``-o .``)."""
+    directory that holds anything else (a user's folder, ``-o .``), said
+    as ``command``'s ("baseline plot")."""
     out = Path(out)
     if out.exists() and not out.is_dir():
         raise OutputRefused(f"{out} is a file: name a directory")
@@ -501,7 +503,7 @@ def stale_files(out: Path) -> list[Path]:
         if len(foreign) > 3:
             shown += f" and {len(foreign) - 3} more"
         raise OutputRefused(
-            f"{out} holds files baseline plot did not write ({shown}): "
+            f"{out} holds files {command} did not write ({shown}): "
             "name a new or empty directory"
         )
     return files
@@ -518,11 +520,11 @@ def clear(out: Path, files: list[Path]) -> None:
             folder = folder.parent
 
 
-def write_marker(out: Path, files: list[str]) -> None:
-    """The list of what this run writes, before it writes any: what the
-    next one may remove, even after this one stopped part way."""
+def write_marker(out: Path, files: list[str], command: str) -> None:
+    """The list of what this run of ``command`` ("baseline plot") writes,
+    before it writes any: what the next one may remove, even after this
+    one stopped part way."""
     (Path(out) / MARKER).write_text(
-        json.dumps({"written_by": "dstf baseline plot", "files": files}, indent=1)
-        + "\n",
+        json.dumps({"written_by": f"dstf {command}", "files": files}, indent=1) + "\n",
         encoding="utf-8",
     )

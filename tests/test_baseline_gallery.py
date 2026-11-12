@@ -87,7 +87,7 @@ def test_an_image_per_variable_at_a_safe_path_named_by_its_label(lib):
             )
         },
     )
-    images = plan_images(baseline_history(lib.top / "refs", revs))
+    images = plan_images(baseline_history(lib.top / "refs", revs).tests)
     assert [i.path for i in images] == [
         "A/Dymola-linux/01-pipe_T_3.png",
         "A/Dymola-linux/02-y.png",
@@ -121,7 +121,7 @@ def test_two_tests_of_one_short_name_are_named_by_their_model_ids(lib):
             ),
         },
     )
-    images = plan_images(baseline_history(lib.top / "refs", revs))
+    images = plan_images(baseline_history(lib.top / "refs", revs).tests)
     assert sorted({i.path.split("/")[0] for i in images}) == [
         "Lib.P.Test",
         "Lib.Q.Test",
@@ -155,7 +155,7 @@ def test_a_path_stays_short_and_never_a_reserved_name(lib):
             ),
         },
     )
-    images = plan_images(baseline_history(lib.top / "refs", revs))
+    images = plan_images(baseline_history(lib.top / "refs", revs).tests)
     by_test = {i.test: i.path for i in images}
     assert (
         by_test[long_id + ".CON"]
@@ -188,7 +188,7 @@ def _history_with_notes(lib):
 
 def test_an_image_says_what_was_skipped_renamed_and_not_finite(lib):
     history = _history_with_notes(lib)
-    (image,) = plan_images(history)
+    (image,) = plan_images(history.tests)
     rev = history.revisions
     # the rename is the skipped revision's: it renamed and changed nothing
     assert image.notes == [
@@ -205,7 +205,7 @@ def test_skipped_revisions_are_said_with_the_revision_each_equals(lib):
     for values in ([0, 1, 2], [0, 1, 3], [0, 1, 3], [0, 1, 3], [0, 1, 4]):
         _write(lib, f"{LINUX}/ref_a.json", _ref("Lib.A", [("x", "", values)]))
         revs.append(lib.commit(f"x {values}"))
-    (image,) = plan_images(baseline_history(lib.top / "refs", revs))
+    (image,) = plan_images(baseline_history(lib.top / "refs", revs).tests)
     one, two, three, four, five, _ = (r[:7] for r in revs)
     assert image.notes[0] == (
         f"Skipped: {two} (equal to {one}); {four}, {five} (equal to {three})."
@@ -235,7 +235,7 @@ def test_only_a_variable_that_moved_is_drawn_the_rest_named_in_one_line(lib):
         },
     )
     history = baseline_history(lib.top / "refs", revs)
-    images = plan_images(history)
+    images = plan_images(history.tests)
     assert [i.path for i in images] == ["A/Dymola-linux/01-x.png"]
     page = gallery_html(history, images, {i.path: b"png" for i in images})
     lines = page.splitlines()
@@ -256,7 +256,7 @@ def test_the_unchanged_line_is_cut_past_ten_names(lib):
         },
     )
     history = baseline_history(lib.top / "refs", revs)
-    images = plan_images(history)
+    images = plan_images(history.tests)
     page = gallery_html(history, images, {i.path: b"png" for i in images})
     shown = ", ".join(names[:10])
     assert f'<p class="said">Not drawn, unchanged: {shown} … and 3 more.</p>' in page
@@ -279,7 +279,7 @@ def test_a_variable_moved_by_rounding_only_is_named_beside_the_unchanged(lib):
     _write(lib, f"{LINUX}/ref_a.json", json.dumps(new))
     two = lib.commit("two")
     history = baseline_history(lib.top / "refs", [one, two])
-    images = plan_images(history)
+    images = plan_images(history.tests)
     assert [i.path for i in images] == ["A/Dymola-linux/01-y.png"]
     page = gallery_html(history, images, {i.path: b"png" for i in images})
     lines = page.splitlines()
@@ -322,7 +322,7 @@ def test_a_constant_that_moved_is_in_the_value_table_never_drawn(lib):
         },
     )
     history = baseline_history(lib.top / "refs", revs)
-    images = plan_images(history)
+    images = plan_images(history.tests)
     assert [i.path for i in images] == ["A/Dymola-linux/01-x.png"]
     page = gallery_html(history, images, {i.path: b"png" for i in images})
     one, two = (r[:7] for r in revs)
@@ -352,7 +352,7 @@ def test_a_folder_whose_only_change_is_a_constant_draws_no_image(lib):
         },
     )
     history = baseline_history(lib.top / "refs", revs)
-    assert plan_images(history) == []
+    assert plan_images(history.tests) == []
     page = gallery_html(history, [], {})
     assert (
         "<tr><td><code>k</code></td><td>3</td><td>6</td><td>100 % of value</td></tr>"
@@ -375,7 +375,7 @@ def test_a_constant_not_a_number_is_a_value_that_matches_itself(lib):
         },
     )
     history = baseline_history(lib.top / "refs", revs)
-    images = plan_images(history)
+    images = plan_images(history.tests)
     page = gallery_html(history, images, {i.path: b"png" for i in images})
     lines = page.splitlines()
     assert "<tr><td><code>n</code></td><td>nan</td><td>nan</td><td>0 %</td></tr>" in (
@@ -404,7 +404,7 @@ def test_a_constant_is_shown_at_the_digits_its_file_was_recorded_with(lib):
     _write(lib, f"{LINUX}/ref_a.json", json.dumps(doc))
     two = lib.commit("two")
     history = baseline_history(lib.top / "refs", [one, two])
-    images = plan_images(history)
+    images = plan_images(history.tests)
     page = gallery_html(history, images, {i.path: b"png" for i in images})
     assert (
         "<tr><td><code>k</code></td><td>0.3333333</td><td>0.333333333333333</td>"
@@ -426,7 +426,7 @@ def test_a_folder_where_nothing_moved_draws_nothing_and_says_so(lib):
         },
     )
     history = baseline_history(lib.top / "refs", revs)
-    assert plan_images(history) == []
+    assert plan_images(history.tests) == []
     page = gallery_html(history, [], {})
     section = page[page.index("<h3>Dymola/linux</h3>") :]
     assert section.startswith(
@@ -443,7 +443,7 @@ def test_a_test_with_no_folder_drawn_says_none_holds_two_different_values(lib):
     _write(lib, "Dymola/windows/ref_a.json", _ref("Lib.A", [("x", "", [0, 1, 5])]))
     two = lib.commit("two")
     history = baseline_history(lib.top / "refs", [one, two], folders=[LINUX])
-    page = gallery_html(history, plan_images(history), {})
+    page = gallery_html(history, plan_images(history.tests), {})
     assert (
         '<p class="said">No folder drawn holds two revisions with different values.</p>'
     ) in page
@@ -466,7 +466,9 @@ def test_a_variable_first_stored_later_is_measured_from_there_and_says_so(lib):
     three = lib.commit("three")
     images = {
         i.label: i
-        for i in plan_images(baseline_history(lib.top / "refs", [one, two, three]))
+        for i in plan_images(
+            baseline_history(lib.top / "refs", [one, two, three]).tests
+        )
     }
     assert images["y"].notes == [
         f"First stored at {two[:7]}; nothing earlier to measure against."
@@ -487,7 +489,7 @@ def test_a_variable_first_stored_at_a_revision_left_out_says_so(lib):
     history = baseline_history(lib.top / "refs", revs)
     (folder,) = history.tests[0].folders
     assert [r.commit.sha for r in folder.thinned] == [revs[2]]
-    images = {i.label: i for i in plan_images(history)}
+    images = {i.label: i for i in plan_images(history.tests)}
     assert (
         f"First stored at {revs[2][:7]}, which is left out; measured from "
         f"{revs[3][:7]}."
@@ -511,7 +513,7 @@ def test_the_panel_drawn_peaks_at_the_change_and_marks_each_point_not_finite(lib
     ((x,),) = [
         b.variables for b in diff_baselines(root, one, two).tests[0].baselines.values()
     ]
-    (image,) = plan_images(baseline_history(root, [one, two]))
+    (image,) = plan_images(baseline_history(root, [one, two]).tests)
     panel = [t for t in image.figure["data"] if t["yaxis"] == "y2"]
     (line,) = [t for t in panel if t["mode"] == "lines"]
     (marks,) = [t for t in panel if t["mode"] == "markers"]
@@ -533,7 +535,7 @@ def test_an_image_says_the_points_of_an_event_stored_otherwise_and_leaves_a_gap(
         _ref("Lib.A", [("x", "", [0, 0, 10, 11])], time=(0, 1, 1, 2)),
     )
     two = lib.commit("twice")
-    (image,) = plan_images(baseline_history(lib.top / "refs", [one, two]))
+    (image,) = plan_images(baseline_history(lib.top / "refs", [one, two]).tests)
     assert image.notes == [
         f"{two[:7]}: 1 point of the first inside an event it stores another "
         "number of times, not compared."
@@ -559,7 +561,7 @@ def test_the_gallery_is_one_file_with_no_script_and_nothing_fetched(lib):
         },
     )
     history = baseline_history(lib.top / "refs", revs)
-    images = plan_images(history)
+    images = plan_images(history.tests)
     pngs = {i.path: b"\x89PNG-" + i.path.encode() for i in images}
     page = gallery_html(history, images, pngs)
     assert "<script" not in page and "http" not in page
@@ -586,7 +588,7 @@ def test_a_named_test_baseline_diff_does_not_list_goes_last_with_no_row(lib):
     _write(lib, f"{LINUX}/ref_b.json", _ref("Lib.B", [("x", "", [0, 1, 2])]))
     three = lib.commit("three")
     history = baseline_history(lib.top / "refs", [one, two, three], tests=["A", "B"])
-    images = plan_images(history)
+    images = plan_images(history.tests)
     page = gallery_html(history, images, {i.path: b"png" for i in images})
     assert page.index("<h2><code>A</code>") < page.index("<h2><code>B</code>")
     b = page[page.index("<h2><code>B</code>") :]
@@ -598,9 +600,9 @@ def test_a_named_test_baseline_diff_does_not_list_goes_last_with_no_row(lib):
 
 
 def test_a_directory_not_there_or_empty_is_written(tmp_path):
-    assert stale_files(tmp_path / "new") == []
+    assert stale_files(tmp_path / "new", "baseline plot") == []
     (tmp_path / "empty").mkdir()
-    assert stale_files(tmp_path / "empty") == []
+    assert stale_files(tmp_path / "empty", "baseline plot") == []
 
 
 def test_a_directory_holding_a_file_this_command_did_not_write_is_refused(tmp_path):
@@ -608,7 +610,7 @@ def test_a_directory_holding_a_file_this_command_did_not_write_is_refused(tmp_pa
     (out / "sub").mkdir(parents=True)
     (out / "sub" / "mine.txt").write_text("a user's file")
     with pytest.raises(OutputRefused) as e:
-        stale_files(out)
+        stale_files(out, "baseline plot")
     assert str(e.value) == (
         f"{out} holds files baseline plot did not write (sub/mine.txt): "
         "name a new or empty directory"
@@ -621,12 +623,14 @@ def test_a_rewrite_removes_exactly_the_files_it_wrote_before(tmp_path):
     for path in written:
         (out / path).parent.mkdir(parents=True, exist_ok=True)
         (out / path).write_bytes(b"x")
-    write_marker(out, written)
-    assert sorted(stale_files(out)) == sorted(out / p for p in [*written, MARKER])
+    write_marker(out, written, "baseline plot")
+    assert sorted(stale_files(out, "baseline plot")) == sorted(
+        out / p for p in [*written, MARKER]
+    )
     # a file it did not write beside them is refused
     (out / "A" / "notes.txt").write_text("mine")
     with pytest.raises(OutputRefused, match=r"\(A/notes.txt\)"):
-        stale_files(out)
+        stale_files(out, "baseline plot")
 
 
 def test_a_marker_naming_a_path_outside_the_directory_removes_nothing_there(tmp_path):
@@ -635,7 +639,7 @@ def test_a_marker_naming_a_path_outside_the_directory_removes_nothing_there(tmp_
     (tmp_path / "precious.txt").write_text("keep")
     (out / MARKER).write_text(json.dumps({"files": ["../precious.txt", "a.png"]}))
     (out / "a.png").write_bytes(b"x")
-    got = stale_files(out)
+    got = stale_files(out, "baseline plot")
     assert sorted(got) == sorted([out / "a.png", out / MARKER])
     assert (tmp_path / "precious.txt") not in got
 
@@ -643,12 +647,12 @@ def test_a_marker_naming_a_path_outside_the_directory_removes_nothing_there(tmp_
 def test_a_file_named_as_the_directory_is_refused(tmp_path):
     (tmp_path / "f").write_text("x")
     with pytest.raises(OutputRefused) as e:
-        stale_files(tmp_path / "f")
+        stale_files(tmp_path / "f", "baseline plot")
     assert str(e.value) == f"{tmp_path / 'f'} is a file: name a directory"
 
 
 def test_the_marker_lists_what_was_written(tmp_path):
-    write_marker(tmp_path, ["b.png", GALLERY])
+    write_marker(tmp_path, ["b.png", GALLERY], "baseline plot")
     data = json.loads((tmp_path / MARKER).read_text())
     assert data["files"] == ["b.png", GALLERY]
     assert Path(tmp_path / MARKER).name == MARKER

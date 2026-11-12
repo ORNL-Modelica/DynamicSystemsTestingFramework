@@ -74,6 +74,9 @@ class Revision:
     #: ``YYYY-MM-DD``
     date: str
 
+    #: what a line of it is, as a note and the change panel say it
+    kind = "baseline"
+
     @property
     def short(self) -> str:
         """How a note names it: its short hash."""
@@ -92,6 +95,9 @@ class Run:
 
     label: str
     folder: str
+
+    #: what a line of it is, as a note and the change panel say it
+    kind = "run"
 
     @property
     def short(self) -> str:
@@ -204,7 +210,8 @@ class FolderHistory:
     """One test's baseline in one backend/os folder, across the revisions."""
 
     folder: str
-    kept: list[Revision]
+    #: the sources drawn, oldest (the first) first
+    kept: list[Source]
     #: skipped, with the last kept revision its time and values equal
     equal: list[tuple[Revision, Revision]]
     #: skipped: no baseline of the test in the folder
@@ -281,7 +288,7 @@ def baseline_history(
             if any(b.status in ("changed", "new") for b in t.baselines.values())
         )
     else:
-        chosen = _named(tests, ids)
+        chosen = named_tests(tests, ids, "baseline at these revisions")
     listed = {t.model_id for t in diff.tests}
 
     #: each file read: its baseline, the digits it spells and the digits it
@@ -301,9 +308,10 @@ def baseline_history(
     return History(Path(root), revisions, diff, out)
 
 
-def _named(names: list[str], ids: list[str]) -> list[str]:
+def named_tests(names: list[str], ids: list[str], held_by: str) -> list[str]:
     """The model ids the names match, each a short name or a full model id,
-    in model-id order; a name that matches none is refused."""
+    in model-id order; a name that matches none is refused, said as no
+    ``held_by`` ("baseline at these revisions") holding it."""
     chosen: set[str] = set()
     unknown = []
     for name in names:
@@ -318,8 +326,7 @@ def _named(names: list[str], ids: list[str]) -> list[str]:
             else "they hold none"
         )
         raise DiffError(
-            f"--test: no baseline at these revisions is of a test named "
-            f"{', '.join(unknown)} ({such})"
+            f"--test: no {held_by} is of a test named {', '.join(unknown)} ({such})"
         )
     return sorted(chosen)
 
@@ -434,6 +441,19 @@ def _move(a: Baseline, b: Baseline) -> tuple[int, float, float]:
     return (non_finite, pct, absolute)
 
 
+def variable_histories(
+    read: Sequence[tuple[Source, Baseline]],
+    digits: Mapping[Source, int | None],
+    shown: Mapping[tuple[Source, str], int],
+) -> list[VariableHistory]:
+    """Each variable of the sources ``read``, every one a line where it is
+    held, followed by name then by label as :func:`baseline_history`
+    follows a revision's: ``digits`` the digits each source's file spells
+    (None for none to round), ``shown`` the digits each of its variables is
+    shown with."""
+    return _variables([(s, b, True) for s, b in read], digits, shown)
+
+
 @dataclass
 class _Chain:
     """A variable as it is followed across the revisions read: its newest
@@ -497,7 +517,9 @@ def _lines(
             out.append(Line(revision, v.name, label, time, values, at))
             continue
         first = out[0]
-        d = difference_series(first.time, first.values, time, values)
+        d = difference_series(
+            first.time, first.values, time, values, kind=revision.kind
+        )
         change = with_rounding(
             series_change(d),
             (first.time, first.values, digits[first.revision]),
