@@ -19,7 +19,7 @@ from dstf.reporting.baseline_gallery import (
     plan_images,
     run_gallery_html,
 )
-from dstf.reporting.run_history import RunError, run_history
+from dstf.reporting.run_history import RunError, RunHistory, run_history
 from dstf.storage.baseline_diff import DiffError
 from mat4_files import write_result_mat
 
@@ -84,8 +84,8 @@ def test_the_variable_that_moved_is_drawn_against_the_first_run(lib, tmp_path):
 
 
 def test_the_first_label_given_is_the_reference_for_every_later_run(lib, tmp_path):
-    """Three runs: each later one minus the FIRST; a constant's Change is
-    the last run's against the first."""
+    """Three runs: each later one minus the FIRST; a constant's Change in
+    the table is the last run's against the first."""
     a = write_python_run(tmp_path / "a", {RAMP: RAMP_MAIN, CSV: {"x": [1.0] * 5}})
     b = write_python_run(tmp_path / "b", {RAMP: RAMP_FIX, CSV: {"x": [2.0] * 5}})
     c = write_python_run(tmp_path / "c", {RAMP: RAMP_MAIN, CSV: {"x": [4.0] * 5}})
@@ -104,7 +104,7 @@ def test_the_first_label_given_is_the_reference_for_every_later_run(lib, tmp_pat
         "<tr><td><code>x</code></td><td>1</td><td>2</td><td>4</td>"
         "<td>300 % of value</td></tr>"
     ) in lines
-    # the section's Change too: c against a (b against a is 100 %)
+    # the section's Change: the largest of any run, c against a (b's is 100 %)
     assert (
         "<table><tr><th>Test</th><th>Change, Python/linux</th></tr><tr><td><code>"
         "ConstantCsv</code></td><td>300 % of value</td></tr></table>"
@@ -444,6 +444,31 @@ def test_sections_are_largest_change_first(lib, tmp_path):
     )
 
 
+def test_three_runs_rank_a_section_by_its_largest_move_of_any_run(lib, tmp_path):
+    """SimpleRamp moved 100 % in try1 and came back in try2; PointsCheck
+    moved 75 % in try2 only. The largest move of any later run against the
+    first ranks, so SimpleRamp comes first, and its Change says that move."""
+    main = write_python_run(tmp_path / "main", {RAMP: RAMP_MAIN, POINTS: WAVE})
+    try1 = write_python_run(
+        tmp_path / "try1", {RAMP: {"x": [0.0, 2.0, 4.0, 6.0, 16.0]}, POINTS: WAVE}
+    )
+    big = {"x": [0.0, 0.8, 0.9, 0.1, 0.5]}
+    try2 = write_python_run(tmp_path / "try2", {RAMP: RAMP_MAIN, POINTS: big})
+    _, page = _page(_history(lib, [("main", main), ("try1", try1), ("try2", try2)]))
+    assert page.index("<h2><code>SimpleRamp</code>") < page.index(
+        "<h2><code>PointsCheck</code>"
+    )
+    lines = page.splitlines()
+    assert (
+        "<table><tr><th>Test</th><th>Change, Python/linux</th></tr><tr><td><code>"
+        "SimpleRamp</code></td><td>100 %</td></tr></table>"
+    ) in lines
+    assert (
+        "<table><tr><th>Test</th><th>Change, Python/linux</th></tr><tr><td><code>"
+        "PointsCheck</code></td><td>75 %</td></tr></table>"
+    ) in lines
+
+
 def test_a_model_the_library_no_longer_has_is_no_failed_run(lib, tmp_path):
     main = write_python_run(
         tmp_path / "main", {RAMP: RAMP_MAIN, "PythonTestingLib.Gone": ONE}
@@ -459,7 +484,10 @@ def test_a_model_the_library_no_longer_has_is_no_failed_run(lib, tmp_path):
 def test_the_nothing_moved_line_is_cut_past_ten_names():
     ids = [f"Lib.T{i:02d}" for i in range(12)]
     shown = ", ".join(f"T{i:02d}" for i in range(10))
-    assert nothing_moved_line(ids) == (
+    history = RunHistory(
+        folders={}, alone=[], tests=[], nothing_moved=ids, held=ids, only=[]
+    )
+    assert nothing_moved_line(history) == (
         f"Nothing moved in 12 tests: {shown} … and 2 more."
     )
 

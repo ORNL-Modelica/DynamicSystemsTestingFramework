@@ -533,17 +533,26 @@ def _run_notes(folder: FolderHistory) -> list[str]:
 
 def _run_changes(folder: FolderHistory) -> list[VariableDiff]:
     """Each variable two runs hold, as ``baseline diff`` reads a variable:
-    its last line's change against its first."""
-    return [
-        VariableDiff(v.lines[-1].name, v.label, "changed", change=v.lines[-1].change)
-        for v in folder.variables
-        if len(v.lines) > 1
-    ]
+    the largest change of any later line against its first, larger as
+    :func:`~.baseline_diff_text.change_rank` ranks changes — so a run that
+    moved and a later one that came back still rank and read as moved."""
+    out = []
+    for v in folder.variables:
+        changes = [
+            VariableDiff(line.name, v.label, "changed", change=line.change)
+            for line in v.lines[1:]
+            if line.change is not None
+        ]
+        if changes:
+            out.append(max(changes, key=lambda c: change_rank([c])))
+    return out
 
 
 def run_sections(history: RunHistory) -> list[tuple[TestHistory, FolderHistory]]:
     """One section per test and folder drawn, largest change first, as
-    ``baseline diff`` ranks its tests; then by model id and folder."""
+    ``baseline diff`` ranks its tests — each variable's largest of any later
+    run against the first (:func:`_run_changes`); then by model id and
+    folder."""
 
     def key(item: tuple[TestHistory, FolderHistory]):
         test, folder = item
@@ -567,27 +576,50 @@ def _section_notes(folder: FolderHistory) -> list[str]:
     return notes
 
 
+def line_names(history: RunHistory) -> dict[str, str]:
+    """How every line names each test a drawn run holds: its short name, or
+    its full model id where another test a drawn run holds has the same
+    short name."""
+    seen = Counter(short_name(m) for m in history.held)
+    return {m: m if seen[short_name(m)] > 1 else short_name(m) for m in history.held}
+
+
 def uncompared_lines(history: RunHistory) -> list[str]:
     """One console line per section with fewer than two runs to compare:
     its test, its folder and why."""
+    names = line_names(history)
     return [
-        f"{short_name(test.model_id)} · {folder.folder}: "
-        + " ".join(_section_notes(folder))
+        f"{names[test.model_id]} · {folder.folder}: " + " ".join(_section_notes(folder))
         for test, folder in run_sections(history)
         if len(folder.kept) < 2
     ]
 
 
-def nothing_moved_line(model_ids: list[str]) -> str:
+def _tests_named(model_ids: list[str], names: Mapping[str, str]) -> str:
+    """The tests ``model_ids`` by their ``names``, cut past ten: the end of
+    a line's sentence."""
+    shown = ", ".join(names[m] for m in model_ids[:_UNCHANGED_SHOWN])
+    more = len(model_ids) - _UNCHANGED_SHOWN
+    return shown + (f" … and {more} more" if more > 0 else "") + "."
+
+
+def nothing_moved_line(history: RunHistory) -> str:
     """The one line naming the tests where nothing moved, cut past ten."""
-    n = len(model_ids)
-    shown = ", ".join(short_name(m) for m in model_ids[:_UNCHANGED_SHOWN])
-    more = n - _UNCHANGED_SHOWN
-    return (
-        f"Nothing moved in {n} test{'s' * (n != 1)}: {shown}"
-        + (f" … and {more} more" if more > 0 else "")
-        + "."
+    n = len(history.nothing_moved)
+    return f"Nothing moved in {n} test{'s' * (n != 1)}: " + _tests_named(
+        history.nothing_moved, line_names(history)
     )
+
+
+def only_lines(history: RunHistory) -> list[str]:
+    """One line per folder and run naming the tests that run alone holds
+    of the folder's, cut past ten: not drawn."""
+    names = line_names(history)
+    return [
+        f"{folder}: {len(ids)} test{'s' * (len(ids) != 1)} only in {label}, not "
+        "drawn: " + _tests_named(ids, names)
+        for folder, label, ids in history.only
+    ]
 
 
 def run_tables(history: RunHistory) -> int:
@@ -606,8 +638,9 @@ def run_gallery_html(
     history: RunHistory, images: list[Image], pngs: Mapping[str, bytes]
 ) -> str:
     """``dstf plot``'s page: the runs of each folder, the tests where
-    nothing moved, then one section per test and folder, largest change
-    first (:func:`run_sections`) — its Change, then its images (``pngs``
+    nothing moved, those only one run of a folder holds, then one section
+    per test and folder, largest change of any run first
+    (:func:`run_sections`) — its Change, then its images (``pngs``
     by image path, inlined), its table of constants and the line of the
     variables not drawn."""
     labels = list(
@@ -637,9 +670,8 @@ def run_gallery_html(
         f"{n} section{'s' * (n != 1)}.</p>",
     ]
     if history.nothing_moved:
-        parts.append(
-            f'<p class="said">{_e(nothing_moved_line(history.nothing_moved))}</p>'
-        )
+        parts.append(f'<p class="said">{_e(nothing_moved_line(history))}</p>')
+    parts += [f'<p class="said">{_e(line)}</p>' for line in only_lines(history)]
     for folder, run in history.alone:
         parts.append(f'<p class="said">{_e(alone_line(folder, run))}</p>')
     for test, folder in sections:

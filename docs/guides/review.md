@@ -261,7 +261,9 @@ grey; under it, each later run minus the FIRST, on the first's time grid,
 as `baseline diff` measures a change. The gallery has a section per test
 and `<Backend>/<os>`, largest change first, each with its `Change`, its
 images, its table of constants and one line naming the variables not
-drawn.
+drawn. With three runs or more, a section's `Change` is the largest of any
+later run against the first: a run that moved and a later one that came
+back still rank high.
 
 How the runs are read:
 
@@ -281,11 +283,16 @@ How the runs are read:
   run that holds no result of the test says `not run`.
 - **The tests:** by default, those with a variable that moved or that only
   some runs hold, or a run that failed or holds no result; the others two
-  runs hold are named in one line (`Nothing moved in 12 tests: …`). `--test`
-  draws the tests it names even where nothing moved or one run holds the
-  test: that is how a passing fix's values are seen. A section with fewer
+  runs hold are named in one line (`Nothing moved in 12 tests: …`). A test
+  only one run of a `<Backend>/<os>` holds — one the branch added, say — is
+  not drawn and is named in a line of that run (`Dymola/linux: 3 tests only
+  in fix, not drawn: …`). `--test` draws the tests it names even where
+  nothing moved or one run holds the test: that is how a passing fix's
+  values are seen. A section with fewer
   than two runs to compare is said on the console too, and so is a
-  `<Backend>/<os>` given one run only.
+  `<Backend>/<os>` given one run only. These lines name a test by its short
+  name, or by its full model id where another test the runs hold has the
+  same short name.
 - **A named test's values:** with `--test`, each section has one table of
   every variable the test tracks, a row each in the order it tracks them,
   and no "unchanged" line. A constant shows its value in each run; a

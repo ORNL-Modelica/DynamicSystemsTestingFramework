@@ -29,6 +29,7 @@ def cmd_plot(args: argparse.Namespace) -> int:
         OutputRefused,
         alone_line,
         nothing_moved_line,
+        only_lines,
         plan_images,
         run_gallery_html,
         run_tables,
@@ -64,6 +65,8 @@ def cmd_plot(args: argparse.Namespace) -> int:
     for line in uncompared_lines(history):
         print(line)
     if history.nothing_moved:
-        print(nothing_moved_line(history.nothing_moved))
+        print(nothing_moved_line(history))
+    for line in only_lines(history):
+        print(line)
     print(wrote(len(images), run_tables(history), page))
     return 0
