@@ -120,16 +120,26 @@ def _read(path: Path) -> dict:
     return data
 
 
-def _folder(path: Path, data: dict) -> str:
-    meta = data.get("metadata")
+def run_folder(meta: Any) -> str | None:
+    """The ``<Backend>/<os>`` folder a run's metadata names — a
+    ``verdicts.json``'s or a ``status.json``'s, one shape — from its
+    ``backend`` (the reference folder's family, never ``backend_name``) and
+    its ``os``; None where it names no backend and os."""
     backend = meta.get("backend") if isinstance(meta, dict) else None
     os_name = meta.get("os") if isinstance(meta, dict) else None
     if not (isinstance(backend, str) and backend and isinstance(os_name, str)):
+        return None
+    return f"{backend}/{os_name}"
+
+
+def _folder(path: Path, data: dict) -> str:
+    folder = run_folder(data.get("metadata"))
+    if folder is None:
         raise SummaryError(
             f"{path}: its metadata names no backend and os (it was written "
             "without the run's status.json)"
         )
-    return f"{backend}/{os_name}"
+    return folder
 
 
 def _count(value: Any) -> int:

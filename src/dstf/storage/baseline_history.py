@@ -70,12 +70,45 @@ class Revision:
     #: ``YYYY-MM-DD``
     date: str
 
+    @property
+    def short(self) -> str:
+        """How a note names it: its short hash."""
+        return self.commit.short
+
+    @property
+    def first(self) -> str:
+        """How the change panel names it as the first line."""
+        return f"{self.date} {self.commit.short}"
+
+
+@dataclass(frozen=True)
+class Run:
+    """A run's work dir as it is drawn (``dstf plot``): the label it was
+    given and the directory's own name."""
+
+    label: str
+    folder: str
+
+    @property
+    def short(self) -> str:
+        """How a note names it: its label."""
+        return self.label
+
+    @property
+    def first(self) -> str:
+        """How the change panel names it as the first line."""
+        return self.label
+
+
+#: Where a line comes from: a revision of the reference root, or a run.
+Source = Revision | Run
+
 
 @dataclass(frozen=True)
 class Line:
     """One variable at one kept revision."""
 
-    revision: Revision
+    revision: Source
     name: str
     #: what a person reads: its expression, else its name
     label: str
@@ -98,7 +131,7 @@ class VariableHistory:
     renames: list[tuple[str, str, str]] = field(default_factory=list)
     #: the first revision read that stores it: a revision left out (over
     #: :data:`MAX_KEPT`) before its first line, else its first line's
-    first_stored: Revision | None = None
+    first_stored: Source | None = None
 
     @property
     def label(self) -> str:
@@ -275,7 +308,7 @@ def _folder(
     kept: list[tuple[Revision, Baseline]] = []
     #: every revision read, in order: what a variable is followed through
     read: list[tuple[Revision, Baseline]] = []
-    digits: dict[Revision, int | None] = {}
+    digits: dict[Source, int | None] = {}
     equal: list[tuple[Revision, Revision]] = []
     absent: list[Revision] = []
     unreadable: list[tuple[Revision, str]] = []
@@ -376,13 +409,13 @@ class _Chain:
     kept revisions so far."""
 
     newest: StoredVariable
-    first: Revision
-    held: list[tuple[Revision, Baseline, StoredVariable]]
+    first: Source
+    held: list[tuple[Source, Baseline, StoredVariable]]
     renames: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 def _variables(
-    read: list[tuple[Revision, Baseline, bool]], digits: dict[Revision, int | None]
+    read: list[tuple[Source, Baseline, bool]], digits: dict[Source, int | None]
 ) -> list[VariableHistory]:
     """Each variable of any kept revision: each revision read — kept (True)
     or skipped — paired against the newest entry of every variable seen so
@@ -402,7 +435,7 @@ def _variables(
                 continue
             chain = newest[id(old)]
             if old.name != new.name:
-                chain.renames.append((revision.commit.short, old.name, new.name))
+                chain.renames.append((revision.short, old.name, new.name))
             chain.newest = new
             chain.held += here
     return [
@@ -413,8 +446,8 @@ def _variables(
 
 
 def _lines(
-    held: list[tuple[Revision, Baseline, StoredVariable]],
-    digits: dict[Revision, int | None],
+    held: list[tuple[Source, Baseline, StoredVariable]],
+    digits: dict[Source, int | None],
 ) -> list[Line]:
     """A variable's lines; each later one measured against the first, and
     read as rounding only against the first's file and its own."""

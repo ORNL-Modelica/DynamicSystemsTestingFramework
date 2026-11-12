@@ -4,15 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-
-def _labelled(arg: str) -> tuple[str, Path]:
-    """``LABEL=DIR`` as its two parts."""
-    from ..reporting.results_summary import SummaryError
-
-    label, sep, folder = arg.partition("=")
-    if not (sep and label and folder):
-        raise SummaryError(f"{arg}: not LABEL=DIR (main=testing_output/main)")
-    return label, Path(folder)
+from .common import NotLabelled, labelled
 
 
 def cmd_summary(args: argparse.Namespace) -> int:
@@ -22,8 +14,8 @@ def cmd_summary(args: argparse.Namespace) -> int:
     from ..reporting.results_summary_text import as_json, as_markdown
 
     try:
-        summary = read_summary([_labelled(a) for a in args.runs], base=args.base)
-    except SummaryError as e:
+        summary = read_summary([labelled(a) for a in args.runs], base=args.base)
+    except (NotLabelled, SummaryError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
     text = as_json(summary) if args.format == "json" else as_markdown(summary)

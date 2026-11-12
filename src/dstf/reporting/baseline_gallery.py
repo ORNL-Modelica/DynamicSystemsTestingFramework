@@ -35,6 +35,8 @@ from ..storage.baseline_history import (
     FolderHistory,
     History,
     Revision,
+    Run,
+    Source,
     TestHistory,
     VariableHistory,
 )
@@ -83,8 +85,10 @@ class Image:
     notes: list[str] = field(default_factory=list)
 
 
-def legend_name(revision: Revision) -> str:
+def legend_name(revision: Source) -> str:
     """``<date> <short hash> <subject>``, the subject cut at 48 characters."""
+    if isinstance(revision, Run):
+        return f"{revision.label} ({revision.folder})"
     commit = revision.commit
     return f"{revision.date} {commit.short} {cut(commit.subject, SUBJECT_CHARS)}"
 
@@ -180,13 +184,13 @@ def _figure(
         y_title=variable.label,
         traces=traces,
         unit=scales[0] if scales else "range",
-        first=f"{first.date} {first.commit.short}",
+        first=first.first,
         notes=notes,
     )
 
 
-def _shorts(revisions: Iterable[Revision]) -> str:
-    return ", ".join(r.commit.short for r in revisions)
+def _shorts(revisions: Iterable[Source]) -> str:
+    return ", ".join(r.short for r in revisions)
 
 
 def _points(n: int) -> str:
@@ -231,15 +235,15 @@ def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
         notes.append(f"Not stored at {_shorts(missing)}.")
     if variable.first_stored not in (None, start):
         notes.append(
-            f"First stored at {variable.first_stored.commit.short}, which is left "
-            f"out; measured from {start.commit.short}."
+            f"First stored at {variable.first_stored.short}, which is left "
+            f"out; measured from {start.short}."
         )
     elif after_first:
         notes.append(
-            f"First stored at {start.commit.short}; nothing earlier to measure against."
+            f"First stored at {start.short}; nothing earlier to measure against."
         )
     for line in variable.lines[1:]:
-        change, short = line.change, line.revision.commit.short
+        change, short = line.change, line.revision.short
         assert change is not None
         if change.note:
             notes.append(f"{short}: {change.note}.")
