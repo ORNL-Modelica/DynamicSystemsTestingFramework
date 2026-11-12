@@ -8,6 +8,8 @@ this file says when they do.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-12
+
 ### Added
 
 - `dstf diff LABEL=DIR LABEL=DIR`: what differs between two runs of one tool
@@ -665,6 +667,7 @@ command is `dstf`. The code is 1.0.0's.
 
 The first tagged version. It was not published to PyPI.
 
+[1.6.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.2.0...v1.3.0
