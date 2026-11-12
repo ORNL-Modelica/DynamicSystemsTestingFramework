@@ -160,3 +160,31 @@ def test_a_backend_and_os_of_one_run_is_said_on_the_console(
     assert _plot(lib, out, f"a={a}", f"b={b}", f"b={w}") == 0
     said = capsys.readouterr().out.splitlines()
     assert said[0] == "Python/windows: one run only (b), not drawn."
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "what"),
+    [
+        ("--test", "SimpleRamp", "a test name"),
+        ("--folder", "Python/linux", "a backend/os folder"),
+    ],
+)
+def test_a_run_given_after_test_or_folder_is_refused_not_read_as_a_name(
+    lib, tmp_path, capsys, flag, value, what
+):
+    """`plot a=1 --test X b=2`: the flag takes several values, so b=2 was
+    read as one more name. A name holds no "=": the run is refused as one,
+    with where the flag goes, before anything is read or written."""
+    runs = [
+        write_python_run(tmp_path / label, {RAMP: {"x": [0, 2, 4, 6, 8]}})
+        for label in "abc"
+    ]
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit) as e:
+        _plot(lib, out, f"a={runs[0]}", f"b={runs[1]}", flag, value, f"c={runs[2]}")
+    assert e.value.code == 2
+    assert capsys.readouterr().err.splitlines()[-1] == (
+        f"dstf plot: error: argument {flag}: c={runs[2]} is a run (LABEL=DIR), "
+        f"not {what}: give {flag} after the runs"
+    )
+    assert not out.exists()

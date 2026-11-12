@@ -604,6 +604,25 @@ def _filter_arg(value: str) -> str:
     return value
 
 
+def _a_name(flag: str, what: str, after: str | None) -> Callable[[str], str]:
+    """The type of a flag that takes several names (``--test``, ``--folder``,
+    ``--details``): a value holding ``=`` is none. Given before a command's
+    LABEL=DIRs, such a flag took the runs after its names as more names
+    (``plot a=1 --test X b=2`` read b=2 as a test): refused, saying where
+    the flag goes (``after``: "the runs"; None where it takes no runs)."""
+
+    def name(text: str) -> str:
+        if "=" in text:
+            raise argparse.ArgumentTypeError(
+                f"{text} is a run (LABEL=DIR), not {what}: give {flag} after {after}"
+                if after
+                else f"{text} is not {what} (no name holds '=')"
+            )
+        return text
+
+    return name
+
+
 def _output_file(text: str) -> str:
     """``--output``, on every command that has it: a file that can be
     written — not a directory, in a directory that is there, and one this
@@ -1549,6 +1568,7 @@ def _add_plot(tree: _Tree, top) -> None:
         metavar="NAME",
         nargs="+",
         default=None,
+        type=_a_name("--test", "a test name", "the runs"),
         help="Only these tests, each a short name (NSSS_Test) or a full model "
         "id, drawn even where nothing moved, with a table of every value it "
         "tracks (a varying one's at the end of each run); a NAME that matches no "
@@ -1561,6 +1581,7 @@ def _add_plot(tree: _Tree, top) -> None:
         metavar="BACKEND/OS",
         nargs="+",
         default=None,
+        type=_a_name("--folder", "a backend/os folder", "the runs"),
         help="Only the runs of these backend/os folders (Dymola/linux). Give "
         "it after the runs. Default: every one with two runs or more.",
     )
@@ -1937,6 +1958,7 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
         metavar="NAME",
         nargs="*",
         default=None,
+        type=_a_name("--details", "a test name", None),
         help="Add each test's folded section to the Markdown: with no NAME, "
         "every listed test's; else only the named ones, each a short name "
         "(NSSS_Test) or a full model id. A NAME that matches no listed test "
