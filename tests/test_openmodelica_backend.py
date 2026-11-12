@@ -1,8 +1,9 @@
 """OpenModelica backend tests.
 
 Unit tests here stub subprocess.run so they don't require an omc binary.
-Integration tests at the bottom exercise real omc and are gated on
-``shutil.which("omc")`` so CI / machines without omc still pass.
+Integration tests at the bottom exercise real omc. They carry the
+``ompython`` marker, which CI's selection deselects, and skip where omc is
+not installed.
 """
 
 import dataclasses
@@ -610,6 +611,10 @@ omc_unavailable = pytest.mark.skipif(
 )
 
 
+# The marker, not the skip, is what keeps a "no simulator" selection from
+# starting omc on a machine that has it: the skip only covers a machine
+# without it.
+@pytest.mark.ompython
 @omc_unavailable
 class TestOpenModelicaIntegration:
     def test_msl_only_smoke(self, tmp_path):

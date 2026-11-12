@@ -1009,6 +1009,10 @@ pytestmark_integration = pytest.mark.skipif(
 )
 
 
+# The marker, not the skip, is what keeps a "no simulator" selection from
+# starting omc on a machine that has it: the skip only covers a machine
+# without it.
+@pytest.mark.ompython
 @pytestmark_integration
 class TestPersistentIntegration:
     def test_msl_smoke(self, tmp_path):
