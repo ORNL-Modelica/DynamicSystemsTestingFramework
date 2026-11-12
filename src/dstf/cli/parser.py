@@ -621,19 +621,22 @@ def _filter_arg(value: str) -> str:
     return value
 
 
-def _a_name(flag: str, what: str, after: str | None) -> Callable[[str], str]:
+def _a_name(flag: str, what: str, runs: bool) -> Callable[[str], str]:
     """The type of a flag that takes several names (``--test``, ``--folder``,
     ``--details``): a value holding ``=`` is none. Given before a command's
-    LABEL=DIRs, such a flag took the runs after its names as more names
-    (``plot a=1 --test X b=2`` read b=2 as a test): refused, saying where
-    the flag goes (``after``: "the runs"; None where it takes no runs)."""
+    LABEL=DIRs (``runs``), such a flag took the runs after its names as more
+    names (``plot a=1 --test X b=2`` read b=2 as a test). Where the value
+    stood is not known here, so the refusal says what is true either way."""
 
     def name(text: str) -> str:
         if "=" in text:
             raise argparse.ArgumentTypeError(
-                f"{text} is a run (LABEL=DIR), not {what}: give {flag} after {after}"
-                if after
-                else f"{text} is not {what} (no name holds '=')"
+                f"{text}: {what} holds no '='"
+                + (
+                    f" (a LABEL=DIR after {flag} is read as one of its values)"
+                    if runs
+                    else ""
+                )
             )
         return text
 
@@ -1587,7 +1590,7 @@ def _add_plot(tree: _Tree, top) -> None:
         metavar="NAME",
         nargs="+",
         default=None,
-        type=_a_name("--test", "a test name", "the runs"),
+        type=_a_name("--test", "a test name", True),
         help="Only these tests, each a short name (NSSS_Test) or a full model "
         "id, drawn even where nothing moved, with a table of every value it "
         "tracks (a varying one's at the end of each run); a NAME that matches no "
@@ -1600,7 +1603,7 @@ def _add_plot(tree: _Tree, top) -> None:
         metavar="BACKEND/OS",
         nargs="+",
         default=None,
-        type=_a_name("--folder", "a backend/os folder", "the runs"),
+        type=_a_name("--folder", "a backend/os folder", True),
         help="Only the runs of these backend/os folders (Dymola/linux). Give "
         "it after the runs. Default: every one with two runs or more.",
     )
@@ -1634,11 +1637,12 @@ def _add_diff(tree: _Tree, top) -> None:
             runs: identical, within rounding (one storage step of the
             coarser file's precision) or different. A signal is identical,
             within rounding, near zero (only with --near-zero: every value
-            of both runs smaller than it), a derivative (a der( variable),
-            or changed — its Change the biggest move against the first
+            of both runs smaller in size than it), a derivative (a der(
+            variable), or changed — its Change the biggest move against the first
             run, as a percent of the first run's range, the measure
-            `baseline diff` prints. A value finite in one run only is
-            always changed. The solver's statistics in the file (CPU time,
+            `baseline diff` prints. A signal is identical or within rounding
+            only where both runs hold the same time points. A value finite
+            in one run only is always changed. The solver's statistics in the file (CPU time,
             event counter, nonlinear systems) are listed, never scored.
 
             Each DIR is a run's work dir, read and never written: its
@@ -1649,8 +1653,9 @@ def _add_diff(tree: _Tree, top) -> None:
             later run is measured against. A LABEL may repeat, once per
             <Backend>/<os>. The tests are those both runs hold; a test whose
             run failed or did not finish in either run is not compared, and
-            is named, as is a test one run holds. A tool whose result file
-            holds only the tracked variables is said so.
+            is named, as is a test one run holds, and so is one whose result
+            file is unfinished. A tool whose result file holds only the
+            tracked signals (parameters are kept) is said so.
 
             --details adds a folded section per test: the counts, the names
             in one run only, the parameters that differ, the largest near
@@ -1670,7 +1675,7 @@ def _add_diff(tree: _Tree, top) -> None:
             "dstf diff main=../main/testing_output/MyLib/Dymola/linux "
             "branch=testing_output/MyLib/Dymola/linux -o diff.md",
             "dstf diff main=main-dymola fix=fix-dymola --near-zero 1e-6 "
-            "--details NSSS_Test",
+            "--details SimpleRamp",
         ),
     )
     node.add_argument(
@@ -1686,8 +1691,8 @@ def _add_diff(tree: _Tree, top) -> None:
         metavar="NAME",
         nargs="+",
         default=None,
-        type=_a_name("--test", "a test name", "the runs"),
-        help="Only these tests, each a short name (NSSS_Test) or a full model "
+        type=_a_name("--test", "a test name", True),
+        help="Only these tests, each a short name (SimpleRamp) or a full model "
         "id; a NAME that matches no run's test is refused. Give it after the "
         "runs. Default: every test both runs hold.",
     )
@@ -1696,7 +1701,7 @@ def _add_diff(tree: _Tree, top) -> None:
         metavar="BACKEND/OS",
         nargs="+",
         default=None,
-        type=_a_name("--folder", "a backend/os folder", "the runs"),
+        type=_a_name("--folder", "a backend/os folder", True),
         help="Only the runs of these backend/os folders (Dymola/linux). Give "
         "it after the runs. Default: every one with two runs.",
     )
@@ -1705,10 +1710,10 @@ def _add_diff(tree: _Tree, top) -> None:
         metavar="NAME",
         nargs="*",
         default=None,
-        type=_a_name("--details", "a test name", "the runs"),
+        type=_a_name("--details", "a test name", True),
         help="Add each test's folded section to the Markdown: with no NAME, "
         "every test where something differs; else only the named ones, each "
-        "a short name (NSSS_Test) or a full model id. A NAME that matches no "
+        "a short name (SimpleRamp) or a full model id. A NAME that matches no "
         "compared test is refused. Give it after the runs. Default: the "
         "overview alone. The JSON is always complete.",
     )
@@ -2095,7 +2100,7 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
         metavar="NAME",
         nargs="*",
         default=None,
-        type=_a_name("--details", "a test name", None),
+        type=_a_name("--details", "a test name", False),
         help="Add each test's folded section to the Markdown: with no NAME, "
         "every listed test's; else only the named ones, each a short name "
         "(NSSS_Test) or a full model id. A NAME that matches no listed test "

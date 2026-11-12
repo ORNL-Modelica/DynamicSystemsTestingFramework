@@ -596,8 +596,8 @@ class Backend(ABC):
             report page links, as ``(file name, label)`` pairs; one that is not
             there is left out.
         saves_tracked_signals_only: Whether a test's result file holds only
-            the variables it tracks, not every variable of the model: ``dstf
-            diff`` says so beside its counts.
+            the signals it tracks (parameters are kept), not every variable of
+            the model: ``dstf diff`` says so beside its counts.
         result_statistics: The names in a test's result file that are the
             solver's statistics, not the model's variables: each an exact
             name, or a prefix ending in ``.``. ``dstf diff`` lists them old →
@@ -640,8 +640,8 @@ class Backend(ABC):
     #: The suffix of the file a test runs, named by its entry's ``source``;
     #: None: a test names no file.
     source_suffix: str | None = None
-    #: The result file holds only the tracked variables (a variable filter,
-    #: or an output list), not every variable of the model.
+    #: The result file holds only the tracked signals (parameters are kept:
+    #: a variable filter, or an output list), not every variable of the model.
     saves_tracked_signals_only: ClassVar[bool] = False
     #: The solver's statistics among the result file's names: an exact name,
     #: or a prefix ending in ``.`` (:meth:`is_result_statistic`).
@@ -990,6 +990,18 @@ class Backend(ABC):
         Returns:
             The names, without ``time``; None when the backend keeps no file it can
             list, in which case only tracked variables can be plotted.
+        """
+        return None
+
+    @classmethod
+    def result_shortfall(cls, test_dir: Path) -> str | None:
+        """Why the result file of a test is not a finished one, in a
+        sentence (a run killed while it wrote it, a cut copy); None for a
+        finished file, for none, and where the backend cannot tell.
+
+        A class method, like :meth:`result_names`: a command that compares
+        whole files asks it before it reads one, and reads no unfinished
+        file, whatever the manifest says. It must not raise.
         """
         return None
 

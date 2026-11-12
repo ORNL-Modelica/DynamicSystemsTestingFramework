@@ -17,18 +17,25 @@ JSON is always complete; identical groups are in it as counts.
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from collections.abc import Collection
 from dataclasses import asdict
 from typing import Any
 
-from ..storage.baseline_diff import DiffError, SeriesChange, short_name
+from ..storage.baseline_diff import (
+    DiffError,
+    SeriesChange,
+    machine_dependent,
+    short_name,
+)
 from .baseline_diff_text import (
+    _COUNTED,
     _change_text,
     _code,
-    _effort,
     _plural,
     _row,
+    _stat,
     _stat_json,
     _strict,
     _true_amount,
@@ -43,6 +50,7 @@ from .run_diff import (
     TestRunDiff,
     signal_order,
 )
+from .stats_rows import StatRow
 
 #: How many names, constants and changed groups a detail lists before it
 #: says how many more.
@@ -53,7 +61,7 @@ _DASH = "–"
 NONE = "none"
 #: Said beside the counts of a backend whose files hold the tracked
 #: variables alone (``saves_tracked_signals_only``).
-TRACKED_ONLY = "this tool saves only the tracked signals"
+TRACKED_ONLY = "this tool saves only the tracked signals; parameters are kept"
 
 #: What the JSON's ``limits`` says, in full.
 LIMITS = (
@@ -61,8 +69,9 @@ LIMITS = (
     "them is not seen. A group is the variables whose values are equal, bit for "
     "bit, in both runs; it is counted once and shown by its shortest name. A "
     "constant holds one value at every stored point of both runs. Identical: "
-    "every compared value equal and none left uncompared; rounding: every "
-    "compared value within one storage step of the coarser file's precision; "
+    "the same time points and every value equal; rounding: as many points, and "
+    "at each one the time and the value within one storage step of the coarser "
+    "file's precision; "
     "near zero (with a cut only): every value of both runs smaller in size than "
     "the cut; derivative: a name of the group holds der(; changed: the rest, "
     "and any value finite in one run only. A Change is the largest |later − "
@@ -193,7 +202,8 @@ def constants_cell(tests: list[TestRunDiff]) -> str:
 
 
 def _names_mark(tests: list[TestRunDiff], f: FolderDiff) -> list[str]:
-    """The names one run's files hold only, counted per side."""
+    """The names one run's files hold only, counted per side, and whether
+    the runs' files hold other time points."""
     old = sum(len(t.only_old) for t in tests)
     new = sum(len(t.only_new) for t in tests)
     marks = []
@@ -201,6 +211,8 @@ def _names_mark(tests: list[TestRunDiff], f: FolderDiff) -> list[str]:
         marks.append(f"{_plural(old, 'name')} only in {f.old.label}")
     if new:
         marks.append(f"{_plural(new, 'name')} only in {f.new.label}")
+    if any(not t.same_points for t in tests):
+        marks.append("time points differ")
     return marks
 
 
@@ -235,11 +247,11 @@ def _key(diff: RunDiff) -> str:
     said = [
         "A group = the variables whose values are equal in both runs, counted "
         "once; a parameter holds one value throughout.",
-        "Identical = every stored value equal; rounding = within one storage "
-        "step of the coarser file's precision;",
+        "Identical = the same time points, every value equal; rounding = point "
+        "by point within one storage step of the coarser file's precision;",
     ]
     if diff.near_zero is not None:
-        said.append(f"near zero = every value smaller than {diff.near_zero:g};")
+        said.append(f"near zero = every value smaller in size than {diff.near_zero:g};")
     said.append(
         f"derivative = a der( variable; changed = the rest, by its biggest move "
         f"against {first}. Only stored points are compared."
@@ -337,6 +349,65 @@ def _count_line(title: str, counts: dict[str, int], always: str) -> str:
     return f"- {title} ({_count(n)} group{'s' * (n != 1)}): {classes}"
 
 
+def _points(test: TestRunDiff, side: int, label: str) -> str:
+    """A run's time points, and their span where the runs' times differ
+    beyond rounding."""
+    said = f"{_count(test.points[side])} in {label}"
+    if not test.same_points:
+        first, last = test.spans[side]
+        said += f" ({first:g}–{last:g} s)"
+    return said
+
+
+def _changed(row: StatRow) -> bool:
+    """A statistic whose two values differ, or that one run lacks — at all,
+    not by a criterion's tolerance: nothing here is scored."""
+    if row.baseline is None or row.run is None:
+        return row.baseline is not row.run
+    a, b = row.baseline, row.run
+    if (
+        isinstance(a, float)
+        and isinstance(b, float)
+        and math.isnan(a)
+        and math.isnan(b)
+    ):
+        return False
+    return bool(a != b)
+
+
+def _statistics(rows: list[StatRow]) -> list[str]:
+    """The statistics' lines: those that differ, those that do not (a
+    translation log's counted), each list the first :data:`LISTED` and how
+    many more, then the machine-dependent times."""
+    solver = [r for r in rows if not machine_dependent(r)]
+    moved = [_stat(r, both=True) for r in solver if _changed(r)]
+    same = [
+        _stat(r, both=False)
+        for r in solver
+        if not _changed(r) and r.section != _COUNTED
+    ]
+    counted = sum(not _changed(r) and r.section == _COUNTED for r in solver)
+    same = _capped(same)
+    if counted:
+        same.append(_plural(counted, f"{_COUNTED} statistic"))
+    machine = [_stat(r, both=False) for r in rows if machine_dependent(r)]
+    out = []
+    for title, said in (
+        ("Changed", _capped(moved)),
+        ("Unchanged", same),
+        ("Machine-dependent", machine),
+    ):
+        if said:
+            out.append(f"  - {title}: " + "; ".join(said))
+    return out
+
+
+def _capped(said: list[str]) -> list[str]:
+    if len(said) <= LISTED:
+        return said
+    return [*said[:LISTED], f"and {_count(len(said) - LISTED)} more"]
+
+
 def _constant_line(c: Constant) -> str:
     return f"{_group_name(c.names)} {c.old:g} → {c.new:g}"
 
@@ -351,8 +422,8 @@ def _detail(f: FolderDiff, test: TestRunDiff) -> list[str]:
         f"`{test.model_id}`",
         "",
         f"- Variables: {_count(test.variables[0])} in {old}, "
-        f"{_count(test.variables[1])} in {new}; points: "
-        f"{_count(test.points[0])} in {old}, {_count(test.points[1])} in {new}",
+        f"{_count(test.variables[1])} in {new}; points: {_points(test, 0, old)}, "
+        f"{_points(test, 1, new)}",
     ]
     if test.only_old:
         lines.append(f"- Only in {old}: {_list(test.only_old)}")
@@ -395,7 +466,7 @@ def _detail(f: FolderDiff, test: TestRunDiff) -> list[str]:
         if len(changed) > LISTED:
             lines += ["", f"And {_count(len(changed) - LISTED)} more changed groups."]
         lines.append("")
-    effort = _effort(test.statistics, LISTED)
+    effort = _statistics(test.statistics)
     if effort:
         lines += [f"- Statistics, {old} → {new} (not scored):", *effort]
     return [*lines, "", "</details>"]

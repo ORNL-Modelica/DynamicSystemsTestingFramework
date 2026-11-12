@@ -23,7 +23,7 @@ this file says when they do.
 - `dstf plot`'s `--test` and `--folder`, and `dstf baseline diff`'s
   `--details`, refuse a value holding `=`: given before the runs,
   `plot a=… --test X b=…` read `b=…` as one more test name. The refusal says
-  to give the flag after the runs.
+  that a LABEL=DIR after such a flag is read as one of its values.
 
 ## [1.5.0] - 2026-11-12
 

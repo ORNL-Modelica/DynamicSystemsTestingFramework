@@ -449,6 +449,15 @@ def _agrees(
     """Every index equal (a NaN to a NaN), or within the larger of old's
     step at its number and new's at its."""
     step = np.fmax(saved_step(old, old_digits), saved_step(new, new_digits))
+    return agrees_within(old, new, step)
+
+
+def agrees_within(old: np.ndarray, new: np.ndarray, step: np.ndarray) -> bool:
+    """Index by index, equal (a NaN to a NaN, an infinity to the same one)
+    or within ``step`` there, with a subtraction's noise of slack — the
+    rounding rule of :func:`with_rounding`, and of ``dstf diff`` with a
+    storage step for ``step``. Arrays of one length."""
+    old, new = np.asarray(old, float), np.asarray(new, float)
     with np.errstate(invalid="ignore"):  # inf - inf
         near = np.abs(new - old) <= step * _ONE_STEP
     same = (old == new) | (np.isnan(old) & np.isnan(new))

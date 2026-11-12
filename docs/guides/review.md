@@ -336,7 +336,7 @@ $ dstf diff main=runs/main fix=runs/fix --details SimpleRamp
 | --- | --- | --- | --- |
 | Python/linux | 3 of 3 | 1 changed (2.5 % of range) | all identical |
 
-A group = the variables whose values are equal in both runs, counted once; a parameter holds one value throughout. Identical = every stored value equal; rounding = within one storage step of the coarser file's precision; derivative = a der( variable; changed = the rest, by its biggest move against main. Only stored points are compared.
+A group = the variables whose values are equal in both runs, counted once; a parameter holds one value throughout. Identical = the same time points, every value equal; rounding = point by point within one storage step of the coarser file's precision; derivative = a der( variable; changed = the rest, by its biggest move against main. Only stored points are compared.
 
 Differs in 1 of 3 tests: `SimpleRamp`.
 
@@ -370,32 +370,40 @@ How the runs are read and compared:
   `<Backend>/<os>`. Two labels only: a third is refused.
 - **The tests** are those both runs hold (`--test` names fewer). A test whose
   run failed or timed out is not compared (`the run failed`), nor one a run
-  did not finish or holds no result of (`not run`): a partial result file is
-  never read. A test only one run holds is named (`Only in fix: …`).
+  did not finish or holds no result of (`not run`), nor one whose result file
+  is unfinished, whatever its manifest says (`fix: partial result: dsres.mat
+  holds …`): a partial result file is never compared. A test only one run holds is named (`Only in fix: …`).
 - **A group** is the variables whose values are equal, bit for bit, in BOTH
   runs: aliases. It is counted once and shown by its shortest name, with how
-  many more (`` `x` (+2) ``). Two aliases in main that differ in the branch
-  are two groups.
+  many more (`` `x` (+2) ``); a derivative group by its `der(` name. Two
+  aliases in main that differ in the branch are two groups.
 - **A parameter** holds one value at every stored point of both runs. It is
   identical, within rounding (one storage step of the coarser file's
   precision at its value: a float32 file's step, where either file is
   float32), or it differs; the detail lists the ones that differ, old → new.
 - **A signal** is any other group, in the first class it fits: identical
-  (every compared value equal and none left uncompared, on one time grid or
-  two), within rounding (every compared value within one storage step),
-  near zero (only with `--near-zero SIZE`: every value of both runs smaller
-  than SIZE, in the variables' own units — so there is no default), a
+  (the same time points, every value equal), within rounding (as many
+  points, and at each one the time and the value within one storage step of
+  the coarser file's precision: a float32 copy of a float64 run is
+  rounding), near zero (only with `--near-zero SIZE`: every value of both
+  runs smaller in size than SIZE, in the variables' own units — so there is
+  no default), a
   derivative (a name of the group holds `der(`), or changed. A value that is
   finite in one run only is always changed, and listed first. A changed
   signal's Change is `baseline diff`'s: the later run on the first run's time
   grid, as a percent of the first run's range (`of value` where it is
   constant, `absolute` where it is zero), at the time it is largest.
+- **Other time points** — another stop time, another output interval, a
+  shifted grid — make every signal at best changed, in either order: the row
+  says `time points differ`, and the detail gives each run's points and
+  span. The Change still reads the later run on the first run's grid, so a
+  move between the first run's points is not in it.
 - **The solver's statistics** in the result file (Dymola's CPU time, event
   counter and nonlinear-system counters) are not variables: they are listed
   old → new in the detail, with the run's own statistics, and never scored.
-- **A tool that saves only the tracked variables** (OpenModelica's
-  `variableFilter`, FMPy's output list) says so in its row: there is little
-  beyond what `compare` scores.
+- **A tool that saves only the tracked signals** (OpenModelica's
+  `variableFilter`, FMPy's output list; parameters are kept) says so in its
+  row.
 
 `--details` adds a folded section per test where something differs (or per
 test named): the counts, the names in one run only, the parameters that

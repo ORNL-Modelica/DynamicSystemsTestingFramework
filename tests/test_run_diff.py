@@ -132,18 +132,52 @@ def test_two_runs_whose_files_hold_the_same_values_are_all_identical(tmp_path, c
     assert "Nothing differs in 1 test." in lines
 
 
-def test_another_grid_whose_values_agree_at_every_compared_point_is_identical(
+def test_a_later_run_over_a_longer_span_differs_in_either_order(tmp_path, capsys):
+    """Another stop time: equal over the reference's span, yet the runs hold
+    other points. Neither order reads identical, and the detail gives each
+    run's points and span."""
+    t8 = [float(t) for t in range(9)]
+    short, long = {"trajectories": {"x": RAMP}}, {"time": t8, "trajectories": {"x": t8}}
+    runs = _pair(tmp_path, short, long)
+    lines = _diff(capsys, *runs, "--details")
+    assert _row(lines) == (
+        "| Dymola/linux | 1 of 1 | 1 changed (0 %) (time points differ) | none |"
+    )
+    assert "Differs in 1 of 1 test: `A`." in lines
+    assert (
+        "- Variables: 1 in main, 1 in fix; points: 5 in main (0–4 s), 9 in fix (0–8 s)"
+    ) in lines
+    lines = _diff(capsys, f"fix={runs[1][4:]}", f"main={runs[0][5:]}", "--details")
+    assert _row(lines) == (
+        "| Dymola/linux | 1 of 1 | 1 changed (0 %) (time points differ) | none |"
+    )
+    assert "| `x` | 0 %; 4 old points outside the new time span |" in lines
+
+
+def test_a_finer_grid_moved_between_the_reference_s_points_is_not_identical(
     tmp_path, capsys
 ):
-    """Another output interval: the later run on the reference's grid is
-    equal at every point, none outside it. Its detail gives each run's
-    points."""
-    old = {"trajectories": {"x": RAMP}}
     fine = [t / 2 for t in range(9)]
-    new = {"time": fine, "trajectories": {"x": fine}}
-    lines = _diff(capsys, *_pair(tmp_path, old, new), "--details", "A")
-    assert _row(lines) == "| Dymola/linux | 1 of 1 | all identical | none |"
-    assert "- Variables: 1 in main, 1 in fix; points: 5 in main, 9 in fix" in lines
+    spiked = [100.0 if t == 0.5 else t for t in fine]
+    old = {"trajectories": {"x": RAMP}}
+    new = {"time": fine, "trajectories": {"x": spiked}}
+    lines = _diff(capsys, *_pair(tmp_path, old, new))
+    assert _row(lines) == (
+        "| Dymola/linux | 1 of 1 | 1 changed (0 %) (time points differ) | none |"
+    )
+
+
+def test_the_same_point_count_on_a_shifted_grid_is_not_identical(tmp_path, capsys):
+    old = {"trajectories": {"x": RAMP}}
+    new = {"time": [0.0, 1.5, 2.0, 3.0, 4.0], "trajectories": {"x": RAMP}}
+    lines = _diff(capsys, *_pair(tmp_path, old, new), "--details")
+    assert _row(lines) == (
+        "| Dymola/linux | 1 of 1 | 1 changed (8.3 % of range) (time points differ) "
+        "| none |"
+    )
+    assert (
+        "- Variables: 1 in main, 1 in fix; points: 5 in main (0–4 s), 5 in fix (0–4 s)"
+    ) in lines
 
 
 # --- rounding ----------------------------------------------------------------
@@ -192,6 +226,25 @@ def test_a_float64_file_against_a_float32_one_rounds_at_float32(tmp_path, capsys
     )
 
 
+def test_float64_and_float32_copies_of_one_run_are_rounding_in_either_order(
+    tmp_path, capsys
+):
+    """One run saved at double and at single precision: the float32 times
+    are not the float64 ones, so the later run must not be read on the
+    other's grid. Point by point, time and value each agree within one
+    float32 step."""
+    t = [i * 0.1 for i in range(11)]
+    data = {"x": [1000.0 * v + 3.0 for v in t], "y": [float(np.sin(10 * v)) for v in t]}
+    f8 = {"dtype": "<f8", "time": t, "trajectories": data}
+    f4 = {"dtype": "<f4", "time": t, "trajectories": data}
+    runs = _pair(tmp_path, f8, f4)
+    for argv in (runs, (f"fix={runs[1][4:]}", f"main={runs[0][5:]}")):
+        lines = _diff(capsys, *argv)
+        assert _row(lines) == (
+            "| Dymola/linux | 1 of 1 | 2 rounding; changed: none | none |"
+        )
+
+
 # --- near zero, derivatives ----------------------------------------------------
 
 
@@ -210,6 +263,8 @@ def test_near_zero_is_a_class_only_with_the_flag(tmp_path, capsys):
         "| Dymola/linux | 1 of 1 | 1 near zero; changed: none | none |"
     )
     assert "- Near zero, the largest |fix − main|: 5e-06 (`x`, 2 s)" in lines
+    (key,) = [line for line in lines if line.startswith("A group = ")]
+    assert "near zero = every value smaller in size than 0.0001;" in key
     # under a cut the values reach, it is a change again
     lines = _diff(capsys, *runs, "--near-zero", "3e-5")
     assert _row(lines) == (
@@ -218,8 +273,8 @@ def test_near_zero_is_a_class_only_with_the_flag(tmp_path, capsys):
 
 
 def test_a_group_is_a_derivative_when_any_of_its_names_is_one(tmp_path, capsys):
-    """The group is shown by its shortest name, `v`; its alias der(pos) makes
-    it a derivative."""
+    """Its alias der(pos) makes the group a derivative, and is the name it
+    is shown by, not the shorter `v`."""
     alias = {"der(pos)": ("v", False)}
     old = {"trajectories": {"v": RAMP}, "aliases": alias}
     new = {"trajectories": {"v": [0.0, 1.0, 2.5, 3.0, 4.0]}, "aliases": alias}
@@ -227,7 +282,7 @@ def test_a_group_is_a_derivative_when_any_of_its_names_is_one(tmp_path, capsys):
     assert _row(lines) == (
         "| Dymola/linux | 1 of 1 | 1 derivative; changed: none | none |"
     )
-    assert "- Derivatives, the largest: `v` (+1) 12 % of range (2 s)" in lines
+    assert "- Derivatives, the largest: `der(pos)` (+1) 12 % of range (2 s)" in lines
 
 
 # --- changed ---------------------------------------------------------------------
@@ -333,9 +388,35 @@ def test_the_solver_s_statistics_are_listed_and_never_scored(tmp_path, capsys):
     assert _row(lines) == "| Dymola/linux | 1 of 1 | all identical | none |"
     assert "- Variables: 1 in main, 1 in fix; points: 5 in main, 5 in fix" in lines
     assert lines[lines.index("- Statistics, main → fix (not scored):") + 1] == (
-        "  - Solver effort, old → new: EventCounter 3 → 5; "
-        f"{stat} 10 → 30; Accepted steps 10 → 20"
+        f"  - Changed: EventCounter 3 → 5; {stat} 10 → 30; Accepted steps 10 → 20"
     )
+
+
+def test_a_statistic_whose_value_differs_at_all_is_listed_as_changed(tmp_path, capsys):
+    """1000 → 1005 is under the scorer's 1 %, and a counter one run lacks is
+    no criterion: both differ, so neither is "unchanged"."""
+    s1 = "NonlinearSystems.simulation[1].Iterations"
+    s2 = "NonlinearSystems.simulation[2].Iterations"
+    old = {"trajectories": {"x": RAMP}, "parameters": {s1: 1000.0}}
+    new = {"trajectories": {"x": RAMP}, "parameters": {s1: 1005.0, s2: 450.0}}
+    lines = _diff(capsys, *_pair(tmp_path, old, new), "--details", "A")
+    at = lines.index("- Statistics, main → fix (not scored):")
+    assert lines[at + 1 : at + 3] == [
+        f"  - Changed: {s1} 1000 → 1005; {s2} – → 450",
+        "",
+    ]
+
+
+def test_the_statistics_lists_are_capped(tmp_path, capsys):
+    names = [f"NonlinearSystems.simulation[{i:02d}].Calls" for i in range(25)]
+    old = {"trajectories": {"x": RAMP}, "parameters": {n: 1.0 for n in names}}
+    moved = {"trajectories": {"x": RAMP}, "parameters": {n: 2.0 for n in names}}
+    lines = _diff(capsys, *_pair(tmp_path, old, old), "--details", "A")
+    (same,) = [line for line in lines if line.startswith("  - Unchanged: ")]
+    assert same.endswith(f"; {names[19]} 1; and 5 more")
+    lines = _diff(capsys, *_pair(tmp_path / "moved", old, moved), "--details", "A")
+    (changed,) = [line for line in lines if line.startswith("  - Changed: ")]
+    assert changed.endswith(f"; {names[19]} 1 → 2; and 5 more")
 
 
 # --- tests not compared ----------------------------------------------------------
@@ -361,6 +442,62 @@ def test_a_test_with_no_result_file_is_not_run(tmp_path, capsys):
     b = _run(tmp_path / "fix", {A: mat, B: None})
     lines = _diff(capsys, f"main={a}", f"fix={b}")
     assert lines[-1] == "Not compared: `B` (fix: not run)."
+
+
+def test_a_timed_out_and_a_cancelled_result_are_not_compared(tmp_path, capsys):
+    mat = {"trajectories": {"x": RAMP}}
+    moved = {"trajectories": {"x": RAMP[::-1]}}
+    a = _run(tmp_path / "main", {A: mat, B: mat})
+    b = _run(tmp_path / "fix", {A: moved, B: moved})
+    manifest = json.loads((b / "batch_manifest.json").read_text())
+    manifest["test_0001"]["last_run_status"] = "timed_out"
+    manifest["test_0002"]["last_run_status"] = "cancelled"
+    (b / "batch_manifest.json").write_text(json.dumps(manifest))
+    lines = _diff(capsys, f"main={a}", f"fix={b}")
+    assert _row(lines) == "| Dymola/linux | 0 of 2 | – | – |"
+    assert lines[-1] == ("Not compared: `A` (fix: the run failed), `B` (fix: not run).")
+
+
+_PARTIAL = (
+    "partial result: dsres.mat holds 3 time points up to t=2, its header counts "
+    "5 — the run did not finish writing it"
+)
+
+
+def _partial(run):
+    """``run``'s test A's file cut after 3 of its 5 points, as a killed run
+    leaves it."""
+    write_result_mat(
+        run / "test_0001" / "dsres.mat",
+        time=TIME,
+        trajectories={"x": [0.0, 1.0, 2.0, 9.0, 9.0]},
+        points=3,
+        declared=5,
+    )
+
+
+def test_a_partial_result_file_is_never_compared(tmp_path, capsys):
+    """Whatever the manifest says: here, passed."""
+    a = _run(tmp_path / "main", {A: {"trajectories": {"x": RAMP}}})
+    b = _run(tmp_path / "fix", {A: None})
+    _partial(b)
+    lines = _diff(capsys, f"main={a}", f"fix={b}")
+    assert lines[-1] == f"Not compared: `A` (fix: {_PARTIAL})."
+
+
+def test_a_partial_result_under_an_old_manifest_is_never_compared(tmp_path, capsys):
+    """An old manifest names its models alone and records no verdict."""
+    a = _run(tmp_path / "main", {A: {"trajectories": {"x": RAMP}}})
+    b = _run(tmp_path / "fix", {A: None})
+    _partial(b)
+    for run in (a, b):
+        held = json.loads((run / "batch_manifest.json").read_text())
+        bare = {key: entry["model_id"] for key, entry in held.items()}
+        (run / "batch_manifest.json").write_text(json.dumps(bare))
+        status = json.loads((run / "status.json").read_text())
+        (run / "status.json").write_text(json.dumps({**status, "tests": []}))
+    lines = _diff(capsys, f"main={a}", f"fix={b}")
+    assert lines[-1] == f"Not compared: `A` (fix: {_PARTIAL})."
 
 
 # --- the reference ---------------------------------------------------------------
@@ -389,8 +526,8 @@ def test_a_tool_that_saves_only_the_tracked_signals_says_so(tmp_path, capsys):
     b = _run(tmp_path / "fix", {A: mat}, backend="OpenModelica")
     lines = _diff(capsys, f"main={a}", f"fix={b}")
     assert lines[4] == (
-        "| OpenModelica/linux (this tool saves only the tracked signals) | 1 of 1 "
-        "| all identical | none |"
+        "| OpenModelica/linux (this tool saves only the tracked signals; parameters "
+        "are kept) | 1 of 1 | all identical | none |"
     )
 
 
@@ -510,7 +647,8 @@ def test_two_labels_over_two_tools_are_two_runs(tmp_path, capsys):
     assert lines[0] == "**Every variable, main → fix** (1 test)"
     assert [line.split(" |")[0] for line in lines if line.startswith("| ")][2:] == [
         "| Dymola/linux",
-        "| OpenModelica/linux (this tool saves only the tracked signals)",
+        "| OpenModelica/linux (this tool saves only the tracked signals; parameters "
+        "are kept)",
     ]
 
 
@@ -533,8 +671,15 @@ def test_near_zero_takes_a_finite_size_above_zero(tmp_path, capsys, size):
 
 def test_details_before_the_runs_does_not_take_them_as_names(capsys):
     assert _parse_refused(capsys, "--details", "a=1", "b=2") == (
-        "dstf diff: error: argument --details: a=1 is a run (LABEL=DIR), not a "
-        "test name: give --details after the runs"
+        "dstf diff: error: argument --details: a=1: a test name holds no '=' (a "
+        "LABEL=DIR after --details is read as one of its values)"
+    )
+
+
+def test_a_test_name_holding_an_equals_sign_after_the_runs_is_refused_plainly(capsys):
+    assert _parse_refused(capsys, "a=1", "b=2", "--test", "Lib.M=1") == (
+        "dstf diff: error: argument --test: Lib.M=1: a test name holds no '=' (a "
+        "LABEL=DIR after --test is read as one of its values)"
     )
 
 
@@ -552,3 +697,80 @@ def test_markdown_over_what_a_pull_request_holds_is_noted_on_stderr(tmp_path, ca
         f"Note: this Markdown is {len(captured.out):,} characters; a GitHub "
         "pull-request body or comment holds 65,536.\n"
     )
+
+
+# --- what the reports hold besides --------------------------------------------------
+
+
+def test_an_event_stored_another_number_of_times_is_said(tmp_path, capsys):
+    """Main stores the event at 2 s three times, fix twice: the middle sample
+    has nothing to meet."""
+    old = {
+        "time": [0.0, 1.0, 2.0, 2.0, 2.0, 3.0],
+        "trajectories": {"x": [0, 1, 2, 3, 4, 5]},
+    }
+    new = {"time": [0.0, 1.0, 2.0, 2.0, 3.0], "trajectories": {"x": [0, 1, 2, 4, 5]}}
+    lines = _diff(capsys, *_pair(tmp_path, old, new), "--details")
+    assert (
+        "| `x` | 0 %; 1 old points inside an event the new run stores another "
+        "number of times |"
+    ) in lines
+
+
+def test_the_json_is_strict_with_a_value_not_finite(tmp_path, capsys):
+    old = {"dtype": "<f8", "trajectories": {"x": RAMP}, "parameters": {"p": 1.0}}
+    new = {
+        "dtype": "<f8",
+        "trajectories": {"x": [0.0, float("inf"), 2.0, 3.0, 4.0]},
+        "parameters": {"p": float("nan")},
+    }
+    text = "\n".join(_diff(capsys, *_pair(tmp_path, old, new), "--format", "json"))
+
+    def refuse(literal):
+        raise ValueError(literal)
+
+    (test,) = json.loads(text, parse_constant=refuse)["folders"][0]["tests"]
+    assert test["parameters"]["groups"] == [
+        {
+            "names": ["p"],
+            "kind": "differs",
+            "old": 1.0,
+            "new": None,
+            "new_non_finite": "nan",
+        }
+    ]
+    (group,) = test["signals"]["groups"]
+    assert (group["change"]["non_finite"], group["change"]["non_finite_at"]) == (1, 1.0)
+
+
+def test_near_zero_lists_the_largest_absolute_move_first(tmp_path, capsys):
+    """`a` moves 10 % of its tiny range, `b` 1 % of a range a hundred times
+    larger: `b` moved more, in the variables' own units."""
+    old = {
+        "trajectories": {
+            "a": [0.0, 1e-7, 2e-7, 3e-7, 4e-7],
+            "b": [0.0, 1e-5, 2e-5, 3e-5, 4e-5],
+        }
+    }
+    new = {
+        "trajectories": {
+            "a": [0.0, 1e-7, 2.4e-7, 3e-7, 4e-7],
+            "b": [0.0, 1e-5, 2.04e-5, 3e-5, 4e-5],
+        }
+    }
+    lines = _diff(capsys, *_pair(tmp_path, old, new), "--details", "--near-zero", "1")
+    (largest,) = [line for line in lines if line.startswith("- Near zero")]
+    assert largest == "- Near zero, the largest |fix − main|: 4e-07 (`b`, 2 s)"
+
+
+def test_the_differing_parameters_are_listed_by_name_and_capped(tmp_path, capsys):
+    names = [f"p{i:02d}" for i in range(24, -1, -1)]  # written last-first
+    old = {"trajectories": {"x": RAMP}, "parameters": {n: int(n[1:]) for n in names}}
+    new = {
+        "trajectories": {"x": RAMP},
+        "parameters": {n: -int(n[1:]) - 1 for n in names},
+    }
+    lines = _diff(capsys, *_pair(tmp_path, old, new), "--details")
+    (said,) = [line for line in lines if line.startswith("- Parameters that differ")]
+    shown = "; ".join(f"`p{i:02d}` {i} → {-i - 1}" for i in range(20))
+    assert said == f"- Parameters that differ, main → fix: {shown}; and 5 more"

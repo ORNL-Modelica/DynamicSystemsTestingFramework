@@ -250,6 +250,5 @@ def test_details_refuses_a_value_holding_an_equals_sign(lib, capsys):
         main(_diff_argv(lib, "--details", "A", "a=1"))
     assert e.value.code == 2
     assert capsys.readouterr().err.splitlines()[-1] == (
-        "dstf baseline diff: error: argument --details: a=1 is not a test name "
-        "(no name holds '=')"
+        "dstf baseline diff: error: argument --details: a=1: a test name holds no '='"
     )

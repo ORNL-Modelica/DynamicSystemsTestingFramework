@@ -494,17 +494,12 @@ def _stat(row: StatRow, *, both: bool) -> str:
 _COUNTED = "translation"
 
 
-def _effort(rows: list[StatRow], listed: int | None = None) -> list[str]:
-    """The solver effort's lines: what moved, what did not — the first
-    ``listed`` of those, then how many more, where it is given — and the
-    machine-dependent times."""
+def _effort(rows: list[StatRow]) -> list[str]:
     solver = [r for r in rows if not machine_dependent(r)]
     moved = [_stat(r, both=True) for r in solver if r.changed]
     same = [
         _stat(r, both=False) for r in solver if not r.changed and r.section != _COUNTED
     ]
-    if listed is not None and len(same) > listed:
-        same = [*same[:listed], f"and {len(same) - listed} more"]
     counted = sum(not r.changed and r.section == _COUNTED for r in solver)
     if counted:
         same.append(f"{_plural(counted, f'{_COUNTED} statistic')}")

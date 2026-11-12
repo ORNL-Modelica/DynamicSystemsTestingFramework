@@ -13,13 +13,15 @@ reference. Nothing is written into a run.
 Which tests: those both runs of a folder hold, by model id (``--test``
 narrows them). A test whose run failed or timed out is not compared ("the
 run failed"), nor one a run started and did not finish, was stopped in, or
-holds no readable result of ("not run"): a partial result file is never
-compared. A test only one run holds is said, per side.
+holds no readable result of ("not run"), nor one whose result file its
+backend says is unfinished (``result_shortfall``, the check the scored
+read makes: that sentence), whatever the manifest says: a partial result
+file is never compared. A test only one run holds is said, per side.
 
 What is compared: the WHOLE result file of each test, every variable, read
 by the backend that wrote it (``result_names`` / ``result_series``; this
-module names no file). A backend whose file holds the tracked variables
-alone (``saves_tracked_signals_only``) is said. The solver's statistics in
+module names no file). A backend whose file holds the tracked signals
+alone, and the parameters (``saves_tracked_signals_only``), is said. The solver's statistics in
 the file (``result_statistics``) are taken out first and never scored:
 their finals are listed old → new, with the run's own statistics
 (``run_stats.json``).
@@ -30,12 +32,16 @@ shortest name and counted once. A group that holds one value at every
 stored point in both runs is a constant (a parameter): identical (NaN
 equals NaN), within rounding (one storage step of the coarser file's
 precision at the larger value), or it differs. Any other group falls in the
-first of: identical (every compared point equal and none left uncompared,
-on one grid or two), within rounding (every compared point within one
-storage step there, none left uncompared), near zero (only with a cut:
-every value of both runs smaller in size), derivative (a name of the group
-holds ``der(``), changed. A value finite on one side only, or a series with
-nothing compared, is always changed. The Change is
+first of: identical (the same times, bit for bit, and every value equal),
+within rounding (as many points, and at each index the time and the value
+within one storage step of the coarser file's precision at the larger of the
+two — the rule of ``baseline diff``'s rounding, with a storage step for a
+saved digit's), near zero (only with a cut: every value of both runs smaller
+in size), derivative (a name of the group holds ``der(``; the group is shown
+by it), changed. Two runs that hold other time points — another span,
+another interval — are never identical nor within rounding, in either
+order, and the test is not one where nothing differs. A value finite on one
+side only, or a series with nothing compared, is always changed. The Change is
 :func:`~dstf.storage.baseline_diff.difference_series`'s, DSTF's one measure
 of a change: the later run on the reference's grid, events paired, as a
 percent of the reference's range (of its value where constant; absolute
@@ -53,9 +59,9 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from ..storage.baseline_diff import (
-    Difference,
     SeriesChange,
     VariableDiff,
+    agrees_within,
     difference_series,
     series_change,
 )
@@ -128,6 +134,13 @@ class TestRunDiff:
     variables: tuple[int, int]
     #: each file's time points: (first, later)
     points: tuple[int, int]
+    #: each file's first and last time: (first, later)
+    spans: tuple[tuple[float, float], tuple[float, float]]
+    #: the two files hold the same times, point for point and bit for bit
+    same_grid: bool
+    #: the two files hold as many points, each time within one storage step
+    #: of the coarser file's (a float32 copy of a float64 run's times)
+    same_points: bool
     #: the names one run's file holds and the other's does not, statistics
     #: apart, sorted
     only_old: list[str]
@@ -151,9 +164,11 @@ class TestRunDiff:
 
     @property
     def same(self) -> bool:
-        """Whether nothing differs: every group identical, no name in one
-        run only."""
-        return not (self.signals or self.constants or self.only_old or self.only_new)
+        """Whether nothing differs: the same time points, every group
+        identical, no name in one run only."""
+        return self.same_grid and not (
+            self.signals or self.constants or self.only_old or self.only_new
+        )
 
 
 @dataclass(frozen=True)
@@ -339,6 +354,10 @@ def _test(
 ) -> tuple[TestRunDiff | None, str, str]:
     """One test's two result files compared; None, with each side's
     state, where a side holds no readable file."""
+    unfinished = [cls.result_shortfall(test_dir) for cls, test_dir in (old, new)]
+    if any(unfinished):
+        said = [_sentence(why) if why else READ for why in unfinished]
+        return None, said[0], said[1]
     a, b = _read(*old), _read(*new)
     if a is None or b is None:
         return None, READ if a else NOT_RUN, READ if b else NOT_RUN
@@ -348,6 +367,11 @@ def _test(
     for name in shared:
         groups.setdefault((_digest(va[name]), _digest(vb[name])), []).append(name)
     same_grid = ta.shape == tb.shape and bool(np.array_equal(ta, tb))
+    # the same points within a time step of the coarser file: what a group
+    # must hold to be within rounding (float32 times are not float64 ones)
+    same_points = same_grid or (
+        ta.shape == tb.shape and agrees_within(ta, tb, _step_at(ta, tb))
+    )
     signal_counts: Counter[str] = Counter({k: 0 for k in KINDS})
     constant_counts: Counter[str] = Counter({k: 0 for k in CONSTANT_KINDS})
     signals: list[Signal] = []
@@ -364,15 +388,17 @@ def _test(
         if same_grid and np.array_equal(x, y, equal_nan=True):
             signal_counts["identical"] += 1
             continue
-        signal = _signal(names, (ta, x), (tb, y), near_zero)
+        signal = _signal(names, (ta, x), (tb, y), near_zero, same_points)
         signal_counts[signal.kind] += 1
-        if signal.kind != "identical":
-            signals.append(signal)
+        signals.append(signal)
     return (
         TestRunDiff(
             model_id=model_id,
             variables=(len(va), len(vb)),
             points=(ta.size, tb.size),
+            spans=(_span(ta), _span(tb)),
+            same_grid=same_grid,
+            same_points=same_points,
             only_old=sorted(n for n in va if n not in vb),
             only_new=sorted(n for n in vb if n not in va),
             signal_counts=dict(signal_counts),
@@ -411,6 +437,23 @@ def _step(size: np.ndarray, precision: type[np.floating]) -> np.ndarray:
     return np.spacing(np.asarray(size).astype(precision)).astype(float)
 
 
+def _step_at(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Index by index, one storage step of the coarser of two arrays at the
+    larger of their two values there."""
+    with np.errstate(invalid="ignore"):
+        size = np.fmax(np.abs(np.asarray(x, float)), np.abs(np.asarray(y, float)))
+    return _step(size, _coarser(x, y))
+
+
+def _span(time: np.ndarray) -> tuple[float, float]:
+    return (float(time[0]), float(time[-1])) if time.size else (0.0, 0.0)
+
+
+def _sentence(why: str) -> str:
+    """A backend's sentence of why a file is not finished, as a state."""
+    return why[:1].lower() + why[1:]
+
+
 def _constant_kind(x: np.ndarray, y: np.ndarray) -> ConstantKind:
     a, b = float(x[0]), float(y[0])
     if a == b or (np.isnan(a) and np.isnan(b)):
@@ -426,9 +469,11 @@ def _signal(
     old: tuple[np.ndarray, np.ndarray],
     new: tuple[np.ndarray, np.ndarray],
     near_zero: float | None,
+    same_points: bool,
 ) -> Signal:
-    """A varying group's class (the module docstring's order) and its
-    Change, by its first name's two series."""
+    """A varying group that is not identical: its class (the module
+    docstring's order) and its Change, by its first name's two series. A
+    derivative group is shown by its derivative."""
     (ta, x), (tb, y) = old, new
     d = difference_series(ta, x, tb, y, kind="run")
     change = series_change(d)
@@ -437,30 +482,23 @@ def _signal(
     if compared.size:
         i = int(np.argmax(compared))
         largest, at = float(compared[i]), float(d.time[d.finite][i])
-    whole = not (change.note or change.outside or change.uneven or change.non_finite)
+    derivatives = [n for n in names if "der(" in n]
     kind: Kind
-    if whole and (largest is None or largest == 0):
-        kind = "identical"
-    elif whole and _within_rounding(d, x, y):
+    # Point by point, never on the reference's grid: a float32 copy of a
+    # float64 run holds other times, and read on the reference's grid its
+    # values move by the slope times that step.
+    if same_points and agrees_within(x, y, _step_at(x, y)):
         kind = "rounding"
     elif change.note or change.non_finite:
         kind = "changed"
     elif near_zero is not None and _magnitude(x, y) < near_zero:
         kind = "near zero"
-    elif any("der(" in n for n in names):
+    elif derivatives:
         kind = "derivative"
+        names = [derivatives[0], *(n for n in names if n != derivatives[0])]
     else:
         kind = "changed"
     return Signal(names, kind, change, largest, at)
-
-
-def _within_rounding(d: Difference, x: np.ndarray, y: np.ndarray) -> bool:
-    """Every compared point within one storage step of the coarser file's
-    precision at the larger of its two values."""
-    old = np.asarray(x, float)[d.finite]
-    delta = d.delta[d.finite]
-    size = np.fmax(np.abs(old), np.abs(old + delta))
-    return bool(np.all(np.abs(delta) <= _step(size, _coarser(x, y))))
 
 
 def _magnitude(x: np.ndarray, y: np.ndarray) -> float:

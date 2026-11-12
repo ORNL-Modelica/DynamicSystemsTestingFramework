@@ -173,8 +173,9 @@ def test_a_run_given_after_test_or_folder_is_refused_not_read_as_a_name(
     lib, tmp_path, capsys, flag, value, what
 ):
     """`plot a=1 --test X b=2`: the flag takes several values, so b=2 was
-    read as one more name. A name holds no "=": the run is refused as one,
-    with where the flag goes, before anything is read or written."""
+    read as one more name. A name holds no "=": the value is refused, and
+    why a run may have landed there is said, before anything is read or
+    written."""
     runs = [
         write_python_run(tmp_path / label, {RAMP: {"x": [0, 2, 4, 6, 8]}})
         for label in "abc"
@@ -184,7 +185,7 @@ def test_a_run_given_after_test_or_folder_is_refused_not_read_as_a_name(
         _plot(lib, out, f"a={runs[0]}", f"b={runs[1]}", flag, value, f"c={runs[2]}")
     assert e.value.code == 2
     assert capsys.readouterr().err.splitlines()[-1] == (
-        f"dstf plot: error: argument {flag}: c={runs[2]} is a run (LABEL=DIR), "
-        f"not {what}: give {flag} after the runs"
+        f"dstf plot: error: argument {flag}: c={runs[2]}: {what} holds no '=' "
+        f"(a LABEL=DIR after {flag} is read as one of its values)"
     )
     assert not out.exists()
