@@ -399,8 +399,9 @@ def _size(n: int) -> str:
 
 def cmd_baseline_plot(args: argparse.Namespace) -> int:
     """Draw the baselines of the tests asked for at each revision: a PNG per
-    variable and one gallery.html, into the --output directory. Every check
-    runs before the directory is created or a file in it removed."""
+    variable that moved and one gallery.html, into the --output directory.
+    Every check runs before the directory is created or a file in it
+    removed; the marker is written before the first image."""
     from ..reporting.baseline_gallery import (
         GALLERY,
         OutputRefused,
@@ -433,9 +434,17 @@ def cmd_baseline_plot(args: argparse.Namespace) -> int:
                 "tests (--test) or the folders (--folder) to draw"
             )
         stale = stale_files(out)
+
+        def begin() -> None:
+            # The marker before the first image: a run stopped part way
+            # (Ctrl-C, a crash) leaves a directory the next run may write.
+            clear(out, stale)
+            out.mkdir(parents=True, exist_ok=True)
+            write_marker(out, [*(image.path for image in images), GALLERY])
+
         if images:
             with Renderer() as renderer:
-                clear(out, stale)
+                begin()
                 for image in images:
                     png = renderer.png(image.figure)
                     path = out / image.path
@@ -443,14 +452,12 @@ def cmd_baseline_plot(args: argparse.Namespace) -> int:
                     path.write_bytes(png)
                     pngs[image.path] = png
         else:
-            clear(out, stale)
+            begin()
     except (ConfigError, GitError, DiffError, OutputRefused, ImagesUnavailable) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
-    out.mkdir(parents=True, exist_ok=True)
     page = out / GALLERY
     page.write_text(gallery_html(history, images, pngs), encoding="utf-8")
-    write_marker(out, [*pngs, GALLERY])
     print(
         f"Wrote {len(images)} image{'s' * (len(images) != 1)} and {page} "
         f"({_size(page.stat().st_size)})"

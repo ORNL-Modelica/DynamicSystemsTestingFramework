@@ -7,7 +7,9 @@ as a data URI, no script, nothing fetched — to send to a reviewer.
 
 The output directory is the command's own: a directory that holds a file
 this command did not write is refused, and a rewrite removes exactly the
-files the last one wrote, as its marker lists them (:func:`stale_files`).
+files the last run was to write, as its marker lists them
+(:func:`stale_files`) — written before its first image, so a run stopped
+part way leaves a directory the next one may write.
 """
 
 from __future__ import annotations
@@ -45,7 +47,8 @@ from .baseline_diff_text import (
 
 #: The page every run writes, at the top of the output directory.
 GALLERY = "gallery.html"
-#: The list of every file a run wrote: what the next run may remove.
+#: The list of every file a run writes, written before the first: what the
+#: next run may remove.
 MARKER = ".dstf-baseline-plot.json"
 #: A legend's subject, a file name's label, a test folder's name.
 SUBJECT_CHARS, LABEL_CHARS, TEST_CHARS = 48, 40, 100
@@ -440,7 +443,8 @@ def clear(out: Path, files: list[Path]) -> None:
 
 
 def write_marker(out: Path, files: list[str]) -> None:
-    """The list of what this run wrote: what the next one may remove."""
+    """The list of what this run writes, before it writes any: what the
+    next one may remove, even after this one stopped part way."""
     (Path(out) / MARKER).write_text(
         json.dumps({"written_by": "dstf baseline plot", "files": files}, indent=1)
         + "\n",
