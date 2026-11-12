@@ -1054,11 +1054,37 @@ def test_old_points_outside_the_new_span_are_never_rounding(lib):
     assert (x.outside, x.within_saved_digits) == (1, False)
 
 
-def test_middle_samples_of_an_event_stored_otherwise_are_never_rounding(lib):
+def test_an_event_whose_times_rounded_apart_is_rounding_point_by_point(lib):
+    """A real re-save at single precision: the 7-digit file stores an event
+    at 1.240653 four times, the float32 one at 1.2406528. Its middle samples
+    meet no sample of the same time (not compared, ``uneven``), yet every
+    stored point agrees within one step: the old file's rounding."""
+    old = _doc(
+        (1.2, 1.240652, 1.240652) + (1.240653,) * 4 + (1.240654,) * 3 + (1.3,),
+        [302993.2, 310047.5, 310047.5] + [310047.6] * 4 + [310047.7] * 3 + [310050.0],
+    )
+    new = _doc(
+        (1.20000005, 1.24065244, 1.24065244)
+        + (1.2406528,) * 4
+        + (1.24065351,) * 3
+        + (1.29999995,),
+        [302993.188, 310047.5, 310047.5]
+        + [310047.562] * 4
+        + [310047.656] * 3
+        + [310050.0],
+        "single",
+    )
+    x = _x(lib, old, new)
+    assert x.uneven > 0
+    assert (x.outside, x.non_finite) == (0, 0)
+    assert x.within_saved_digits is True
+
+
+def test_an_event_stored_otherwise_is_rounding_only_where_every_point_is(lib):
     """Old stores t=1 three times, new twice (its third is 1.000001, one
-    unit on): the middle sample is not compared."""
+    unit on): the middle sample is not compared, and is 0.5 off — a move."""
     old = _doc((0, 1, 1, 1, 2), [0.0, 1.0, 2.0, 3.0, 3.0])
-    new = _doc((0, 1, 1, 1.000001, 2), [0.0, 1.0, 2.0, 3.0, 3.000001])
+    new = _doc((0, 1, 1, 1.000001, 2), [0.0, 1.0, 2.5, 3.0, 3.000001])
     x = _x(lib, old, new)
     assert (x.uneven, x.within_saved_digits) == (1, False)
 

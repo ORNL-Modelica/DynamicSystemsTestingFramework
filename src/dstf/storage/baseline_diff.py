@@ -414,20 +414,17 @@ def with_rounding(
     is only the rounding of a file saved with fewer digits. ``old`` and
     ``new`` are each side's (time, values, the digits its file spells —
     `~.baseline_codec.saved_digits`, None for none to round). That holds
-    where some point moved, every one of old's points was compared or is
-    NaN where new's is too (no difference not finite, none outside new's
-    span or inside an event stored otherwise), the two files hold the same
-    number of points, and at every index the times, and the values, agree
-    within one step of the last digit either file spells — each at its own
-    number (`~.baseline_codec.saved_step`). Index by index: a re-save keeps
-    its points, and read on old's grid a float32 time moves a step."""
-    if (
-        not change.largest
-        or change.non_finite
-        or change.outside
-        or change.uneven
-        or change.note
-    ):
+    where some point moved, no difference is not finite and none of old's
+    points is outside new's span, the two files hold the same number of
+    points, and at every index the times, and the values, agree within one
+    step of the last digit either file spells — each at its own number
+    (`~.baseline_codec.saved_step`; a NaN where the other side's is NaN
+    agrees). Index by index: a re-save keeps its points, and read on old's
+    grid a float32 time moves a step. That check reaches every stored
+    point, so the middle samples of an event the two files store at times
+    that rounded apart (``uneven``, not compared on old's grid) are held
+    by it too."""
+    if not change.largest or change.non_finite or change.outside or change.note:
         return change
     (to, yo, old_digits), (tn, yn, new_digits) = old, new
     if old_digits is None and new_digits is None:
