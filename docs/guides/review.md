@@ -397,7 +397,12 @@ How the runs are read and compared:
   shifted grid — make every signal at best changed, in either order: the row
   says `time points differ`, and the detail gives each run's points and
   span. The Change still reads the later run on the first run's grid, so a
-  move between the first run's points is not in it.
+  move between the first run's points is not in it, and where it reads 0 %
+  the row gives no percent (`1 changed (time points differ)`).
+- **Rounding is no difference:** a test whose groups and times differ only
+  within rounding is counted with the tests where nothing differs (`Nothing
+  differs beyond rounding in 3 tests.`), and `--details` with no name folds
+  it out no section.
 - **The solver's statistics** in the result file (Dymola's CPU time, event
   counter and nonlinear-system counters) are not variables: they are listed
   old → new in the detail, with the run's own statistics, and never scored.

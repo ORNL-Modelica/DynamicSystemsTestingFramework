@@ -141,15 +141,16 @@ def test_a_later_run_over_a_longer_span_differs_in_either_order(tmp_path, capsys
     runs = _pair(tmp_path, short, long)
     lines = _diff(capsys, *runs, "--details")
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (0 %) (time points differ) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (time points differ) | none |"
     )
     assert "Differs in 1 of 1 test: `A`." in lines
     assert (
-        "- Variables: 1 in main, 1 in fix; points: 5 in main (0–4 s), 9 in fix (0–8 s)"
+        "- Variables: 1 in main, 1 in fix; points: 5 in main (0–4 s), 9 in fix "
+        "(0–8 s); a Change is measured on main's points only"
     ) in lines
     lines = _diff(capsys, f"fix={runs[1][4:]}", f"main={runs[0][5:]}", "--details")
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (0 %) (time points differ) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (time points differ) | none |"
     )
     assert "| `x` | 0 %; 4 old points outside the new time span |" in lines
 
@@ -163,7 +164,7 @@ def test_a_finer_grid_moved_between_the_reference_s_points_is_not_identical(
     new = {"time": fine, "trajectories": {"x": spiked}}
     lines = _diff(capsys, *_pair(tmp_path, old, new))
     assert _row(lines) == (
-        "| Dymola/linux | 1 of 1 | 1 changed (0 %) (time points differ) | none |"
+        "| Dymola/linux | 1 of 1 | 1 changed (time points differ) | none |"
     )
 
 
@@ -176,7 +177,8 @@ def test_the_same_point_count_on_a_shifted_grid_is_not_identical(tmp_path, capsy
         "| none |"
     )
     assert (
-        "- Variables: 1 in main, 1 in fix; points: 5 in main (0–4 s), 5 in fix (0–4 s)"
+        "- Variables: 1 in main, 1 in fix; points: 5 in main (0–4 s), 5 in fix "
+        "(0–4 s); a Change is measured on main's points only"
     ) in lines
 
 
@@ -239,10 +241,24 @@ def test_float64_and_float32_copies_of_one_run_are_rounding_in_either_order(
     f4 = {"dtype": "<f4", "time": t, "trajectories": data}
     runs = _pair(tmp_path, f8, f4)
     for argv in (runs, (f"fix={runs[1][4:]}", f"main={runs[0][5:]}")):
-        lines = _diff(capsys, *argv)
+        lines = _diff(capsys, *argv, "--details")
         assert _row(lines) == (
             "| Dymola/linux | 1 of 1 | 2 rounding; changed: none | none |"
         )
+        # rounding is no difference: nothing to fold out either
+        assert "Nothing differs beyond rounding in 1 test." in lines
+        assert "<details>" not in lines
+
+
+def test_times_within_rounding_and_no_varying_signal_differ_in_nothing(
+    tmp_path, capsys
+):
+    t = [i * 0.1 for i in range(11)]
+    held = {"time": t, "trajectories": {"c": [5.0] * 11}}
+    runs = _pair(tmp_path, {"dtype": "<f8", **held}, {"dtype": "<f4", **held})
+    lines = _diff(capsys, *runs)
+    assert _row(lines) == "| Dymola/linux | 1 of 1 | none | all identical |"
+    assert "Nothing differs beyond rounding in 1 test." in lines
 
 
 # --- near zero, derivatives ----------------------------------------------------

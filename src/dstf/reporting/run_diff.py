@@ -163,12 +163,23 @@ class TestRunDiff:
         return [s for s in self.signals if s.kind == kind]
 
     @property
-    def same(self) -> bool:
-        """Whether nothing differs: the same time points, every group
-        identical, no name in one run only."""
-        return self.same_grid and not (
-            self.signals or self.constants or self.only_old or self.only_new
+    def differs(self) -> bool:
+        """Whether something differs beyond rounding: a group changed, near
+        zero or a derivative, a parameter that differs, a name one run holds
+        only, or time points that differ beyond rounding. Rounding is no
+        difference, as ``baseline diff`` reads it 0 %."""
+        return bool(
+            any(s.kind != "rounding" for s in self.signals)
+            or any(c.kind == "differs" for c in self.constants)
+            or self.only_old
+            or self.only_new
+            or not self.same_points
         )
+
+    @property
+    def rounded(self) -> bool:
+        """Whether anything is only rounding: a group, or the times."""
+        return bool(self.signals or self.constants or not self.same_grid)
 
 
 @dataclass(frozen=True)

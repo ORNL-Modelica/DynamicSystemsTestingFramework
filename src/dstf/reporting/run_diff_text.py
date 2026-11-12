@@ -180,7 +180,16 @@ def signals_cell(tests: list[TestRunDiff]) -> str:
     largest = _largest_changed(tests)
     if largest is None:
         return ", ".join(parts) + "; changed: none"
-    changed = f"{_count(counts['changed'])} changed ({_size(largest.change)})"
+    changed = f"{_count(counts['changed'])} changed"
+    # A 0 % beside "changed" reads as a contradiction: where the runs hold
+    # other time points, the move is off the reference's points.
+    unmeasured = (
+        largest.change.largest == 0
+        and not (largest.change.non_finite or largest.change.note)
+        and any(not t.same_points for t in tests)
+    )
+    if not unmeasured:
+        changed += f" ({_size(largest.change)})"
     return "; ".join([", ".join(parts), changed]) if parts else changed
 
 
@@ -277,14 +286,17 @@ def _test_lines(diff: RunDiff) -> list[str]:
     lines = []
     for f in diff.folders:
         where = _where(f, diff)
-        differs = [short_name(t.model_id) for t in f.tests if not t.same]
+        differs = [short_name(t.model_id) for t in f.tests if t.differs]
         if differs:
             lines.append(
                 f"{where}Differs in {len(differs)} of {_plural(len(f.tests), 'test')}: "
                 f"{_list(differs)}."
             )
         elif f.tests:
-            lines.append(f"{where}Nothing differs in {_plural(len(f.tests), 'test')}.")
+            beyond = " beyond rounding" if any(t.rounded for t in f.tests) else ""
+            lines.append(
+                f"{where}Nothing differs{beyond} in {_plural(len(f.tests), 'test')}."
+            )
         for side, label in (("old", f.old.label), ("new", f.new.label)):
             other = "new" if side == "old" else "old"
             only = [
@@ -359,6 +371,14 @@ def _points(test: TestRunDiff, side: int, label: str) -> str:
     return said
 
 
+def _measured_on(test: TestRunDiff, label: str) -> str:
+    """Where the runs hold other time points: that a Change is read on the
+    reference's points alone."""
+    return (
+        "" if test.same_points else f"; a Change is measured on {label}'s points only"
+    )
+
+
 def _changed(row: StatRow) -> bool:
     """A statistic whose two values differ, or that one run lacks — at all,
     not by a criterion's tolerance: nothing here is scored."""
@@ -423,7 +443,7 @@ def _detail(f: FolderDiff, test: TestRunDiff) -> list[str]:
         "",
         f"- Variables: {_count(test.variables[0])} in {old}, "
         f"{_count(test.variables[1])} in {new}; points: {_points(test, 0, old)}, "
-        f"{_points(test, 1, new)}",
+        f"{_points(test, 1, new)}{_measured_on(test, old)}",
     ]
     if test.only_old:
         lines.append(f"- Only in {old}: {_list(test.only_old)}")
@@ -486,7 +506,7 @@ def detailed(diff: RunDiff, names: list[str]) -> set[tuple[str, str]]:
     :class:`DiffError` naming every name that matches no compared test."""
     pairs = [(f.folder, t) for f in diff.folders for t in f.tests]
     if not names:
-        return {(folder, t.model_id) for folder, t in pairs if not t.same}
+        return {(folder, t.model_id) for folder, t in pairs if t.differs}
     chosen: set[tuple[str, str]] = set()
     unknown = []
     for name in names:
