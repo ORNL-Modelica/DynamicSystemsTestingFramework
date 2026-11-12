@@ -8,6 +8,16 @@ this file says when they do.
 
 ## [Unreleased]
 
+### Added
+
+- `dstf diff LABEL=DIR LABEL=DIR`: what differs between two runs of one tool
+  over EVERY variable of each test's result file, not only the tracked ones —
+  per backend/os, the alias groups of signals as identical, within rounding,
+  near zero (`--near-zero`), derivatives or changed (by `baseline diff`'s
+  Change), the parameters that differ and the solver's statistics old → new —
+  as Markdown for a pull request or JSON. Reads no testing.json and no
+  library. The guide "Summarize a change for review" says how.
+
 ### Fixed
 
 - `dstf plot`'s `--test` and `--folder`, and `dstf baseline diff`'s

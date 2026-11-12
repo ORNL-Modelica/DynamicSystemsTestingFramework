@@ -6,7 +6,8 @@ baselines changed between two revisions of the reference root, and by how
 much. `dstf summary` puts the test results of several runs side by side: the
 branch against the main line, on each simulator and OS. Both print Markdown
 written to be pasted into the pull request. `dstf baseline plot` draws the
-changed baselines as images, in one page to send.
+changed baselines as images, in one page to send. `dstf diff` compares two
+runs over every variable of their result files, not only the tracked ones.
 
 ## What changed between two revisions
 
@@ -303,6 +304,107 @@ How the runs are read:
 
 The images, the `-o DIR` rules, the 300-image limit without `--test` and
 the browser it needs are `baseline plot`'s.
+
+## Every variable of two runs
+
+`dstf plot` and `baseline diff` see the variables a test tracks. A change
+that moves an untracked variable, or a start value, passes them unseen.
+`dstf diff` reads the WHOLE result file of each test in two runs of one
+tool — main's run and a branch's — and prints, as Markdown for the pull
+request, what differs among all its variables:
+
+```console
+$ dstf diff main=../main/testing_output/MyLib/Dymola/linux branch=testing_output/MyLib/Dymola/linux -o diff.md
+$ dstf diff main=main-dymola fix=fix-dymola --near-zero 1e-6 --details SimpleRamp
+```
+
+The bundled Python example shows it. Copy `examples/python/PythonTestingLib`
+twice, as `main` and `fix`; in `fix`, change `SimpleRamp`'s slope from 2 to
+2.05 (`fun=lambda t, y: [2.05]` in `Examples/SimpleRamp.py`). Run each copy
+into its own work dir, then compare the two:
+
+```console
+$ dstf --config main/Resources/ReferenceResults/testing.json run --work-dir runs/main
+$ dstf --config fix/Resources/ReferenceResults/testing.json run --work-dir runs/fix
+$ dstf diff main=runs/main fix=runs/fix --details SimpleRamp
+```
+
+```text
+**Every variable, main → fix** (3 tests)
+
+| Tool/OS | Result files | Signals | Parameters |
+| --- | --- | --- | --- |
+| Python/linux | 3 of 3 | 1 changed (2.5 % of range) | all identical |
+
+A group = the variables whose values are equal in both runs, counted once; a parameter holds one value throughout. Identical = every stored value equal; rounding = within one storage step of the coarser file's precision; derivative = a der( variable; changed = the rest, by its biggest move against main. Only stored points are compared.
+
+Differs in 1 of 3 tests: `SimpleRamp`.
+
+<details>
+<summary><code>SimpleRamp</code> · Python/linux — 1 changed (2.5 % of range)</summary>
+
+`PythonTestingLib.Examples.SimpleRamp`
+
+- Variables: 1 in main, 1 in fix; points: 101 in main, 101 in fix
+- Signals (1 group): 1 changed
+- Parameters: none
+
+| Changed | Change |
+| --- | --- |
+| `x` | 2.5 % of range (5 s) |
+
+- Statistics, main → fix (not scored):
+  - Machine-dependent: Wall time 0.414686592004728 s → 0.458123841002816 s
+
+</details>
+```
+
+How the runs are read and compared:
+
+- **A run** is a work dir, read as `dstf plot` reads one and never written:
+  its `batch_manifest.json` holds the tests it ran, its `status.json` the
+  backend and OS that ran them, and that backend reads each test's result
+  file. No `testing.json` and no library is read: the command compares
+  files. Runs pair within one `<Backend>/<os>`; the first label given is the
+  one the later run is measured against. A label may repeat, once per
+  `<Backend>/<os>`. Two labels only: a third is refused.
+- **The tests** are those both runs hold (`--test` names fewer). A test whose
+  run failed or timed out is not compared (`the run failed`), nor one a run
+  did not finish or holds no result of (`not run`): a partial result file is
+  never read. A test only one run holds is named (`Only in fix: …`).
+- **A group** is the variables whose values are equal, bit for bit, in BOTH
+  runs: aliases. It is counted once and shown by its shortest name, with how
+  many more (`` `x` (+2) ``). Two aliases in main that differ in the branch
+  are two groups.
+- **A parameter** holds one value at every stored point of both runs. It is
+  identical, within rounding (one storage step of the coarser file's
+  precision at its value: a float32 file's step, where either file is
+  float32), or it differs; the detail lists the ones that differ, old → new.
+- **A signal** is any other group, in the first class it fits: identical
+  (every compared value equal and none left uncompared, on one time grid or
+  two), within rounding (every compared value within one storage step),
+  near zero (only with `--near-zero SIZE`: every value of both runs smaller
+  than SIZE, in the variables' own units — so there is no default), a
+  derivative (a name of the group holds `der(`), or changed. A value that is
+  finite in one run only is always changed, and listed first. A changed
+  signal's Change is `baseline diff`'s: the later run on the first run's time
+  grid, as a percent of the first run's range (`of value` where it is
+  constant, `absolute` where it is zero), at the time it is largest.
+- **The solver's statistics** in the result file (Dymola's CPU time, event
+  counter and nonlinear-system counters) are not variables: they are listed
+  old → new in the detail, with the run's own statistics, and never scored.
+- **A tool that saves only the tracked variables** (OpenModelica's
+  `variableFilter`, FMPy's output list) says so in its row: there is little
+  beyond what `compare` scores.
+
+`--details` adds a folded section per test where something differs (or per
+test named): the counts, the names in one run only, the parameters that
+differ, the largest near-zero and derivative signals, the changed signals
+with their time, and the statistics. A Markdown over 65,536 characters is
+printed whole, with a note on stderr. `--format json` writes every fact,
+every name of every group that is not identical included. The command is
+refused, with one sentence and exit code 2, as `dstf plot` refuses a run,
+and when the runs of a `<Backend>/<os>` hold no test in common.
 
 ## The results of several runs
 
