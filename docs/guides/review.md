@@ -284,12 +284,13 @@ How the runs are read:
 - **The tests:** by default, those with a variable that moved or that only
   some runs hold, or a run that failed or holds no result; the others two
   runs hold are named in one line (`Nothing moved in 12 tests: …`). A test
-  only one run of a `<Backend>/<os>` holds — one the branch added, say — is
-  not drawn and is named in a line of that run (`Dymola/linux: 3 tests only
-  in fix, not drawn: …`). `--test` draws the tests it names even where
+  of the current test spec that only one run of a `<Backend>/<os>` holds —
+  one the branch added, say — is not drawn and is named in a line of that
+  run (`Dymola/linux: 3 tests only in fix, not drawn: …`); one the spec no
+  longer lists is not named. `--test` draws the tests it names even where
   nothing moved or one run holds the test: that is how a passing fix's
-  values are seen. A section with fewer
-  than two runs to compare is said on the console too, and so is a
+  values are seen. A section with fewer than two runs to compare is said
+  on the console too, and so is a
   `<Backend>/<os>` given one run only. These lines name a test by its short
   name, or by its full model id where another test the runs hold has the
   same short name.
@@ -298,9 +299,9 @@ How the runs are read:
   and no "unchanged" line. A constant shows its value in each run; a
   varying one its value at the END of each run, marked `(end)`
   (`RTD40 (end) | 350.1886 | 350.1886 | 0 %`); `–` where a run holds none,
-  failed or did not run. Its `Change` is the biggest move over the whole
-  run against the first run, as everywhere else, not the difference of the
-  end values. A variable that moved is still drawn too. A line under the
+  failed or did not run. Its `Change` is the LAST run's biggest move over
+  the whole run against the first run, not the difference of the end
+  values. A variable that moved is still drawn too. A line under the
   table says what `(end)` and `Change` are.
 - **The variables:** without `--test`, a variable that holds one value at
   every point of each run is a row of the section's table, never an image: its value in each

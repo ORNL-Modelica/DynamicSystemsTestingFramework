@@ -448,8 +448,8 @@ def _constant(line: Line) -> str:
 
 #: Under a table of a named test's values, where a row holds an end value.
 END_KEY = (
-    "(end) = the value at the end of each run; Change = the biggest move "
-    "over the whole run."
+    "(end) = the value at the end of each run; Change = the last run's "
+    "biggest move over the whole run, against the first."
 )
 
 
@@ -532,20 +532,18 @@ def _run_notes(folder: FolderHistory) -> list[str]:
 
 
 def _run_changes(folder: FolderHistory) -> list[VariableDiff]:
-    """Each variable two runs hold, as ``baseline diff`` reads a variable:
-    the largest change of any later line against its first, larger as
-    :func:`~.baseline_diff_text.change_rank` ranks changes — so a run that
-    moved and a later one that came back still rank and read as moved."""
-    out = []
-    for v in folder.variables:
-        changes = [
-            VariableDiff(line.name, v.label, "changed", change=line.change)
-            for line in v.lines[1:]
-            if line.change is not None
-        ]
-        if changes:
-            out.append(max(changes, key=lambda c: change_rank([c])))
-    return out
+    """Each later line of each variable two runs hold, as ``baseline diff``
+    reads a variable: its change against the variable's first line. Every
+    run's change, so the rank and the Change cell read the largest move of
+    any run and any point not finite, wherever each is — a run that moved
+    and a later one that came back still rank and read as moved. Only the
+    largest of them and whether any is not finite are read: no count."""
+    return [
+        VariableDiff(line.name, v.label, "changed", change=line.change)
+        for v in folder.variables
+        for line in v.lines[1:]
+        if line.change is not None
+    ]
 
 
 def run_sections(history: RunHistory) -> list[tuple[TestHistory, FolderHistory]]:

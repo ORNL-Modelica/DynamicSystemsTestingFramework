@@ -26,7 +26,8 @@ Which tests: those named — drawn where any run holds them — else every test
 with a variable that moved or that only some runs hold, or a run that
 failed or holds no result, in a folder of two runs or more that hold it.
 Every other test two runs of a folder hold is named as one where nothing
-moved, and a test one run of a folder holds alone as one only in that run.
+moved, and a test one run of a folder holds alone as one only in that run —
+the tests of the current spec only: a test it no longer lists is not named.
 """
 
 from __future__ import annotations
@@ -80,7 +81,8 @@ class RunHistory:
     nothing_moved: list[str]
     #: every model id a drawn run holds: what a test's name is told apart in
     held: list[str]
-    #: without tests named, each folder's tests one run of it holds alone:
+    #: without tests named, each folder's tests (of the current spec) one
+    #: run of it holds alone:
     #: (folder, that run's label, the model ids), folders in folder order,
     #: labels in label order; not drawn
     only: list[tuple[str, str, list[str]]]

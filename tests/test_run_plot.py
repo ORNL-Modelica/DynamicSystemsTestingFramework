@@ -469,6 +469,44 @@ def test_three_runs_rank_a_section_by_its_largest_move_of_any_run(lib, tmp_path)
     ) in lines
 
 
+def test_a_section_s_change_is_every_run_s_largest_move_and_its_not_finite(
+    lib, tmp_path
+):
+    """SimpleRamp: b holds a point not finite and moved 5 %, c moved 100 %.
+    PointsCheck: b moved 75 %, c holds a point not finite and moved 10 %.
+    Both sections are not finite; the largest move of any run ranks them
+    and is their Change."""
+    nan = float("nan")
+    a = write_python_run(tmp_path / "a", {RAMP: RAMP_MAIN, POINTS: WAVE})
+    b = write_python_run(
+        tmp_path / "b",
+        {
+            RAMP: {"x": [0.0, 2.0, nan, 6.0, 8.4]},
+            POINTS: {"x": [0.0, 0.8, 0.9, 0.1, 0.5]},
+        },
+    )
+    c = write_python_run(
+        tmp_path / "c",
+        {
+            RAMP: {"x": [0.0, 2.0, 4.0, 6.0, 16.0]},
+            POINTS: {"x": [0.0, 0.8, nan, 0.1, -0.54]},
+        },
+    )
+    _, page = _page(_history(lib, [("a", a), ("b", b), ("c", c)]))
+    assert page.index("<h2><code>SimpleRamp</code>") < page.index(
+        "<h2><code>PointsCheck</code>"
+    )
+    lines = page.splitlines()
+    assert (
+        "<table><tr><th>Test</th><th>Change, Python/linux</th></tr><tr><td><code>"
+        "SimpleRamp</code></td><td>100 % (not finite)</td></tr></table>"
+    ) in lines
+    assert (
+        "<table><tr><th>Test</th><th>Change, Python/linux</th></tr><tr><td><code>"
+        "PointsCheck</code></td><td>75 % (not finite)</td></tr></table>"
+    ) in lines
+
+
 def test_a_model_the_library_no_longer_has_is_no_failed_run(lib, tmp_path):
     main = write_python_run(
         tmp_path / "main", {RAMP: RAMP_MAIN, "PythonTestingLib.Gone": ONE}
@@ -640,7 +678,7 @@ def test_a_float32_run_s_constant_is_shown_at_7_digits(tmp_path):
 
 KEY = (
     '<p class="said">(end) = the value at the end of each run; Change = the '
-    "biggest move over the whole run.</p>"
+    "last run&#x27;s biggest move over the whole run, against the first.</p>"
 )
 
 

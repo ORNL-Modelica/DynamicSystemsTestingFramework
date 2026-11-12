@@ -268,6 +268,117 @@ def test_of_three_runs_a_test_one_holds_is_named_and_one_two_hold_is_drawn(
     ) in page.splitlines()
 
 
+def _said_and_page(capsys, out):
+    return (
+        capsys.readouterr().out.splitlines(),
+        (out / GALLERY).read_text(encoding="utf-8").splitlines(),
+    )
+
+
+def test_a_test_one_run_holds_that_the_spec_lacks_is_not_named(
+    lib, tmp_path, monkeypatch, capsys
+):
+    """The runs are read through the CURRENT spec: a test it does not list
+    (one the branch removed, read under the branch's spec) is no line."""
+    a = write_python_run(tmp_path / "a", {RAMP: SAME})
+    b = write_python_run(tmp_path / "b", {RAMP: SAME, "Lib.New.Added": SAME})
+    out = tmp_path / "out"
+    fake_playwright(monkeypatch)
+    assert _plot(lib, out, f"main={a}", f"fix={b}") == 0
+    said, page = _said_and_page(capsys, out)
+    assert said[0] == "Nothing moved in 1 test: SimpleRamp."
+    assert said[1].startswith("Wrote 0 images")
+    assert not any("Added" in line or "only in" in line for line in said + page)
+
+
+def test_a_lone_test_sharing_a_short_name_is_said_in_full(
+    lib, tmp_path, monkeypatch, capsys
+):
+    """Lib.New.Same only in fix, Lib.A.Same in both: each line says each
+    in full."""
+    _more_tests(lib, "Lib.A.Same", "Lib.New.Same")
+    a = write_python_run(tmp_path / "a", {RAMP: SAME, "Lib.A.Same": SAME})
+    b = write_python_run(
+        tmp_path / "b", {RAMP: SAME, "Lib.A.Same": SAME, "Lib.New.Same": SAME}
+    )
+    out = tmp_path / "out"
+    fake_playwright(monkeypatch)
+    assert _plot(lib, out, f"main={a}", f"fix={b}") == 0
+    said, _ = _said_and_page(capsys, out)
+    assert said[:2] == [
+        "Nothing moved in 2 tests: Lib.A.Same, SimpleRamp.",
+        "Python/linux: 1 test only in fix, not drawn: Lib.New.Same.",
+    ]
+
+
+def test_eleven_lone_tests_name_ten_and_one_more(lib, tmp_path, monkeypatch, capsys):
+    new = [f"Lib.New.N{i:02d}" for i in range(11)]
+    _more_tests(lib, *new)
+    a = write_python_run(tmp_path / "a", {RAMP: SAME})
+    b = write_python_run(tmp_path / "b", {RAMP: SAME, **dict.fromkeys(new, SAME)})
+    out = tmp_path / "out"
+    fake_playwright(monkeypatch)
+    assert _plot(lib, out, f"main={a}", f"fix={b}") == 0
+    said, _ = _said_and_page(capsys, out)
+    shown = ", ".join(f"N{i:02d}" for i in range(10))
+    assert said[1] == (
+        f"Python/linux: 11 tests only in fix, not drawn: {shown} … and 1 more."
+    )
+
+
+def test_each_backend_and_os_says_its_own_lone_tests_in_folder_order(
+    lib, tmp_path, monkeypatch, capsys
+):
+    """The windows runs given first; a test is lone by the runs of its own
+    folder: OnlyFixBoth is fix's alone in each, Mixed in windows only."""
+    _more_tests(lib, "Lib.A.OnlyMainL", "Lib.B.OnlyFixW", "Lib.C.Mixed")
+    _more_tests(lib, "Lib.D.OnlyFixBoth")
+    ml = write_python_run(
+        tmp_path / "ml", {RAMP: SAME, "Lib.A.OnlyMainL": SAME, "Lib.C.Mixed": SAME}
+    )
+    fl = write_python_run(
+        tmp_path / "fl", {RAMP: SAME, "Lib.C.Mixed": SAME, "Lib.D.OnlyFixBoth": SAME}
+    )
+    mw = write_python_run(tmp_path / "mw", {RAMP: SAME}, os_name="windows")
+    fw = write_python_run(
+        tmp_path / "fw",
+        {
+            RAMP: SAME,
+            "Lib.B.OnlyFixW": SAME,
+            "Lib.C.Mixed": SAME,
+            "Lib.D.OnlyFixBoth": SAME,
+        },
+        os_name="windows",
+    )
+    out = tmp_path / "out"
+    fake_playwright(monkeypatch)
+    runs = [f"main={mw}", f"fix={fw}", f"main={ml}", f"fix={fl}"]
+    assert _plot(lib, out, *runs) == 0
+    said, _ = _said_and_page(capsys, out)
+    assert [line for line in said if "only in" in line] == [
+        "Python/linux: 1 test only in main, not drawn: OnlyMainL.",
+        "Python/linux: 1 test only in fix, not drawn: OnlyFixBoth.",
+        "Python/windows: 3 tests only in fix, not drawn: OnlyFixW, Mixed, OnlyFixBoth.",
+    ]
+
+
+def test_a_lone_test_s_name_is_escaped_on_the_page(lib, tmp_path, monkeypatch, capsys):
+    odd = "Lib.Odd.'a<b>&c'"
+    _more_tests(lib, odd)
+    a = write_python_run(tmp_path / "a", {RAMP: SAME})
+    b = write_python_run(tmp_path / "b", {RAMP: SAME, odd: SAME})
+    out = tmp_path / "out"
+    fake_playwright(monkeypatch)
+    assert _plot(lib, out, f"main={a}", f"fix={b}") == 0
+    said, page = _said_and_page(capsys, out)
+    assert said[1] == "Python/linux: 1 test only in fix, not drawn: 'a<b>&c'."
+    assert (
+        '<p class="said">Python/linux: 1 test only in fix, not drawn: '
+        "&#x27;a&lt;b&gt;&amp;c&#x27;.</p>"
+    ) in page
+    assert not any("<b>" in line for line in page)
+
+
 @pytest.mark.parametrize(
     ("flag", "value", "what"),
     [
