@@ -8,7 +8,7 @@ import types
 
 import pytest
 
-from conftest import GitRepo
+from conftest import GitRepo, resaved_single
 from dstf.cli.main import main
 from dstf.reporting.baseline_gallery import GALLERY, MARKER
 
@@ -234,3 +234,30 @@ def test_a_run_interrupted_mid_render_leaves_a_directory_the_next_run_may_write(
     _fake_playwright(monkeypatch)
     assert _plot(lib, out) == 0
     assert _files(out) == sorted([MARKER, GALLERY, *planned])
+
+
+def test_a_baseline_saved_again_at_single_precision_draws_nothing(tmp_path, capsys):
+    """A real baseline accepted again at single precision, its numbers
+    kept: no image (no browser is started), and the page names its
+    variables as the rounding of the saved digits."""
+    repo = GitRepo(tmp_path / "lib")
+    file = repo.top / "ReferenceResults" / "Dymola" / "windows" / "ref_a.json"
+    file.parent.mkdir(parents=True)
+    old, new = resaved_single()
+    file.write_text(json.dumps(old))
+    one = repo.commit("one")
+    file.write_text(json.dumps(new))
+    two = repo.commit("two")
+    out = tmp_path / "out"
+    code = main(
+        ["baseline", "plot", one, two, "-o", str(out)]
+        + ["--reference-root", str(repo.top / "ReferenceResults")]
+    )
+    assert code == 0
+    assert capsys.readouterr().out.startswith(f"Wrote 0 images and {out / GALLERY} (")
+    assert sorted(p.name for p in out.rglob("*")) == [MARKER, GALLERY]
+    page = (out / GALLERY).read_text(encoding="utf-8")
+    assert (
+        '<p class="said">Not drawn, rounding of the saved digits only: '
+        "unitTests.x[1], unitTests.x[2], unitTests.x[3].</p>"
+    ) in page.splitlines()

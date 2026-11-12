@@ -86,6 +86,20 @@ def shown_digits(sampling: Sampling | None) -> int:
     return SINGLE_SHOWN if sampling.precision == SINGLE else DOUBLE_SHOWN
 
 
+def saved_step(values: np.ndarray, digits: int) -> np.ndarray:
+    """One unit in the ``digits``-th significant digit of each ``|value|``
+    (``231.3005`` at 7 digits: 0.0001); 0 where a value is 0 or not
+    finite. A number saved with ``digits`` digits stands for anything
+    within this of it, so two baselines that differ by no more are the
+    files' rounding, not a change — a file spelled at 7 digits, accepted
+    again at single precision, reads ``231.3005`` as ``231.300491``."""
+    size = np.abs(np.asarray(values, float))
+    out = np.zeros(size.shape)
+    some = np.isfinite(size) & (size > 0)
+    out[some] = 10.0 ** (np.floor(np.log10(size[some])) - (digits - 1))
+    return out
+
+
 def _through_single(values: list) -> list:
     """Each number as the nearest float32, widened back to a Python float."""
     return np.asarray(values, dtype=np.float32).astype(np.float64).tolist()

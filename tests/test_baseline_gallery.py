@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import GitRepo
+from conftest import GitRepo, resaved_single
 from dstf.reporting.baseline_diff_text import overview_cells, steps_folder
 from dstf.reporting.baseline_gallery import (
     GALLERY,
@@ -237,7 +237,7 @@ def test_only_a_variable_that_moved_is_drawn_the_rest_named_in_one_line(lib):
     images = plan_images(history)
     assert [i.path for i in images] == ["A/Dymola-linux/01-x.png"]
     page = gallery_html(history, images, {i.path: b"png" for i in images})
-    assert '<p class="said">Not drawn, unchanged: same, gone, added</p>' in page
+    assert '<p class="said">Not drawn, unchanged: same, gone, added.</p>' in page
 
 
 def test_the_unchanged_line_is_cut_past_ten_names(lib):
@@ -256,7 +256,32 @@ def test_the_unchanged_line_is_cut_past_ten_names(lib):
     images = plan_images(history)
     page = gallery_html(history, images, {i.path: b"png" for i in images})
     shown = ", ".join(names[:10])
-    assert f'<p class="said">Not drawn, unchanged: {shown} … and 3 more</p>' in page
+    assert f'<p class="said">Not drawn, unchanged: {shown} … and 3 more.</p>' in page
+
+
+def test_a_variable_moved_by_rounding_only_is_named_beside_the_unchanged(lib):
+    """A baseline accepted again at single precision: its values differ by
+    the old file's rounding only, so none is drawn; they are named in the
+    same line as the unchanged ones, apart from them."""
+    old, new = resaved_single()
+    for doc, last in ((old, 3.0), (new, 5.0)):
+        doc["variables"] += [
+            # a constant: a sloped series reads the rounding of the float32 times
+            {"index": 4, "name": "same", "expression": "", "values": [2, 2, 2, 2]},
+            {"index": 5, "name": "y", "expression": "", "values": [0, 1, 2, last]},
+        ]
+    _write(lib, f"{LINUX}/ref_a.json", json.dumps(old))
+    one = lib.commit("one")
+    _write(lib, f"{LINUX}/ref_a.json", json.dumps(new))
+    two = lib.commit("two")
+    history = baseline_history(lib.top / "refs", [one, two])
+    images = plan_images(history)
+    assert [i.path for i in images] == ["A/Dymola-linux/01-y.png"]
+    page = gallery_html(history, images, {i.path: b"png" for i in images})
+    assert (
+        '<p class="said">Not drawn, unchanged: same. Not drawn, rounding of the '
+        "saved digits only: unitTests.x[1], unitTests.x[2], unitTests.x[3].</p>"
+    ) in page.splitlines()
 
 
 def test_a_folder_where_nothing_moved_draws_nothing_and_says_so(lib):
@@ -277,7 +302,7 @@ def test_a_folder_where_nothing_moved_draws_nothing_and_says_so(lib):
     page = gallery_html(history, [], {})
     section = page[page.index("<h3>Dymola/linux</h3>") :]
     assert section.startswith(
-        '<h3>Dymola/linux</h3>\n<p class="said">Not drawn, unchanged: x, added</p>'
+        '<h3>Dymola/linux</h3>\n<p class="said">Not drawn, unchanged: x, added.</p>'
     )
 
 

@@ -24,7 +24,10 @@ that holds it — ``baseline diff``'s Change measure itself, so for two
 revisions the largest finite point of a variable's difference is the
 Change that command prints. A variable is followed through every revision
 read, the skipped ones too, so a rename is said at the revision that made
-it. Only a variable that moved is drawn (:attr:`VariableHistory.moved`).
+it. Only a variable that moved is drawn (:attr:`VariableHistory.moved`):
+a line whose change is within one step of the digits the coarser of its
+file and the first line's was saved with is the files' rounding
+(:attr:`~.baseline_diff.SeriesChange.within_saved_digits`), and no move.
 """
 
 from __future__ import annotations
@@ -34,8 +37,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .baseline import Baseline, StoredVariable
-from .baseline_codec import decode_reference, parse_body
+from .baseline import Baseline, ReferenceFile, StoredVariable
+from .baseline_codec import decode_reference, parse_body, shown_digits
 from .baseline_diff import (
     BaselineFile,
     Diff,
@@ -104,11 +107,23 @@ class VariableHistory:
     @property
     def moved(self) -> bool:
         """Whether a later line differs from its first: a change that is
-        not nothing — a compared point that moved, a difference not finite,
-        a point not compared, or a series that cannot be. A variable added
-        or removed between revisions moved only where it then changed."""
+        not nothing — a compared point that moved beyond the files'
+        rounding, a difference not finite, a point not compared, or a
+        series that cannot be. A variable added or removed between
+        revisions moved only where it then changed."""
         return any(
-            line.change is not None and not unchanged(line.change)
+            line.change is not None
+            and not unchanged(line.change)
+            and not line.change.within_saved_digits
+            for line in self.lines[1:]
+        )
+
+    @property
+    def rounding_only(self) -> bool:
+        """Whether it did not move, but some later line differs from its
+        first by the files' rounding only."""
+        return not self.moved and any(
+            line.change is not None and line.change.within_saved_digits
             for line in self.lines[1:]
         )
 
@@ -210,7 +225,7 @@ def baseline_history(
         chosen = _named(tests, ids)
     listed = {t.model_id for t in diff.tests}
 
-    decoded: dict[bytes, Baseline] = {}
+    decoded: dict[bytes, ReferenceFile] = {}
     out = []
     for model_id in chosen:
         drawn = []
@@ -251,13 +266,14 @@ def _named(names: list[str], ids: list[str]) -> list[str]:
 def _folder(
     folder: str,
     per_revision: list[tuple[Revision, list[BaselineFile]]],
-    decoded: dict[bytes, Baseline],
+    decoded: dict[bytes, ReferenceFile],
 ) -> FolderHistory | None:
     """One test's baseline in one folder across the revisions, or None
     where fewer than two revisions are kept."""
     kept: list[tuple[Revision, Baseline]] = []
     #: every revision read, in order: what a variable is followed through
     read: list[tuple[Revision, Baseline]] = []
+    digits: dict[Revision, int] = {}
     equal: list[tuple[Revision, Revision]] = []
     absent: list[Revision] = []
     unreadable: list[tuple[Revision, str]] = []
@@ -272,8 +288,9 @@ def _folder(
         else:
             raw = files[0].raw
             if raw not in decoded:
-                decoded[raw] = decode_reference(parse_body(raw)).baseline
-            baseline = decoded[raw]
+                decoded[raw] = decode_reference(parse_body(raw))
+            baseline = decoded[raw].baseline
+            digits[revision] = shown_digits(decoded[raw].sampling)
             read.append((revision, baseline))
             if kept and _same_values(kept[-1][1], baseline):
                 equal.append((revision, kept[-1][0]))
@@ -290,7 +307,7 @@ def _folder(
         absent=absent,
         unreadable=unreadable,
         thinned=thinned,
-        variables=_variables([(r, b, r in drawn) for r, b in read]),
+        variables=_variables([(r, b, r in drawn) for r, b in read], digits),
     )
 
 
@@ -363,12 +380,13 @@ class _Chain:
 
 
 def _variables(
-    read: list[tuple[Revision, Baseline, bool]],
+    read: list[tuple[Revision, Baseline, bool]], digits: dict[Revision, int]
 ) -> list[VariableHistory]:
     """Each variable of any kept revision: each revision read — kept (True)
     or skipped — paired against the newest entry of every variable seen so
     far, so a rename is followed and said at the revision that made it, in
-    the order they first appear. A line is a kept revision's only."""
+    the order they first appear. A line is a kept revision's only; ``digits``
+    each revision's file's significant digits."""
     chains: list[_Chain] = []
     for revision, baseline, kept in read:
         newest = {id(c.newest): c for c in chains}
@@ -386,11 +404,18 @@ def _variables(
             chain.newest = new
             chain.held += here
     return [
-        VariableHistory(_lines(c.held), c.renames, c.first) for c in chains if c.held
+        VariableHistory(_lines(c.held, digits), c.renames, c.first)
+        for c in chains
+        if c.held
     ]
 
 
-def _lines(held: list[tuple[Revision, Baseline, StoredVariable]]) -> list[Line]:
+def _lines(
+    held: list[tuple[Revision, Baseline, StoredVariable]],
+    digits: dict[Revision, int],
+) -> list[Line]:
+    """A variable's lines; each later one measured against the first, the
+    files' rounding read at the coarser digits of the two."""
     out: list[Line] = []
     for revision, baseline, v in held:
         time = np.asarray(baseline.time, float)
@@ -401,7 +426,8 @@ def _lines(held: list[tuple[Revision, Baseline, StoredVariable]]) -> list[Line]:
             continue
         first = out[0]
         d = difference_series(first.time, first.values, time, values)
+        coarser = min(digits[first.revision], digits[revision])
         out.append(
-            Line(revision, v.name, label, time, values, d, change=series_change(d))
+            Line(revision, v.name, label, time, values, d, series_change(d, coarser))
         )
     return out

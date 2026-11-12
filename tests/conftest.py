@@ -58,6 +58,54 @@ class GitRepo:
         return self.git("rev-parse", "HEAD")
 
 
+#: A real baseline accepted again at single precision, its numbers kept: the
+#: old file holds no ``sampling`` and spells each value at 7 significant
+#: digits; the new one says ``precision: single`` and is read through
+#: float32. Nothing moved — the two differ by the old file's rounding.
+RESAVED_OLD = {
+    "unitTests.x[1]": 231.3005,
+    "unitTests.x[2]": 202.6389,
+    "unitTests.x[3]": 615.5131,
+}
+RESAVED_NEW = {
+    "unitTests.x[1]": 231.300491,
+    "unitTests.x[2]": 202.638885,
+    "unitTests.x[3]": 615.513123,
+}
+SINGLE_SAMPLING = {
+    "setting": "all",
+    "source_points": 4,
+    "stored_points": 4,
+    "precision": "single",
+}
+
+
+def resaved_single(model_id: str = "Lib.A") -> tuple[dict, dict]:
+    """The old and the new document of :data:`RESAVED_OLD` /
+    :data:`RESAVED_NEW`, each value constant over four samples 0.01 s apart
+    (the new file's times as float32 spells them)."""
+
+    def doc(time: list, values: dict, **fields) -> dict:
+        return {
+            "model_id": model_id,
+            "simulation": {"stop_time": 0.03},
+            **fields,
+            "time": time,
+            "variables": [
+                {"index": i, "name": n, "expression": "", "values": [v] * len(time)}
+                for i, (n, v) in enumerate(values.items(), start=1)
+            ],
+        }
+
+    old = doc([0.0, 0.01, 0.02, 0.03], RESAVED_OLD)
+    new = doc(
+        [0.0, 0.00999999978, 0.0199999996, 0.0299999993],
+        RESAVED_NEW,
+        sampling=SINGLE_SAMPLING,
+    )
+    return old, new
+
+
 def make_test_model(model_id: str = "Lib.T", **kw) -> TestModel:
     """A directly-constructed :class:`TestModel` for backend-level tests.
 

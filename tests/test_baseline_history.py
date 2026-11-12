@@ -9,7 +9,7 @@ import math
 import numpy as np
 import pytest
 
-from conftest import GitRepo
+from conftest import RESAVED_OLD, GitRepo, resaved_single
 from dstf.storage.baseline_diff import DiffError, diff_baselines
 from dstf.storage.baseline_history import MAX_KEPT, baseline_history
 
@@ -261,6 +261,43 @@ def test_a_variable_moved_only_where_a_later_line_differs_from_its_first(lib):
         "nan": False,
     }
     assert history.images == 1
+
+
+def _docs(lib, *docs):
+    """One commit per document of Lib.A's baseline in LINUX."""
+    out = []
+    for i, doc in enumerate(docs):
+        _write(lib, json.dumps(doc))
+        out.append(lib.commit(f"step {i}"))
+    return out
+
+
+def test_a_change_within_the_saved_digits_did_not_move(lib):
+    """A real baseline accepted again at single precision, its numbers
+    kept: each line differs from the first by the first file's rounding
+    (its true size kept), and nothing is drawn."""
+    history = baseline_history(lib.top / "refs", _docs(lib, *resaved_single()))
+    _, folder = _one(history)
+    assert {v.label: v.moved for v in folder.variables} == {
+        n: False for n in RESAVED_OLD
+    }
+    assert history.images == 0
+    change = folder.variables[0].lines[1].change
+    assert change.within_saved_digits is True
+    assert change.largest == pytest.approx(3.747e-6, rel=1e-3)
+
+
+def test_each_line_is_held_to_the_coarser_digits_of_its_file_and_the_first(lib):
+    """The first file double (15 digits): the same numbers in a double file
+    moved; in a single-precision one (7 digits) they are its rounding."""
+    old, single = resaved_single()
+    first = {**old, "sampling": {**single["sampling"], "precision": "double"}}
+    double = {**single, "sampling": first["sampling"]}
+    history = baseline_history(lib.top / "refs", _docs(lib, first, double, single))
+    _, folder = _one(history)
+    x1 = folder.variables[0]
+    assert [line.change.within_saved_digits for line in x1.lines[1:]] == [False, True]
+    assert x1.moved is True
 
 
 def test_a_value_turned_not_finite_is_a_move(lib):

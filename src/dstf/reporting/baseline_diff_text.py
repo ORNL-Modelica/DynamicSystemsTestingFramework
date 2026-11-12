@@ -10,7 +10,10 @@ each with every variable, the settings that changed and the solver effort
 old → new. A number is a percent with two significant digits under 10 %
 (a trailing zero kept: ``1.0 %``), whole above, in scientific notation
 under 0.001 %, and ``0 %`` for none (``±0 %`` for a signed one); a time is
-``%g`` seconds. Facts only: nothing here judges
+``%g`` seconds. A change within the digits the files were saved with
+(:attr:`~dstf.storage.baseline_diff.SeriesChange.within_saved_digits`) is
+none wherever a cell or the order reads a size — ``0 %`` — and the detail
+says its true size as rounding. Facts only: nothing here judges
 a change, and nothing knows a library. The JSON is always complete, its
 ``limits`` the full statement the Markdown's key line shortens.
 """
@@ -98,7 +101,22 @@ def _seconds(t: float) -> str:
     return f"{t:g} s"
 
 
+def _moved_by(change: SeriesChange) -> float:
+    """A compared change's size as a cell and the order read it: none for
+    the files' rounding (``within_saved_digits``)."""
+    assert change.largest is not None
+    return 0.0 if change.within_saved_digits else change.largest
+
+
 def _amount(change: SeriesChange) -> str:
+    """A change's size as a cell says it: :func:`_true_amount`, and ``0 %``
+    for the files' rounding."""
+    if change.within_saved_digits:
+        return percent(0)
+    return _true_amount(change)
+
+
+def _true_amount(change: SeriesChange) -> str:
     """A change's size: a percent, ``of value`` for a constant's, or the
     absolute difference; ``0 %`` for none, whatever its scale (a bare ``0``
     beside ``=`` read alike)."""
@@ -116,7 +134,9 @@ def _change_text(change: SeriesChange) -> str:
     if change.note:
         return change.note
     parts = []
-    if change.largest is not None:
+    if change.within_saved_digits:
+        parts.append(f"{percent(0)} (rounding: {_true_amount(change)})")
+    elif change.largest is not None:
         moved = change.at is not None and change.largest != 0
         at = f" ({_seconds(change.at)})" if moved else ""
         parts.append(_amount(change) + at)
@@ -145,12 +165,12 @@ def _rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
     difference."""
     non_finite = _non_finite(variables)
     pct = [
-        v.change.largest
+        _moved_by(v.change)
         for v in variables
         if v.change and v.change.largest is not None and v.change.scale != "absolute"
     ]
     absolute = [
-        v.change.largest
+        _moved_by(v.change)
         for v in variables
         if v.change and v.change.largest is not None and v.change.scale == "absolute"
     ]
@@ -160,9 +180,10 @@ def _rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
 def _size(change: SeriesChange) -> tuple[int, int, float]:
     """How large a compared change is: any move above none, then any
     percent above any absolute difference, then by its number — so a cell
-    never reads ``0 %`` beside a variable that moved."""
-    assert change.largest is not None
-    return (int(change.largest != 0), int(change.scale != "absolute"), change.largest)
+    never reads ``0 %`` beside a variable that moved. The files' rounding
+    is none (:func:`_moved_by`)."""
+    moved = _moved_by(change)
+    return (int(moved != 0), int(change.scale != "absolute"), moved)
 
 
 def _largest(variables: list[VariableDiff]) -> SeriesChange | None:
@@ -314,16 +335,20 @@ def _overview(diff: Diff, tests: list[TestDiff], steps: str | None) -> list[str]
 
 def _unmoved(tests: list[TestDiff]) -> bool:
     """Whether a Change cell says a changed file whose tracked values did
-    not move (its other bytes did): every compared variable 0, none with a
-    value no longer finite and no old point left uncompared (outside the
-    new span, or inside an event the new run stores otherwise)."""
+    not move (its other bytes did): every compared variable 0 or the files'
+    rounding, none with a value no longer finite and no old point left
+    uncompared (outside the new span, or inside an event the new run
+    stores otherwise)."""
     for test in tests:
         for b in test.baselines.values():
             if b.status != "changed":
                 continue
             changes = [v.change for v in b.variables if v.change is not None]
             if changes and all(
-                c.largest == 0 and not c.non_finite and not c.outside and not c.uneven
+                (c.largest == 0 or c.within_saved_digits)
+                and not c.non_finite
+                and not c.outside
+                and not c.uneven
                 for c in changes
             ):
                 return True
@@ -339,7 +364,10 @@ def _key(diff: Diff, tests: list[TestDiff], steps: str | None) -> str:
         "Change = the biggest move of a tracked variable, old → new, as % of its range."
     ]
     if _unmoved(tests):
-        said.append(f"{percent(0)} = the file changed but no tracked value moved.")
+        said.append(
+            f"{percent(0)} = the file changed but no tracked value moved beyond "
+            "the digits it was saved with."
+        )
     if diff.against:
         said.append("Gap = the same, between tools or OSes, after the change.")
     if steps:

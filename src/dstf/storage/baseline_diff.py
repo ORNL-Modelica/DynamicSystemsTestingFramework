@@ -41,6 +41,15 @@ range under 1e-10 of the value is a constant and the percent is of its
 value, and an old series of zeros reads the absolute difference. Values
 are the codec's (a single-precision file reads through float32). Only the
 stored samples are compared: what happened between them is not seen.
+
+A change no larger than the rounding of the files is no move
+(:attr:`SeriesChange.within_saved_digits`): where every compared point
+differs by at most one step in the last digit the coarser of the two files
+was saved with (`~.baseline_codec.saved_step`, at
+`~.baseline_codec.shown_digits`: 7 for a single-precision file or one with
+no ``sampling``, 15 for a double one), the change is the files' rounding —
+a baseline accepted again at another precision, its numbers kept. Its
+size is still the true largest difference; the words say it as none.
 """
 
 from __future__ import annotations
@@ -48,7 +57,7 @@ from __future__ import annotations
 import math
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -61,6 +70,7 @@ from .baseline_codec import (
     decode_reference,
     model_id_of,
     parse_body,
+    saved_step,
     shown_digits,
 )
 from .git_revisions import Commit, Repository
@@ -119,6 +129,11 @@ class SeriesChange:
     non_finite_at: float | None = None
     #: why nothing was compared ("no time in the old baseline"); "" otherwise
     note: str = ""
+    #: the change is the files' rounding: some point moved, and every one
+    #: compared by no more than one step in the last digit the coarser
+    #: file was saved with (`~.baseline_codec.saved_step`); every point
+    #: compared and each finite on both sides. ``largest`` keeps its size.
+    within_saved_digits: bool = False
 
 
 @dataclass(frozen=True)
@@ -259,6 +274,9 @@ class Difference:
     #: of those inside, the middle samples of an event that new stores
     #: another number of times (:attr:`SeriesChange.uneven`); None: none
     uneven: np.ndarray | None = None
+    #: the larger of ``|old|`` and ``|new on old's grid|`` at each of old's
+    #: points: what a step of the saved digits is a step of; None: none
+    magnitude: np.ndarray | None = None
 
     @property
     def scaled(self) -> np.ndarray:
@@ -341,7 +359,15 @@ def difference_series(
     with np.errstate(invalid="ignore"):  # inf - inf
         delta = np.where(met, on_old - yo, np.nan)
     return Difference(
-        to, delta, scale, float(scale_value), inside, finite, differs, uneven=uneven
+        to,
+        delta,
+        scale,
+        float(scale_value),
+        inside,
+        finite,
+        differs,
+        uneven=uneven,
+        magnitude=np.fmax(np.abs(yo), np.abs(on_old)),
     )
 
 
@@ -356,9 +382,11 @@ def _runs(time: np.ndarray) -> tuple[list[float], list[tuple[int, int]]]:
     )
 
 
-def series_change(d: Difference) -> SeriesChange:
+def series_change(d: Difference, digits: int | None = None) -> SeriesChange:
     """The change a difference series says: its largest compared point, as
-    a percent of the scale (or absolute), and what was not compared."""
+    a percent of the scale (or absolute), and what was not compared; with
+    ``digits``, the significant digits of the coarser file, whether it is
+    the files' rounding (:attr:`SeriesChange.within_saved_digits`)."""
     if d.note:
         return SeriesChange(largest=None, scale="absolute", at=None, note=d.note)
     largest = at = None
@@ -371,7 +399,7 @@ def series_change(d: Difference) -> SeriesChange:
             else float(size[i] / d.scale_value * 100)
         )
         at = float(d.time[d.finite][i])
-    return SeriesChange(
+    change = SeriesChange(
         largest=largest,
         scale=d.scale,
         at=at,
@@ -381,6 +409,26 @@ def series_change(d: Difference) -> SeriesChange:
         non_finite=int(d.differs.sum()),
         non_finite_at=float(d.time[d.differs][0]) if d.differs.any() else None,
     )
+    if digits is None or not _rounding_only(d, change, digits):
+        return change
+    return replace(change, within_saved_digits=True)
+
+
+def _rounding_only(d: Difference, change: SeriesChange, digits: int) -> bool:
+    """Whether a change is the files' rounding at ``digits``: some point
+    moved, every point compared and finite on both sides, and each by no
+    more than one step of those digits."""
+    if (
+        not change.largest
+        or change.non_finite
+        or change.outside
+        or change.uneven
+        or change.note
+        or d.magnitude is None
+    ):
+        return False
+    step = saved_step(d.magnitude[d.finite], digits)
+    return bool(np.all(np.abs(d.delta[d.finite]) <= step))
 
 
 def compare_series(
@@ -388,10 +436,14 @@ def compare_series(
     old_values: np.ndarray,
     new_time: np.ndarray,
     new_values: np.ndarray,
+    digits: int | None = None,
 ) -> SeriesChange:
     """How much ``new`` changed against ``old``: the largest point of their
-    :func:`difference_series`."""
-    return series_change(difference_series(old_time, old_values, new_time, new_values))
+    :func:`difference_series`; with ``digits`` (the coarser file's), whether
+    that is the files' rounding (:func:`series_change`)."""
+    return series_change(
+        difference_series(old_time, old_values, new_time, new_values), digits
+    )
 
 
 def _unreadable_series(time: np.ndarray, values: np.ndarray, side: str) -> str:
@@ -441,9 +493,15 @@ def pair_variables(
     return out
 
 
-def _variables(old: Baseline, new: Baseline) -> list[VariableDiff]:
+def saved_digits(a: ReferenceFile, b: ReferenceFile) -> int:
+    """The significant digits the coarser of two files was saved with: a
+    difference within one step of them is the files' rounding."""
+    return min(shown_digits(a.sampling), shown_digits(b.sampling))
+
+
+def _variables(old: Baseline, new: Baseline, digits: int) -> list[VariableDiff]:
     """Every variable of either side, paired by :func:`pair_variables`:
-    old's order, then new's."""
+    old's order, then new's; ``digits`` the coarser file's."""
     out: list[VariableDiff] = []
     for ov, nv in pair_variables(old.variables, new.variables):
         if nv is None:
@@ -458,6 +516,7 @@ def _variables(old: Baseline, new: Baseline) -> list[VariableDiff]:
             np.asarray(ov.values, float),
             np.asarray(new.time, float),
             np.asarray(nv.values, float),
+            digits,
         )
         renamed = (ov.name, nv.name) if ov.name != nv.name else None
         said = (ov.expression or "", nv.expression or "")
@@ -718,7 +777,7 @@ def _baseline(
         "changed",
         old_file,
         new_file,
-        variables=_variables(a.baseline, b.baseline),
+        variables=_variables(a.baseline, b.baseline, saved_digits(a, b)),
         settings=_settings(a, b),
         samples=_samples(a.sampling, b.sampling),
         sampling_first=b.sampling if a.sampling is None else None,
@@ -847,7 +906,9 @@ def _against(
             continue
         other = _one_readable(keyed.get((folder, model_id), [[], []])[1])
         if other is not None:
-            out[folder] = _variables(reference.baseline, other.baseline)
+            out[folder] = _variables(
+                reference.baseline, other.baseline, saved_digits(reference, other)
+            )
     return out
 
 

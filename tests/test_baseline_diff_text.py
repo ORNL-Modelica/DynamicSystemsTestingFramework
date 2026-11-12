@@ -477,7 +477,10 @@ def test_one_key_line_under_the_table_names_only_the_columns_it_has():
     assert "_" not in lines[-1]
 
 
-KEY_ZERO = "0 % = the file changed but no tracked value moved."
+KEY_ZERO = (
+    "0 % = the file changed but no tracked value moved beyond the digits it was "
+    "saved with."
+)
 
 
 def test_a_change_of_exactly_zero_reads_0_percent_and_the_key_line_says_it():
@@ -922,6 +925,67 @@ def test_old_points_of_an_event_new_stores_otherwise_are_said_and_no_unmoved_fil
         "| `y` | 0 %; 2 old points inside an event the new run stores another "
         "number of times |"
     ) in text
+
+
+def _rounding(name, largest):
+    """A change within the digits the coarser file was saved with."""
+    return _var(name, largest, scale="value", within_saved_digits=True)
+
+
+def test_a_change_within_the_saved_digits_reads_0_percent_and_ranks_as_none():
+    """A file accepted again at another precision moved by its rounding
+    only: its cell reads 0 %, it sorts below a real move of a smaller
+    number, and the key line says what 0 % means."""
+    added = [_var(f"n{i}", 0.0, status="new") for i in range(6)]
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {
+                    "Dymola/linux": _changed(
+                        "Dymola/linux", _rounding("x", 3.7e-6), *added
+                    )
+                },
+            ),
+            TestDiff(
+                "Lib.B", {"Dymola/linux": _changed("Dymola/linux", _var("y", 1e-6))}
+            ),
+        ],
+        folders=["Dymola/linux"],
+    )
+    text = as_markdown(diff)
+    assert _overview(text)[2:] == [["`B`", "1.0e-06 %"], ["`A`", "0 % (+6 variables)"]]
+    assert text.rstrip().splitlines()[-1] == f"{KEY_CHANGE} {KEY_ZERO} {KEY_END}"
+
+
+def test_the_detail_names_a_rounding_with_its_true_size():
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {"Dymola/linux": _changed("Dymola/linux", _rounding("x", 3.7e-6))},
+            )
+        ],
+        folders=["Dymola/linux"],
+    )
+    text = as_markdown(diff, details=["Lib.A"])
+    assert "<summary><code>A</code> — 0 %</summary>" in text.splitlines()
+    assert "| `x` | 0 % (rounding: 3.7e-06 % of value) |" in text.splitlines()
+
+
+def test_a_gap_within_the_saved_digits_reads_0_percent():
+    diff = _diff(
+        [
+            TestDiff(
+                "Lib.A",
+                {"A/linux": _changed("A/linux", _var("x", 1.0))},
+                against={"B/linux": [_rounding("x", 5e-6)]},
+            )
+        ],
+        folders=["A/linux", "B/linux"],
+        against="A/linux",
+    )
+    assert _overview(as_markdown(diff))[2] == ["`A`", "1.0 %", "", "0 %"]
 
 
 def test_a_renamed_variable_says_so_in_the_detail_and_only_it_in_json():
