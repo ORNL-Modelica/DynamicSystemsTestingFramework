@@ -1503,9 +1503,15 @@ def _add_plot(tree: _Tree, top) -> None:
             that only some runs hold, or a run that failed or holds no
             result, in a <Backend>/<os> of two runs that hold them; the
             others are named in one line ("Nothing moved in 12 tests: …").
-            --test names tests to draw in full, tables included, even where
-            nothing moved or one run holds them: how a passing fix's values
-            are seen.
+            --test names tests to draw even where nothing moved or one run
+            holds them: how a passing fix's values are seen. A named test's
+            section has one table of every variable it tracks, a row each in
+            the order it tracks them: a constant's value in each run, a
+            varying one's value at the end of each run (marked "(end)"),
+            "–" where a run holds none or failed, and its Change — the
+            biggest move over the whole run against the first run, not the
+            difference of the end values. A variable that moved is drawn
+            too.
 
             The images are drawn as `baseline plot` draws them, by the
             plotly.js DSTF ships in a headless Chromium (Playwright):
@@ -1544,7 +1550,8 @@ def _add_plot(tree: _Tree, top) -> None:
         nargs="+",
         default=None,
         help="Only these tests, each a short name (NSSS_Test) or a full model "
-        "id, drawn in full even where nothing moved; a NAME that matches no "
+        "id, drawn even where nothing moved, with a table of every value it "
+        "tracks (a varying one's at the end of each run); a NAME that matches no "
         "run's test is refused. Give it after the runs. Default: every test "
         "with a variable that moved or that only some runs hold, or a run "
         "that failed or holds no result.",

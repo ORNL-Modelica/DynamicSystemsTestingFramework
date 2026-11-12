@@ -161,11 +161,11 @@ def _change_text(change: SeriesChange) -> str:
     return "; ".join(parts) or "nothing compared"
 
 
-def constant_change(change: SeriesChange) -> str:
-    """A constant's Change in a value table (``baseline plot``, ``plot``):
-    ``0 %`` for none or the files' rounding; its size where every compared
-    point is finite; else what the detail says (a point not finite, a
-    note)."""
+def value_change(change: SeriesChange) -> str:
+    """A variable's Change in a value table (``baseline plot``'s constants,
+    ``plot``'s values): ``0 %`` for none or the files' rounding; its size —
+    the largest move over the whole series — where every compared point is
+    finite; else what the detail says (a point not finite, a note)."""
     if unchanged(change) or change.within_saved_digits:
         return percent(0)
     if change.largest is not None and not change.non_finite:
