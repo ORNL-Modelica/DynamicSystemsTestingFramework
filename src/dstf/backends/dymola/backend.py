@@ -130,6 +130,15 @@ class DymolaBackend(Backend):
     }
     source_types = frozenset({"modelica"})
     binaries = ("dymola",)
+    # dsres.mat holds these beside the model's variables. `LinearSystems.`
+    # is the twin of `NonlinearSystems.` and has not been seen in a real
+    # file yet.
+    result_statistics = (
+        "CPUtime",
+        "EventCounter",
+        "NonlinearSystems.",
+        "LinearSystems.",
+    )
     artifact_files = (
         ("dslog.txt", "Simulation log"),
         ("translation_log.txt", "Translation log"),

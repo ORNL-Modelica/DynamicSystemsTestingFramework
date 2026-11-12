@@ -30,7 +30,7 @@ moved.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -85,22 +85,40 @@ def _run_folder_name(directory: Path) -> str:
     return directory.name or directory.resolve().name
 
 
-def _read_one(
-    label: str,
-    directory: Path,
-    config_for: ConfigFor,
-    discovered: dict[str, list],
-) -> tuple[str, Run, dict, set[str]]:
-    """One ``LABEL=DIR``: its folder, its line's source, its results of the
-    discovered tests, and the model ids its manifest names."""
-    from ..backends import (
-        BackendUnavailableError,
-        backend_class,
-        backend_family,
-        select_backend,
-    )
+@dataclass(frozen=True)
+class RunDir:
+    """A run's work dir as it is read with no configuration: what ``plot``
+    and ``diff`` both read of it first."""
+
+    label: str
+    directory: Path
+    #: its ``<Backend>/<os>`` (:func:`~.results_summary.run_folder`)
+    folder: str
+    #: the name of the backend that ran it, as its status.json says it
+    backend_name: str
+    #: its manifest: each test key's entry, an old manifest's bare model id
+    #: read as ``{"model_id": ...}``
+    entries: dict[str, dict]
+
+    @property
+    def held(self) -> set[str]:
+        """The model ids its manifest names."""
+        return {entry["model_id"] for entry in self.entries.values()}
+
+    @property
+    def run(self) -> Run:
+        """Its line's source: its label and its folder's name."""
+        return Run(self.label, _run_folder_name(self.directory))
+
+
+def read_run(label: str, directory: Path) -> RunDir:
+    """One ``LABEL=DIR`` read with no configuration: its manifest, and the
+    backend and the folder its status.json names. Raises :class:`RunError`
+    for a directory that is no run's work dir, a manifest or status.json
+    that cannot be read, a status.json that names no backend and os, and a
+    backend not registered here. Nothing is written."""
+    from ..backends import backend_class, backend_family
     from ..backends.progress import read_status
-    from ..discovery.test_registry import discover_tests
 
     given = f"{label}={directory}"
     if not (directory / MANIFEST).is_file():
@@ -108,7 +126,7 @@ def _read_one(
             f"{given}: not a run's work dir (no {MANIFEST} in it; `dstf run` "
             "writes one)"
         )
-    held = _manifest_ids(given, directory / MANIFEST)
+    entries = _manifest_entries(given, directory / MANIFEST)
     status = read_status(directory)
     if status is None and (directory / "status.json").exists():
         raise RunError(
@@ -132,12 +150,109 @@ def _read_one(
             f"{given}: its run used backend '{backend_name}', which is not "
             "registered here"
         )
-    config = config_for(directory, backend_name)
-    if backend_name not in discovered:
-        discovered[backend_name] = discover_tests(config)
-    tests = discovered[backend_name]
+    return RunDir(label, directory, folder, backend_name, entries)
+
+
+def _manifest_entries(given: str, path: Path) -> dict[str, dict]:
+    """A run's manifest, each entry an object with its model id. Read here,
+    not by ``BatchManifest.load``, which moves a manifest it cannot read
+    aside: a run is never written."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise RunError(f"{given}: its {MANIFEST} cannot be read ({e})") from e
+    if not isinstance(data, dict):
+        raise RunError(f"{given}: its {MANIFEST} holds no JSON object")
+    entries = {}
+    for key, entry in data.items():
+        # an old manifest names its model alone; a newer one in an object
+        model_id = entry.get("model_id") if isinstance(entry, dict) else entry
+        if not (isinstance(model_id, str) and model_id):
+            raise RunError(
+                f"{given}: its {MANIFEST} holds an entry with no model id ({key})"
+            )
+        entries[key] = entry if isinstance(entry, dict) else {"model_id": model_id}
+    return entries
+
+
+def read_runs[T](
+    runs: list[tuple[str, Path]], then: Callable[[RunDir], T]
+) -> dict[str, list[tuple[RunDir, T]]]:
+    """The runs ``runs`` (``(label, dir)`` in the order given), each read
+    by :func:`read_run` and then by ``then``, by ``<Backend>/<os>`` — each
+    folder's runs in the order their labels were first given, so the first
+    is the reference whatever order the arguments name a folder's runs in.
+    Raises :class:`RunError` for a directory given twice and for two runs
+    of one label and folder, as well as for what the two readers refuse."""
+    by_folder: dict[str, list[tuple[RunDir, T]]] = {}
+    seen: dict[tuple[str, str], Path] = {}
+    dirs: dict[Path, str] = {}
+    for label, directory in runs:
+        directory = Path(directory)
+        where = directory.resolve()
+        if where in dirs:
+            raise RunError(
+                f"{label}={directory}: this directory is given twice (also as "
+                f"{dirs[where]})"
+            )
+        dirs[where] = label
+        run = read_run(label, directory)
+        read = then(run)
+        if (label, run.folder) in seen:
+            raise RunError(
+                f"{label}: two runs of {run.folder}, {seen[(label, run.folder)]} "
+                f"and {directory}: give each its own label"
+            )
+        seen[(label, run.folder)] = directory
+        by_folder.setdefault(run.folder, []).append((run, read))
+    order = list(dict.fromkeys(label for label, _ in runs))
+    for read_here in by_folder.values():
+        read_here.sort(key=lambda r: order.index(r[0].label))
+    return by_folder
+
+
+def paired_folders(
+    labels: Mapping[str, list[str]],
+    folders: list[str] | None,
+    command: str,
+) -> tuple[list[str], list[str]]:
+    """Of the folders the runs are of (``labels``: each folder's runs'
+    labels, in order) — those ``folders`` names, else every one — the ones
+    of two runs or more and the ones of one, each in folder order. Raises
+    :class:`RunError` for a ``folders`` name no run is of, and where no
+    chosen folder has two runs (``command`` is what the sentence says needs
+    them: "plot draws two runs or more")."""
+    held_folders = sorted(labels, key=folder_order)
+    unknown = [f for f in folders or [] if f not in labels]
+    if unknown:
+        them = "it" if len(unknown) == 1 else "them"
+        raise RunError(
+            f"--folder {', '.join(unknown)}: no run of {them} (the runs are of "
+            f"{', '.join(held_folders)})"
+        )
+    chosen = [f for f in held_folders if folders is None or f in folders]
+    paired = [f for f in chosen if len(labels[f]) >= 2]
+    if not paired:
+        given = ", ".join(f"{f} ({', '.join(labels[f])})" for f in chosen)
+        raise RunError(f"{command} of one backend/os; there is one of each: {given}")
+    return paired, [f for f in chosen if len(labels[f]) < 2]
+
+
+def _read_results(
+    run: RunDir, config_for: ConfigFor, discovered: dict[str, list]
+) -> tuple[dict, set[str]]:
+    """A run's results of the discovered tests, read under its
+    configuration, and the model ids its manifest names of them."""
+    from ..backends import BackendUnavailableError, select_backend
+    from ..discovery.test_registry import discover_tests
+
+    given = f"{run.label}={run.directory}"
+    config = config_for(run.directory, run.backend_name)
+    if run.backend_name not in discovered:
+        discovered[run.backend_name] = discover_tests(config)
+    tests = discovered[run.backend_name]
     ids = {t.model_id for t in tests}
-    if not held & ids:
+    if not run.held & ids:
         raise RunError(
             f"{given}: its run holds none of this library's tests (a run of "
             "another library?)"
@@ -148,30 +263,7 @@ def _read_one(
         raise RunError(f"{given}: {e}") from e
     backend.quiet = True
     results = backend.read_last_results(tests)
-    run = Run(label, _run_folder_name(directory))
-    return folder, run, {m: r for m, r in results.items() if m in ids}, held & ids
-
-
-def _manifest_ids(given: str, path: Path) -> set[str]:
-    """The model ids a run's manifest names. Read here, not by
-    ``BatchManifest.load``, which moves a manifest it cannot read aside:
-    a run is never written."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        raise RunError(f"{given}: its {MANIFEST} cannot be read ({e})") from e
-    if not isinstance(data, dict):
-        raise RunError(f"{given}: its {MANIFEST} holds no JSON object")
-    ids = set()
-    for key, entry in data.items():
-        # an old manifest names its model alone; a newer one in an object
-        model_id = entry.get("model_id") if isinstance(entry, dict) else entry
-        if not (isinstance(model_id, str) and model_id):
-            raise RunError(
-                f"{given}: its {MANIFEST} holds an entry with no model id ({key})"
-            )
-        ids.add(model_id)
-    return ids
+    return {m: r for m, r in results.items() if m in ids}, run.held & ids
 
 
 def _baseline(result) -> tuple[Baseline, dict[str, int]]:
@@ -202,54 +294,17 @@ def run_history(
     two runs of one label and folder, a folder of fewer than two runs, or
     a name no run answers to."""
     discovered: dict[str, list] = {}
-    by_folder: dict[str, list[tuple[Run, dict, set[str]]]] = {}
-    seen: dict[tuple[str, str], Path] = {}
-    dirs: dict[Path, str] = {}
-    for label, directory in runs:
-        directory = Path(directory)
-        where = directory.resolve()
-        if where in dirs:
-            raise RunError(
-                f"{label}={directory}: this directory is given twice (also as "
-                f"{dirs[where]})"
-            )
-        dirs[where] = label
-        folder, run, results, held = _read_one(label, directory, config_for, discovered)
-        if (label, folder) in seen:
-            raise RunError(
-                f"{label}: two runs of {folder}, {seen[(label, folder)]} and "
-                f"{directory}: give each its own label"
-            )
-        seen[(label, folder)] = directory
-        by_folder.setdefault(folder, []).append((run, results, held))
-    # Per folder, in the order the labels were first given: the reference
-    # is the run of the earliest label that has one there, whatever order
-    # the arguments name each folder's runs in.
-    order = list(dict.fromkeys(label for label, _ in runs))
-    for read in by_folder.values():
-        read.sort(key=lambda r: order.index(r[0].label))
-
-    held_folders = sorted(by_folder, key=folder_order)
-    unknown = [f for f in folders or [] if f not in by_folder]
-    if unknown:
-        them = "it" if len(unknown) == 1 else "them"
-        raise RunError(
-            f"--folder {', '.join(unknown)}: no run of {them} (the runs are of "
-            f"{', '.join(held_folders)})"
-        )
-    chosen_folders = [f for f in held_folders if folders is None or f in folders]
-    drawn = {f: by_folder[f] for f in chosen_folders if len(by_folder[f]) >= 2}
-    alone = [(f, by_folder[f][0][0]) for f in chosen_folders if len(by_folder[f]) < 2]
-    if not drawn:
-        given = ", ".join(
-            f"{f} ({', '.join(run.label for run, _, _ in by_folder[f])})"
-            for f in chosen_folders
-        )
-        raise RunError(
-            f"plot draws two runs or more of one backend/os; there is one of "
-            f"each: {given}"
-        )
-
+    read = read_runs(runs, lambda run: _read_results(run, config_for, discovered))
+    paired, single = paired_folders(
+        {f: [run.label for run, _ in each] for f, each in read.items()},
+        folders,
+        "plot draws two runs or more",
+    )
+    drawn = {
+        f: [(run.run, results, held) for run, (results, held) in read[f]]
+        for f in paired
+    }
+    alone = [(f, read[f][0][0].run) for f in single]
     ids = sorted({m for f in drawn.values() for _, _, held in f for m in held})
     named = None if tests is None else named_tests(tests, ids, "run given")
     out: list[TestHistory] = []

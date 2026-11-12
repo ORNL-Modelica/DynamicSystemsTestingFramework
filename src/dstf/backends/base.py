@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
@@ -595,6 +595,13 @@ class Backend(ABC):
         artifact_files: Files a run leaves in a test's directory that its
             report page links, as ``(file name, label)`` pairs; one that is not
             there is left out.
+        saves_tracked_signals_only: Whether a test's result file holds only
+            the variables it tracks, not every variable of the model: ``dstf
+            diff`` says so beside its counts.
+        result_statistics: The names in a test's result file that are the
+            solver's statistics, not the model's variables: each an exact
+            name, or a prefix ending in ``.``. ``dstf diff`` lists them old →
+            new and never scores them.
         quiet: Whether a run prints nothing to the console. A caller with no
             console sets it; a backend that prints checks it first.
         config: The project's configuration, set by the constructor.
@@ -633,6 +640,12 @@ class Backend(ABC):
     #: The suffix of the file a test runs, named by its entry's ``source``;
     #: None: a test names no file.
     source_suffix: str | None = None
+    #: The result file holds only the tracked variables (a variable filter,
+    #: or an output list), not every variable of the model.
+    saves_tracked_signals_only: ClassVar[bool] = False
+    #: The solver's statistics among the result file's names: an exact name,
+    #: or a prefix ending in ``.`` (:meth:`is_result_statistic`).
+    result_statistics: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self, config: Config):
         """Keep the project's configuration.
@@ -979,6 +992,16 @@ class Backend(ABC):
             list, in which case only tracked variables can be plotted.
         """
         return None
+
+    @classmethod
+    def is_result_statistic(cls, name: str) -> bool:
+        """Whether ``name``, a name of a result file, is one of the solver's
+        statistics (:attr:`result_statistics`): the name itself, or under a
+        prefix that ends in ``.``."""
+        return any(
+            name.startswith(s) if s.endswith(".") else name == s
+            for s in cls.result_statistics
+        )
 
     @classmethod
     def result_series(

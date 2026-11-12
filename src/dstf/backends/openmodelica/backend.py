@@ -129,6 +129,9 @@ class OpenModelicaBackend(Backend):
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     source_types = frozenset({"modelica"})
     binaries = ("omc",)
+    # A run's variableFilter keeps the tracked and listed variables alone
+    # (`mos_generator`): the result file holds no other.
+    saves_tracked_signals_only = True
     artifact_files = (
         ("simulate.mos", "Simulation script"),
         ("result_res.mat", "Result file"),

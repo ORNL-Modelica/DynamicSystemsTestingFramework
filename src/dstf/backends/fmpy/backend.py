@@ -124,6 +124,9 @@ class FmpyBackend(Backend):
     source_types = frozenset({"fmu"})
     source_suffix = ".fmu"
     artifact_files = (("result.npz", "Result file"),)
+    # A run records what its output list asks for — the tracked and listed
+    # variables, else fmpy's default outputs — never every variable.
+    saves_tracked_signals_only = True
 
     #: Filename used for the on-disk structured-array cache per test.
     RESULT_FILENAME = "result.npz"
