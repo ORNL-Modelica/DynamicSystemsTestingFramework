@@ -399,6 +399,65 @@ def test_a_label_two_variables_of_a_side_share_pairs_nothing(lib):
     assert got == [("a", "removed"), ("b", "removed"), ("c", "new")]
 
 
+def test_a_label_two_variables_of_the_new_side_share_pairs_nothing(lib):
+    """Unique on both sides: two new variables that read alike — once the
+    white space is gone — are no partner for the old one."""
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref("Lib.A", variables=[("a", "T[1,1]", [0, 1, 2])]),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A", variables=[("c", "T[1, 1]", [0, 1, 2]), ("d", "T[1,1]", [0, 1, 3])]
+        ),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    got = [(v.name, v.status) for v in test.baselines["Dymola/linux"].variables]
+    assert got == [("a", "removed"), ("c", "new"), ("d", "new")]
+
+
+def test_labels_that_differ_only_in_white_space_pair_as_a_rename(lib):
+    """A library's rename wrote the old names as expressions in its own
+    spelling: `alphas[1,1]` became `alphas[1, 1]`, a `cat(` lost its line
+    break. Read without white space, each is the one label it was."""
+    cat_old = "cat(\n    1,\n    a,\n    b)"
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            variables=[("alphas[1,1]", "", [0, 5, 10]), ("c", cat_old, [1, 2, 3])],
+        ),
+    )
+    one = lib.commit("one")
+    _write(
+        lib,
+        "Dymola/linux/ref_a.json",
+        _ref(
+            "Lib.A",
+            variables=[
+                ("unitTests.x[1]", "alphas[1, 1]", [0, 5, 10]),
+                ("unitTests.x[2]", "cat(1, a, b)", [1, 2, 3]),
+            ],
+        ),
+    )
+    two = lib.commit("two")
+    (test,) = diff_baselines(lib.top / "refs", one, two).tests
+    got = [
+        (v.renamed, v.status, v.change.largest)
+        for v in test.baselines["Dymola/linux"].variables
+    ]
+    assert got == [
+        (("alphas[1,1]", "unitTests.x[1]"), "changed", 0.0),
+        (("c", "unitTests.x[2]"), "changed", 0.0),
+    ]
+
+
 def test_a_name_pairs_before_a_label_does(lib):
     """The name is the identity (D132): `a` is paired by its name although
     its label moved to `c`; the leftovers `b` and `c` hold other labels."""

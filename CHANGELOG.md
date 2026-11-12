@@ -24,10 +24,11 @@ this file says when they do.
   reviewer. Needs the `browser` extra and its Chromium. The guide "Summarize a
   change for review" says how.
 - `dstf baseline diff` pairs a renamed variable by its label: a variable left
-  over on each side with one label (`expression`, else the name) is compared
-  across the rename, which the detail and the JSON (`renamed`) say. Across a
-  library's rename of its UnitTests variables, a test read "+N variables,
-  −N variables" and no change.
+  over on each side with one label (`expression`, else the name, read without
+  white space, so `a[1,1]` is `a[1, 1]`) is compared across the rename, which
+  the detail and the JSON (`renamed`) say. Across a library's rename of its
+  UnitTests variables, a test read "+N variables, −N variables" and no
+  change.
 - `dstf summary LABEL=DIR...`: several runs' results side by side, a row per
   backend/os and a column per label, passed over run; with `--base`, which
   tests not passing the base failed too — as Markdown for a pull request, or

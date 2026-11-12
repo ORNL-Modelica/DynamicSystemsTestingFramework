@@ -15,10 +15,10 @@ the model id its JSON names, or else by its path.
 
 A baseline's variables are paired by NAME, the variable's identity (D132);
 the ones left over on each side are then paired by label (``expression or
-name``) where that label is held by one variable on each side: a library
-that renamed a variable and kept what it reads (``PHS.p`` became
-``unitTests.x[1]`` with ``PHS.p`` as its expression) is compared across
-the rename, which is said (:attr:`VariableDiff.renamed`).
+name``, read without white space) where that label is held by one variable
+on each side: a library that renamed a variable and kept what it reads
+(``PHS.p`` became ``unitTests.x[1]`` with ``PHS.p`` as its expression) is
+compared across the rename, which is said (:attr:`VariableDiff.renamed`).
 
 What counts as a change: the parts that score — ``time``, ``variables``,
 ``diagnostics``, ``simulation``, ``statistics``, ``sampling`` and
@@ -412,19 +412,20 @@ def pair_variables(
 ) -> list[tuple[StoredVariable | None, StoredVariable | None]]:
     """Every variable of either side as (old, new), None on the side that
     lacks it: old's order, then new's. Paired by name; then each left over
-    on both sides with a label (``expression or name``) that one variable
-    of each side holds. A pair of two names is a rename."""
+    on both sides with a label (``expression or name``, read without white
+    space: :func:`_label_key`) that one variable of each side holds. A pair
+    of two names is a rename."""
     old_by, new_by = _by_name(olds), _by_name(news)
-    old_labels = Counter(_label(v) for v in old_by.values())
-    new_labels = Counter(_label(v) for v in new_by.values())
+    old_labels = Counter(_label_key(v) for v in old_by.values())
+    new_labels = Counter(_label_key(v) for v in new_by.values())
     left = {
-        _label(v): v
+        _label_key(v): v
         for name, v in new_by.items()
-        if name not in old_by and new_labels[_label(v)] == 1
+        if name not in old_by and new_labels[_label_key(v)] == 1
     }
     partner: dict[str, StoredVariable] = {}
     for name, v in old_by.items():
-        label = _label(v)
+        label = _label_key(v)
         if name not in new_by and old_labels[label] == 1 and label in left:
             partner[name] = left.pop(label)
     taken = {v.name for v in partner.values()}
@@ -483,6 +484,14 @@ def _by_name(variables: list[StoredVariable]) -> dict[str, StoredVariable]:
 
 def _label(v: StoredVariable) -> str:
     return v.expression or v.name
+
+
+def _label_key(v: StoredVariable) -> str:
+    """The label a variable is paired by: its label with no white space. A
+    library's rename wrote its old names as expressions in its own spelling
+    (``alphas[1,1]`` as ``alphas[1, 1]``, a ``cat(`` over several lines),
+    and white space changes nothing an expression reads."""
+    return "".join(_label(v).split())
 
 
 # --- what a side of the reference root holds ----------------------------------

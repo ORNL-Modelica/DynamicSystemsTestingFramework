@@ -116,11 +116,11 @@ Change = the biggest move of a tracked variable, old → new, as % of its range.
 Baselines are paired by model id inside each folder, never by file name, so
 a renamed file holding the same data is no change. A baseline's variables
 are paired by name; the ones left over on both sides are then paired by
-label (the expression, else the name) where one variable of each side holds
-it, so a variable renamed with what it reads kept (`PHS.p` becoming
-`unitTests.x[1]` with `PHS.p` as its expression) is compared across the
-rename, and the detail says `renamed PHS.p → unitTests.x[1]`. For each variable the
-change is the largest difference between the two baselines, |new − old|,
+label (the expression, else the name, read without white space: `a[1,1]` is
+`a[1, 1]`) where one variable of each side holds it, so a variable renamed
+with what it reads kept (`PHS.p` becoming `unitTests.x[1]` with `PHS.p` as
+its expression) is compared across the rename, and the detail says
+`renamed PHS.p → unitTests.x[1]`. For each variable the change is the largest difference between the two baselines, |new − old|,
 with the new one read on the old one's time grid, as a percent of the old
 baseline's range (of its value where the old baseline is constant: the scale
 the `nrmse` score divides by; the absolute difference where it is zero), and
