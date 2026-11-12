@@ -88,9 +88,16 @@ jobs:
   # HTML reports in a real Chromium. A job of its own, beside the tests, so
   # its minutes add nothing to theirs; no coverage, which the `quality` job
   # measures. `-rf --tb=short` prints each failure's reason in the log.
+  # Three runners, each with a third of the tests (`--shard I/3`, dealt
+  # round-robin by `tests/_shard.py`): one runner took 17-19 minutes.
   browser:
+    name: browser (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -107,7 +114,7 @@ jobs:
         run: uv run --no-sync playwright install --with-deps chromium
 
       - name: Pytest (browser)
-        run: uv run --no-sync pytest tests/ -m playwright -n 4 -q -rf --tb=short
+        run: uv run --no-sync pytest tests/ -m playwright -n 4 -q -rf --tb=short --shard ${{ matrix.shard }}/3
 
   # The documentation site, built as Read the Docs builds it: every warning
   # is an error (a reference page that names a type it cannot link to, a

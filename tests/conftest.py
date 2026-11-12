@@ -11,6 +11,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from _shard import (  # noqa: F401  (`--shard I/N`: the hooks, re-exported)
+    pytest_addoption,
+    pytest_collection_modifyitems,
+)
 from dstf.discovery.test_registry import TestModel
 from dstf.storage.baseline import Baseline
 from dstf.storage.baseline_codec import decode_series
