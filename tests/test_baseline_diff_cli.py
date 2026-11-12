@@ -241,3 +241,14 @@ def test_a_baseline_saved_again_at_single_precision_reads_0_percent(tmp_path, ca
     assert (x1["within_saved_digits"], x1["scale"]) == (True, "value")
     assert x1["largest"] == pytest.approx(3.747e-6, rel=1e-3)
     assert all(v["change"]["within_saved_digits"] for v in variables)
+
+
+def test_details_refuses_a_value_holding_an_equals_sign(lib, capsys):
+    """No test name holds "=": such a value is refused when the command
+    line is read, as it is by `plot` and `diff`, whose runs it would be."""
+    with pytest.raises(SystemExit) as e:
+        main(_diff_argv(lib, "--details", "A", "a=1"))
+    assert e.value.code == 2
+    assert capsys.readouterr().err.splitlines()[-1] == (
+        "dstf baseline diff: error: argument --details: a=1: a test name holds no '='"
+    )

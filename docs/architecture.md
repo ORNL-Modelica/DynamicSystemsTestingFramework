@@ -485,6 +485,8 @@ Two manifest files are written to the work directory before simulation starts:
 Backend (ABC)
   ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT, LIVE_RESULTS, CANCEL
   ├── artifact_files: tuple[tuple[str, str], ...]  # (filename, label) pairs for the report
+  ├── saves_tracked_signals_only: bool            # the result file holds the tracked variables alone
+  ├── result_statistics: tuple[str, ...]          # the solver's statistics among its names (CPUtime, NonlinearSystems.)
   ├── run_tests(tests) → list[BatchManifest]       # override for batch execution
   ├── run_single_test(test, ...) → TestRunResult   # override for per-process execution
   ├── read_result(test, ...) → TestResult          # abstract — must implement

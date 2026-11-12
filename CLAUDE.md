@@ -16,7 +16,7 @@
 DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli/                      # CLI package. parser.py: the command tree (build_arg_parser) — every command, the flags each reads
-│   │                             #      and its help; main.py: the dispatch table. Commands: discover, run, compare, summary, plot, author,
+│   │                             #      and its help; main.py: the dispatch table. Commands: discover, run, compare, summary, plot, diff, author,
 │   │                             #      check (where each backend is on this machine, and whether the project's is ready), and the
 │   │                             #      groups spec (add / update / schema), baseline (export / diff / plot), soft-check (add / list / remove),
 │   │                             #      companion (add / list / freeze / remove), manifest (show / dump / cleanup)
@@ -90,7 +90,8 @@ DynamicSystemsTestingFramework/
 │       │                         #      + stats_rows.py (the Statistics rows both tiers render: the report's table and the card; one "changed")
 │       │                         #      + baseline_diff_text.py (`baseline diff`'s Markdown and JSON)
 │       │                         #      + baseline_gallery.py (`baseline plot`'s and `plot`'s images, their paths and notes, each gallery.html with its value tables of constants, and its output directory's marker)
-│       │                         #      + run_history.py (`plot`'s facts: runs' work dirs read as compare reads them, never written, paired by backend/os, the first label the reference)
+│       │                         #      + run_history.py (`plot`'s facts: runs' work dirs read as compare reads them, never written, paired by backend/os, the first label the reference; read_run / read_runs: a run read with no configuration, `diff`'s too)
+│       │                         #      + run_diff.py (`diff`'s facts: every variable of each test's whole result file in two runs, by alias group: identical / rounding / near zero / derivative / changed, parameters apart, the solver's statistics never scored) + run_diff_text.py (its Markdown and JSON)
 │       │                         #      + images.py (PNGs of figure dicts: the vendored plotly.js in one headless Chromium; the ONE import of Playwright outside tests)
 │       │                         #      + results_summary.py (`summary`'s facts: several runs' verdicts.json by backend/os and label, against a base) + results_summary_text.py (its Markdown and JSON)
 │       │                         #      + console/junit + context_builder + report_suite + dashboard_render + overlay_loader (companion / soft-check overlays) + schema_export (`spec schema`) + theme.py (the token tables both tiers render, one per bundled theme: default and dark)

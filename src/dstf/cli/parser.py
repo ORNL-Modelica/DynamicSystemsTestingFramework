@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import math
 import os
 import textwrap
 from collections.abc import Callable, Collection
@@ -576,6 +577,22 @@ def _whole(
     return parse
 
 
+def _a_size(text: str) -> float:
+    """``--near-zero``: a size, a finite number above 0 — no default, for a
+    size is in the variables' own units."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: must be a number above 0 (a size, in the variables' units)"
+        ) from None
+    if not (math.isfinite(value) and value > 0):
+        raise argparse.ArgumentTypeError(
+            f"{text}: must be a finite number above 0 (a size, in the variables' units)"
+        )
+    return value
+
+
 def _a_value(parse: Callable[[str], object] | None) -> Callable[[str], object]:
     """The one argparse ``type=`` every flag that takes a value and every
     positional goes through (:func:`build_arg_parser` lays it over each
@@ -602,6 +619,28 @@ def _filter_arg(value: str) -> str:
             f"{value!r} names nothing: there is no pattern between its commas"
         )
     return value
+
+
+def _a_name(flag: str, what: str, runs: bool) -> Callable[[str], str]:
+    """The type of a flag that takes several names (``--test``, ``--folder``,
+    ``--details``): a value holding ``=`` is none. Given before a command's
+    LABEL=DIRs (``runs``), such a flag took the runs after its names as more
+    names (``plot a=1 --test X b=2`` read b=2 as a test). Where the value
+    stood is not known here, so the refusal says what is true either way."""
+
+    def name(text: str) -> str:
+        if "=" in text:
+            raise argparse.ArgumentTypeError(
+                f"{text}: {what} holds no '='"
+                + (
+                    f" (a LABEL=DIR after {flag} is read as one of its values)"
+                    if runs
+                    else ""
+                )
+            )
+        return text
+
+    return name
 
 
 def _output_file(text: str) -> str:
@@ -967,7 +1006,7 @@ class _Tree:
 
 #: The top-level help's listing: the commands by what they are for.
 COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("run and score", ("discover", "run", "compare", "summary", "plot")),
+    ("run and score", ("discover", "run", "compare", "summary", "plot", "diff")),
     ("write criteria", ("author", "spec add", "spec update", "spec schema")),
     (
         "baselines and the data beside them",
@@ -1039,6 +1078,7 @@ READS: dict[str, tuple[str, ...]] = {
     "baseline export": (*_STORE, "format", "output", "backend", "work_dir"),
     "summary": ("base", "format", "output"),
     "plot": ("config", "source_path", "test_spec", "test", "folder", "output"),
+    "diff": ("test", "folder", "details", "near_zero", "format", "output"),
     "baseline diff": (
         "config",
         "reference_root",
@@ -1120,6 +1160,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     _add_compare(tree, top)
     _add_summary(tree, top)
     _add_plot(tree, top)
+    _add_diff(tree, top)
     _add_author(tree, top)
     _add_check(tree, top)
     _add_spec(tree, top)
@@ -1533,7 +1574,7 @@ def _add_plot(tree: _Tree, top) -> None:
             "dstf plot main=../main/testing_output/MyLib/Dymola/linux "
             "branch=testing_output/MyLib/Dymola/linux -o plots",
             "dstf plot main=main-dymola main=main-om fix=fix-dymola fix=fix-om "
-            "--test NSSS_Test -o nsss",
+            "--test SimpleRamp -o ramp",
         ),
     )
     node.add_argument(
@@ -1549,7 +1590,8 @@ def _add_plot(tree: _Tree, top) -> None:
         metavar="NAME",
         nargs="+",
         default=None,
-        help="Only these tests, each a short name (NSSS_Test) or a full model "
+        type=_a_name("--test", "a test name", True),
+        help="Only these tests, each a short name (SimpleRamp) or a full model "
         "id, drawn even where nothing moved, with a table of every value it "
         "tracks (a varying one's at the end of each run); a NAME that matches no "
         "run's test is refused. Give it after the runs. Default: every test "
@@ -1561,6 +1603,7 @@ def _add_plot(tree: _Tree, top) -> None:
         metavar="BACKEND/OS",
         nargs="+",
         default=None,
+        type=_a_name("--folder", "a backend/os folder", True),
         help="Only the runs of these backend/os folders (Dymola/linux). Give "
         "it after the runs. Default: every one with two runs or more.",
     )
@@ -1572,6 +1615,126 @@ def _add_plot(tree: _Tree, top) -> None:
         help="The directory to write the images and gallery.html into: a new "
         "or empty one, or one this command wrote before.",
     )
+
+
+def _add_diff(tree: _Tree, top) -> None:
+    node = tree.command(
+        top,
+        "diff",
+        summary="Compare every variable of two runs, test by test",
+        description="""
+            Print what differs between two runs of one tool — main's run
+            and a branch's — over EVERY variable of each test's result file,
+            not only the ones it tracks: the run-folder twin of `baseline
+            diff`. The Markdown is a headline, an overview table with a row
+            per <Backend>/<os> — the result files compared, the signals and
+            the parameters — and one line naming the tests where something
+            differs.
+
+            A group is the variables whose values are equal, bit for bit,
+            in both runs (aliases), counted once and shown by its shortest
+            name. A parameter holds one value at every stored point of both
+            runs: identical, within rounding (one storage step of the
+            coarser file's precision) or different. A signal is identical,
+            within rounding, near zero (only with --near-zero: every value
+            of both runs smaller in size than it), a derivative (a der(
+            variable), or changed — its Change the biggest move against the first
+            run, as a percent of the first run's range, the measure
+            `baseline diff` prints. A signal is identical or within rounding
+            only where both runs hold the same time points. A value finite
+            in one run only is always changed. The solver's statistics in the file (CPU time,
+            event counter, nonlinear systems) are listed, never scored.
+
+            Each DIR is a run's work dir, read and never written: its
+            batch_manifest.json holds the tests it ran, its status.json the
+            backend and os that ran them, and that backend reads each test's
+            result file. No testing.json and no library is read. Runs pair
+            within one <Backend>/<os>; the first label given is the one the
+            later run is measured against. A LABEL may repeat, once per
+            <Backend>/<os>. The tests are those both runs hold; a test whose
+            run failed or did not finish in either run is not compared, and
+            is named, as is a test one run holds, and so is one whose result
+            file is unfinished. A tool whose result file holds only the
+            tracked signals (parameters are kept) is said so.
+
+            --details adds a folded section per test: the counts, the names
+            in one run only, the parameters that differ, the largest near
+            zero and derivative, the changed signals with their time, and the
+            statistics old → new. Markdown by default, to paste into a pull
+            request (over 65,536 characters, a note on stderr); --format json
+            for every fact.
+
+            Exit code: 0 when the difference is printed, whatever differs;
+            2 when an argument is not LABEL=DIR, a DIR is no run's work dir,
+            its status.json names no backend and os, a third label is given,
+            a label holds two runs of one <Backend>/<os>, no <Backend>/<os>
+            has two runs, its runs hold no test in common, or --test,
+            --folder or --details names nothing.
+            """,
+        examples=(
+            "dstf diff main=../main/testing_output/MyLib/Dymola/linux "
+            "branch=testing_output/MyLib/Dymola/linux -o diff.md",
+            "dstf diff main=main-dymola fix=fix-dymola --near-zero 1e-6 "
+            "--details SimpleRamp",
+        ),
+    )
+    node.add_argument(
+        "runs",
+        metavar="LABEL=DIR",
+        nargs="+",
+        help="A run's label and its work dir (the folder holding "
+        "batch_manifest.json): two labels, the first the one the later run "
+        "is measured against; a label may repeat, once per backend/os.",
+    )
+    node.add_argument(
+        "--test",
+        metavar="NAME",
+        nargs="+",
+        default=None,
+        type=_a_name("--test", "a test name", True),
+        help="Only these tests, each a short name (SimpleRamp) or a full model "
+        "id; a NAME that matches no run's test is refused. Give it after the "
+        "runs. Default: every test both runs hold.",
+    )
+    node.add_argument(
+        "--folder",
+        metavar="BACKEND/OS",
+        nargs="+",
+        default=None,
+        type=_a_name("--folder", "a backend/os folder", True),
+        help="Only the runs of these backend/os folders (Dymola/linux). Give "
+        "it after the runs. Default: every one with two runs.",
+    )
+    node.add_argument(
+        "--details",
+        metavar="NAME",
+        nargs="*",
+        default=None,
+        type=_a_name("--details", "a test name", True),
+        help="Add each test's folded section to the Markdown: with no NAME, "
+        "every test where something differs; else only the named ones, each "
+        "a short name (SimpleRamp) or a full model id. A NAME that matches no "
+        "compared test is refused. Give it after the runs. Default: the "
+        "overview alone. The JSON is always complete.",
+    )
+    node.add_argument(
+        "--near-zero",
+        metavar="SIZE",
+        type=_a_size,
+        default=None,
+        help="Class a signal whose every value in both runs is smaller than "
+        "SIZE (in the variables' own units, above 0) as near zero, not as "
+        "changed or a derivative. Default: no such class.",
+    )
+    _offer(
+        node,
+        "format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="markdown (to paste into a pull request) or json (every fact, "
+        "non-finite numbers as null beside a flag). Default: markdown.",
+    )
+    _offer(node, "output", default=None, help="The file to write. Default: printed.")
 
 
 # ---------------------------------------------------------------------------
@@ -1907,7 +2070,7 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
             "dstf baseline diff main --reference-root Resources/ReferenceResults",
             "dstf baseline diff v1.3.0 HEAD --config testing.json -o baselines.md",
             "dstf baseline diff HEAD~1 HEAD --config testing.json --against Dymola/linux",
-            "dstf baseline diff main HEAD --config testing.json --details NSSS_Test",
+            "dstf baseline diff main HEAD --config testing.json --details SimpleRamp",
             "dstf baseline diff main --config testing.json --format json -o diff.json",
         ),
         own_help=_REVISIONS_HELP,
@@ -1937,9 +2100,10 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
         metavar="NAME",
         nargs="*",
         default=None,
+        type=_a_name("--details", "a test name", False),
         help="Add each test's folded section to the Markdown: with no NAME, "
         "every listed test's; else only the named ones, each a short name "
-        "(NSSS_Test) or a full model id. A NAME that matches no listed test "
+        "(SimpleRamp) or a full model id. A NAME that matches no listed test "
         "is refused. Give it after REV1 and REV2. Default: the overview "
         "alone. The JSON is always complete.",
     )
@@ -2010,8 +2174,8 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
             """,
         examples=(
             "dstf baseline plot main HEAD --config testing.json -o plots",
-            "dstf baseline plot v1.2.0 v1.3.0 HEAD --test NSSS_Test --folder "
-            "Dymola/linux -o nsss",
+            "dstf baseline plot v1.2.0 v1.3.0 HEAD --test SimpleRamp --folder "
+            "Dymola/linux -o ramp",
         ),
         own_help=_REVISIONS_HELP,
     )
@@ -2027,7 +2191,7 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
         metavar="NAME",
         nargs="+",
         default=None,
-        help="Only these tests, each a short name (NSSS_Test) or a full model "
+        help="Only these tests, each a short name (SimpleRamp) or a full model "
         "id; a NAME that matches no baseline is refused. Give it after the "
         "revisions. Default: every test baseline diff lists as changed or new "
         "between the first and the last revision.",

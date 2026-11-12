@@ -2363,3 +2363,10 @@ hold a partial run, and `dstf plot` names the failure and draws nothing of
 it. It could draw that partial result up to where the run stopped, the line
 labelled with the stop time, and measure its Change only over the time both
 runs hold. Status: deferred by the owner on 2026-11-12.
+
+**`dstf diff` across tools (owner, 2026-11-12; low priority).** `dstf diff`
+compares two runs of ONE tool: runs pair only within one backend/os. A
+Dymola run against an OpenModelica run of the same change would compare
+every variable across tools, but an OpenModelica run saves only the tracked
+variables (its `variableFilter`), so there is little to compare beyond what
+`compare` already scores. It needs OpenModelica to save every variable.

@@ -17,7 +17,7 @@ from ...storage.batch_manifest import BatchManifest
 from .. import register
 from ..base import Backend, Diagnosis, _print_run_header
 from ..common import result_files
-from ..common.mat_reader import read_result_mat
+from ..common.mat_reader import mat_shortfall, read_result_mat
 from ..common.proc_kill import kill_process_tree
 from ..common.result_variables import (
     compute_needed_variables,
@@ -130,6 +130,15 @@ class DymolaBackend(Backend):
     }
     source_types = frozenset({"modelica"})
     binaries = ("dymola",)
+    # dsres.mat holds these beside the model's variables. `LinearSystems.`
+    # is the twin of `NonlinearSystems.` and has not been seen in a real
+    # file yet.
+    result_statistics = (
+        "CPUtime",
+        "EventCounter",
+        "NonlinearSystems.",
+        "LinearSystems.",
+    )
     artifact_files = (
         ("dslog.txt", "Simulation log"),
         ("translation_log.txt", "Translation log"),
@@ -693,6 +702,11 @@ class DymolaBackend(Backend):
     @classmethod
     def result_series(cls, test_dir, names):
         return result_files.mat_series(test_dir / "dsres.mat", names)
+
+    @classmethod
+    def result_shortfall(cls, test_dir: Path) -> str | None:
+        path = test_dir / "dsres.mat"
+        return mat_shortfall(path) if path.is_file() else None
 
     @classmethod
     def live_result_path(cls, test_dir: Path) -> Path:

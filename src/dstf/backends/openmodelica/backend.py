@@ -36,7 +36,7 @@ from .. import register
 from ..base import Backend, Diagnosis
 from ..common import result_files
 from ..common.failure_message import failure_message
-from ..common.mat_reader import mat_reaches_time, read_result_mat
+from ..common.mat_reader import mat_reaches_time, mat_shortfall, read_result_mat
 from ..common.proc_output import decode_output
 from ..common.result_variables import (
     compute_needed_variables,
@@ -129,6 +129,9 @@ class OpenModelicaBackend(Backend):
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     source_types = frozenset({"modelica"})
     binaries = ("omc",)
+    # A run's variableFilter keeps the tracked and listed variables alone
+    # (`mos_generator`): the result file holds no other.
+    saves_tracked_signals_only = True
     artifact_files = (
         ("simulate.mos", "Simulation script"),
         ("result_res.mat", "Result file"),
@@ -459,6 +462,11 @@ class OpenModelicaBackend(Backend):
     @classmethod
     def result_series(cls, test_dir, names):
         return result_files.mat_series(test_dir / cls.RESULT_MAT_FILENAME, names)
+
+    @classmethod
+    def result_shortfall(cls, test_dir: Path) -> str | None:
+        path = test_dir / cls.RESULT_MAT_FILENAME
+        return mat_shortfall(path) if path.is_file() else None
 
     @classmethod
     def live_result_path(cls, test_dir: Path) -> Path:
