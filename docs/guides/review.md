@@ -90,7 +90,7 @@ and a folded section for every test, and `--details NAME ...` only for the
 named ones, each a short name or a full model id:
 
 ```console
-$ dstf baseline diff main HEAD --config testing.json --details NSSS_Test
+$ dstf baseline diff main HEAD --config testing.json --details SimpleRamp
 ```
 
 A section holds each variable's change and when it happens (its columns
@@ -171,7 +171,7 @@ the machine.
 
 ```console
 $ dstf baseline plot main HEAD --config testing.json -o plots
-$ dstf baseline plot v1.2.0 v1.3.0 HEAD --test NSSS_Test --folder Dymola/linux -o nsss
+$ dstf baseline plot v1.2.0 v1.3.0 HEAD --test SimpleRamp --folder Dymola/linux -o ramp
 ```
 
 ![A variable at two revisions: on top, the old baseline in grey and the new one in blue; under it, the new minus the old as a percent of the old one's range, peaking near 100 % at 4.7 s; the legend names each revision's date, hash and subject](../img/baseline-plot.png)
@@ -251,7 +251,7 @@ first:
 
 ```console
 $ dstf plot main=../main/testing_output/MyLib/Dymola/linux branch=testing_output/MyLib/Dymola/linux -o plots
-$ dstf plot main=main-dymola main=main-om fix=fix-dymola fix=fix-om --test NSSS_Test -o nsss
+$ dstf plot main=main-dymola main=main-om fix=fix-dymola fix=fix-om --test SimpleRamp -o ramp
 ```
 
 ![A variable in two runs: on top, main's run in grey and the branch's in blue; under it, the branch minus main as a percent of main's range, rising to 12 % at 5 s; the legend names each run's label and work dir](../img/run-plot.png)

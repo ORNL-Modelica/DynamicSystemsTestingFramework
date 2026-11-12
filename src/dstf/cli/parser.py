@@ -1574,7 +1574,7 @@ def _add_plot(tree: _Tree, top) -> None:
             "dstf plot main=../main/testing_output/MyLib/Dymola/linux "
             "branch=testing_output/MyLib/Dymola/linux -o plots",
             "dstf plot main=main-dymola main=main-om fix=fix-dymola fix=fix-om "
-            "--test NSSS_Test -o nsss",
+            "--test SimpleRamp -o ramp",
         ),
     )
     node.add_argument(
@@ -1591,7 +1591,7 @@ def _add_plot(tree: _Tree, top) -> None:
         nargs="+",
         default=None,
         type=_a_name("--test", "a test name", True),
-        help="Only these tests, each a short name (NSSS_Test) or a full model "
+        help="Only these tests, each a short name (SimpleRamp) or a full model "
         "id, drawn even where nothing moved, with a table of every value it "
         "tracks (a varying one's at the end of each run); a NAME that matches no "
         "run's test is refused. Give it after the runs. Default: every test "
@@ -2070,7 +2070,7 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
             "dstf baseline diff main --reference-root Resources/ReferenceResults",
             "dstf baseline diff v1.3.0 HEAD --config testing.json -o baselines.md",
             "dstf baseline diff HEAD~1 HEAD --config testing.json --against Dymola/linux",
-            "dstf baseline diff main HEAD --config testing.json --details NSSS_Test",
+            "dstf baseline diff main HEAD --config testing.json --details SimpleRamp",
             "dstf baseline diff main --config testing.json --format json -o diff.json",
         ),
         own_help=_REVISIONS_HELP,
@@ -2103,7 +2103,7 @@ def _add_baseline_diff(tree: _Tree, sub) -> None:
         type=_a_name("--details", "a test name", False),
         help="Add each test's folded section to the Markdown: with no NAME, "
         "every listed test's; else only the named ones, each a short name "
-        "(NSSS_Test) or a full model id. A NAME that matches no listed test "
+        "(SimpleRamp) or a full model id. A NAME that matches no listed test "
         "is refused. Give it after REV1 and REV2. Default: the overview "
         "alone. The JSON is always complete.",
     )
@@ -2174,8 +2174,8 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
             """,
         examples=(
             "dstf baseline plot main HEAD --config testing.json -o plots",
-            "dstf baseline plot v1.2.0 v1.3.0 HEAD --test NSSS_Test --folder "
-            "Dymola/linux -o nsss",
+            "dstf baseline plot v1.2.0 v1.3.0 HEAD --test SimpleRamp --folder "
+            "Dymola/linux -o ramp",
         ),
         own_help=_REVISIONS_HELP,
     )
@@ -2191,7 +2191,7 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
         metavar="NAME",
         nargs="+",
         default=None,
-        help="Only these tests, each a short name (NSSS_Test) or a full model "
+        help="Only these tests, each a short name (SimpleRamp) or a full model "
         "id; a NAME that matches no baseline is refused. Give it after the "
         "revisions. Default: every test baseline diff lists as changed or new "
         "between the first and the last revision.",
