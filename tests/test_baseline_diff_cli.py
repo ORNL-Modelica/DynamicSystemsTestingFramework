@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from conftest import GitRepo
+from conftest import RESAVED_OLD, GitRepo, resaved_single
 from dstf.cli.main import main
 
 
@@ -213,3 +213,31 @@ def test_markdown_over_what_a_pull_request_holds_is_noted_on_stderr(tmp_path, ca
 def test_markdown_within_what_a_pull_request_holds_notes_nothing(lib, capsys):
     assert main(_diff_argv(lib, "--details")) == 0
     assert capsys.readouterr().err == ""
+
+
+def test_a_baseline_saved_again_at_single_precision_reads_0_percent(tmp_path, capsys):
+    """A real baseline accepted again at single precision, its numbers
+    kept: the Markdown's cell reads 0 %, the JSON keeps each difference's
+    true size and says it is within the saved digits."""
+    repo = GitRepo(tmp_path / "lib")
+    file = repo.top / "ReferenceResults" / "Dymola" / "windows" / "ref_a.json"
+    file.parent.mkdir(parents=True)
+    old, new = resaved_single()
+    file.write_text(json.dumps(old))
+    one = repo.commit("one")
+    file.write_text(json.dumps(new))
+    two = repo.commit("two")
+    argv = ["baseline", "diff", one, two]
+    argv += ["--reference-root", str(repo.top / "ReferenceResults")]
+    assert main(argv) == 0
+    assert "| `A` | 0 % |" in capsys.readouterr().out.splitlines()
+    out = tmp_path / "diff.json"
+    assert main([*argv, "--format", "json", "-o", str(out)]) == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    (test,) = data["tests"]
+    variables = test["baselines"]["Dymola/windows"]["variables"]
+    assert [v["name"] for v in variables] == list(RESAVED_OLD)
+    x1 = variables[0]["change"]
+    assert (x1["within_saved_digits"], x1["scale"]) == (True, "value")
+    assert x1["largest"] == pytest.approx(3.747e-6, rel=1e-3)
+    assert all(v["change"]["within_saved_digits"] for v in variables)

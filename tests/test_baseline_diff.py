@@ -11,7 +11,7 @@ import os
 import numpy as np
 import pytest
 
-from conftest import GitRepo
+from conftest import RESAVED_OLD, GitRepo, resaved_single
 from dstf.reporting.stats_rows import report_text, statistics_rows
 from dstf.storage.baseline import DiagnosticSummary, Sampling
 from dstf.storage.baseline_diff import (
@@ -878,6 +878,251 @@ def test_a_single_precision_file_is_read_through_float32(lib):
     (test,) = diff_baselines(lib.top / "refs", one, two).tests
     (x,) = test.baselines["Dymola/linux"].variables
     assert x.change.largest == pytest.approx(abs(float(np.float32(0.1)) - 0.1) * 100)
+
+
+# --- a change within the digits a file was saved with ------------------------
+
+
+def _two_docs(lib, old, new, path="Dymola/linux/ref_a.json"):
+    """``old`` then ``new`` (documents) committed at one path; the diff."""
+    _write(lib, path, json.dumps(old))
+    one = lib.commit("one")
+    _write(lib, path, json.dumps(new))
+    two = lib.commit("two")
+    return diff_baselines(lib.top / "refs", one, two)
+
+
+def _changes(diff, folder="Dymola/linux"):
+    (test,) = diff.tests
+    return {v.name: v.change for v in test.baselines[folder].variables}
+
+
+def test_a_file_saved_again_at_single_precision_moved_only_within_its_digits(lib):
+    """A real baseline accepted again at single precision: the old file
+    spelled 231.3005 (7 digits), the new one reads float32's 231.300491.
+    The difference is the old file's rounding, not a change — and its size
+    is kept, never rounded away."""
+    old, new = resaved_single()
+    changes = _changes(_two_docs(lib, old, new))
+    assert {n: c.within_saved_digits for n, c in changes.items()} == {
+        n: True for n in RESAVED_OLD
+    }
+    x1, x2, x3 = changes.values()
+    assert (x1.scale, x1.largest) == ("value", pytest.approx(3.747e-6, rel=1e-3))
+    assert x2.largest == pytest.approx(7.157e-6, rel=1e-3)
+    assert x3.largest == pytest.approx(3.665e-6, rel=1e-3)
+
+
+def test_one_point_two_steps_of_the_saved_digits_away_moved(lib):
+    """231.3007 against 231.3005 is two steps of the 7th digit: a move, of
+    the size it always had; the variable's other points and the other
+    variables are still the old file's rounding."""
+    old, new = resaved_single()
+    new["variables"][0]["values"][2] = 231.3007
+    changes = _changes(_two_docs(lib, old, new))
+    x1 = changes["unitTests.x[1]"]
+    assert x1.within_saved_digits is False
+    assert (x1.largest, x1.at) == (pytest.approx(8.861e-5, rel=1e-3), 0.02)
+    assert changes["unitTests.x[2]"].within_saved_digits is True
+
+
+def _doc(time, x, precision=None):
+    """Lib.A's baseline document with one variable ``x``; ``precision``
+    records sampling (None: a file written before it existed)."""
+    doc = json.loads(_ref("Lib.A", time=time, variables={"x": list(x)}))
+    if precision is not None:
+        doc["sampling"] = _sampling(stored=len(time), precision=precision)
+    return doc
+
+
+def _x(lib, old, new):
+    """``x``'s change between two documents."""
+    (x,) = _changes(_two_docs(lib, old, new)).values()
+    return x
+
+
+def test_two_single_precision_files_hold_no_rounding(lib):
+    """A file that records its sampling spells its run's own numbers: two
+    such files differ by what the runs did. 12 float32 steps on 1e5 Pa
+    (0.09 Pa) is a move, under one step of a 7th digit as it is."""
+    ulp = float(np.spacing(np.float32(102635.3)))
+    old = [float(np.float32(102635.3))] * 3
+    old[1] += ulp
+    new = [v + 12 * ulp for v in old]
+    x = _x(lib, _doc((0, 1, 2), old, "single"), _doc((0, 1, 2), new, "single"))
+    assert x.largest > 0
+    assert x.within_saved_digits is False
+
+
+@pytest.mark.parametrize(
+    ("new_value", "within"),
+    [
+        # 260 units of the 15th digit the older file spells
+        (300.123456789272, False),
+        # half a unit of it, in a double file's 16 digits
+        (300.1234567890125, True),
+    ],
+)
+def test_a_file_spelled_at_15_digits_is_held_to_its_15th_digit(lib, new_value, within):
+    """A file with no sampling spelled at 15 digits (as OpenModelica's
+    were) stands for nothing coarser than its 15th digit."""
+    old = _doc((0, 1, 2), [300.123456789012] * 3)
+    new = _doc((0, 1, 2), [300.123456789012, new_value, 300.123456789012], "double")
+    x = _x(lib, old, new)
+    assert x.largest > 0
+    assert x.within_saved_digits is within
+
+
+def test_two_files_one_unit_apart_in_their_7th_digit_are_rounding(lib):
+    """Exactly one unit, whatever the floating-point noise of the
+    subtraction (231.3006 - 231.3005 is a little over 1e-4)."""
+    old = _doc((0, 1, 2), [231.3005] * 3)
+    new = _doc((0, 1, 2), [231.3005, 231.3006, 231.3005])
+    assert _x(lib, old, new).within_saved_digits is True
+
+
+#: A real re-save's points: the older file at 7 digits, the newer the same
+#: run's float32 numbers. A slope (an easing curve) and an event at 0.25 s.
+SLOPED = (
+    (5.0, 5.02, 5.04, 5.06, 5.08, 5.1, 5.12),
+    (3.0, 2.999691, 2.998766, 2.997225, 2.995067, 2.992293, 2.988905),
+    (5.0, 5.01999998, 5.03999996, 5.05999994, 5.07999992, 5.0999999, 5.11999989),
+    (3.0, 2.99969149, 2.99876642, 2.99722457, 2.99506688, 2.99229336, 2.98890495),
+)
+STEPPED = (
+    (0.22, 0.23, 0.24, 0.25, 0.25, 0.26),
+    (0.0, 0.0, 0.0, 0.0, 1.0, 1.0),
+    (0.219999999, 0.230000004, 0.239999995, 0.25, 0.25, 0.25999999),
+    (0.0, 0.0, 0.0, 0.0, 1.0, 1.0),
+)
+
+
+@pytest.mark.parametrize("points", [SLOPED, STEPPED], ids=["sloped", "stepped"])
+def test_a_re_saved_series_that_slopes_or_steps_is_rounding(lib, points):
+    """Read on the old grid, the newer file's float32 times move a step by
+    its height times their shift (5.4e-05 % at 0.24 s); point by point,
+    every time and value agrees within one step of the 7th digit."""
+    old_t, old_x, new_t, new_x = points
+    x = _x(lib, _doc(old_t, old_x), _doc(new_t, new_x, "single"))
+    assert x.largest > 0
+    assert x.within_saved_digits is True
+
+
+def test_a_nan_at_the_same_point_on_both_sides_is_no_obstacle(lib):
+    old = _doc((0, 1, 2), [231.3005, math.nan, 231.3005])
+    new = _doc((0, 1, 2), [231.300491, math.nan, 231.300491], "single")
+    assert _x(lib, old, new).within_saved_digits is True
+
+
+def test_files_of_different_point_counts_are_never_rounding(lib):
+    old = _doc((0, 1, 2), [1.0, 2.0, 3.0])
+    new = _doc((0, 0.5, 1, 1.5, 2), [1.0000001, 1.5, 2.0, 2.5, 3.0])
+    x = _x(lib, old, new)
+    assert x.largest > 0
+    assert x.within_saved_digits is False
+
+
+def test_a_file_of_short_numbers_is_still_held_to_7_digits(lib):
+    """1, 2, 3 spell one digit each: the file is held to the 7 DSTF wrote
+    before it recorded its sampling, not to one."""
+    x = _x(lib, _doc((0, 1, 2), [1, 2, 3]), _doc((0, 1, 2), [1.4, 2, 3]))
+    assert x.within_saved_digits is False
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        # one step of 99.99999 is 1e-5; of the 100.00005 it became, 1e-4
+        (((0, 1, 2), [99.99999] * 3), ((0, 1, 2), [100.00005] * 3, "single")),
+        # within a step at 1000, and far past one at 0.001
+        (((0, 1), [1000.0, 0.001]), ((0, 1), [1000.0005, 0.0015])),
+    ],
+    ids=["across-a-decade", "two-decades"],
+)
+def test_each_point_is_held_to_the_step_of_its_own_value(lib, old, new):
+    x = _x(lib, _doc(*old), _doc(*new))
+    assert x.largest > 0
+    assert x.within_saved_digits is False
+
+
+def test_old_points_outside_the_new_span_are_never_rounding(lib):
+    """The last time moved one unit (3.000001 → 3): inside one step, yet
+    old's last point is outside new's span and not compared."""
+    old = _doc((0, 1, 2, 3.000001), [1.0, 2.0, 3.0, 4.0])
+    new = _doc((0, 1, 2, 3), [1.0, 2.000001, 3.0, 4.0])
+    x = _x(lib, old, new)
+    assert (x.outside, x.within_saved_digits) == (1, False)
+
+
+def test_an_event_whose_times_rounded_apart_is_rounding_point_by_point(lib):
+    """A real re-save at single precision: the 7-digit file stores an event
+    at 1.240653 four times, the float32 one at 1.2406528. Its middle samples
+    meet no sample of the same time (not compared, ``uneven``), yet every
+    stored point agrees within one step: the old file's rounding."""
+    old = _doc(
+        (1.2, 1.240652, 1.240652) + (1.240653,) * 4 + (1.240654,) * 3 + (1.3,),
+        [302993.2, 310047.5, 310047.5] + [310047.6] * 4 + [310047.7] * 3 + [310050.0],
+    )
+    new = _doc(
+        (1.20000005, 1.24065244, 1.24065244)
+        + (1.2406528,) * 4
+        + (1.24065351,) * 3
+        + (1.29999995,),
+        [302993.188, 310047.5, 310047.5]
+        + [310047.562] * 4
+        + [310047.656] * 3
+        + [310050.0],
+        "single",
+    )
+    x = _x(lib, old, new)
+    assert x.uneven > 0
+    assert (x.outside, x.non_finite) == (0, 0)
+    assert x.within_saved_digits is True
+
+
+def test_an_event_stored_otherwise_is_rounding_only_where_every_point_is(lib):
+    """Old stores t=1 three times, new twice (its third is 1.000001, one
+    unit on): the middle sample is not compared, and is 0.5 off — a move."""
+    old = _doc((0, 1, 1, 1, 2), [0.0, 1.0, 2.0, 3.0, 3.0])
+    new = _doc((0, 1, 1, 1.000001, 2), [0.0, 1.0, 2.5, 3.0, 3.000001])
+    x = _x(lib, old, new)
+    assert (x.uneven, x.within_saved_digits) == (1, False)
+
+
+def test_a_move_off_an_old_series_of_zeros_is_never_rounding(lib):
+    """Zero has no digits to round: 1e-30 where old stored 0 is a move."""
+    old = json.loads(_ref("Lib.A", variables={"x": [0.0, 0.0, 0.0]}))
+    new = json.loads(_ref("Lib.A", variables={"x": [0.0, 1e-30, 0.0]}))
+    (x,) = _changes(_two_docs(lib, old, new)).values()
+    assert (x.scale, x.largest, x.within_saved_digits) == ("absolute", 1e-30, False)
+
+
+def test_a_value_that_turned_not_finite_is_never_rounding(lib):
+    old, new = resaved_single()
+    new["variables"][0]["values"][1] = math.nan
+    x1 = _changes(_two_docs(lib, old, new))["unitTests.x[1]"]
+    assert (x1.non_finite, x1.within_saved_digits) == (1, False)
+
+
+def test_the_gap_between_folders_is_held_to_the_same_rule(lib):
+    """``--against``: each folder's newer baseline against the named one's,
+    point by point against the digits of the two files."""
+    old, new = resaved_single()
+    moved = json.loads(json.dumps(old))
+    moved["variables"][0]["values"][2] = 231.3007
+    _write(lib, "Dymola/linux/ref_a.json", json.dumps(old))
+    one = lib.commit("one")
+    _write(lib, "Dymola/linux/ref_a.json", json.dumps(new))
+    _write(lib, "Dymola/windows/ref_a.json", json.dumps(old))
+    _write(lib, "OpenModelica/linux/ref_a.json", json.dumps(moved))
+    two = lib.commit("two")
+    diff = diff_baselines(lib.top / "refs", one, two, against="Dymola/linux")
+    (test,) = diff.tests
+    windows = {v.name: v.change for v in test.against["Dymola/windows"]}
+    om = {v.name: v.change for v in test.against["OpenModelica/linux"]}
+    assert all(c.within_saved_digits for c in windows.values())
+    assert om["unitTests.x[1]"].within_saved_digits is False
+    assert om["unitTests.x[2]"].within_saved_digits is True
 
 
 def test_against_scores_every_other_folder_s_new_baseline_against_one(lib):

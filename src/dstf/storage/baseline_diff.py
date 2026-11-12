@@ -41,6 +41,18 @@ range under 1e-10 of the value is a constant and the percent is of its
 value, and an old series of zeros reads the absolute difference. Values
 are the codec's (a single-precision file reads through float32). Only the
 stored samples are compared: what happened between them is not seen.
+
+A change that is only the rounding of a file saved with fewer digits is
+no move (:attr:`SeriesChange.within_saved_digits`): a file that records no
+``sampling`` spells its numbers at some digits (`~.baseline_codec.saved_digits`,
+7 or more), and where the two files hold the same number of points and, point
+by point, each time and each value agrees within one step of the last digit
+either file spells (`~.baseline_codec.saved_step`), the change is that
+rounding — a baseline accepted again at single precision, its numbers kept.
+Point by point, not on old's grid: a float32 time read on a 7-digit grid
+moves a step by its height. Two files that both record ``sampling`` spell
+their runs' own numbers and hold no rounding. The change's size is still
+the largest difference on old's grid; the words say it as none.
 """
 
 from __future__ import annotations
@@ -48,7 +60,7 @@ from __future__ import annotations
 import math
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -61,6 +73,8 @@ from .baseline_codec import (
     decode_reference,
     model_id_of,
     parse_body,
+    saved_digits,
+    saved_step,
     shown_digits,
 )
 from .git_revisions import Commit, Repository
@@ -119,6 +133,9 @@ class SeriesChange:
     non_finite_at: float | None = None
     #: why nothing was compared ("no time in the old baseline"); "" otherwise
     note: str = ""
+    #: the change is only the rounding of a file saved with fewer digits
+    #: (:func:`with_rounding`); ``largest`` keeps its size
+    within_saved_digits: bool = False
 
 
 @dataclass(frozen=True)
@@ -383,6 +400,56 @@ def series_change(d: Difference) -> SeriesChange:
     )
 
 
+#: How far past one step a difference may be and still be one step: the
+#: noise of a subtraction (231.3006 - 231.3005 is 1.00000000003e-4).
+_ONE_STEP = 1 + 1e-9
+
+
+def with_rounding(
+    change: SeriesChange,
+    old: tuple[np.ndarray, np.ndarray, int | None],
+    new: tuple[np.ndarray, np.ndarray, int | None],
+) -> SeriesChange:
+    """``change`` marked :attr:`~SeriesChange.within_saved_digits` where it
+    is only the rounding of a file saved with fewer digits. ``old`` and
+    ``new`` are each side's (time, values, the digits its file spells —
+    `~.baseline_codec.saved_digits`, None for none to round). That holds
+    where some point moved, no difference is not finite and none of old's
+    points is outside new's span, the two files hold the same number of
+    points, and at every index the times, and the values, agree within one
+    step of the last digit either file spells — each at its own number
+    (`~.baseline_codec.saved_step`; a NaN where the other side's is NaN
+    agrees). Index by index: a re-save keeps its points, and read on old's
+    grid a float32 time moves a step. That check reaches every stored
+    point, so the middle samples of an event the two files store at times
+    that rounded apart (``uneven``, not compared on old's grid) are held
+    by it too."""
+    if not change.largest or change.non_finite or change.outside or change.note:
+        return change
+    (to, yo, old_digits), (tn, yn, new_digits) = old, new
+    if old_digits is None and new_digits is None:
+        return change
+    if to.size != tn.size or yo.size != yn.size:
+        return change
+    if _agrees(to, tn, old_digits, new_digits) and _agrees(
+        yo, yn, old_digits, new_digits
+    ):
+        return replace(change, within_saved_digits=True)
+    return change
+
+
+def _agrees(
+    old: np.ndarray, new: np.ndarray, old_digits: int | None, new_digits: int | None
+) -> bool:
+    """Every index equal (a NaN to a NaN), or within the larger of old's
+    step at its number and new's at its."""
+    step = np.fmax(saved_step(old, old_digits), saved_step(new, new_digits))
+    with np.errstate(invalid="ignore"):  # inf - inf
+        near = np.abs(new - old) <= step * _ONE_STEP
+    same = (old == new) | (np.isnan(old) & np.isnan(new))
+    return bool(np.all(near | same))
+
+
 def compare_series(
     old_time: np.ndarray,
     old_values: np.ndarray,
@@ -441,9 +508,15 @@ def pair_variables(
     return out
 
 
-def _variables(old: Baseline, new: Baseline) -> list[VariableDiff]:
+def _variables(
+    old: Baseline,
+    new: Baseline,
+    digits: tuple[int | None, int | None],
+) -> list[VariableDiff]:
     """Every variable of either side, paired by :func:`pair_variables`:
-    old's order, then new's."""
+    old's order, then new's; ``digits`` what old's and new's files spell
+    (`~.baseline_codec.saved_digits`)."""
+    old_time, new_time = np.asarray(old.time, float), np.asarray(new.time, float)
     out: list[VariableDiff] = []
     for ov, nv in pair_variables(old.variables, new.variables):
         if nv is None:
@@ -453,11 +526,12 @@ def _variables(old: Baseline, new: Baseline) -> list[VariableDiff]:
         if ov is None:
             out.append(VariableDiff(nv.name, _label(nv), "new"))
             continue
-        change = compare_series(
-            np.asarray(old.time, float),
-            np.asarray(ov.values, float),
-            np.asarray(new.time, float),
-            np.asarray(nv.values, float),
+        old_values = np.asarray(ov.values, float)
+        new_values = np.asarray(nv.values, float)
+        change = with_rounding(
+            compare_series(old_time, old_values, new_time, new_values),
+            (old_time, old_values, digits[0]),
+            (new_time, new_values, digits[1]),
         )
         renamed = (ov.name, nv.name) if ov.name != nv.name else None
         said = (ov.expression or "", nv.expression or "")
@@ -718,7 +792,9 @@ def _baseline(
         "changed",
         old_file,
         new_file,
-        variables=_variables(a.baseline, b.baseline),
+        variables=_variables(
+            a.baseline, b.baseline, (saved_digits(a), saved_digits(b))
+        ),
         settings=_settings(a, b),
         samples=_samples(a.sampling, b.sampling),
         sampling_first=b.sampling if a.sampling is None else None,
@@ -841,13 +917,16 @@ def _against(
     reference = _one_readable(keyed.get((against, model_id), [[], []])[1])
     if reference is None:
         return {}
+    spelled = saved_digits(reference)
     out = {}
     for folder in folders:
         if folder == against:
             continue
         other = _one_readable(keyed.get((folder, model_id), [[], []])[1])
         if other is not None:
-            out[folder] = _variables(reference.baseline, other.baseline)
+            out[folder] = _variables(
+                reference.baseline, other.baseline, (spelled, saved_digits(other))
+            )
     return out
 
 

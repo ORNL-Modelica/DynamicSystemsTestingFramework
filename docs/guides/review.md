@@ -57,7 +57,7 @@ What a `Change` cell can say:
 | `1.8 %` | the largest change of a variable there, as a percent of the old baseline's range |
 | `2.9e-05 % of value` | the old series is constant: the change is a percent of its value |
 | `0.004 absolute` | the old series is zero: the change is the difference itself |
-| `0 %` | the file changed, but no compared sample of a tracked variable moved; the key line says so when no value turned non-finite and no old point fell outside the new run |
+| `0 %` | the file changed, but no compared sample of a tracked variable moved beyond the rounding of a file saved with fewer digits; the key line says so when no value turned non-finite and no old point fell outside the new run |
 | `–` | nothing compared: no finite point on either side, or no time |
 | `(+N variables)`, `(−N variables)` | N variables only the newer, or only the older, baseline holds |
 | `(settings)` | the simulation settings, the sampling setting or precision, or the comparison settings changed |
@@ -133,6 +133,17 @@ compared with the new one's sample of the same place there when the new
 baseline stores that time as many times, and is otherwise counted, not
 compared.
 
+A difference that is only the rounding of a file saved with fewer digits is
+no change. A baseline written before DSTF recorded its sampling spells its
+numbers at some number of significant digits (7, or more where its numbers
+show more); one that records it spells its run's own numbers exactly. Where
+the two files hold the same stored points and, point by point, each time and
+each value agrees within one step of the last digit either file spells, the
+cell reads `0 %`: a baseline accepted again at single precision with its
+numbers kept (`231.3005` read back as `231.300491`) is such a file. Two
+files that both record their sampling never differ by rounding. The detail
+keeps the true size and names it: `0 % (rounding: 3.7e-06 % of value)`.
+
 `--against Dymola/linux` adds the `Gap` column: every other folder's newer
 baseline scored against that folder's newer one, by the same rule.
 
@@ -193,11 +204,13 @@ Which images:
   added later was first stored, and the points not compared or not finite.
 - **The variables:** each one that moved: at some later revision its change
   against the first revision that holds it is not nothing (a point that
-  moved, a difference not finite, or a point not compared). A variable added
-  or removed between the revisions moved only where it then changed. The
-  others are named in one line under the folder (`Not drawn, unchanged: a,
-  b, c`, cut past ten names), and a folder where nothing moved draws
-  nothing.
+  moved beyond the rounding of a file saved with fewer digits, as `baseline
+  diff` reads it against the first revision's file; a difference not
+  finite; or a point not compared). A variable added or removed between the revisions moved only
+  where it then changed. The others are named in one line under the folder
+  (`Not drawn, unchanged: a, b, c. Not drawn, rounding of the saved digits
+  only: d.`, each list cut past ten names), and a folder where nothing moved
+  draws nothing.
 
 The gallery lists the revisions with their subjects, then each test,
 largest change first, with its row of `baseline diff`'s overview and its

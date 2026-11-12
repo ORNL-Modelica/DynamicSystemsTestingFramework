@@ -1,7 +1,8 @@
 """``dstf baseline plot``'s images and page, from the facts of
 :mod:`dstf.storage.baseline_history`: one figure per variable that moved,
 of each folder drawn (:func:`plan_images`, at a path safe on every OS; the
-others named in one line of the page), and one
+others named in one line of the page — unchanged, or moved only by the
+rounding of a file saved with fewer digits), and one
 self-contained ``gallery.html`` (:func:`gallery_html`) — every PNG inline
 as a data URI, no script, nothing fetched — to send to a reviewer.
 
@@ -56,7 +57,7 @@ SUBJECT_CHARS, LABEL_CHARS, TEST_CHARS = 48, 40, 100
 _FOLDER_CHARS = 40
 #: One note under an image.
 _NOTE_CHARS = 150
-#: The most variables the line of those not drawn names.
+#: The most variables each sentence of the line of those not drawn names.
 _UNCHANGED_SHOWN = 10
 #: Names no file may have on Windows, whatever its extension.
 _RESERVED = frozenset(
@@ -352,9 +353,13 @@ def _section(test, row, header, diff, steps, images, pngs) -> list[str]:
         )
     for folder in test.folders:
         out.append(f"<h3>{_e(folder.folder)}</h3>")
-        unchanged = [v.label for v in folder.variables if not v.moved]
-        if unchanged:
-            out.append(f'<p class="said">{_e(_not_drawn(unchanged))}</p>')
+        unchanged = [
+            v.label for v in folder.variables if not v.moved and not v.rounding_only
+        ]
+        rounding = [v.label for v in folder.variables if v.rounding_only]
+        if unchanged or rounding:
+            said = _not_drawn(unchanged, rounding)
+            out.append(f'<p class="said">{_e(said)}</p>')
         for image in images:
             if image.test != test.model_id or image.folder != folder.folder:
                 continue
@@ -370,13 +375,25 @@ def _section(test, row, header, diff, steps, images, pngs) -> list[str]:
     return out
 
 
-def _not_drawn(labels: list[str]) -> str:
-    """The one line naming a folder's variables that did not move."""
-    shown = ", ".join(labels[:_UNCHANGED_SHOWN])
-    more = len(labels) - _UNCHANGED_SHOWN
-    return f"Not drawn, unchanged: {shown}" + (
-        f" … and {more} more" if more > 0 else ""
-    )
+def _not_drawn(unchanged: list[str], rounding: list[str]) -> str:
+    """The one line naming a folder's variables that did not move: the
+    unchanged, then those that moved by the files' rounding only — each
+    sentence only where it names any."""
+    said = []
+    for what, labels in (
+        ("unchanged", unchanged),
+        ("rounding of the saved digits only", rounding),
+    ):
+        if not labels:
+            continue
+        shown = ", ".join(labels[:_UNCHANGED_SHOWN])
+        more = len(labels) - _UNCHANGED_SHOWN
+        said.append(
+            f"Not drawn, {what}: {shown}"
+            + (f" … and {more} more" if more > 0 else "")
+            + "."
+        )
+    return " ".join(said)
 
 
 # --- the output directory --------------------------------------------------------
