@@ -47,6 +47,21 @@ _PANEL_SAID = {
     "value": "as % of the first's value (a constant)",
     "absolute": "the absolute difference (the first is all zero)",
 }
+#: The words for what each line is (``baseline plot``'s baselines, ``plot``'s
+#: runs): the panel's caption, and the notes naming a line not held or the
+#: first that holds one (``{}``: the line's short name).
+KIND_WORDS = {
+    "baseline": {
+        "each later": "each later baseline",
+        "not held": "Not stored at {}.",
+        "first held": "First stored at {}",
+    },
+    "run": {
+        "each later": "each later run",
+        "not held": "Not in run {}.",
+        "first held": "First in run {}",
+    },
+}
 _GRID = "#eeeeee"
 _MUTED = "#555555"
 
@@ -84,12 +99,14 @@ def history_figure(
     unit: str,
     first: str,
     notes: Sequence[str],
+    kind: str = "baseline",
 ) -> dict:
     """The figure of one variable: ``traces`` oldest first, the first the
     one every other is measured against. ``unit`` is the difference's
     scale (``range``, ``value`` or ``absolute``); ``first`` names the first
-    revision in the panel's caption; ``notes`` are lines under the legend
-    (revisions skipped, a rename, the points not finite)."""
+    revision in the panel's caption, ``kind`` what each line is there
+    ("baseline", "run"); ``notes`` are lines under the legend (revisions
+    skipped, a rename, the points not finite)."""
     palette = palette_of("default")
     colours = [palette.context, *ramp(palette.hues[0], max(len(traces) - 1, 1))]
     data: list[dict] = []
@@ -145,7 +162,7 @@ def history_figure(
     height = _TOP + _PLOT + bottom
     annotations = [
         {
-            "text": f"each later baseline minus the first ({first}), "
+            "text": f"{KIND_WORDS[kind]['each later']} minus the first ({first}), "
             f"{_PANEL_SAID[unit]}: baseline diff's Change measure",
             "xref": "paper",
             "yref": "paper",

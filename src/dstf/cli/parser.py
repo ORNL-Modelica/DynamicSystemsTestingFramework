@@ -967,7 +967,7 @@ class _Tree:
 
 #: The top-level help's listing: the commands by what they are for.
 COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("run and score", ("discover", "run", "compare", "summary")),
+    ("run and score", ("discover", "run", "compare", "summary", "plot")),
     ("write criteria", ("author", "spec add", "spec update", "spec schema")),
     (
         "baselines and the data beside them",
@@ -1038,6 +1038,7 @@ READS: dict[str, tuple[str, ...]] = {
     "spec schema": ("output",),
     "baseline export": (*_STORE, "format", "output", "backend", "work_dir"),
     "summary": ("base", "format", "output"),
+    "plot": ("config", "source_path", "test_spec", "test", "folder", "output"),
     "baseline diff": (
         "config",
         "reference_root",
@@ -1118,6 +1119,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     _add_run(tree, top)
     _add_compare(tree, top)
     _add_summary(tree, top)
+    _add_plot(tree, top)
     _add_author(tree, top)
     _add_check(tree, top)
     _add_spec(tree, top)
@@ -1463,6 +1465,106 @@ def _add_summary(tree: _Tree, top) -> None:
         "as data). Default: markdown.",
     )
     _offer(node, "output", default=None, help="The file to write. Default: printed.")
+
+
+def _add_plot(tree: _Tree, top) -> None:
+    node = tree.command(
+        top,
+        "plot",
+        summary="Draw two runs or more as images and a page",
+        description="""
+            Draw a library's tests in two runs or more — main's run beside
+            a branch's — one PNG image per variable that moved: on top, the
+            variable in each run; under it, each later run minus the FIRST
+            run, on the first's time grid, as a percent of the first's
+            range (% of value where the first is constant; the absolute
+            difference where it is all zero) — the measure `baseline diff`
+            prints as Change. Every image is also inline in one
+            gallery.html: a section per test and <Backend>/<os>, largest
+            change first, each with its Change, its images, a table of its
+            constants — each variable that holds one value at every point
+            of each run, moved or not: its value in each run and its Change
+            — and one line naming the variables not drawn because they did
+            not change, or only one run holds them.
+
+            Each DIR is a run's work dir, read as `dstf compare` reads one
+            and never written: its batch_manifest.json holds the tests it
+            ran, its status.json the backend and os that ran them, and that
+            backend reads its results under the CURRENT testing.json and
+            test spec — the tests discovery finds and the variables they
+            track. Runs pair only within one <Backend>/<os>, in the order
+            their labels are first given; the first is the one each later
+            run is measured against. A LABEL may repeat, once per
+            <Backend>/<os>: one change run on two backends. A test whose run
+            failed or did not run in a run is no line there, and the page
+            says so.
+
+            By default the tests are those with a variable that moved or
+            that only some runs hold, or a run that failed or holds no
+            result, in a <Backend>/<os> of two runs that hold them; the
+            others are named in one line ("Nothing moved in 12 tests: …").
+            --test names tests to draw in full, tables included, even where
+            nothing moved or one run holds them: how a passing fix's values
+            are seen.
+
+            The images are drawn as `baseline plot` draws them, by the
+            plotly.js DSTF ships in a headless Chromium (Playwright):
+            install the browser extra, then `python -m playwright install
+            chromium`. -o DIR is created when it is not there; a directory
+            holding anything this command did not write is refused, one it
+            wrote before is rewritten. Without --test, over 300 images are
+            refused.
+
+            Exit code: 0 when the images and the page are written; 2 when an
+            argument is not LABEL=DIR, a DIR is no run's work dir, its
+            status.json names no backend and os, it is a run of another
+            library, a label holds two runs of one <Backend>/<os>, no
+            <Backend>/<os> has two runs, a --test or --folder names
+            nothing, -o is refused, over 300 images are asked for without
+            --test, or there is no browser to draw with.
+            """,
+        examples=(
+            "dstf plot main=../main/testing_output/MyLib/Dymola/linux "
+            "branch=testing_output/MyLib/Dymola/linux -o plots",
+            "dstf plot main=main-dymola main=main-om fix=fix-dymola fix=fix-om "
+            "--test NSSS_Test -o nsss",
+        ),
+    )
+    node.add_argument(
+        "runs",
+        metavar="LABEL=DIR",
+        nargs="+",
+        help="A run's label and its work dir (the folder holding "
+        "batch_manifest.json). The first label's run is the one each later "
+        "run is measured against; a label may repeat, once per backend/os.",
+    )
+    node.add_argument(
+        "--test",
+        metavar="NAME",
+        nargs="+",
+        default=None,
+        help="Only these tests, each a short name (NSSS_Test) or a full model "
+        "id, drawn in full even where nothing moved; a NAME that matches no "
+        "run's test is refused. Give it after the runs. Default: every test "
+        "with a variable that moved or that only some runs hold, or a run "
+        "that failed or holds no result.",
+    )
+    node.add_argument(
+        "--folder",
+        metavar="BACKEND/OS",
+        nargs="+",
+        default=None,
+        help="Only the runs of these backend/os folders (Dymola/linux). Give "
+        "it after the runs. Default: every one with two runs or more.",
+    )
+    node.add_argument(
+        "-o",
+        "--output",
+        metavar="DIR",
+        required=True,
+        help="The directory to write the images and gallery.html into: a new "
+        "or empty one, or one this command wrote before.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1868,7 +1970,11 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
             and, per folder, one line naming the variables not drawn because
             they did not change, or changed only by the rounding of a file
             saved with fewer digits (the same points, each within one step
-            of its last digit): one file to send to a reviewer.
+            of its last digit): one file to send to a reviewer. A constant —
+            a variable that holds one value at every stored point at each
+            revision — is never drawn: per folder, one table gives each
+            constant's value at each revision, at the digits its file holds,
+            and its Change, whether it moved or not.
 
             By default the tests are those `baseline diff` REV1 to the last
             revision lists as changed or new, in every <Backend>/<os> folder

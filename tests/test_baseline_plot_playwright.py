@@ -110,7 +110,7 @@ def test_the_images_the_gallery_and_the_marker_are_written(lib, tmp_path, capsys
     marker = json.loads((out / MARKER).read_text())
     assert sorted(marker["files"]) == sorted([*images, GALLERY])
     said = capsys.readouterr().out.strip()
-    assert said.startswith(f"Wrote 3 images and {out / GALLERY} (")
+    assert said.startswith(f"Wrote 3 images, 0 tables and {out / GALLERY} (")
 
 
 def test_a_rewrite_of_its_own_directory_leaves_no_stale_image(lib, tmp_path):

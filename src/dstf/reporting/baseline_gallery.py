@@ -1,8 +1,10 @@
 """``dstf baseline plot``'s images and page, from the facts of
 :mod:`dstf.storage.baseline_history`: one figure per variable that moved,
-of each folder drawn (:func:`plan_images`, at a path safe on every OS; the
-others named in one line of the page — unchanged, or moved only by the
-rounding of a file saved with fewer digits), and one
+of each folder drawn (:func:`plan_images`, at a path safe on every OS; a
+constant in the folder's value table instead, moved or not
+(:func:`value_table`); the others named in one line of the page —
+unchanged, or moved only by the rounding of a file saved with fewer
+digits), and one
 self-contained ``gallery.html`` (:func:`gallery_html`) — every PNG inline
 as a data URI, no script, nothing fetched — to send to a reviewer.
 
@@ -28,23 +30,35 @@ from pathlib import Path
 
 import numpy as np
 
-from ..figures.history import HistoryTrace, cut, history_figure
-from ..storage.baseline_diff import short_name
+from ..figures.history import KIND_WORDS, HistoryTrace, cut, history_figure
+from ..storage.baseline_diff import (
+    BaselineDiff,
+    VariableDiff,
+    folder_order,
+    short_name,
+)
 from ..storage.baseline_history import (
     MAX_KEPT,
     FolderHistory,
     History,
+    Line,
     Revision,
+    Run,
+    Source,
     TestHistory,
     VariableHistory,
 )
 from .baseline_diff_text import (
     LIMITS,
+    change_cell,
+    change_rank,
+    constant_change,
     overview_cells,
     overview_header,
     sorted_tests,
     steps_folder,
 )
+from .run_history import RunHistory
 
 #: The page every run writes, at the top of the output directory.
 GALLERY = "gallery.html"
@@ -57,6 +71,8 @@ SUBJECT_CHARS, LABEL_CHARS, TEST_CHARS = 48, 40, 100
 _FOLDER_CHARS = 40
 #: One note under an image.
 _NOTE_CHARS = 150
+#: A value table's cell where the source holds no such constant.
+_DASH = "–"
 #: The most variables each sentence of the line of those not drawn names.
 _UNCHANGED_SHOWN = 10
 #: Names no file may have on Windows, whatever its extension.
@@ -83,8 +99,10 @@ class Image:
     notes: list[str] = field(default_factory=list)
 
 
-def legend_name(revision: Revision) -> str:
+def legend_name(revision: Source) -> str:
     """``<date> <short hash> <subject>``, the subject cut at 48 characters."""
+    if isinstance(revision, Run):
+        return f"{revision.label} ({revision.folder})"
     commit = revision.commit
     return f"{revision.date} {commit.short} {cut(commit.subject, SUBJECT_CHARS)}"
 
@@ -125,17 +143,18 @@ def _test_folders(model_ids: Iterable[str]) -> dict[str, str]:
 # --- the images ----------------------------------------------------------------
 
 
-def plan_images(history: History) -> list[Image]:
-    """Every image of the history — one per variable that moved — with its
-    figure and its notes."""
-    folders = _test_folders(t.model_id for t in history.tests)
+def plan_images(tests: list[TestHistory]) -> list[Image]:
+    """Every image of the history — one per variable that moved and is no
+    constant (:attr:`~.VariableHistory.drawn`) — with its figure and its
+    notes."""
+    folders = _test_folders(t.model_id for t in tests)
     out = []
-    for test in history.tests:
+    for test in tests:
         for folder in test.folders:
             where = f"{folders[test.model_id]}/" + _safe(
                 folder.folder.replace("/", "-"), _FOLDER_CHARS, dots=False
             )
-            moved = [v for v in folder.variables if v.moved]
+            moved = [v for v in folder.variables if v.drawn]
             width = max(2, len(str(len(moved))))
             for n, variable in enumerate(moved, start=1):
                 name = f"{n:0{width}d}-{_safe(variable.label, LABEL_CHARS, dots=False)}"
@@ -180,13 +199,14 @@ def _figure(
         y_title=variable.label,
         traces=traces,
         unit=scales[0] if scales else "range",
-        first=f"{first.date} {first.commit.short}",
+        first=first.first,
         notes=notes,
+        kind=first.kind,
     )
 
 
-def _shorts(revisions: Iterable[Revision]) -> str:
-    return ", ".join(r.commit.short for r in revisions)
+def _shorts(revisions: Iterable[Source]) -> str:
+    return ", ".join(r.short for r in revisions)
 
 
 def _points(n: int) -> str:
@@ -213,6 +233,7 @@ def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
     notes += [
         f"Cannot be read at {r.commit.short} ({why})." for r, why in folder.unreadable
     ]
+    notes += _run_notes(folder)
     if folder.thinned:
         total = len(folder.kept) + len(folder.thinned)
         notes.append(
@@ -225,21 +246,23 @@ def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
     ]
     held = {line.revision for line in variable.lines}
     start = variable.lines[0].revision
+    words = KIND_WORDS[start.kind]
     after_first = folder.kept.index(start)
     missing = [r for r in folder.kept[after_first:] if r not in held]
     if missing:
-        notes.append(f"Not stored at {_shorts(missing)}.")
+        notes.append(words["not held"].format(_shorts(missing)))
     if variable.first_stored not in (None, start):
         notes.append(
-            f"First stored at {variable.first_stored.commit.short}, which is left "
-            f"out; measured from {start.commit.short}."
+            words["first held"].format(variable.first_stored.short)
+            + f", which is left out; measured from {start.short}."
         )
     elif after_first:
         notes.append(
-            f"First stored at {start.commit.short}; nothing earlier to measure against."
+            words["first held"].format(start.short)
+            + "; nothing earlier to measure against."
         )
     for line in variable.lines[1:]:
-        change, short = line.change, line.revision.commit.short
+        change, short = line.change, line.revision.short
         assert change is not None
         if change.note:
             notes.append(f"{short}: {change.note}.")
@@ -354,9 +377,11 @@ def _section(test, row, header, diff, steps, images, pngs) -> list[str]:
     for folder in test.folders:
         out.append(f"<h3>{_e(folder.folder)}</h3>")
         unchanged = [
-            v.label for v in folder.variables if not v.moved and not v.rounding_only
+            v.label
+            for v in folder.variables
+            if not v.moved and not v.rounding_only and not v.flat
         ]
-        rounding = [v.label for v in folder.variables if v.rounding_only]
+        rounding = [v.label for v in folder.variables if v.rounding_only and not v.flat]
         if unchanged or rounding:
             said = _not_drawn(unchanged, rounding)
             out.append(f'<p class="said">{_e(said)}</p>')
@@ -371,19 +396,69 @@ def _section(test, row, header, diff, steps, images, pngs) -> list[str]:
                 + (f"<figcaption>{caption}</figcaption>" if caption else "")
                 + "</figure>"
             )
+        out += value_table(folder)
     out.append("</section>")
     return out
+
+
+def tables(history: History) -> int:
+    """The value tables of the history: one per folder drawn that holds a
+    constant."""
+    return sum(
+        any(v.flat for v in folder.variables)
+        for test in history.tests
+        for folder in test.folders
+    )
+
+
+def value_table(folder: FolderHistory) -> list[str]:
+    """The folder's constants (:attr:`~.VariableHistory.flat`), moved or
+    not, as one table: a row each, its value at each source drawn — at the
+    digits that source holds, ``–`` where it holds none — and the last
+    one's Change against the first, in ``baseline diff``'s words. None
+    where the folder holds no constant."""
+    flat = [v for v in folder.variables if v.flat]
+    if not flat:
+        return []
+    heads = "".join(f"<th>{_e(source.short)}</th>" for source in folder.kept)
+    rows = [
+        '<table class="constants">',
+        f"<tr><th>Constant</th>{heads}<th>Change</th></tr>",
+    ]
+    for variable in flat:
+        at = {line.revision: line for line in variable.lines}
+        cells = "".join(
+            f"<td>{_e(_constant(at[source]) if source in at else _DASH)}</td>"
+            for source in folder.kept
+        )
+        last = variable.lines[-1].change
+        change = _DASH if last is None else constant_change(last)
+        rows.append(
+            f"<tr><td><code>{_e(variable.label)}</code></td>{cells}"
+            f"<td>{_e(change)}</td></tr>"
+        )
+    rows.append("</table>")
+    return rows
+
+
+def _constant(line: Line) -> str:
+    """A constant's one value, at the digits its source holds."""
+    return f"{float(line.values[0]):.{line.digits}g}"
 
 
 def _not_drawn(unchanged: list[str], rounding: list[str]) -> str:
     """The one line naming a folder's variables that did not move: the
     unchanged, then those that moved by the files' rounding only — each
     sentence only where it names any."""
+    return _not_drawn_of(
+        [("unchanged", unchanged), ("rounding of the saved digits only", rounding)]
+    )
+
+
+def _not_drawn_of(groups: list[tuple[str, list[str]]]) -> str:
+    """The not-drawn line: a sentence for each group that names any."""
     said = []
-    for what, labels in (
-        ("unchanged", unchanged),
-        ("rounding of the saved digits only", rounding),
-    ):
+    for what, labels in groups:
         if not labels:
             continue
         shown = ", ".join(labels[:_UNCHANGED_SHOWN])
@@ -394,6 +469,180 @@ def _not_drawn(unchanged: list[str], rounding: list[str]) -> str:
             + "."
         )
     return " ".join(said)
+
+
+# --- dstf plot: the runs' page ---------------------------------------------------
+
+
+def _run_notes(folder: FolderHistory) -> list[str]:
+    """Each run of the folder that is no line: its run failed, with why,
+    or it holds no result of the test."""
+    return [f"{s.short}: the run failed ({why})." for s, why in folder.failed] + [
+        f"{s.short}: not run." for s in folder.not_run
+    ]
+
+
+def _run_changes(folder: FolderHistory) -> list[VariableDiff]:
+    """Each variable two runs hold, as ``baseline diff`` reads a variable:
+    its last line's change against its first."""
+    return [
+        VariableDiff(v.lines[-1].name, v.label, "changed", change=v.lines[-1].change)
+        for v in folder.variables
+        if len(v.lines) > 1
+    ]
+
+
+def run_sections(history: RunHistory) -> list[tuple[TestHistory, FolderHistory]]:
+    """One section per test and folder drawn, largest change first, as
+    ``baseline diff`` ranks its tests; then by model id and folder."""
+
+    def key(item: tuple[TestHistory, FolderHistory]):
+        test, folder = item
+        nf, pct, absolute = change_rank(_run_changes(folder))
+        return (-nf, -pct, -absolute, test.model_id, folder_order(folder.folder))
+
+    return sorted(((t, f) for t in history.tests for f in t.folders), key=key)
+
+
+def alone_line(folder: str, run: Run) -> str:
+    """The line naming a backend/os given one run only."""
+    return f"{folder}: one run only ({run.label}), not drawn."
+
+
+def _section_notes(folder: FolderHistory) -> list[str]:
+    """What a section says before its images: each run that is no line,
+    and that there is nothing to compare where fewer than two are."""
+    notes = _run_notes(folder)
+    if len(folder.kept) < 2:
+        notes.append("No two runs of it to compare.")
+    return notes
+
+
+def uncompared_lines(history: RunHistory) -> list[str]:
+    """One console line per section with fewer than two runs to compare:
+    its test, its folder and why."""
+    return [
+        f"{short_name(test.model_id)} · {folder.folder}: "
+        + " ".join(_section_notes(folder))
+        for test, folder in run_sections(history)
+        if len(folder.kept) < 2
+    ]
+
+
+def nothing_moved_line(model_ids: list[str]) -> str:
+    """The one line naming the tests where nothing moved, cut past ten."""
+    n = len(model_ids)
+    shown = ", ".join(short_name(m) for m in model_ids[:_UNCHANGED_SHOWN])
+    more = n - _UNCHANGED_SHOWN
+    return (
+        f"Nothing moved in {n} test{'s' * (n != 1)}: {shown}"
+        + (f" … and {more} more" if more > 0 else "")
+        + "."
+    )
+
+
+def run_tables(history: RunHistory) -> int:
+    """The value tables of the page: one per section that holds a constant."""
+    return sum(
+        any(v.flat for v in folder.variables)
+        for test in history.tests
+        for folder in test.folders
+    )
+
+
+def run_gallery_html(
+    history: RunHistory, images: list[Image], pngs: Mapping[str, bytes]
+) -> str:
+    """``dstf plot``'s page: the runs of each folder, the tests where
+    nothing moved, then one section per test and folder, largest change
+    first (:func:`run_sections`) — its Change, then its images (``pngs``
+    by image path, inlined), its table of constants and the line of the
+    variables not drawn."""
+    labels = list(
+        dict.fromkeys(r.label for runs in history.folders.values() for r in runs)
+    )
+    title = " → ".join(labels)
+    runs = "".join(
+        f"<li>{_e(folder)}: {_e(' → '.join(legend_name(r) for r in got))}</li>"
+        for folder, got in history.folders.items()
+    )
+    sections = run_sections(history)
+    n = len(sections)
+    parts = [
+        "<!doctype html>",
+        '<html lang="en"><head><meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        f"<title>Runs {_e(title)}</title>",
+        f"<style>{_STYLE}</style></head><body>",
+        f"<h1>Runs {_e(title)}</h1>",
+        f"<ul>{runs}</ul>",
+        "<p>Each image: one variable of each run (top), and each later run "
+        "minus the first, on the first's time grid, as <code>baseline "
+        "diff</code> measures a change (bottom). A constant is a row of its "
+        "section's table instead.</p>",
+        f"<p>{len(images)} image{'s' * (len(images) != 1)} and "
+        f"{run_tables(history)} table{'s' * (run_tables(history) != 1)} in "
+        f"{n} section{'s' * (n != 1)}.</p>",
+    ]
+    if history.nothing_moved:
+        parts.append(
+            f'<p class="said">{_e(nothing_moved_line(history.nothing_moved))}</p>'
+        )
+    for folder, run in history.alone:
+        parts.append(f'<p class="said">{_e(alone_line(folder, run))}</p>')
+    for test, folder in sections:
+        parts += _run_section(test, folder, images, pngs)
+    parts.append("</body></html>")
+    return "\n".join(parts) + "\n"
+
+
+def _run_section(
+    test: TestHistory,
+    folder: FolderHistory,
+    images: list[Image],
+    pngs: Mapping[str, bytes],
+) -> list[str]:
+    short = short_name(test.model_id)
+    cell = change_cell(
+        BaselineDiff(folder.folder, "changed", variables=_run_changes(folder))
+    )
+    out = [
+        "<section>",
+        f"<h2><code>{_e(short)}</code> · {_e(folder.folder)}</h2>",
+        f'<p class="id"><code>{_e(test.model_id)}</code></p>',
+        f"<table><tr><th>Test</th><th>Change, {_e(folder.folder)}</th></tr>"
+        f"<tr><td><code>{_e(short)}</code></td><td>{_e(cell)}</td></tr></table>",
+    ]
+    out += [f'<p class="said">{_e(note)}</p>' for note in _section_notes(folder)]
+    for image in images:
+        if image.test != test.model_id or image.folder != folder.folder:
+            continue
+        data = base64.b64encode(pngs[image.path]).decode("ascii")
+        caption = "<br>".join(_e(n) for n in image.notes)
+        out.append(
+            f'<figure><img alt="{_e(image.label)}" '
+            f'src="data:image/png;base64,{data}">'
+            + (f"<figcaption>{caption}</figcaption>" if caption else "")
+            + "</figure>"
+        )
+    out += value_table(folder)
+    unchanged = [
+        v.label
+        for v in folder.variables
+        if len(v.lines) > 1 and not v.moved and not v.flat
+    ]
+    only: dict[str, list[str]] = {}
+    for v in folder.variables:
+        if len(v.lines) == 1 and not v.flat:
+            only.setdefault(v.lines[0].revision.short, []).append(v.label)
+    said = _not_drawn_of(
+        [("unchanged", unchanged)]
+        + [(f"only in {label}", labels) for label, labels in only.items()]
+    )
+    if said:
+        out.append(f'<p class="said">{_e(said)}</p>')
+    out.append("</section>")
+    return out
 
 
 # --- the output directory --------------------------------------------------------
@@ -420,11 +669,12 @@ def _listed(out: Path) -> set[str]:
     return listed
 
 
-def stale_files(out: Path) -> list[Path]:
+def stale_files(out: Path, command: str) -> list[Path]:
     """The files a run into ``out`` replaces: none for a directory that is
     not there or is empty; every file of one the last run wrote, its
     marker included. Raises :class:`OutputRefused` for a file, or for a
-    directory that holds anything else (a user's folder, ``-o .``)."""
+    directory that holds anything else (a user's folder, ``-o .``), said
+    as ``command``'s ("baseline plot")."""
     out = Path(out)
     if out.exists() and not out.is_dir():
         raise OutputRefused(f"{out} is a file: name a directory")
@@ -442,7 +692,7 @@ def stale_files(out: Path) -> list[Path]:
         if len(foreign) > 3:
             shown += f" and {len(foreign) - 3} more"
         raise OutputRefused(
-            f"{out} holds files baseline plot did not write ({shown}): "
+            f"{out} holds files {command} did not write ({shown}): "
             "name a new or empty directory"
         )
     return files
@@ -459,11 +709,11 @@ def clear(out: Path, files: list[Path]) -> None:
             folder = folder.parent
 
 
-def write_marker(out: Path, files: list[str]) -> None:
-    """The list of what this run writes, before it writes any: what the
-    next one may remove, even after this one stopped part way."""
+def write_marker(out: Path, files: list[str], command: str) -> None:
+    """The list of what this run of ``command`` ("baseline plot") writes,
+    before it writes any: what the next one may remove, even after this
+    one stopped part way."""
     (Path(out) / MARKER).write_text(
-        json.dumps({"written_by": "dstf baseline plot", "files": files}, indent=1)
-        + "\n",
+        json.dumps({"written_by": f"dstf {command}", "files": files}, indent=1) + "\n",
         encoding="utf-8",
     )

@@ -30,6 +30,12 @@ this file says when they do.
   the detail and the JSON (`renamed`) say. Across a library's rename of its
   UnitTests variables, a test read "+N variables, −N variables" and no
   change.
+- `dstf plot LABEL=DIR LABEL=DIR [...] -o DIR`: two runs or more of the
+  library — main's run beside a branch's — as PNG images, one per variable
+  that moved, each later run minus the first as `baseline diff` measures a
+  change, and one `gallery.html` with a table of each test's constants.
+  The runs are only read. Needs the `browser` extra and its Chromium. The
+  guide "Summarize a change for review" says how.
 - `dstf summary LABEL=DIR...`: several runs' results side by side, a row per
   backend/os and a column per label, passed over run; with `--base`, which
   tests not passing the base failed too — as Markdown for a pull request, or
@@ -42,6 +48,11 @@ this file says when they do.
   within one step of its last digit: a baseline accepted again at single
   precision with its numbers kept reads `0 %` (the detail says `rounding:` and
   its true size), and its variables are named, not drawn.
+- `dstf baseline plot` draws no constant: a variable that holds one value at
+  every stored point, at each revision, is a row of its folder's value table
+  in `gallery.html` — its value at each revision and its `Change` — moved or
+  not, and no longer an image or a name in the not-drawn line. The command
+  says how many tables it wrote beside the images.
 
 ### Fixed
 

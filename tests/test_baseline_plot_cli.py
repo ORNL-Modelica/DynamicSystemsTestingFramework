@@ -4,11 +4,10 @@ themselves are `test_baseline_plot_playwright.py`'s."""
 
 import json
 import sys
-import types
 
 import pytest
 
-from conftest import GitRepo, resaved_single
+from conftest import GitRepo, fake_playwright, resaved_single
 from dstf.cli.main import main
 from dstf.reporting.baseline_gallery import GALLERY, MARKER
 
@@ -160,58 +159,6 @@ def test_without_a_reference_root_it_is_refused(tmp_path, capsys, monkeypatch):
     assert not (tmp_path / "out").exists()
 
 
-def _fake_playwright(monkeypatch, stop_at=None):
-    """Playwright faked at its edge: a browser whose screenshot is a few
-    bytes, and is interrupted (Ctrl-C) at the ``stop_at``-th."""
-    shots = []
-
-    class Page:
-        def route(self, *a):
-            pass
-
-        def set_content(self, *a):
-            pass
-
-        def add_script_tag(self, **k):
-            pass
-
-        def set_viewport_size(self, *a):
-            pass
-
-        def evaluate(self, *a):
-            pass
-
-        def locator(self, *a):
-            return self
-
-        def screenshot(self, **k):
-            shots.append(1)
-            if len(shots) == stop_at:
-                raise KeyboardInterrupt
-            return b"\x89PNG fake"
-
-    class Browser:
-        def new_page(self):
-            return Page()
-
-        def close(self):
-            pass
-
-    class Running:
-        chromium = types.SimpleNamespace(launch=lambda: Browser())
-
-        def start(self):
-            return self
-
-        def stop(self):
-            pass
-
-    fake = types.ModuleType("playwright.sync_api")
-    fake.Error = type("Error", (Exception,), {})
-    fake.sync_playwright = Running
-    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
-
-
 def _files(out):
     return sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file())
 
@@ -224,14 +171,14 @@ def test_a_run_interrupted_mid_render_leaves_a_directory_the_next_run_may_write(
     lib = _lib(tmp_path, variables=3)
     out = tmp_path / "out"
     planned = [f"A/Dymola-linux/0{i}-x{i - 1}.png" for i in (1, 2, 3)]
-    _fake_playwright(monkeypatch, stop_at=2)
+    fake_playwright(monkeypatch, stop_at=2)
     with pytest.raises(KeyboardInterrupt):
         _plot(lib, out)
     assert _files(out) == sorted([MARKER, planned[0]])
     listed = json.loads((out / MARKER).read_text())["files"]
     assert sorted(listed) == sorted([*planned, GALLERY])
 
-    _fake_playwright(monkeypatch)
+    fake_playwright(monkeypatch)
     assert _plot(lib, out) == 0
     assert _files(out) == sorted([MARKER, GALLERY, *planned])
 
@@ -254,10 +201,14 @@ def test_a_baseline_saved_again_at_single_precision_draws_nothing(tmp_path, caps
         + ["--reference-root", str(repo.top / "ReferenceResults")]
     )
     assert code == 0
-    assert capsys.readouterr().out.startswith(f"Wrote 0 images and {out / GALLERY} (")
+    assert capsys.readouterr().out.startswith(
+        f"Wrote 0 images, 1 table and {out / GALLERY} ("
+    )
     assert sorted(p.name for p in out.rglob("*")) == [MARKER, GALLERY]
     page = (out / GALLERY).read_text(encoding="utf-8")
+    # constants: in the value table, the rounding of the saved digits 0 %
     assert (
-        '<p class="said">Not drawn, rounding of the saved digits only: '
-        "unitTests.x[1], unitTests.x[2], unitTests.x[3].</p>"
+        "<tr><td><code>unitTests.x[3]</code></td><td>615.5131</td><td>615.5131</td>"
+        "<td>0 %</td></tr>"
     ) in page.splitlines()
+    assert "rounding of the saved digits only" not in page

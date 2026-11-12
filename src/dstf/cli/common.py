@@ -62,6 +62,18 @@ def _build_config(args: argparse.Namespace) -> Config:
     return Config(**kwargs)
 
 
+class NotLabelled(Exception):
+    """A command-line argument that is not ``LABEL=DIR``; one sentence."""
+
+
+def labelled(arg: str) -> tuple[str, Path]:
+    """``LABEL=DIR`` as its two parts (`summary`'s runs, `plot`'s)."""
+    label, sep, folder = arg.partition("=")
+    if not (sep and label and folder):
+        raise NotLabelled(f"{arg}: not LABEL=DIR (main=testing_output/main)")
+    return label, Path(folder)
+
+
 def _split_filter_list(spec: str) -> list[str]:
     """Split a comma-separated filter list on commas NOT inside ``[]``.
 

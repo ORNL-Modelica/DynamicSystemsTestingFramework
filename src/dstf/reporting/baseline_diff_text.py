@@ -40,6 +40,7 @@ from ..storage.baseline_diff import (
     machine_dependent,
     short_name,
 )
+from ..storage.baseline_history import unchanged
 from .stats_rows import SECTION_TITLES, StatRow, report_text
 
 #: What a change is and what is not compared: the JSON's ``limits``, in
@@ -160,10 +161,22 @@ def _change_text(change: SeriesChange) -> str:
     return "; ".join(parts) or "nothing compared"
 
 
+def constant_change(change: SeriesChange) -> str:
+    """A constant's Change in a value table (``baseline plot``, ``plot``):
+    ``0 %`` for none or the files' rounding; its size where every compared
+    point is finite; else what the detail says (a point not finite, a
+    note)."""
+    if unchanged(change) or change.within_saved_digits:
+        return percent(0)
+    if change.largest is not None and not change.non_finite:
+        return _amount(change)
+    return _change_text(change)
+
+
 # --- ranking ---------------------------------------------------------------
 
 
-def _rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
+def change_rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
     """How large a set of variable changes is, for sorting: any non-finite
     difference first, then the largest percent, then the largest absolute
     difference."""
@@ -208,7 +221,7 @@ def _test_rank(test: TestDiff) -> tuple[int, int, float, float]:
     if not compared:
         return (1, 0, 0.0, 0.0)
     variables = [v for b in compared for v in b.variables]
-    nf, pct, absolute = _rank(variables)
+    nf, pct, absolute = change_rank(variables)
     return (0, -nf, -pct, -absolute)
 
 
@@ -239,7 +252,9 @@ def _marked(text: str, marks: list[str]) -> str:
     return f"{text} ({', '.join(marks)})" if marks else text
 
 
-def _cell(b: BaselineDiff) -> str:
+def change_cell(b: BaselineDiff) -> str:
+    """A changed baseline's Change cell: its largest change, with its marks
+    (variables added or removed, settings, a value not finite)."""
     if b.status != "changed":
         return _STATUS_CELL[b.status]
     largest = _largest(b.variables)
@@ -320,7 +335,9 @@ def overview_cells(diff: Diff, test: TestDiff, steps: str | None) -> list[str]:
     cells = []
     for folder in diff.folders:
         b = test.baselines.get(folder)
-        cells.append(_cell(b) if b else _SAME if folder in test.unchanged else _NONE)
+        cells.append(
+            change_cell(b) if b else _SAME if folder in test.unchanged else _NONE
+        )
     if diff.against:
         cells.append(_against_cell(test, several))
     if steps:

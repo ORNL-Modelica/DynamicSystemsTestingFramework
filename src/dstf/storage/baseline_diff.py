@@ -291,6 +291,8 @@ def difference_series(
     old_values: np.ndarray,
     new_time: np.ndarray,
     new_values: np.ndarray,
+    *,
+    kind: str = "baseline",
 ) -> Difference:
     """``new - old`` on old's grid (the module docstring's rule). An event
     is two samples or more at one time: old's first sample there meets
@@ -299,10 +301,13 @@ def difference_series(
     between them new's sample of the same place at that time where new
     stores it as many times — else that one is not compared
     (:attr:`Difference.uneven`). A point where either side is NaN or
-    infinite is a non-finite difference, unless both hold the same one."""
+    infinite is a non-finite difference, unless both hold the same one.
+    ``kind`` is what a side is, as a note says it ("baseline", "run")."""
     to, yo = np.asarray(old_time, float), np.asarray(old_values, float)
     tn, yn = np.asarray(new_time, float), np.asarray(new_values, float)
-    note = _unreadable_series(to, yo, "old") or _unreadable_series(tn, yn, "new")
+    note = _unreadable_series(to, yo, f"old {kind}") or _unreadable_series(
+        tn, yn, f"new {kind}"
+    )
     if note:
         none = np.zeros(0, bool)
         return Difference(to[:0], to[:0], "absolute", 1.0, none, none, none, note)
@@ -462,15 +467,16 @@ def compare_series(
 
 
 def _unreadable_series(time: np.ndarray, values: np.ndarray, side: str) -> str:
-    """Why a side's series cannot be compared, or ""."""
+    """Why a side's series cannot be compared, or "": ``side`` as a note
+    names it ("old baseline")."""
     if time.size == 0:
-        return f"no time in the {side} baseline"
+        return f"no time in the {side}"
     if values.size != time.size:
-        return f"the {side} baseline holds {values.size} values for {time.size} times"
+        return f"the {side} holds {values.size} values for {time.size} times"
     if not np.isfinite(time).all():
-        return f"the {side} baseline's time is not finite"
+        return f"the {side}'s time is not finite"
     if np.any(np.diff(time) < 0):
-        return f"the {side} baseline's time is not in order"
+        return f"the {side}'s time is not in order"
     return ""
 
 
