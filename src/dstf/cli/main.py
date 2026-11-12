@@ -92,4 +92,11 @@ def main(argv: list[str] | None = None) -> int:
 
 def main_entry() -> None:
     """Entry point for the console_scripts wrapper."""
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        # Ctrl-C is the user's stop, not a crash: one line and the shell's
+        # exit code for it (128 + SIGINT), never a traceback. `main` lets the
+        # interrupt through, so each command's own cleanup has already run.
+        print("Interrupted.", file=sys.stderr)
+        sys.exit(130)
