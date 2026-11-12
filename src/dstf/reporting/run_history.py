@@ -76,6 +76,9 @@ class RunHistory:
     tests: list[TestHistory]
     #: every other test two runs of a folder hold, by model id
     nothing_moved: list[str]
+    #: the tests were named (``--test``): each section's table holds every
+    #: tracked value
+    named: bool = False
 
 
 def _run_folder_name(directory: Path) -> str:
@@ -273,6 +276,7 @@ def run_history(
         alone=alone,
         tests=out,
         nothing_moved=nothing,
+        named=named is not None,
     )
 
 

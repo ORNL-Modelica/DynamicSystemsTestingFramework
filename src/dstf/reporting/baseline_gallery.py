@@ -52,11 +52,11 @@ from .baseline_diff_text import (
     LIMITS,
     change_cell,
     change_rank,
-    constant_change,
     overview_cells,
     overview_header,
     sorted_tests,
     steps_folder,
+    value_change,
 )
 from .run_history import RunHistory
 
@@ -432,7 +432,7 @@ def value_table(folder: FolderHistory) -> list[str]:
             for source in folder.kept
         )
         last = variable.lines[-1].change
-        change = _DASH if last is None else constant_change(last)
+        change = _DASH if last is None else value_change(last)
         rows.append(
             f"<tr><td><code>{_e(variable.label)}</code></td>{cells}"
             f"<td>{_e(change)}</td></tr>"
@@ -444,6 +444,55 @@ def value_table(folder: FolderHistory) -> list[str]:
 def _constant(line: Line) -> str:
     """A constant's one value, at the digits its source holds."""
     return f"{float(line.values[0]):.{line.digits}g}"
+
+
+#: Under a table of a named test's values, where a row holds an end value.
+END_KEY = (
+    "(end) = the value at the end of each run; Change = the biggest move "
+    "over the whole run."
+)
+
+
+def values_table(folder: FolderHistory, runs: list[Run]) -> list[str]:
+    """A named test's every tracked variable in one table (``dstf plot
+    --test``), in the order the runs track them: a constant's one value in
+    each run, a varying one's value at the end of each run (its label
+    marked ``(end)``) — at the digits that run holds, ``–`` where a run
+    holds none, its run failed or did not run — and the last line's Change
+    against the first: the largest move over the whole run, not the
+    difference of the end values. Under it, what ``(end)`` and Change are,
+    where a row is marked. None where no two runs are compared."""
+    if not folder.variables:
+        return []
+    heads = "".join(f"<th>{_e(run.short)}</th>" for run in runs)
+    rows = [
+        '<table class="values">',
+        f"<tr><th>Value</th>{heads}<th>Change</th></tr>",
+    ]
+    for variable in folder.variables:
+        at = {line.revision: line for line in variable.lines}
+        cells = "".join(
+            f"<td>{_e(_value_at(at[run], variable.flat) if run in at else _DASH)}</td>"
+            for run in runs
+        )
+        last = variable.lines[-1].change
+        change = _DASH if last is None else value_change(last)
+        end = "" if variable.flat else " (end)"
+        rows.append(
+            f"<tr><td><code>{_e(variable.label)}</code>{end}</td>{cells}"
+            f"<td>{_e(change)}</td></tr>"
+        )
+    rows.append("</table>")
+    if not all(v.flat for v in folder.variables):
+        rows.append(f'<p class="said">{_e(END_KEY)}</p>')
+    return rows
+
+
+def _value_at(line: Line, flat: bool) -> str:
+    """A constant's one value, or a varying one's last, at the digits its
+    source holds."""
+    value = line.values[0] if flat else line.values[-1]
+    return f"{float(value):.{line.digits}g}"
 
 
 def _not_drawn(unchanged: list[str], rounding: list[str]) -> str:
@@ -542,9 +591,12 @@ def nothing_moved_line(model_ids: list[str]) -> str:
 
 
 def run_tables(history: RunHistory) -> int:
-    """The value tables of the page: one per section that holds a constant."""
+    """The value tables of the page: one per section that holds a constant;
+    with tests named, one per section where two runs are compared."""
     return sum(
-        any(v.flat for v in folder.variables)
+        bool(folder.variables)
+        if history.named
+        else any(v.flat for v in folder.variables)
         for test in history.tests
         for folder in test.folders
     )
@@ -591,7 +643,8 @@ def run_gallery_html(
     for folder, run in history.alone:
         parts.append(f'<p class="said">{_e(alone_line(folder, run))}</p>')
     for test, folder in sections:
-        parts += _run_section(test, folder, images, pngs)
+        runs = history.folders[folder.folder] if history.named else None
+        parts += _run_section(test, folder, images, pngs, runs)
     parts.append("</body></html>")
     return "\n".join(parts) + "\n"
 
@@ -601,7 +654,10 @@ def _run_section(
     folder: FolderHistory,
     images: list[Image],
     pngs: Mapping[str, bytes],
+    runs: list[Run] | None,
 ) -> list[str]:
+    """A section; ``runs`` its folder's runs where the test was named, and
+    then its table holds every value (:func:`values_table`)."""
     short = short_name(test.model_id)
     cell = change_cell(
         BaselineDiff(folder.folder, "changed", variables=_run_changes(folder))
@@ -625,11 +681,12 @@ def _run_section(
             + (f"<figcaption>{caption}</figcaption>" if caption else "")
             + "</figure>"
         )
-    out += value_table(folder)
+    out += value_table(folder) if runs is None else values_table(folder, runs)
+    # A named test's table holds every value: none is named twice.
     unchanged = [
         v.label
         for v in folder.variables
-        if len(v.lines) > 1 and not v.moved and not v.flat
+        if len(v.lines) > 1 and not v.moved and not v.flat and runs is None
     ]
     only: dict[str, list[str]] = {}
     for v in folder.variables:

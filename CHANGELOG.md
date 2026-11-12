@@ -34,7 +34,9 @@ this file says when they do.
   library — main's run beside a branch's — as PNG images, one per variable
   that moved, each later run minus the first as `baseline diff` measures a
   change, and one `gallery.html` with a table of each test's constants.
-  The runs are only read. Needs the `browser` extra and its Chromium. The
+  With `--test`, a named test's table holds every variable it tracks: a
+  varying one's value at the end of each run, marked `(end)`, and its
+  Change over the whole run. The runs are only read. Needs the `browser` extra and its Chromium. The
   guide "Summarize a change for review" says how.
 - `dstf summary LABEL=DIR...`: several runs' results side by side, a row per
   backend/os and a column per label, passed over run; with `--base`, which

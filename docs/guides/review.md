@@ -281,12 +281,21 @@ How the runs are read:
 - **The tests:** by default, those with a variable that moved or that only
   some runs hold, or a run that failed or holds no result; the others two
   runs hold are named in one line (`Nothing moved in 12 tests: …`). `--test`
-  draws the tests it names in full, tables included, even where nothing
-  moved or one run holds the test: that is how a passing fix's values are
-  seen. A section with fewer than two runs to compare is said on the
-  console too, and so is a `<Backend>/<os>` given one run only.
-- **The variables:** a variable that holds one value at every point of each
-  run is a row of the section's table, never an image: its value in each
+  draws the tests it names even where nothing moved or one run holds the
+  test: that is how a passing fix's values are seen. A section with fewer
+  than two runs to compare is said on the console too, and so is a
+  `<Backend>/<os>` given one run only.
+- **A named test's values:** with `--test`, each section has one table of
+  every variable the test tracks, a row each in the order it tracks them,
+  and no "unchanged" line. A constant shows its value in each run; a
+  varying one its value at the END of each run, marked `(end)`
+  (`RTD40 (end) | 350.1886 | 350.1886 | 0 %`); `–` where a run holds none,
+  failed or did not run. Its `Change` is the biggest move over the whole
+  run against the first run, as everywhere else, not the difference of the
+  end values. A variable that moved is still drawn too. A line under the
+  table says what `(end)` and `Change` are.
+- **The variables:** without `--test`, a variable that holds one value at
+  every point of each run is a row of the section's table, never an image: its value in each
   run at the digits that run holds, and its `Change` from the first run to
   the last. A variable one run holds is named (`Not drawn, only in main:
   y.`). A run's numbers are its own, so nothing is read as the rounding of

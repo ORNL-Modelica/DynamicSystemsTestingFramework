@@ -211,8 +211,8 @@ def test_a_named_test_one_run_holds_has_its_section(lib, tmp_path):
 
 
 def test_a_named_test_is_drawn_in_full_even_where_nothing_moved(lib, tmp_path):
-    """How a reviewer sees a passing fix's values: its constants' table and
-    the line of the variables that did not move."""
+    """How a reviewer sees a passing fix's values: one table of every
+    tracked variable — a constant's value, a varying one's at the end."""
     main = write_python_run(
         tmp_path / "main", {RAMP: RAMP_MAIN, CSV: ONE, POINTS: WAVE}
     )
@@ -224,7 +224,10 @@ def test_a_named_test_is_drawn_in_full_even_where_nothing_moved(lib, tmp_path):
     assert images == [] and history.nothing_moved == []
     lines = page.splitlines()
     assert "<tr><td><code>x</code></td><td>1</td><td>1</td><td>0 %</td></tr>" in lines
-    assert '<p class="said">Not drawn, unchanged: x.</p>' in lines
+    assert (
+        "<tr><td><code>x</code> (end)</td><td>-0.7</td><td>-0.7</td><td>0 %</td></tr>"
+    ) in lines
+    assert "Not drawn" not in page
     assert "SimpleRamp" not in page
 
 
@@ -603,3 +606,117 @@ def test_a_float32_run_s_constant_is_shown_at_7_digits(tmp_path):
         "<tr><td><code>x</code></td><td>2.233511e+10</td><td>1.548207e+10</td>"
         "<td>31 % of value</td></tr>"
     ) in page.splitlines()
+
+
+# --- --test: every tracked variable's value ---------------------------------------
+
+KEY = (
+    '<p class="said">(end) = the value at the end of each run; Change = the '
+    "biggest move over the whole run.</p>"
+)
+
+
+def _section_table(page):
+    """The section's value table and the line under it, as lines."""
+    lines = page.splitlines()
+    start = lines.index('<table class="values">')
+    end = lines.index("</table>", start)
+    return lines[start : end + 2]
+
+
+def test_varying_values_identical_in_both_runs_are_shown_at_their_end(lib, tmp_path):
+    """Every tracked value varies and nothing moved: before, the page said
+    only "unchanged" — now each one's end value, and 0 %."""
+    _track_y(lib)
+    same = {**RAMP_MAIN, "y1": [3.0, 1.0, 4.0, 1.0, 5.5]}
+    main = write_python_run(tmp_path / "main", {RAMP: same})
+    fix = write_python_run(tmp_path / "fix", {RAMP: same})
+    images, page = _page(
+        _history(lib, [("main", main), ("fix", fix)], tests=["SimpleRamp"])
+    )
+    assert images == []
+    assert _section_table(page) == [
+        '<table class="values">',
+        "<tr><th>Value</th><th>main</th><th>fix</th><th>Change</th></tr>",
+        "<tr><td><code>x</code> (end)</td><td>8</td><td>8</td><td>0 %</td></tr>",
+        "<tr><td><code>y1</code> (end)</td><td>5.5</td><td>5.5</td><td>0 %</td></tr>",
+        "</table>",
+        KEY,
+    ]
+    assert "Not drawn" not in page
+
+
+def test_a_varying_value_that_moved_is_drawn_and_a_row_with_the_panel_s_change(
+    lib, tmp_path
+):
+    """Its Change is the biggest move over the run (1.6 of a range of 8 at
+    2 s), not the difference of its end values, which is none."""
+    main = write_python_run(tmp_path / "main", {RAMP: RAMP_MAIN})
+    fix = write_python_run(tmp_path / "fix", {RAMP: {"x": [0.0, 2.0, 5.6, 6.0, 8.0]}})
+    images, page = _page(
+        _history(lib, [("main", main), ("fix", fix)], tests=["SimpleRamp"])
+    )
+    (image,) = images
+    (line,) = [t for t in image.figure["data"] if t["yaxis"] == "y2"]
+    assert max(abs(y) for y in line["y"]) == pytest.approx(20.0)
+    assert (
+        "<tr><td><code>x</code> (end)</td><td>8</td><td>8</td><td>20 %</td></tr>"
+        in (page.splitlines())
+    )
+
+
+def test_a_constant_and_a_varying_value_are_one_table(lib, tmp_path):
+    _track_y(lib)
+    main = write_python_run(tmp_path / "main", {RAMP: {**RAMP_MAIN, "yk": [5.0] * 5}})
+    fix = write_python_run(tmp_path / "fix", {RAMP: {**RAMP_MAIN, "yk": [6.0] * 5}})
+    _, page = _page(_history(lib, [("main", main), ("fix", fix)], tests=["SimpleRamp"]))
+    assert _section_table(page) == [
+        '<table class="values">',
+        "<tr><th>Value</th><th>main</th><th>fix</th><th>Change</th></tr>",
+        "<tr><td><code>x</code> (end)</td><td>8</td><td>8</td><td>0 %</td></tr>",
+        "<tr><td><code>yk</code></td><td>5</td><td>6</td><td>20 % of value</td></tr>",
+        "</table>",
+        KEY,
+    ]
+
+
+def test_a_table_of_constants_only_has_no_end_key(lib, tmp_path):
+    main = write_python_run(tmp_path / "main", {CSV: ONE})
+    fix = write_python_run(tmp_path / "fix", {CSV: ONE})
+    _, page = _page(
+        _history(lib, [("main", main), ("fix", fix)], tests=["ConstantCsv"])
+    )
+    assert _section_table(page) == [
+        '<table class="values">',
+        "<tr><th>Value</th><th>main</th><th>fix</th><th>Change</th></tr>",
+        "<tr><td><code>x</code></td><td>1</td><td>1</td><td>0 %</td></tr>",
+        "</table>",
+        "</section>",
+    ]
+
+
+def test_a_value_one_run_holds_is_a_dash_in_the_other(lib, tmp_path):
+    _track_y(lib)
+    main = write_python_run(
+        tmp_path / "main", {RAMP: {**RAMP_MAIN, "y1": [0, 1, 0, 1, 3]}}
+    )
+    fix = write_python_run(tmp_path / "fix", {RAMP: RAMP_MAIN})
+    _, page = _page(_history(lib, [("main", main), ("fix", fix)], tests=["SimpleRamp"]))
+    lines = page.splitlines()
+    assert (
+        "<tr><td><code>y1</code> (end)</td><td>3</td><td>–</td><td>–</td></tr>" in lines
+    )
+    assert '<p class="said">Not drawn, only in main: y1.</p>' in lines
+
+
+def test_a_failed_run_s_column_is_a_dash(lib, tmp_path):
+    a = write_python_run(tmp_path / "a", {RAMP: RAMP_MAIN})
+    b = write_python_run(tmp_path / "b", {RAMP: RAMP_FIX}, failed={RAMP})
+    c = write_python_run(tmp_path / "c", {RAMP: RAMP_MAIN})
+    _, page = _page(_history(lib, [("a", a), ("b", b), ("c", c)], tests=["SimpleRamp"]))
+    lines = page.splitlines()
+    assert _section_table(page)[1:3] == [
+        "<tr><th>Value</th><th>a</th><th>b</th><th>c</th><th>Change</th></tr>",
+        "<tr><td><code>x</code> (end)</td><td>8</td><td>–</td><td>8</td><td>0 %</td></tr>",
+    ]
+    assert '<p class="said">b: the run failed (Run recorded failed).</p>' in lines
