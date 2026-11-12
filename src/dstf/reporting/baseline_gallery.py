@@ -1,8 +1,8 @@
 """``dstf baseline plot``'s images and page, from the facts of
 :mod:`dstf.storage.baseline_history`: one figure per variable that moved,
 of each folder drawn (:func:`plan_images`, at a path safe on every OS; the
-others named in one line of the page — unchanged, or moved by the rounding
-of the digits their files were saved with only), and one
+others named in one line of the page — unchanged, or moved only by the
+rounding of a file saved with fewer digits), and one
 self-contained ``gallery.html`` (:func:`gallery_html`) — every PNG inline
 as a data URI, no script, nothing fetched — to send to a reviewer.
 

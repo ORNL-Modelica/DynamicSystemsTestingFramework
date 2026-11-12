@@ -287,17 +287,45 @@ def test_a_change_within_the_saved_digits_did_not_move(lib):
     assert change.largest == pytest.approx(3.747e-6, rel=1e-3)
 
 
-def test_each_line_is_held_to_the_coarser_digits_of_its_file_and_the_first(lib):
-    """The first file double (15 digits): the same numbers in a double file
-    moved; in a single-precision one (7 digits) they are its rounding."""
+def _with(doc, value, precision, time=None):
+    """``doc`` with every value ``value``, ``precision`` recorded, and
+    ``time`` where given."""
+    out = json.loads(json.dumps(doc))
+    for v in out["variables"]:
+        v["values"] = [value] * len(v["values"])
+    out["sampling"] = {**out["sampling"], "precision": precision}
+    if time is not None:
+        out["time"] = time
+    return out
+
+
+def test_each_line_is_held_to_its_own_file_and_the_first_s(lib):
+    """The first file spelled at 7 digits: a later single-precision line
+    within a step of it is its rounding, whatever a double revision moved
+    between them."""
     old, single = resaved_single()
-    first = {**old, "sampling": {**single["sampling"], "precision": "double"}}
-    double = {**single, "sampling": first["sampling"]}
-    history = baseline_history(lib.top / "refs", _docs(lib, first, double, single))
+    double = _with(single, 231.4, "double")
+    history = baseline_history(lib.top / "refs", _docs(lib, old, double, single))
     _, folder = _one(history)
     x1 = folder.variables[0]
     assert [line.change.within_saved_digits for line in x1.lines[1:]] == [False, True]
-    assert x1.moved is True
+
+
+def test_lines_of_files_that_record_their_sampling_are_never_rounding(lib):
+    """Single, then the same numbers in a double file (skipped as equal),
+    then a double within a 7th digit of the first: both files spell their
+    runs' own numbers, so that is a move, drawn."""
+    _, single = resaved_single()
+    exact = [0.0, 1.0, 2.0, 3.0]  # the same times in either precision
+    first = _with(single, 231.300491, "single", exact)
+    same = _with(single, float(np.float32(231.300491)), "double", exact)
+    moved = _with(single, 231.30049, "double", exact)
+    revs = _docs(lib, first, same, moved)
+    history = baseline_history(lib.top / "refs", revs)
+    _, folder = _one(history)
+    assert [r.commit.sha for r, _ in folder.equal] == [revs[1]]
+    x1 = folder.variables[0]
+    assert (x1.lines[1].change.within_saved_digits, x1.moved) == (False, True)
 
 
 def test_a_value_turned_not_finite_is_a_move(lib):

@@ -10,7 +10,8 @@ each with every variable, the settings that changed and the solver effort
 old → new. A number is a percent with two significant digits under 10 %
 (a trailing zero kept: ``1.0 %``), whole above, in scientific notation
 under 0.001 %, and ``0 %`` for none (``±0 %`` for a signed one); a time is
-``%g`` seconds. A change within the digits the files were saved with
+``%g`` seconds. A change that is only the rounding of a file saved with
+fewer digits
 (:attr:`~dstf.storage.baseline_diff.SeriesChange.within_saved_digits`) is
 none wherever a cell or the order reads a size — ``0 %`` — and the detail
 says its true size as rounding. Facts only: nothing here judges
@@ -52,7 +53,10 @@ LIMITS = (
     "difference where it is zero); the old baseline's points outside the "
     "new one's time span are counted, not compared, and so are the middle "
     "samples of an event (a time stored three times or more) the new one "
-    "stores another number of times._"
+    "stores another number of times. A file that records no sampling was "
+    "saved with fewer digits: where the two files hold the same points and "
+    "each time and value agrees within one step of the last digit either "
+    "file spells, the change is that rounding and reads 0 %._"
 )
 
 #: A cell of a folder where the test has no baseline on either side.
@@ -366,7 +370,7 @@ def _key(diff: Diff, tests: list[TestDiff], steps: str | None) -> str:
     if _unmoved(tests):
         said.append(
             f"{percent(0)} = the file changed but no tracked value moved beyond "
-            "the digits it was saved with."
+            "the rounding of a file saved with fewer digits."
         )
     if diff.against:
         said.append("Gap = the same, between tools or OSes, after the change.")

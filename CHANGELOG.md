@@ -35,6 +35,14 @@ this file says when they do.
   tests not passing the base failed too — as Markdown for a pull request, or
   JSON.
 
+### Changed
+
+- `dstf baseline diff` and `dstf baseline plot` count a change as none when
+  the older file was saved with fewer digits and every stored point agrees
+  within one step of its last digit: a baseline accepted again at single
+  precision with its numbers kept reads `0 %` (the detail says `rounding:` and
+  its true size), and its variables are named, not drawn.
+
 ### Fixed
 
 - An OpenModelica failure keeps its reason: a line the simulator repeated is
@@ -44,13 +52,6 @@ this file says when they do.
 - `dstf summary`'s "What failed" names an OpenModelica error from its tag
   (`[translation:error:63] …`) instead of the call omc echoes before it, and
   passes over a repeated warning to the line that says why.
-
-### Changed
-
-- `dstf baseline diff` and `dstf baseline plot` count a difference within one
-  step of the coarser file's saved digits as unchanged: a baseline accepted
-  again at single precision with its numbers kept reads `0 %` (the detail says
-  `rounding:` and its true size), and its variables are named, not drawn.
 
 ## [1.4.0] - 2026-11-11
 

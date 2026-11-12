@@ -21,6 +21,7 @@ baselines (TRANSFORM + examples): decode -> encode is byte-identical.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -86,15 +87,53 @@ def shown_digits(sampling: Sampling | None) -> int:
     return SINGLE_SHOWN if sampling.precision == SINGLE else DOUBLE_SHOWN
 
 
-def saved_step(values: np.ndarray, digits: int) -> np.ndarray:
+#: The significant digits DSTF wrote a value with before a file recorded
+#: its ``sampling``: the fewest a file without it is held to.
+UNRECORDED_DIGITS = 7
+
+
+def _spelled(x: Any) -> int:
+    """The significant digits a decoded number's spelling holds: ``repr``
+    gives the file's spelling back up to 15 digits (16 or 17 may come back
+    shorter, the same double)."""
+    mantissa = repr(float(x)).lstrip("-").split("e")[0].replace(".", "")
+    return len(mantissa.strip("0"))
+
+
+def saved_digits(ref: ReferenceFile) -> int | None:
+    """The significant digits a baseline file's numbers were saved with:
+    None for a file that records its ``sampling`` — written at 9 or 17
+    digits, it spells its run's own numbers exactly, and holds no rounding.
+    A file without ``sampling`` is held to the most digits any of its
+    numbers spells (its time and its values; 17 where one spells 16 or
+    more), and never to fewer than :data:`UNRECORDED_DIGITS`: DSTF wrote 7
+    before ``sampling`` existed, so a file whose numbers spell fewer could
+    still be a rounding at 7. Count it once per file: it reads every
+    number."""
+    if ref.sampling is not None:
+        return None
+    b = ref.baseline
+    most = UNRECORDED_DIGITS
+    for values in (b.time, *(v.values for v in b.variables)):
+        for x in values:
+            if x is not None and math.isfinite(x) and x != 0:
+                most = max(most, _spelled(x))
+        if most >= 16:
+            return 17
+    return most
+
+
+def saved_step(values: np.ndarray, digits: int | None) -> np.ndarray:
     """One unit in the ``digits``-th significant digit of each ``|value|``
-    (``231.3005`` at 7 digits: 0.0001); 0 where a value is 0 or not
-    finite. A number saved with ``digits`` digits stands for anything
-    within this of it, so two baselines that differ by no more are the
-    files' rounding, not a change — a file spelled at 7 digits, accepted
-    again at single precision, reads ``231.3005`` as ``231.300491``."""
+    (``231.3005`` at 7 digits: 0.0001); 0 where a value is 0 or not finite,
+    and everywhere for ``digits`` None (:func:`saved_digits`: a file that
+    holds no rounding). A number saved with ``digits`` digits stands for
+    anything within this of it: a file spelled at 7 digits, accepted again
+    at single precision, reads ``231.3005`` as ``231.300491``."""
     size = np.abs(np.asarray(values, float))
     out = np.zeros(size.shape)
+    if digits is None:
+        return out
     some = np.isfinite(size) & (size > 0)
     out[some] = 10.0 ** (np.floor(np.log10(size[some])) - (digits - 1))
     return out

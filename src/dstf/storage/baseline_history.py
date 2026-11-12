@@ -25,9 +25,9 @@ revisions the largest finite point of a variable's difference is the
 Change that command prints. A variable is followed through every revision
 read, the skipped ones too, so a rename is said at the revision that made
 it. Only a variable that moved is drawn (:attr:`VariableHistory.moved`):
-a line whose change is within one step of the digits the coarser of its
-file and the first line's was saved with is the files' rounding
-(:attr:`~.baseline_diff.SeriesChange.within_saved_digits`), and no move.
+a line whose change is only the rounding of a file saved with fewer digits
+— its file's and the FIRST line's, point by point, as ``baseline diff``
+reads two files (:func:`~.baseline_diff.with_rounding`) — is no move.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .baseline import Baseline, ReferenceFile, StoredVariable
-from .baseline_codec import decode_reference, parse_body, shown_digits
+from .baseline import Baseline, StoredVariable
+from .baseline_codec import decode_reference, parse_body, saved_digits
 from .baseline_diff import (
     BaselineFile,
     Diff,
@@ -54,6 +54,7 @@ from .baseline_diff import (
     pair_variables,
     series_change,
     short_name,
+    with_rounding,
 )
 from .git_revisions import Commit, Repository
 
@@ -225,7 +226,8 @@ def baseline_history(
         chosen = _named(tests, ids)
     listed = {t.model_id for t in diff.tests}
 
-    decoded: dict[bytes, ReferenceFile] = {}
+    #: each file read: its baseline and the digits it spells, counted once
+    decoded: dict[bytes, tuple[Baseline, int | None]] = {}
     out = []
     for model_id in chosen:
         drawn = []
@@ -266,14 +268,14 @@ def _named(names: list[str], ids: list[str]) -> list[str]:
 def _folder(
     folder: str,
     per_revision: list[tuple[Revision, list[BaselineFile]]],
-    decoded: dict[bytes, ReferenceFile],
+    decoded: dict[bytes, tuple[Baseline, int | None]],
 ) -> FolderHistory | None:
     """One test's baseline in one folder across the revisions, or None
     where fewer than two revisions are kept."""
     kept: list[tuple[Revision, Baseline]] = []
     #: every revision read, in order: what a variable is followed through
     read: list[tuple[Revision, Baseline]] = []
-    digits: dict[Revision, int] = {}
+    digits: dict[Revision, int | None] = {}
     equal: list[tuple[Revision, Revision]] = []
     absent: list[Revision] = []
     unreadable: list[tuple[Revision, str]] = []
@@ -288,9 +290,9 @@ def _folder(
         else:
             raw = files[0].raw
             if raw not in decoded:
-                decoded[raw] = decode_reference(parse_body(raw))
-            baseline = decoded[raw].baseline
-            digits[revision] = shown_digits(decoded[raw].sampling)
+                ref = decode_reference(parse_body(raw))
+                decoded[raw] = (ref.baseline, saved_digits(ref))
+            baseline, digits[revision] = decoded[raw]
             read.append((revision, baseline))
             if kept and _same_values(kept[-1][1], baseline):
                 equal.append((revision, kept[-1][0]))
@@ -380,13 +382,13 @@ class _Chain:
 
 
 def _variables(
-    read: list[tuple[Revision, Baseline, bool]], digits: dict[Revision, int]
+    read: list[tuple[Revision, Baseline, bool]], digits: dict[Revision, int | None]
 ) -> list[VariableHistory]:
     """Each variable of any kept revision: each revision read — kept (True)
     or skipped — paired against the newest entry of every variable seen so
     far, so a rename is followed and said at the revision that made it, in
     the order they first appear. A line is a kept revision's only; ``digits``
-    each revision's file's significant digits."""
+    the digits each revision's file spells."""
     chains: list[_Chain] = []
     for revision, baseline, kept in read:
         newest = {id(c.newest): c for c in chains}
@@ -412,10 +414,10 @@ def _variables(
 
 def _lines(
     held: list[tuple[Revision, Baseline, StoredVariable]],
-    digits: dict[Revision, int],
+    digits: dict[Revision, int | None],
 ) -> list[Line]:
-    """A variable's lines; each later one measured against the first, the
-    files' rounding read at the coarser digits of the two."""
+    """A variable's lines; each later one measured against the first, and
+    read as rounding only against the first's file and its own."""
     out: list[Line] = []
     for revision, baseline, v in held:
         time = np.asarray(baseline.time, float)
@@ -426,8 +428,10 @@ def _lines(
             continue
         first = out[0]
         d = difference_series(first.time, first.values, time, values)
-        coarser = min(digits[first.revision], digits[revision])
-        out.append(
-            Line(revision, v.name, label, time, values, d, series_change(d, coarser))
+        change = with_rounding(
+            series_change(d),
+            (first.time, first.values, digits[first.revision]),
+            (time, values, digits[revision]),
         )
+        out.append(Line(revision, v.name, label, time, values, d, change))
     return out

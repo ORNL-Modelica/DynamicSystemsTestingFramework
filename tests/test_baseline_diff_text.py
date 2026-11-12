@@ -478,8 +478,8 @@ def test_one_key_line_under_the_table_names_only_the_columns_it_has():
 
 
 KEY_ZERO = (
-    "0 % = the file changed but no tracked value moved beyond the digits it was "
-    "saved with."
+    "0 % = the file changed but no tracked value moved beyond the rounding of a "
+    "file saved with fewer digits."
 )
 
 
@@ -928,7 +928,7 @@ def test_old_points_of_an_event_new_stores_otherwise_are_said_and_no_unmoved_fil
 
 
 def _rounding(name, largest):
-    """A change within the digits the coarser file was saved with."""
+    """A change that is only the rounding of a file saved with fewer digits."""
     return _var(name, largest, scale="value", within_saved_digits=True)
 
 

@@ -1866,9 +1866,9 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
             peak is that number. Every image is also inline in one
             gallery.html, with each test's row of `baseline diff`'s overview
             and, per folder, one line naming the variables not drawn because
-            they did not change, or changed only within one step of the
-            digits their files were saved with: one file to send to a
-            reviewer.
+            they did not change, or changed only by the rounding of a file
+            saved with fewer digits (the same points, each within one step
+            of its last digit): one file to send to a reviewer.
 
             By default the tests are those `baseline diff` REV1 to the last
             revision lists as changed or new, in every <Backend>/<os> folder
