@@ -42,6 +42,11 @@ this file says when they do.
   within one step of its last digit: a baseline accepted again at single
   precision with its numbers kept reads `0 %` (the detail says `rounding:` and
   its true size), and its variables are named, not drawn.
+- `dstf baseline plot` draws no constant: a variable that holds one value at
+  every stored point, at each revision, is a row of its folder's value table
+  in `gallery.html` — its value at each revision and its `Change` — moved or
+  not, and no longer an image or a name in the not-drawn line. The command
+  says how many tables it wrote beside the images.
 
 ### Fixed
 

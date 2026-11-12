@@ -211,10 +211,16 @@ Which images:
   (`Not drawn, unchanged: a, b, c. Not drawn, rounding of the saved digits
   only: d.`, each list cut past ten names), and a folder where nothing moved
   draws nothing.
+- **The constants:** a variable that holds one value at every stored point,
+  at each revision, is never drawn, whether it moved or not. Each folder's
+  constants are one table under its images: a row each, its value at each
+  revision at the digits that revision's file holds (`–` where it is not
+  stored), and its `Change` from the first revision to the last in `baseline
+  diff`'s words (`0 %`, `100 % of value`). A NaN at every point is one value.
 
 The gallery lists the revisions with their subjects, then each test,
-largest change first, with its row of `baseline diff`'s overview and its
-images. Every image is inside the file and nothing is fetched: it opens
+largest change first, with its row of `baseline diff`'s overview, its
+images and its table of constants. Every image is inside the file and nothing is fetched: it opens
 offline, and it is the one file to attach.
 
 The images are drawn by the plotly.js DSTF ships, in a headless Chromium

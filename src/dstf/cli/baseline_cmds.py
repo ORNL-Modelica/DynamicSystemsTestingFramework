@@ -397,6 +397,15 @@ def _size(n: int) -> str:
     return f"{n / 1e6:.1f} MB" if n >= 1e6 else f"{max(1, round(n / 1e3))} kB"
 
 
+def wrote(images: int, tables: int, page: Path) -> str:
+    """What a plot command says it wrote: its images, its value tables and
+    its page, with the page's size."""
+    return (
+        f"Wrote {images} image{'s' * (images != 1)}, {tables} "
+        f"table{'s' * (tables != 1)} and {page} ({_size(page.stat().st_size)})"
+    )
+
+
 def cmd_baseline_plot(args: argparse.Namespace) -> int:
     """Draw the baselines of the tests asked for at each revision: a PNG per
     variable that moved and one gallery.html, into the --output directory.
@@ -409,6 +418,7 @@ def cmd_baseline_plot(args: argparse.Namespace) -> int:
         gallery_html,
         plan_images,
         stale_files,
+        tables,
         write_marker,
     )
     from ..reporting.images import ImagesUnavailable, Renderer
@@ -458,8 +468,5 @@ def cmd_baseline_plot(args: argparse.Namespace) -> int:
         return 2
     page = out / GALLERY
     page.write_text(gallery_html(history, images, pngs), encoding="utf-8")
-    print(
-        f"Wrote {len(images)} image{'s' * (len(images) != 1)} and {page} "
-        f"({_size(page.stat().st_size)})"
-    )
+    print(wrote(len(images), tables(history), page))
     return 0

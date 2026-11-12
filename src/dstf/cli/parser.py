@@ -1868,7 +1868,11 @@ def _add_baseline_plot(tree: _Tree, sub) -> None:
             and, per folder, one line naming the variables not drawn because
             they did not change, or changed only by the rounding of a file
             saved with fewer digits (the same points, each within one step
-            of its last digit): one file to send to a reviewer.
+            of its last digit): one file to send to a reviewer. A constant —
+            a variable that holds one value at every stored point at each
+            revision — is never drawn: per folder, one table gives each
+            constant's value at each revision, at the digits its file holds,
+            and its Change, whether it moved or not.
 
             By default the tests are those `baseline diff` REV1 to the last
             revision lists as changed or new, in every <Backend>/<os> folder

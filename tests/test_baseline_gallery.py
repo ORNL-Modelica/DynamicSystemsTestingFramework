@@ -214,7 +214,8 @@ def test_skipped_revisions_are_said_with_the_revision_each_equals(lib):
 
 def test_only_a_variable_that_moved_is_drawn_the_rest_named_in_one_line(lib):
     """A variable that is the same at every revision, or is stored at one
-    only, is no image: the gallery names them under the folder."""
+    only, is no image: the gallery names them under the folder — but one
+    that holds one value is in the value table, its other column a dash."""
     revs = _two(
         lib,
         {
@@ -237,7 +238,9 @@ def test_only_a_variable_that_moved_is_drawn_the_rest_named_in_one_line(lib):
     images = plan_images(history)
     assert [i.path for i in images] == ["A/Dymola-linux/01-x.png"]
     page = gallery_html(history, images, {i.path: b"png" for i in images})
-    assert '<p class="said">Not drawn, unchanged: same, gone, added.</p>' in page
+    lines = page.splitlines()
+    assert '<p class="said">Not drawn, unchanged: same, added.</p>' in lines
+    assert "<tr><td><code>gone</code></td><td>5</td><td>–</td><td>–</td></tr>" in lines
 
 
 def test_the_unchanged_line_is_cut_past_ten_names(lib):
@@ -261,14 +264,15 @@ def test_the_unchanged_line_is_cut_past_ten_names(lib):
 
 def test_a_variable_moved_by_rounding_only_is_named_beside_the_unchanged(lib):
     """A baseline accepted again at single precision: its values differ by
-    the old file's rounding only, so none is drawn; they are named in the
-    same line as the unchanged ones, apart from them."""
+    the old file's rounding only, so none is drawn. A series that steps is
+    named in the not-drawn line, apart from the unchanged ones; a constant
+    is in the value table at 0 %, its float32 number shown at 7 digits."""
     old, new = resaved_single()
-    for doc, last in ((old, 3.0), (new, 5.0)):
+    for doc, last, step in ((old, 3.0, 202.6389), (new, 5.0, 202.638885)):
         doc["variables"] += [
-            # a constant: a sloped series reads the rounding of the float32 times
-            {"index": 4, "name": "same", "expression": "", "values": [2, 2, 2, 2]},
+            {"index": 4, "name": "same", "expression": "", "values": [1, 2, 2, 2]},
             {"index": 5, "name": "y", "expression": "", "values": [0, 1, 2, last]},
+            {"index": 6, "name": "r", "expression": "", "values": [1, 1, step, step]},
         ]
     _write(lib, f"{LINUX}/ref_a.json", json.dumps(old))
     one = lib.commit("one")
@@ -278,9 +282,133 @@ def test_a_variable_moved_by_rounding_only_is_named_beside_the_unchanged(lib):
     images = plan_images(history)
     assert [i.path for i in images] == ["A/Dymola-linux/01-y.png"]
     page = gallery_html(history, images, {i.path: b"png" for i in images})
+    lines = page.splitlines()
     assert (
         '<p class="said">Not drawn, unchanged: same. Not drawn, rounding of the '
-        "saved digits only: unitTests.x[1], unitTests.x[2], unitTests.x[3].</p>"
+        "saved digits only: r.</p>"
+    ) in lines
+    assert (
+        "<tr><td><code>unitTests.x[1]</code></td><td>231.3005</td>"
+        "<td>231.3005</td><td>0 %</td></tr>"
+    ) in lines
+
+
+# --- the value table -----------------------------------------------------------
+
+
+def test_a_constant_that_moved_is_in_the_value_table_never_drawn(lib):
+    """A variable that holds one value at every stored point, at each
+    revision, is a row of the folder's table — its value at each revision
+    at the digits its file holds, and baseline diff's Change — and no
+    image, whether it moved or not."""
+    revs = _two(
+        lib,
+        {
+            f"{LINUX}/ref_a.json": (
+                "Lib.A",
+                [
+                    ("x", "", [0, 1, 2]),
+                    ("k", "", [1, 1, 1]),
+                    ("c", "Cs_sum", [2.233511e10] * 3),
+                    ("same", "", [4, 4, 4]),
+                ],
+                [
+                    ("x", "", [0, 1, 3]),
+                    ("k", "", [0, 0, 0]),
+                    ("c", "Cs_sum", [1.548207e10] * 3),
+                    ("same", "", [4, 4, 4]),
+                ],
+            )
+        },
+    )
+    history = baseline_history(lib.top / "refs", revs)
+    images = plan_images(history)
+    assert [i.path for i in images] == ["A/Dymola-linux/01-x.png"]
+    page = gallery_html(history, images, {i.path: b"png" for i in images})
+    one, two = (r[:7] for r in revs)
+    table = page[page.index('<table class="constants">') :]
+    assert table.splitlines()[:6] == [
+        '<table class="constants">',
+        f"<tr><th>Constant</th><th>{one}</th><th>{two}</th><th>Change</th></tr>",
+        "<tr><td><code>k</code></td><td>1</td><td>0</td><td>100 % of value</td></tr>",
+        "<tr><td><code>Cs_sum</code></td><td>2.233511e+10</td><td>1.548207e+10</td>"
+        "<td>31 % of value</td></tr>",
+        "<tr><td><code>same</code></td><td>4</td><td>4</td><td>0 %</td></tr>",
+        "</table>",
+    ]
+    # never in the not-drawn line: the table holds them
+    assert '<p class="said">' not in page[page.index("<h3>") :]
+
+
+def test_a_folder_whose_only_change_is_a_constant_draws_no_image(lib):
+    revs = _two(
+        lib,
+        {
+            f"{LINUX}/ref_a.json": (
+                "Lib.A",
+                [("x", "", [0, 1, 2]), ("k", "", [3, 3, 3])],
+                [("x", "", [0, 1, 2]), ("k", "", [6, 6, 6])],
+            )
+        },
+    )
+    history = baseline_history(lib.top / "refs", revs)
+    assert plan_images(history) == []
+    page = gallery_html(history, [], {})
+    assert (
+        "<tr><td><code>k</code></td><td>3</td><td>6</td><td>100 % of value</td></tr>"
+    ) in page.splitlines()
+    assert '<p class="said">Not drawn, unchanged: x.</p>' in page.splitlines()
+
+
+def test_a_constant_not_a_number_is_a_value_that_matches_itself(lib):
+    """NaN at every point is one value: at both revisions, no change; NaN
+    against a number is said as the detail says points not finite."""
+    nan = float("nan")
+    revs = _two(
+        lib,
+        {
+            f"{LINUX}/ref_a.json": (
+                "Lib.A",
+                [("x", "", [0, 1, 2]), ("n", "", [nan] * 3), ("m", "", [1, 1, 1])],
+                [("x", "", [0, 1, 3]), ("n", "", [nan] * 3), ("m", "", [nan] * 3)],
+            )
+        },
+    )
+    history = baseline_history(lib.top / "refs", revs)
+    images = plan_images(history)
+    page = gallery_html(history, images, {i.path: b"png" for i in images})
+    lines = page.splitlines()
+    assert "<tr><td><code>n</code></td><td>nan</td><td>nan</td><td>0 %</td></tr>" in (
+        lines
+    )
+    assert (
+        "<tr><td><code>m</code></td><td>1</td><td>nan</td>"
+        "<td>3 points not finite from 0 s</td></tr>"
+    ) in lines
+
+
+def test_a_constant_is_shown_at_the_digits_its_file_was_recorded_with(lib):
+    """A file that records double precision shows 15 digits; one that
+    records no sampling was saved at single precision, 7."""
+    third = 1 / 3
+    doc = json.loads(_ref("Lib.A", [("x", "", [0, 1, 2]), ("k", "", [third] * 3)]))
+    _write(lib, f"{LINUX}/ref_a.json", json.dumps(doc))
+    one = lib.commit("one")
+    doc = json.loads(_ref("Lib.A", [("x", "", [0, 1, 3]), ("k", "", [third] * 3)]))
+    doc["sampling"] = {
+        "setting": "all",
+        "source_points": 3,
+        "stored_points": 3,
+        "precision": "double",
+    }
+    _write(lib, f"{LINUX}/ref_a.json", json.dumps(doc))
+    two = lib.commit("two")
+    history = baseline_history(lib.top / "refs", [one, two])
+    images = plan_images(history)
+    page = gallery_html(history, images, {i.path: b"png" for i in images})
+    assert (
+        "<tr><td><code>k</code></td><td>0.3333333</td><td>0.333333333333333</td>"
+        "<td>0 %</td></tr>"
     ) in page.splitlines()
 
 

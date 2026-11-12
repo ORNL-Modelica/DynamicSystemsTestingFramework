@@ -254,10 +254,14 @@ def test_a_baseline_saved_again_at_single_precision_draws_nothing(tmp_path, caps
         + ["--reference-root", str(repo.top / "ReferenceResults")]
     )
     assert code == 0
-    assert capsys.readouterr().out.startswith(f"Wrote 0 images and {out / GALLERY} (")
+    assert capsys.readouterr().out.startswith(
+        f"Wrote 0 images, 1 table and {out / GALLERY} ("
+    )
     assert sorted(p.name for p in out.rglob("*")) == [MARKER, GALLERY]
     page = (out / GALLERY).read_text(encoding="utf-8")
+    # constants: in the value table, the rounding of the saved digits 0 %
     assert (
-        '<p class="said">Not drawn, rounding of the saved digits only: '
-        "unitTests.x[1], unitTests.x[2], unitTests.x[3].</p>"
+        "<tr><td><code>unitTests.x[3]</code></td><td>615.5131</td><td>615.5131</td>"
+        "<td>0 %</td></tr>"
     ) in page.splitlines()
+    assert "rounding of the saved digits only" not in page

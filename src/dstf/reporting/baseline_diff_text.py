@@ -40,6 +40,7 @@ from ..storage.baseline_diff import (
     machine_dependent,
     short_name,
 )
+from ..storage.baseline_history import unchanged
 from .stats_rows import SECTION_TITLES, StatRow, report_text
 
 #: What a change is and what is not compared: the JSON's ``limits``, in
@@ -158,6 +159,18 @@ def _change_text(change: SeriesChange) -> str:
             "another number of times"
         )
     return "; ".join(parts) or "nothing compared"
+
+
+def constant_change(change: SeriesChange) -> str:
+    """A constant's Change in a value table (``baseline plot``, ``plot``):
+    ``0 %`` for none or the files' rounding; its size where every compared
+    point is finite; else what the detail says (a point not finite, a
+    note)."""
+    if unchanged(change) or change.within_saved_digits:
+        return percent(0)
+    if change.largest is not None and not change.non_finite:
+        return _amount(change)
+    return _change_text(change)
 
 
 # --- ranking ---------------------------------------------------------------

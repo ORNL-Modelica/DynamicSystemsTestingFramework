@@ -27,18 +27,22 @@ read, the skipped ones too, so a rename is said at the revision that made
 it. Only a variable that moved is drawn (:attr:`VariableHistory.moved`):
 a line whose change is only the rounding of a file saved with fewer digits
 — its file's and the FIRST line's, point by point, as ``baseline diff``
-reads two files (:func:`~.baseline_diff.with_rounding`) — is no move.
+reads two files (:func:`~.baseline_diff.with_rounding`) — is no move. A
+constant — one value at every stored point of each line
+(:attr:`VariableHistory.flat`) — is never drawn, moved or not: its values
+are a table's.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
 from .baseline import Baseline, StoredVariable
-from .baseline_codec import decode_reference, parse_body, saved_digits
+from .baseline_codec import decode_reference, parse_body, saved_digits, shown_digits
 from .baseline_diff import (
     BaselineFile,
     Diff,
@@ -114,6 +118,10 @@ class Line:
     label: str
     time: np.ndarray
     values: np.ndarray
+    #: the significant digits a value of it is shown with: what its source
+    #: holds (a baseline file's ``shown_digits``, a run's array's
+    #: ``recorded_digits``)
+    digits: int
     #: this line minus the variable's first line, on the first's grid;
     #: None for the first line itself
     difference: Difference | None = None
@@ -153,6 +161,17 @@ class VariableHistory:
         )
 
     @property
+    def flat(self) -> bool:
+        """Whether each line holds one value at every stored point (a NaN
+        matching itself): a constant, said in a value table, never drawn."""
+        return all(_one_value(line.values) for line in self.lines)
+
+    @property
+    def drawn(self) -> bool:
+        """Whether it is an image: it moved, and is no constant."""
+        return self.moved and not self.flat
+
+    @property
     def rounding_only(self) -> bool:
         """Whether it did not move, but some later line differs from its
         first by the files' rounding only."""
@@ -160,6 +179,11 @@ class VariableHistory:
             line.change is not None and line.change.within_saved_digits
             for line in self.lines[1:]
         )
+
+
+def _one_value(values: np.ndarray) -> bool:
+    v = np.asarray(values, float)
+    return bool(v.size) and bool(np.all((v == v[0]) | (np.isnan(v) & np.isnan(v[0]))))
 
 
 def unchanged(change: SeriesChange) -> bool:
@@ -213,8 +237,9 @@ class History:
 
     @property
     def images(self) -> int:
-        """One per variable that moved, of each folder drawn."""
-        return sum(v.moved for t in self.tests for f in t.folders for v in f.variables)
+        """One per variable drawn (:attr:`VariableHistory.drawn`), of each
+        folder drawn."""
+        return sum(v.drawn for t in self.tests for f in t.folders for v in f.variables)
 
 
 def baseline_history(
@@ -259,8 +284,9 @@ def baseline_history(
         chosen = _named(tests, ids)
     listed = {t.model_id for t in diff.tests}
 
-    #: each file read: its baseline and the digits it spells, counted once
-    decoded: dict[bytes, tuple[Baseline, int | None]] = {}
+    #: each file read: its baseline, the digits it spells and the digits it
+    #: is shown with, counted once
+    decoded: dict[bytes, tuple[Baseline, int | None, int]] = {}
     out = []
     for model_id in chosen:
         drawn = []
@@ -301,7 +327,7 @@ def _named(names: list[str], ids: list[str]) -> list[str]:
 def _folder(
     folder: str,
     per_revision: list[tuple[Revision, list[BaselineFile]]],
-    decoded: dict[bytes, tuple[Baseline, int | None]],
+    decoded: dict[bytes, tuple[Baseline, int | None, int]],
 ) -> FolderHistory | None:
     """One test's baseline in one folder across the revisions, or None
     where fewer than two revisions are kept."""
@@ -309,6 +335,7 @@ def _folder(
     #: every revision read, in order: what a variable is followed through
     read: list[tuple[Revision, Baseline]] = []
     digits: dict[Source, int | None] = {}
+    shown: dict[tuple[Source, str], int] = {}
     equal: list[tuple[Revision, Revision]] = []
     absent: list[Revision] = []
     unreadable: list[tuple[Revision, str]] = []
@@ -324,8 +351,13 @@ def _folder(
             raw = files[0].raw
             if raw not in decoded:
                 ref = decode_reference(parse_body(raw))
-                decoded[raw] = (ref.baseline, saved_digits(ref))
-            baseline, digits[revision] = decoded[raw]
+                decoded[raw] = (
+                    ref.baseline,
+                    saved_digits(ref),
+                    shown_digits(ref.sampling),
+                )
+            baseline, digits[revision], file_digits = decoded[raw]
+            shown |= {(revision, v.name): file_digits for v in baseline.variables}
             read.append((revision, baseline))
             if kept and _same_values(kept[-1][1], baseline):
                 equal.append((revision, kept[-1][0]))
@@ -342,7 +374,7 @@ def _folder(
         absent=absent,
         unreadable=unreadable,
         thinned=thinned,
-        variables=_variables([(r, b, r in drawn) for r, b in read], digits),
+        variables=_variables([(r, b, r in drawn) for r, b in read], digits, shown),
     )
 
 
@@ -415,13 +447,16 @@ class _Chain:
 
 
 def _variables(
-    read: list[tuple[Source, Baseline, bool]], digits: dict[Source, int | None]
+    read: Sequence[tuple[Source, Baseline, bool]],
+    digits: Mapping[Source, int | None],
+    shown: Mapping[tuple[Source, str], int],
 ) -> list[VariableHistory]:
     """Each variable of any kept revision: each revision read — kept (True)
     or skipped — paired against the newest entry of every variable seen so
     far, so a rename is followed and said at the revision that made it, in
     the order they first appear. A line is a kept revision's only; ``digits``
-    the digits each revision's file spells."""
+    the digits each revision's file spells, ``shown`` the digits each
+    variable of each is shown with."""
     chains: list[_Chain] = []
     for revision, baseline, kept in read:
         newest = {id(c.newest): c for c in chains}
@@ -439,7 +474,7 @@ def _variables(
             chain.newest = new
             chain.held += here
     return [
-        VariableHistory(_lines(c.held, digits), c.renames, c.first)
+        VariableHistory(_lines(c.held, digits, shown), c.renames, c.first)
         for c in chains
         if c.held
     ]
@@ -447,7 +482,8 @@ def _variables(
 
 def _lines(
     held: list[tuple[Source, Baseline, StoredVariable]],
-    digits: dict[Source, int | None],
+    digits: Mapping[Source, int | None],
+    shown: Mapping[tuple[Source, str], int],
 ) -> list[Line]:
     """A variable's lines; each later one measured against the first, and
     read as rounding only against the first's file and its own."""
@@ -456,8 +492,9 @@ def _lines(
         time = np.asarray(baseline.time, float)
         values = np.asarray(v.values, float)
         label = v.expression or v.name
+        at = shown[(revision, v.name)]
         if not out:
-            out.append(Line(revision, v.name, label, time, values))
+            out.append(Line(revision, v.name, label, time, values, at))
             continue
         first = out[0]
         d = difference_series(first.time, first.values, time, values)
@@ -466,5 +503,5 @@ def _lines(
             (first.time, first.values, digits[first.revision]),
             (time, values, digits[revision]),
         )
-        out.append(Line(revision, v.name, label, time, values, d, change))
+        out.append(Line(revision, v.name, label, time, values, at, d, change))
     return out

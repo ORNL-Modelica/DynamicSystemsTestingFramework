@@ -1,8 +1,10 @@
 """``dstf baseline plot``'s images and page, from the facts of
 :mod:`dstf.storage.baseline_history`: one figure per variable that moved,
-of each folder drawn (:func:`plan_images`, at a path safe on every OS; the
-others named in one line of the page — unchanged, or moved only by the
-rounding of a file saved with fewer digits), and one
+of each folder drawn (:func:`plan_images`, at a path safe on every OS; a
+constant in the folder's value table instead, moved or not
+(:func:`value_table`); the others named in one line of the page —
+unchanged, or moved only by the rounding of a file saved with fewer
+digits), and one
 self-contained ``gallery.html`` (:func:`gallery_html`) — every PNG inline
 as a data URI, no script, nothing fetched — to send to a reviewer.
 
@@ -34,6 +36,7 @@ from ..storage.baseline_history import (
     MAX_KEPT,
     FolderHistory,
     History,
+    Line,
     Revision,
     Run,
     Source,
@@ -42,6 +45,7 @@ from ..storage.baseline_history import (
 )
 from .baseline_diff_text import (
     LIMITS,
+    constant_change,
     overview_cells,
     overview_header,
     sorted_tests,
@@ -59,6 +63,8 @@ SUBJECT_CHARS, LABEL_CHARS, TEST_CHARS = 48, 40, 100
 _FOLDER_CHARS = 40
 #: One note under an image.
 _NOTE_CHARS = 150
+#: A value table's cell where the source holds no such constant.
+_DASH = "–"
 #: The most variables each sentence of the line of those not drawn names.
 _UNCHANGED_SHOWN = 10
 #: Names no file may have on Windows, whatever its extension.
@@ -130,8 +136,9 @@ def _test_folders(model_ids: Iterable[str]) -> dict[str, str]:
 
 
 def plan_images(history: History) -> list[Image]:
-    """Every image of the history — one per variable that moved — with its
-    figure and its notes."""
+    """Every image of the history — one per variable that moved and is no
+    constant (:attr:`~.VariableHistory.drawn`) — with its figure and its
+    notes."""
     folders = _test_folders(t.model_id for t in history.tests)
     out = []
     for test in history.tests:
@@ -139,7 +146,7 @@ def plan_images(history: History) -> list[Image]:
             where = f"{folders[test.model_id]}/" + _safe(
                 folder.folder.replace("/", "-"), _FOLDER_CHARS, dots=False
             )
-            moved = [v for v in folder.variables if v.moved]
+            moved = [v for v in folder.variables if v.drawn]
             width = max(2, len(str(len(moved))))
             for n, variable in enumerate(moved, start=1):
                 name = f"{n:0{width}d}-{_safe(variable.label, LABEL_CHARS, dots=False)}"
@@ -358,9 +365,11 @@ def _section(test, row, header, diff, steps, images, pngs) -> list[str]:
     for folder in test.folders:
         out.append(f"<h3>{_e(folder.folder)}</h3>")
         unchanged = [
-            v.label for v in folder.variables if not v.moved and not v.rounding_only
+            v.label
+            for v in folder.variables
+            if not v.moved and not v.rounding_only and not v.flat
         ]
-        rounding = [v.label for v in folder.variables if v.rounding_only]
+        rounding = [v.label for v in folder.variables if v.rounding_only and not v.flat]
         if unchanged or rounding:
             said = _not_drawn(unchanged, rounding)
             out.append(f'<p class="said">{_e(said)}</p>')
@@ -375,8 +384,54 @@ def _section(test, row, header, diff, steps, images, pngs) -> list[str]:
                 + (f"<figcaption>{caption}</figcaption>" if caption else "")
                 + "</figure>"
             )
+        out += value_table(folder)
     out.append("</section>")
     return out
+
+
+def tables(history: History) -> int:
+    """The value tables of the history: one per folder drawn that holds a
+    constant."""
+    return sum(
+        any(v.flat for v in folder.variables)
+        for test in history.tests
+        for folder in test.folders
+    )
+
+
+def value_table(folder: FolderHistory) -> list[str]:
+    """The folder's constants (:attr:`~.VariableHistory.flat`), moved or
+    not, as one table: a row each, its value at each source drawn — at the
+    digits that source holds, ``–`` where it holds none — and the last
+    one's Change against the first, in ``baseline diff``'s words. None
+    where the folder holds no constant."""
+    flat = [v for v in folder.variables if v.flat]
+    if not flat:
+        return []
+    heads = "".join(f"<th>{_e(source.short)}</th>" for source in folder.kept)
+    rows = [
+        '<table class="constants">',
+        f"<tr><th>Constant</th>{heads}<th>Change</th></tr>",
+    ]
+    for variable in flat:
+        at = {line.revision: line for line in variable.lines}
+        cells = "".join(
+            f"<td>{_e(_constant(at[source]) if source in at else _DASH)}</td>"
+            for source in folder.kept
+        )
+        last = variable.lines[-1].change
+        change = _DASH if last is None else constant_change(last)
+        rows.append(
+            f"<tr><td><code>{_e(variable.label)}</code></td>{cells}"
+            f"<td>{_e(change)}</td></tr>"
+        )
+    rows.append("</table>")
+    return rows
+
+
+def _constant(line: Line) -> str:
+    """A constant's one value, at the digits its source holds."""
+    return f"{float(line.values[0]):.{line.digits}g}"
 
 
 def _not_drawn(unchanged: list[str], rounding: list[str]) -> str:
