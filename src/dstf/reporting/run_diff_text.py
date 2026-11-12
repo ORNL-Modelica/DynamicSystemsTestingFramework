@@ -49,6 +49,8 @@ from .run_diff import (
 LISTED = 20
 #: A cell where nothing was compared.
 _DASH = "–"
+#: A cell of a kind of group the files hold none of.
+NONE = "none"
 #: Said beside the counts of a backend whose files hold the tracked
 #: variables alone (``saves_tracked_signals_only``).
 TRACKED_ONLY = "this tool saves only the tracked signals"
@@ -148,12 +150,14 @@ def _largest_changed(tests: list[TestRunDiff]) -> Signal | None:
 
 
 def signals_cell(tests: list[TestRunDiff]) -> str:
-    """The varying groups said: ``all identical``; else near zero,
-    derivatives and rounding counted, then the changed ones with the
+    """The varying groups said: ``none``, ``all identical``; else near
+    zero, derivatives and rounding counted, then the changed ones with the
     largest Change (``changed: none`` beside the others)."""
     counts = _signal_counts(tests)
     if not tests:
         return _DASH
+    if not sum(counts.values()):
+        return NONE
     if sum(counts.values()) == counts["identical"]:
         return "all identical"
     parts = []
@@ -172,11 +176,13 @@ def signals_cell(tests: list[TestRunDiff]) -> str:
 
 
 def constants_cell(tests: list[TestRunDiff]) -> str:
-    """The constant groups said: ``all identical``; else how many differ
-    and how many are within rounding."""
+    """The constant groups said: ``none``, ``all identical``; else how many
+    differ and how many are within rounding."""
     if not tests:
         return _DASH
     counts = _constant_counts(tests)
+    if not sum(counts.values()):
+        return NONE
     parts = []
     if counts["differs"]:
         n = counts["differs"]
@@ -309,13 +315,26 @@ def _what(test: TestRunDiff, f: FolderDiff) -> str:
     """A test's summary line: its signals, then its parameters where any
     is not identical (``signals all identical; parameters: 1 differs``)."""
     signals, constants = signals_cell([test]), constants_cell([test])
-    if constants == "all identical":
+    if constants in ("all identical", NONE):
         said = signals
-    elif signals == "all identical":
-        said = f"signals all identical; parameters: {constants}"
+    elif signals in ("all identical", NONE):
+        said = f"signals {signals}; parameters: {constants}"
     else:
         said = f"{signals}; parameters: {constants}"
     return _marked(said, _names_mark([test], f))
+
+
+def _count_line(title: str, counts: dict[str, int], always: str) -> str:
+    """A detail's line of a kind of group: how many, then each class that
+    holds any, and ``always`` even at 0 (``0 changed``); ``none`` where
+    there are no groups."""
+    n = sum(counts.values())
+    if not n:
+        return f"- {title}: {NONE}"
+    classes = ", ".join(
+        _kind_count(k, kind) for kind, k in counts.items() if k or kind == always
+    )
+    return f"- {title} ({_count(n)} group{'s' * (n != 1)}): {classes}"
 
 
 def _constant_line(c: Constant) -> str:
@@ -339,18 +358,8 @@ def _detail(f: FolderDiff, test: TestRunDiff) -> list[str]:
         lines.append(f"- Only in {old}: {_list(test.only_old)}")
     if test.only_new:
         lines.append(f"- Only in {new}: {_list(test.only_new)}")
-    counts = test.signal_counts
-    lines.append(
-        f"- Signals ({_count(sum(counts.values()))} groups): "
-        + ", ".join(
-            _kind_count(n, kind) for kind, n in counts.items() if n or kind == "changed"
-        )
-    )
-    constant_counts = test.constant_counts
-    lines.append(
-        f"- Parameters ({_count(sum(constant_counts.values()))} groups): "
-        + ", ".join(_kind_count(n, kind) for kind, n in constant_counts.items() if n)
-    )
+    lines.append(_count_line("Signals", test.signal_counts, "changed"))
+    lines.append(_count_line("Parameters", test.constant_counts, "differs"))
     differ = [c for c in test.constants if c.kind == "differs"]
     if differ:
         shown = "; ".join(_constant_line(c) for c in differ[:LISTED])
