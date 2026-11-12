@@ -221,6 +221,10 @@ class FolderHistory:
     #: kept but left out: more than :data:`MAX_KEPT` were
     thinned: list[Revision]
     variables: list[VariableHistory]
+    #: a run (``dstf plot``) whose result failed, with why: no line
+    failed: list[tuple[Source, str]] = field(default_factory=list)
+    #: a run that holds no result of the test: no line
+    not_run: list[Source] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

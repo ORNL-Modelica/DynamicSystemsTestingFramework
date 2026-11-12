@@ -25,6 +25,7 @@ from .diag_cmds import (
     cmd_manifest_show,
 )
 from .parser import build_arg_parser, command_path
+from .plot_cmd import cmd_plot
 from .run_cmds import cmd_compare, cmd_run
 from .spec_cmds import cmd_spec_add, cmd_spec_schema, cmd_spec_update
 from .summary_cmd import cmd_summary
@@ -39,6 +40,7 @@ _COMMANDS = {
     "run": cmd_run,
     "compare": cmd_compare,
     "summary": cmd_summary,
+    "plot": cmd_plot,
     "author": cmd_author,
     "check": cmd_check,
     "spec add": cmd_spec_add,

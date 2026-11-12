@@ -4,6 +4,8 @@ import json
 import os
 import shutil
 import subprocess
+import sys
+import types
 from collections import defaultdict
 from collections.abc import Mapping
 from pathlib import Path
@@ -187,6 +189,107 @@ def python_example_copy(tmp_path, *, baselines: bool = True):
 
     config = Config(config_file=ref_root / "testing.json", work_dir=tmp_path / "work")
     return config, discover_tests(config)
+
+
+#: The time of a run :func:`write_python_run` writes.
+RUN_TIME = [0.0, 1.0, 2.0, 3.0, 4.0]
+
+
+def write_python_run(
+    where,
+    results,
+    *,
+    os_name="linux",
+    failed=(),
+    metadata=True,
+):
+    """A Python run's work dir as its backend leaves one (`dstf plot`'s
+    tests): ``results`` maps a model id to its variables on
+    :data:`RUN_TIME`; a model in ``failed`` is recorded as failed, its file
+    holding values (a partial run's)."""
+    where.mkdir(parents=True)
+    manifest = {}
+    rows = []
+    for i, (model_id, variables) in enumerate(results.items(), start=1):
+        key = f"test_{i:04d}"
+        status = "failed" if model_id in failed else "passed"
+        manifest[key] = {
+            "model_id": model_id,
+            "ref_id": None,
+            "last_run_at": 1.0,
+            "last_run_status": status,
+        }
+        verdict = "SIM_FAIL" if model_id in failed else "PASS"
+        rows.append(
+            {
+                "test_key": key,
+                "model_id": model_id,
+                "status": status,
+                "verdict": verdict,
+            }
+        )
+        (where / key).mkdir()
+        payload = {"success": True, "time": RUN_TIME, "variables": variables}
+        (where / key / "result.json").write_text(json.dumps(payload))
+    (where / "batch_manifest.json").write_text(json.dumps(manifest))
+    meta = {"backend": "Python", "backend_name": "Python", "os": os_name}
+    (where / "status.json").write_text(
+        json.dumps({"metadata": meta if metadata else None, "tests": rows})
+    )
+    return where
+
+
+def fake_playwright(monkeypatch, stop_at=None):
+    """Playwright faked at its edge: a browser whose screenshot is a few
+    bytes, and is interrupted (Ctrl-C) at the ``stop_at``-th (the plot
+    commands' tests, without a browser)."""
+    shots = []
+
+    class Page:
+        def route(self, *a):
+            pass
+
+        def set_content(self, *a):
+            pass
+
+        def add_script_tag(self, **k):
+            pass
+
+        def set_viewport_size(self, *a):
+            pass
+
+        def evaluate(self, *a):
+            pass
+
+        def locator(self, *a):
+            return self
+
+        def screenshot(self, **k):
+            shots.append(1)
+            if len(shots) == stop_at:
+                raise KeyboardInterrupt
+            return b"\x89PNG fake"
+
+    class Browser:
+        def new_page(self):
+            return Page()
+
+        def close(self):
+            pass
+
+    class Running:
+        chromium = types.SimpleNamespace(launch=lambda: Browser())
+
+        def start(self):
+            return self
+
+        def stop(self):
+            pass
+
+    fake = types.ModuleType("playwright.sync_api")
+    fake.Error = type("Error", (Exception,), {})
+    fake.sync_playwright = Running
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
 
 
 @pytest.fixture

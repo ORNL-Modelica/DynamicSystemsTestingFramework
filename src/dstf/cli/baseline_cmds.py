@@ -406,6 +406,35 @@ def wrote(images: int, tables: int, page: Path) -> str:
     )
 
 
+def draw(out: Path, images: list, stale: list[Path], command: str) -> dict[str, bytes]:
+    """Write ``images`` into ``out`` as PNGs, ``stale`` (the last run's
+    files) removed first and the marker written before the first image —
+    a run stopped part way (Ctrl-C, a crash) leaves a directory the next
+    run may write. The PNGs by image path."""
+    from ..reporting.baseline_gallery import GALLERY, clear, write_marker
+    from ..reporting.images import Renderer
+
+    pngs: dict[str, bytes] = {}
+
+    def begin() -> None:
+        clear(out, stale)
+        out.mkdir(parents=True, exist_ok=True)
+        write_marker(out, [*(image.path for image in images), GALLERY], command)
+
+    if images:
+        with Renderer() as renderer:
+            begin()
+            for image in images:
+                png = renderer.png(image.figure)
+                path = out / image.path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(png)
+                pngs[image.path] = png
+    else:
+        begin()
+    return pngs
+
+
 def cmd_baseline_plot(args: argparse.Namespace) -> int:
     """Draw the baselines of the tests asked for at each revision: a PNG per
     variable that moved and one gallery.html, into the --output directory.
@@ -414,20 +443,17 @@ def cmd_baseline_plot(args: argparse.Namespace) -> int:
     from ..reporting.baseline_gallery import (
         GALLERY,
         OutputRefused,
-        clear,
         gallery_html,
         plan_images,
         stale_files,
         tables,
-        write_marker,
     )
-    from ..reporting.images import ImagesUnavailable, Renderer
+    from ..reporting.images import ImagesUnavailable
     from ..storage.baseline_diff import DiffError
     from ..storage.baseline_history import baseline_history
     from ..storage.git_revisions import GitError
 
     out = Path(args.output)
-    pngs: dict[str, bytes] = {}
     try:
         if len(args.revisions) < 2:
             raise DiffError(
@@ -443,28 +469,7 @@ def cmd_baseline_plot(args: argparse.Namespace) -> int:
                 f"{len(images)} images to draw, over {MAX_IMAGES}: name the "
                 "tests (--test) or the folders (--folder) to draw"
             )
-        stale = stale_files(out, "baseline plot")
-
-        def begin() -> None:
-            # The marker before the first image: a run stopped part way
-            # (Ctrl-C, a crash) leaves a directory the next run may write.
-            clear(out, stale)
-            out.mkdir(parents=True, exist_ok=True)
-            write_marker(
-                out, [*(image.path for image in images), GALLERY], "baseline plot"
-            )
-
-        if images:
-            with Renderer() as renderer:
-                begin()
-                for image in images:
-                    png = renderer.png(image.figure)
-                    path = out / image.path
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(png)
-                    pngs[image.path] = png
-        else:
-            begin()
+        pngs = draw(out, images, stale_files(out, "baseline plot"), "baseline plot")
     except (ConfigError, GitError, DiffError, OutputRefused, ImagesUnavailable) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2

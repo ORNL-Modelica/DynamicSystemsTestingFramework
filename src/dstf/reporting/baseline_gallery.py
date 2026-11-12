@@ -31,7 +31,12 @@ from pathlib import Path
 import numpy as np
 
 from ..figures.history import HistoryTrace, cut, history_figure
-from ..storage.baseline_diff import short_name
+from ..storage.baseline_diff import (
+    BaselineDiff,
+    VariableDiff,
+    folder_order,
+    short_name,
+)
 from ..storage.baseline_history import (
     MAX_KEPT,
     FolderHistory,
@@ -45,12 +50,15 @@ from ..storage.baseline_history import (
 )
 from .baseline_diff_text import (
     LIMITS,
+    change_cell,
+    change_rank,
     constant_change,
     overview_cells,
     overview_header,
     sorted_tests,
     steps_folder,
 )
+from .run_history import RunHistory
 
 #: The page every run writes, at the top of the output directory.
 GALLERY = "gallery.html"
@@ -225,6 +233,7 @@ def _notes(folder: FolderHistory, variable: VariableHistory) -> list[str]:
     notes += [
         f"Cannot be read at {r.commit.short} ({why})." for r, why in folder.unreadable
     ]
+    notes += _run_notes(folder)
     if folder.thinned:
         total = len(folder.kept) + len(folder.thinned)
         notes.append(
@@ -439,11 +448,15 @@ def _not_drawn(unchanged: list[str], rounding: list[str]) -> str:
     """The one line naming a folder's variables that did not move: the
     unchanged, then those that moved by the files' rounding only — each
     sentence only where it names any."""
+    return _not_drawn_of(
+        [("unchanged", unchanged), ("rounding of the saved digits only", rounding)]
+    )
+
+
+def _not_drawn_of(groups: list[tuple[str, list[str]]]) -> str:
+    """The not-drawn line: a sentence for each group that names any."""
     said = []
-    for what, labels in (
-        ("unchanged", unchanged),
-        ("rounding of the saved digits only", rounding),
-    ):
+    for what, labels in groups:
         if not labels:
             continue
         shown = ", ".join(labels[:_UNCHANGED_SHOWN])
@@ -454,6 +467,160 @@ def _not_drawn(unchanged: list[str], rounding: list[str]) -> str:
             + "."
         )
     return " ".join(said)
+
+
+# --- dstf plot: the runs' page ---------------------------------------------------
+
+
+def _run_notes(folder: FolderHistory) -> list[str]:
+    """Each run of the folder that is no line: its run failed, with why,
+    or it holds no result of the test."""
+    return [f"{s.short}: the run failed ({why})." for s, why in folder.failed] + [
+        f"{s.short}: not run." for s in folder.not_run
+    ]
+
+
+def _run_changes(folder: FolderHistory) -> list[VariableDiff]:
+    """Each variable two runs hold, as ``baseline diff`` reads a variable:
+    its last line's change against its first."""
+    return [
+        VariableDiff(v.lines[-1].name, v.label, "changed", change=v.lines[-1].change)
+        for v in folder.variables
+        if len(v.lines) > 1
+    ]
+
+
+def run_sections(history: RunHistory) -> list[tuple[TestHistory, FolderHistory]]:
+    """One section per test and folder drawn, largest change first, as
+    ``baseline diff`` ranks its tests; then by model id and folder."""
+
+    def key(item: tuple[TestHistory, FolderHistory]):
+        test, folder = item
+        nf, pct, absolute = change_rank(_run_changes(folder))
+        return (-nf, -pct, -absolute, test.model_id, folder_order(folder.folder))
+
+    return sorted(((t, f) for t in history.tests for f in t.folders), key=key)
+
+
+def nothing_moved_line(model_ids: list[str]) -> str:
+    """The one line naming the tests where nothing moved, cut past ten."""
+    n = len(model_ids)
+    shown = ", ".join(short_name(m) for m in model_ids[:_UNCHANGED_SHOWN])
+    more = n - _UNCHANGED_SHOWN
+    return (
+        f"Nothing moved in {n} test{'s' * (n != 1)}: {shown}"
+        + (f" … and {more} more" if more > 0 else "")
+        + "."
+    )
+
+
+def run_tables(history: RunHistory) -> int:
+    """The value tables of the page: one per section that holds a constant."""
+    return sum(
+        any(v.flat for v in folder.variables)
+        for test in history.tests
+        for folder in test.folders
+    )
+
+
+def run_gallery_html(
+    history: RunHistory, images: list[Image], pngs: Mapping[str, bytes]
+) -> str:
+    """``dstf plot``'s page: the runs of each folder, the tests where
+    nothing moved, then one section per test and folder, largest change
+    first (:func:`run_sections`) — its Change, then its images (``pngs``
+    by image path, inlined), its table of constants and the line of the
+    variables not drawn."""
+    labels = list(
+        dict.fromkeys(r.label for runs in history.folders.values() for r in runs)
+    )
+    title = " → ".join(labels)
+    runs = "".join(
+        f"<li>{_e(folder)}: {_e(' → '.join(legend_name(r) for r in got))}</li>"
+        for folder, got in history.folders.items()
+    )
+    sections = run_sections(history)
+    n = len(sections)
+    parts = [
+        "<!doctype html>",
+        '<html lang="en"><head><meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        f"<title>Runs {_e(title)}</title>",
+        f"<style>{_STYLE}</style></head><body>",
+        f"<h1>Runs {_e(title)}</h1>",
+        f"<ul>{runs}</ul>",
+        "<p>Each image: one variable of each run (top), and each later run "
+        "minus the first, on the first's time grid, as <code>baseline "
+        "diff</code> measures a change (bottom). A constant is a row of its "
+        "section's table instead.</p>",
+        f"<p>{len(images)} image{'s' * (len(images) != 1)} and "
+        f"{run_tables(history)} table{'s' * (run_tables(history) != 1)} in "
+        f"{n} section{'s' * (n != 1)}.</p>",
+    ]
+    if history.nothing_moved:
+        parts.append(
+            f'<p class="said">{_e(nothing_moved_line(history.nothing_moved))}</p>'
+        )
+    for folder, run in history.alone:
+        parts.append(
+            f'<p class="said">{_e(folder)}: one run only ({_e(run.label)}), '
+            "not drawn.</p>"
+        )
+    for test, folder in sections:
+        parts += _run_section(test, folder, images, pngs)
+    parts.append("</body></html>")
+    return "\n".join(parts) + "\n"
+
+
+def _run_section(
+    test: TestHistory,
+    folder: FolderHistory,
+    images: list[Image],
+    pngs: Mapping[str, bytes],
+) -> list[str]:
+    short = short_name(test.model_id)
+    cell = change_cell(
+        BaselineDiff(folder.folder, "changed", variables=_run_changes(folder))
+    )
+    out = [
+        "<section>",
+        f"<h2><code>{_e(short)}</code> · {_e(folder.folder)}</h2>",
+        f'<p class="id"><code>{_e(test.model_id)}</code></p>',
+        f"<table><tr><th>Test</th><th>Change, {_e(folder.folder)}</th></tr>"
+        f"<tr><td><code>{_e(short)}</code></td><td>{_e(cell)}</td></tr></table>",
+    ]
+    out += [f'<p class="said">{_e(note)}</p>' for note in _run_notes(folder)]
+    if len(folder.kept) < 2:
+        out.append('<p class="said">No two runs of it to compare.</p>')
+    for image in images:
+        if image.test != test.model_id or image.folder != folder.folder:
+            continue
+        data = base64.b64encode(pngs[image.path]).decode("ascii")
+        caption = "<br>".join(_e(n) for n in image.notes)
+        out.append(
+            f'<figure><img alt="{_e(image.label)}" '
+            f'src="data:image/png;base64,{data}">'
+            + (f"<figcaption>{caption}</figcaption>" if caption else "")
+            + "</figure>"
+        )
+    out += value_table(folder)
+    unchanged = [
+        v.label
+        for v in folder.variables
+        if len(v.lines) > 1 and not v.moved and not v.flat
+    ]
+    only: dict[str, list[str]] = {}
+    for v in folder.variables:
+        if len(v.lines) == 1 and not v.flat:
+            only.setdefault(v.lines[0].revision.short, []).append(v.label)
+    said = _not_drawn_of(
+        [("unchanged", unchanged)]
+        + [(f"only in {label}", labels) for label, labels in only.items()]
+    )
+    if said:
+        out.append(f'<p class="said">{_e(said)}</p>')
+    out.append("</section>")
+    return out
 
 
 # --- the output directory --------------------------------------------------------

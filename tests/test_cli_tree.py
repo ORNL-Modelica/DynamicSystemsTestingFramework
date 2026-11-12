@@ -169,6 +169,7 @@ _SUMMARY_WORDS = {
     "run": "Simulate",
     "compare": "without simulating",
     "summary": "several runs",
+    "plot": "two runs or more",
     "author": "authoring tool",
     "check": "backends",
     "spec add": "Add a test",
@@ -721,6 +722,9 @@ READS: dict[str, set[str]] = {
     "compare": _PROJECT | _AFTER_ONLY,
     # its runs are named by LABEL=DIR: no project
     "summary": set(),
+    # the library and the spec its runs are read under; each run's work dir
+    # and backend are its LABEL=DIR's own
+    "plot": {"--config", "--source-path", "--test-spec"},
     # the Session builds its Config from testing.json alone
     "author": {"--config", "--backend", "--work-dir"},
     # the search for a testing.json; never the spec, a partition or a work dir
@@ -761,6 +765,7 @@ ARGV: dict[str, list[str]] = {
     "baseline diff": ["HEAD"],
     "baseline plot": ["HEAD~1", "HEAD", "-o", "out"],
     "summary": ["head=."],
+    "plot": ["a=.", "b=.", "-o", "out"],
     "soft-check add": ["Lib.M", "other", "ref.json"],
     "soft-check remove": ["Lib.M", "other"],
     "companion add": ["Lib.M", "rig", "rig.csv"],
@@ -1395,6 +1400,7 @@ def test_output_has_its_short_form_everywhere():
         "run",
         "compare",
         "summary",
+        "plot",
         "spec schema",
         "baseline export",
         "baseline diff",
@@ -1787,6 +1793,7 @@ IN_A_LIBRARY = {
     "baseline export": [],
     "baseline diff": ["HEAD"],
     "baseline plot": ["HEAD~1", "HEAD", "-o", "out"],
+    "plot": ["a=.", "b=.", "-o", "out"],
     "soft-check add": ["Lib.A", "om", "{file}"],
     "soft-check list": [],
     "soft-check remove": ["Lib.A", "om"],
