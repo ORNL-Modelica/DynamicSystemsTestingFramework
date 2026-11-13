@@ -49,6 +49,10 @@ class GitError(Exception):
     or the revision."""
 
 
+class NotARepository(GitError):
+    """The folder is in no git repository: ``not a git repository: …``."""
+
+
 @dataclass(frozen=True)
 class Commit:
     """A revision as git resolved it."""
@@ -116,7 +120,7 @@ class Repository:
         proc = _run(["rev-parse", "--show-toplevel", "--show-prefix"], folder)
         if proc.returncode != 0:
             if b"not a git repository" in proc.stderr:
-                raise GitError(f"not a git repository: {folder}")
+                raise NotARepository(f"not a git repository: {folder}")
             raise GitError(f"{folder}: {_said(proc)}")
         top, prefix = (proc.stdout.decode("utf-8").splitlines() + [""])[:2]
         return cls(Path(top), prefix.rstrip("/"))
