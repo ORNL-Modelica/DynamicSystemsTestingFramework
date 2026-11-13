@@ -75,7 +75,7 @@ def _written(fixture: str):
 # --------------------------------------------------------------------------
 
 
-def _dymola(monkeypatch, config: Config, save, error_log="") -> list:
+def _dymola(monkeypatch, config: Config, save, error_log="", opens=True) -> list:
     """A PersistentDymolaBackend over a fake interface whose
     ``saveTotalModel(file, ...)`` is ``save(file)``. Returns the
     interfaces it made (one per worker)."""
@@ -100,7 +100,7 @@ def _dymola(monkeypatch, config: Config, save, error_log="") -> list:
             # Dymola's own default: it moves into the file's directory
             if changeDirectory:
                 self.cwd = str(Path(path).parent)
-            return True
+            return opens
 
         def ExecuteCommand(self, cmd):
             return True
@@ -458,3 +458,28 @@ def test_a_question_not_answered_in_time_ends_the_asking(tool, monkeypatch, tmp_
     }
     assert asked == ["0.mo"]
     assert closed()
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_a_library_that_does_not_load_is_said_without_a_worker_number(
+    tool, monkeypatch, tmp_path
+):
+    """The start's own words: the one-shot worker's number (-1) means
+    nothing to the person reading `dstf uses`'s one line."""
+    from dstf.backends.persistent import WorkerStartError
+
+    config = _config(tmp_path, tool)
+    if tool == "Dymola":
+        backend, _ = _dymola(
+            monkeypatch, config, _written("dymola_SimpleTest.mo"), opens=False
+        )
+    else:
+        from dstf.backends.openmodelica import persistent_backend as pr
+        from test_openmodelica_persistent import FakeSession
+
+        session = FakeSession({"loadFile(": False})
+        monkeypatch.setattr(pr, "load_omc_session", lambda: lambda: session)
+        backend = pr.PersistentOpenModelicaBackend(config)
+    with pytest.raises(WorkerStartError) as raised:
+        backend.uses([_tm(SIMPLE)])
+    assert str(raised.value).startswith("failed to load library "), raised.value

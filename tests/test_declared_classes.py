@@ -29,6 +29,9 @@ package Lib "the library: model Fake end Fake;"
     model Short = B.C(x(start=1)) "a short model";
     function f = g;
     connector RealIn = input Real;
+    package ShortPkg = B "a short package";
+    record ShortRec = Rec(r = 1);
+    block ShortBlock = Blk;
     block Blk end Blk;
     record Rec Real r; end Rec;
     class Cls end Cls;
@@ -66,6 +69,9 @@ def test_every_class_a_hand_written_text_declares_in_source_order():
         "Lib.A.Short",
         "Lib.A.f",
         "Lib.A.RealIn",
+        "Lib.A.ShortPkg",
+        "Lib.A.ShortRec",
+        "Lib.A.ShortBlock",
         "Lib.A.Blk",
         "Lib.A.Rec",
         "Lib.A.Cls",

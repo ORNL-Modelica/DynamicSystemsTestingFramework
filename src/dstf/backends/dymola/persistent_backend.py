@@ -274,8 +274,7 @@ class DymolaWorker(Worker):
             ok = self.dymola.openModel(str(dep_pkg))
             if not ok:
                 raise RuntimeError(
-                    f"Worker {self.worker_id}: failed to load dependency "
-                    f"{dep_pkg} — {self._last_error()}"
+                    f"failed to load dependency {dep_pkg} — {self._last_error()}"
                 )
 
         # Load main library
@@ -284,8 +283,7 @@ class DymolaWorker(Worker):
         ok = self.dymola.openModel(str(main_pkg))
         if not ok:
             raise RuntimeError(
-                f"Worker {self.worker_id}: failed to load library {main_pkg} "
-                f"— {self._last_error()}"
+                f"failed to load library {main_pkg} — {self._last_error()}"
             )
 
         # Framework settings (mirror startup.mos). ExecuteCommand returns the

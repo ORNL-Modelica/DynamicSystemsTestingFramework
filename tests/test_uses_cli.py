@@ -200,8 +200,9 @@ def test_a_test_that_could_not_be_asked_counts_as_using_every_class(env, capsys)
         f"{EXAMPLE} is used by 1 of 14 tests:\n"
         f"{UNIT_TESTS} is used by 11 of 14 tests:\n"
         + "".join(f"  {t}\n" for t in WITH)
-        + "Could not be asked (counted as using it):\n"
-        f"  {HEAT} — Error: class\n  HeatRodTest not found.\n"
+        + "Could not be asked (counted as using each):\n"
+        # a reason is printed on its test's one line, whatever the backend said
+        f"  {HEAT} — Error: class HeatRodTest not found.\n"
         "11 of 14 tests use at least one of them.\n"
     )
 
@@ -231,7 +232,7 @@ def test_an_answer_without_the_test_s_own_model_is_not_believed(env, capsys):
         f"{EXAMPLE} is used by 1 of 14 tests:\n"
         "Could not be asked (counted as using it):\n"
         f"  {simple} — FakeUses's answer does not hold the test's own model\n"
-        f"Wrote {out_file}: 1 tests\n"
+        f"Wrote {out_file}: 1 test\n"
     )
     assert out_file.read_text(encoding="utf-8") == f"{simple}\n"
 
@@ -246,10 +247,23 @@ def test_filter_and_package_narrow_the_tests_asked(env, capsys):
         out == f"{UNIT_TESTS} is used by 1 of 2 tests:\n  {LIB}.Examples.SimpleTest\n"
     )
 
-    rc, out, _ = _uses(env, capsys, UNIT_TESTS, "--package", HEAT)
+
+def test_one_test_is_one_test(env, capsys):
+    simple = f"{LIB}.Examples.SimpleTest"
+    rc, out, err = _uses(env, capsys, UNIT_TESTS, EXAMPLE, "--package", simple)
     assert rc == 0
-    assert env.asked[-1] == [HEAT]
-    assert out == f"{UNIT_TESTS} is used by none of the 1 tests.\n"
+    assert env.asked == [[simple]]
+    assert err == "Asking FakeUses what 1 test uses ...\n"
+    assert out == (
+        f"{UNIT_TESTS} is used by the 1 test:\n"
+        f"  {simple}\n"
+        f"{EXAMPLE} is not used by the 1 test.\n"
+        "The 1 test uses at least one of them.\n"
+    )
+
+    rc, out, _ = _uses(env, capsys, EXAMPLE, f"{LIB}.Icons", "--package", simple)
+    assert rc == 0
+    assert out.endswith("No test uses any of them.\n")
 
 
 # --------------------------------------------------------------------------
@@ -368,13 +382,13 @@ def test_no_test_to_ask_is_exit_1(env, capsys):
 
 
 def test_a_simulator_that_could_not_be_asked_is_exit_1_and_counts_nothing(env, capsys):
-    env.fails = RuntimeError("Worker -1: failed to load library package.mo")
+    env.fails = RuntimeError("failed to load library package.mo — no licence")
     out_file = env.cwd / "uses.txt"
     rc, out, err = _uses(env, capsys, UNIT_TESTS, "-o", str(out_file))
     assert rc == 1 and out == ""
     assert err == (
         "Asking FakeUses what 14 tests use ...\n"
-        "FakeUses could not be asked: Worker -1: failed to load library package.mo\n"
+        "FakeUses could not be asked: failed to load library package.mo — no licence\n"
     )
     assert not out_file.exists()
 
@@ -392,6 +406,14 @@ def test_a_backend_that_can_answer_but_is_not_found_says_so(env, capsys):
 # --------------------------------------------------------------------------
 # A backend that cannot answer, and the hint
 # --------------------------------------------------------------------------
+
+
+def test_the_capability_is_checked_before_the_class(env, capsys):
+    """A backend that cannot answer says so first: a mistyped class is no
+    reason to try another backend."""
+    rc, out, err = _uses(env, capsys, f"{LIB}.Nope", "--backend", CANNOT)
+    assert (rc, out) == (1, "")
+    assert err.startswith("FakeCannot cannot say what a test uses.\n")
 
 
 def test_a_backend_that_cannot_answer_names_one_installed_that_can(env, capsys):

@@ -53,11 +53,16 @@ def _believed(
     the test then counts as using every class, as one it could not ask
     does: it left the test out, or its answer does not hold the test's own
     model, which every answer holds (:meth:`Backend.uses`). Such an answer
-    would read as a test that uses nothing."""
+    would read as a test that uses nothing. A reason is made one line here,
+    whichever backend gave it: it is printed on its test's line."""
+    from ..discovery.uses import one_line
+
     if model_id not in said:
         return f"{label} gave no answer for it"
     got = said[model_id]
-    if not isinstance(got, str) and model_id not in got:
+    if isinstance(got, str):
+        return one_line(got, f"{label} could not answer for it and said nothing")
+    if model_id not in got:
         return f"{label}'s answer does not hold the test's own model"
     return got
 
@@ -97,7 +102,8 @@ def cmd_uses(args: argparse.Namespace) -> int:
         print(exc, file=sys.stderr)
         return 1
 
-    print(f"Asking {backend.label} what {len(tests)} tests use ...", file=sys.stderr)
+    asked = "1 test uses" if len(tests) == 1 else f"{len(tests)} tests use"
+    print(f"Asking {backend.label} what {asked} ...", file=sys.stderr)
     try:
         said = backend.uses(tests)
     except Exception as exc:
@@ -115,20 +121,38 @@ def cmd_uses(args: argparse.Namespace) -> int:
         union.update(using, unasked)
         n = len(using) + len(unasked)
         if n == 0:
-            print(f"{name} is used by none of the {total} tests.")
+            none = (
+                "is not used by the 1 test"
+                if total == 1
+                else (f"is used by none of the {total} tests")
+            )
+            print(f"{name} {none}.")
             continue
-        print(f"{name} is used by {n} of {total} tests:")
+        print(f"{name} is used by {_among(n, total)}:")
         for test in using:
             print(f"  {test}")
     if unasked:
-        print("Could not be asked (counted as using it):")
+        each = "it" if len(args.classes) == 1 else "each"
+        print(f"Could not be asked (counted as using {each}):")
         for test in unasked:
             print(f"  {test} — {answers[test]}")
     if len(args.classes) > 1:
-        print(f"{len(union)} of {total} tests use at least one of them.")
+        k = len(union)
+        if k == 0:
+            print("No test uses any of them.")
+        else:
+            among = _among(k, total)
+            verb = "uses" if k == 1 else "use"
+            print(f"{among[0].upper()}{among[1:]} {verb} at least one of them.")
     if args.output is not None:
         Path(args.output).write_text(
             "".join(f"{test}\n" for test in sorted(union)), encoding="utf-8"
         )
-        print(f"Wrote {args.output}: {len(union)} tests")
+        print(f"Wrote {args.output}: {len(union)} test{'' if len(union) == 1 else 's'}")
     return 0
+
+
+def _among(n: int, total: int) -> str:
+    """``n`` of the ``total`` tests asked, ``n`` at least 1, in words:
+    ``3 of 14 tests``, or ``the 1 test`` when one was asked."""
+    return "the 1 test" if total == 1 else f"{n} of {total} tests"

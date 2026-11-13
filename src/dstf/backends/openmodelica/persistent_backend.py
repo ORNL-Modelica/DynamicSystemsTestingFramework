@@ -431,10 +431,7 @@ class OpenModelicaWorker(Worker):
             else:
                 why = self._load(f'loadFile("{arg}")', Path(arg).parent)
             if why is not None:
-                raise RuntimeError(
-                    f"Worker {self.worker_id}: failed to load dependency "
-                    f"{dep!r} — {why[:400]}"
-                )
+                raise RuntimeError(f"failed to load dependency {dep!r} — {why[:400]}")
 
         main_pkg = self.config.library_dir / "package.mo"
         main_pkg_fwd = str(main_pkg.resolve()).replace("\\", "/")
@@ -442,10 +439,7 @@ class OpenModelicaWorker(Worker):
         why = self._load(f'loadFile("{main_pkg_fwd}")', main_pkg.parent)
         self._library_load_seconds = time.monotonic() - began
         if why is not None:
-            raise RuntimeError(
-                f"Worker {self.worker_id}: failed to load library {main_pkg} "
-                f"— {why[:400]}"
-            )
+            raise RuntimeError(f"failed to load library {main_pkg} — {why[:400]}")
 
         # User setup commands — best-effort; warn on failure but don't abort.
         for cmd in self.om_config.backend_setup or ():
