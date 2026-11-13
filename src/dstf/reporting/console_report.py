@@ -34,10 +34,11 @@ def _color(text: str, code: str) -> str:
     return text
 
 
-def print_report(comparisons: list[TestComparison]) -> int:
+def print_report(comparisons: list[TestComparison], note: str | None = None) -> int:
     """Print a console report and return exit code (0 when nothing FAILED or
     failed to simulate — NOT RUN and NO_REF do not fail it — and something
-    ran, else 1: ``exit_code``)."""
+    ran, else 1: ``exit_code``). ``note`` is said in brackets after the
+    Results line's counts."""
     if not comparisons:
         print("No comparisons to report.")
         return 1
@@ -93,7 +94,8 @@ def print_report(comparisons: list[TestComparison]) -> int:
     # Summary
     total = len(comparisons)
     print()
-    print(_color(f"Results: {n_passed}/{total} passed", _BOLD))
+    said = f" ({note})" if note else ""
+    print(_color(f"Results: {n_passed}/{total} passed{said}", _BOLD))
     if n_failed:
         print(_color(f"  Failed: {n_failed}", _RED))
     if n_sim_fail:

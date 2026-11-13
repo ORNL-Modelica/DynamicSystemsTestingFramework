@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from conftest import make_test_model
 from dstf.backends.base import Backend
 from dstf.backends.persistent import PersistentBackendBase, Worker
@@ -207,6 +209,35 @@ class TestAllThreeSitesAgree:
         assert manifest_ids == {"test_0001": "Lib.A", "test_0002": "Lib.B"}
         assert metadata["tool_version"] == "FakeTool 1.2.3"
         assert metadata["backend"] == "Dymola"
+
+
+class TestEachSiteRecordsTheSelection:
+    """``run --changed-since``'s block reaches status.json through each
+    site that runs tests — the batch loop, the persistent template, batch
+    Dymola — and a run of every test writes null."""
+
+    BLOCK = {
+        "changed_since": "main",
+        "commits": ["abc1234"],
+        "files": 2,
+        "selected": 1,
+        "of": 3,
+        "could_not_be_asked": 0,
+    }
+
+    @pytest.mark.parametrize("site", ["batch", "persistent", "dymola-batch"])
+    @pytest.mark.parametrize("selection", [BLOCK, None])
+    def test_status_json_holds_it(self, site, selection, tmp_path, monkeypatch):
+        cfg = _config(tmp_path)
+        backend = {
+            "batch": lambda: _FakeBatchBackend(cfg),
+            "persistent": lambda: _FakePersistentBackend(cfg),
+            "dymola-batch": lambda: _dymola_backend(cfg, monkeypatch),
+        }[site]()
+        backend.selection = selection
+        backend.run_tests([_tm("Lib.A")])
+        status = json.loads((cfg.work_dir / "status.json").read_text())
+        assert "selection" in status and status["selection"] == selection
 
 
 class TestRunSummary:

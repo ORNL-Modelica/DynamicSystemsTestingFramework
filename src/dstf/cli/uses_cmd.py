@@ -394,8 +394,8 @@ def _what(f) -> str:
     return f"deleted → {asked}" if f.deleted else asked
 
 
-def _every_test(changes, tests: int, named: int) -> str:
-    """The line that says every test is counted, and why."""
+def _every_test(changes, tests: int, named: int, verb: str = "counted") -> str:
+    """The line that says every test is counted (``run``: run), and why."""
     from ..discovery.uses import NO_CLASS
 
     files = changes.every_test
@@ -404,7 +404,7 @@ def _every_test(changes, tests: int, named: int) -> str:
         why = f"{_count(n, 'file')} that no class stores changed"
     else:
         why = f"{_count(n, 'changed file')} cannot be asked as a class"
-    line = f"{why}: every test is counted ({_count(tests, 'test')})"
+    line = f"{why}: every test is {verb} ({_count(tests, 'test')})"
     if named:
         line += (
             "; the class named is not asked"
