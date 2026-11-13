@@ -698,12 +698,26 @@ def declared_classes(text: str) -> list[str]:
     return out
 
 
+def is_declared(library_dir: Path, library_name: str, name: str) -> bool:
+    """Whether ``name`` is a class of the library in ``library_dir`` whose
+    top package is ``library_name``: the library itself, or a class under
+    it of any kind — a ``type`` and an ``operator`` included, which
+    :func:`find_class` (a test's model) passes over."""
+    if name == library_name:
+        return (library_dir / "package.mo").is_file()
+    return find_class(library_dir, library_name, name, _DECLARED_TOKEN_RE) is not None
+
+
 def find_class(
-    library_dir: Path, library_name: str, model_id: str
+    library_dir: Path,
+    library_name: str,
+    model_id: str,
+    token: re.Pattern[str] = _CLASS_TOKEN_RE,
 ) -> LocatedClass | None:
     """Locate the class ``model_id`` in the library's files and read its
     own ``experiment(...)`` annotation — for a test that names a model no
-    recognizer found (declared in ``test_spec.json`` only).
+    recognizer found (declared in ``test_spec.json`` only). ``token`` is the
+    declarations a class is looked for among (:func:`_direct_classes`).
 
     A Modelica class is stored as its own file (``A/B/C.mo``), as a
     directory (``A/B/C/package.mo``), or inside the file of a class that
@@ -736,14 +750,17 @@ def find_class(
         for path in candidates:
             if not path.is_file():
                 continue
-            found = _class_in_file(path, [library_name, *owner], nested)
+            found = _class_in_file(path, [library_name, *owner], nested, token)
             if found is not None:
                 return found
     return None
 
 
 def _class_in_file(
-    path: Path, top: list[str], nested: list[str]
+    path: Path,
+    top: list[str],
+    nested: list[str],
+    token: re.Pattern[str] = _CLASS_TOKEN_RE,
 ) -> LocatedClass | None:
     """The class ``nested`` deep inside the file's top class ``top`` (the
     top class itself for an empty ``nested``), or None when the file does
@@ -755,20 +772,20 @@ def _class_in_file(
     if _extract_within(text) != ".".join(top[:-1]):
         return None
     stripped = _strip_modelica_literals(text)
-    span = _named(_direct_classes(stripped, 0, len(stripped)), top[-1])
+    span = _named(_direct_classes(stripped, 0, len(stripped), token), top[-1])
     for name in nested:
         if span is None:
             return None
         # A short class has no body: the classes of its own are the ones
         # its modification redeclares, one bracket into its statement.
-        inside = _direct_classes(stripped, span.body, span.end)
+        inside = _direct_classes(stripped, span.body, span.end, token)
         span = _named(inside, name, depth=1 if span.short else 0)
     if span is None:
         return None
     # Blanked 1:1, so `_parse_experiment`'s offsets into the original text
     # (its string-valued fields) still hold.
     own = list(text[span.start : span.end])
-    for child in _direct_classes(stripped, span.body, span.end):
+    for child in _direct_classes(stripped, span.body, span.end, token):
         for i in range(child.start - span.start, child.end - span.start):
             if own[i] != "\n":
                 own[i] = " "

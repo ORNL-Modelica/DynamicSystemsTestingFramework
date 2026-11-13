@@ -30,6 +30,7 @@ from .plot_cmd import cmd_plot
 from .run_cmds import cmd_compare, cmd_run
 from .spec_cmds import cmd_spec_add, cmd_spec_schema, cmd_spec_update
 from .summary_cmd import cmd_summary
+from .uses_cmd import cmd_uses
 
 # Command → handler dispatch table, keyed by the command as it is typed
 # (`cli.parser.command_path`). Lives at module scope so tests can assert the
@@ -38,6 +39,7 @@ from .summary_cmd import cmd_summary
 # by `test_argparse_subcommands_match_dispatch_table`.
 _COMMANDS = {
     "discover": cmd_discover,
+    "uses": cmd_uses,
     "run": cmd_run,
     "compare": cmd_compare,
     "summary": cmd_summary,

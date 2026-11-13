@@ -5,17 +5,18 @@ A backend answers per test with the classes its model uses
 (:meth:`dstf.backends.base.Backend.uses`), read from the file its simulator
 writes of the model and everything it uses. Here those classes are cut to
 the project's — its library and the dependencies given as a path — by the
-top packages they are under.
+top packages they are under; a name the command is given is checked to be
+one of them; and the answers are turned round to the users of a class.
 """
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .library_state import dependency_file, dependency_root
-from .mo_parser import declared_classes
+from .mo_parser import declared_classes, is_declared
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -50,6 +51,41 @@ def project_classes(text: str, tops: Collection[str]) -> frozenset[str]:
     return frozenset(
         name for name in declared_classes(text) if name.split(".", 1)[0] in tops
     )
+
+
+def is_class(config: Config, name: str) -> bool:
+    """Whether ``name`` is a class of the project: a top package of the
+    library or of a dependency given as a path, or a class under one of any
+    kind (a ``type`` and an ``operator`` included) — what a simulator's
+    answer can hold. A one-file dependency is read whole."""
+    tops = top_packages(config)
+    top = name.split(".", 1)[0]
+    file = tops.get(top)
+    if file is None:
+        return False
+    if name == top:
+        return True
+    if file.name != "package.mo":
+        try:
+            text = file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        return name in declared_classes(text)
+    return is_declared(file.parent, top, name)
+
+
+def users(
+    answers: Mapping[str, frozenset[str] | str], name: str
+) -> tuple[list[str], list[str]]:
+    """The tests that use class ``name``, and the tests that could not be
+    asked (each counted as using every class), each sorted by model id."""
+    using = sorted(
+        test
+        for test, got in answers.items()
+        if not isinstance(got, str) and name in got
+    )
+    unasked = sorted(test for test, got in answers.items() if isinstance(got, str))
+    return using, unasked
 
 
 #: The longest reason a test that could not be asked is given, in

@@ -1006,7 +1006,10 @@ class _Tree:
 
 #: The top-level help's listing: the commands by what they are for.
 COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("run and score", ("discover", "run", "compare", "summary", "plot", "diff")),
+    (
+        "run and score",
+        ("discover", "uses", "run", "compare", "summary", "plot", "diff"),
+    ),
     ("write criteria", ("author", "spec add", "spec update", "spec schema")),
     (
         "baselines and the data beside them",
@@ -1041,6 +1044,7 @@ _REPORTS = ("report_format", "output", "report", "no_browser")
 #: handler reads each one is ``tests/test_cli_tree.py``'s to prove.
 READS: dict[str, tuple[str, ...]] = {
     "discover": (*_ALL, *_SELECT),
+    "uses": (*_ALL, *_SELECT, "backend", "backend_path", "output"),
     "run": (
         *_ALL,
         *_SELECT,
@@ -1156,6 +1160,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     top = tree.subparsers(root, dest="command", title="commands", metavar="<command>")
 
     _add_discover(tree, top)
+    _add_uses(tree, top)
     _add_run(tree, top)
     _add_compare(tree, top)
     _add_summary(tree, top)
@@ -1244,6 +1249,67 @@ def _add_discover(tree: _Tree, top) -> None:
         ),
     )
     _offer_selection(node)
+
+
+def _add_uses(tree: _Tree, top) -> None:
+    node = tree.command(
+        top,
+        "uses",
+        summary="List the tests that use a class",
+        description="""
+            List the tests whose model uses a class: the model itself, a
+            component, a base class, a function, a type, or a package that
+            holds one of them. The answer is the simulator's: the backend
+            is started, asked what each test's model depends on, and closed.
+            Dymola and OpenModelica can answer. OpenModelica's list can
+            hold a test that does not use the class (omc may save a class
+            the model does not use); it has not been seen to miss one.
+
+            A test the simulator could not answer for is listed apart, with
+            its reason, and counted as using every class named. With
+            --output, the tests are written one per line: run only those
+            with `dstf run --filter @FILE`. A full run stays the check
+            before a release.
+
+            Nothing is simulated, and nothing is written in the project,
+            the work directory or the current directory but --output.
+
+            Exit code: 0; 1 when the backend cannot say what a test uses,
+            or there is no test to ask, or it could not be started; 2 for a
+            name that is no class of the library or of a dependency given
+            as a path.
+            """,
+        examples=(
+            "dstf uses ModelicaTestingLib.Components.UnitTests --config testing.json",
+            "dstf uses ModelicaTestingLib.Components.UnitTests "
+            "ModelicaTestingLib.Icons.Example --config testing.json -o uses.txt",
+            "dstf uses ModelicaTestingLib.Components.UnitTests --config testing.json "
+            "--backend OpenModelica --filter 'ModelicaTestingLib.Examples.*'",
+        ),
+    )
+    node.add_argument(
+        "classes",
+        nargs="+",
+        metavar="CLASS",
+        help="A class of the library or of a dependency given as a path, by "
+        "its full name (ModelicaTestingLib.Components.UnitTests). Several "
+        "are SPACE-separated.",
+    )
+    _offer_selection(node)
+    _offer(
+        node,
+        "backend",
+        help=f"{_BACKEND} It is the simulator that is asked. {_BACKEND_DEFAULT}",
+    )
+    _offer(node, "backend_path", fill={"backend_path_note": ""})
+    _offer(
+        node,
+        "output",
+        default=None,
+        help="A file to write the tests to, one model id per line, sorted: "
+        "the tests that use any class named, and those that could not be "
+        "asked. --filter @FILE reads it. Default: none is written.",
+    )
 
 
 def _add_run(tree: _Tree, top) -> None:
