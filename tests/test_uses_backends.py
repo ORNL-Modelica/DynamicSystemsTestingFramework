@@ -235,3 +235,104 @@ end {LIB}_Test;
     assert backend.uses([_tm(f"{LIB}.Test")]) == {
         f"{LIB}.Test": frozenset({LIB, f"{LIB}.Test", "Dep", "Dep.M", "One", "One.T"})
     }
+
+
+# --------------------------------------------------------------------------
+# OpenModelica
+# --------------------------------------------------------------------------
+
+
+def _openmodelica(monkeypatch, config: Config, save):
+    """A PersistentOpenModelicaBackend over a FakeSession whose answer to
+    ``saveTotalModelDebug(...)`` is ``save(file)``: a bool, a str (the raw
+    reply), None (no reply) or an exception (what OMPython raises)."""
+    from dstf.backends.openmodelica import persistent_backend as pr
+    from test_openmodelica_persistent import FakeSession
+
+    def reply(expr: str):
+        return save(expr.split('"')[1])
+
+    session = FakeSession({"saveTotalModelDebug(": reply})
+    monkeypatch.setattr(pr, "load_omc_session", lambda: lambda: session)
+    return pr.PersistentOpenModelicaBackend(config), session
+
+
+def _saved(session) -> list[str]:
+    return [c for c in session.calls if c.startswith("saveTotalModelDebug(")]
+
+
+def test_openmodelica_saves_the_total_model_in_a_temporary_directory(
+    monkeypatch, tmp_path
+):
+    config = _config(tmp_path, "OpenModelica")
+    backend, session = _openmodelica(
+        monkeypatch, config, _written("openmodelica_SimpleTest.mo")
+    )
+
+    # As the worker asks it, with the Modelica Standard Library loaded: omc
+    # writes `package Modelica` at top level between the library and its
+    # wrapper model `SimpleTest_total`; neither is the project's. It keeps
+    # an emptied `Icons` package of the library the model does not use.
+    assert backend.uses([_tm(SIMPLE)]) == {SIMPLE: SIMPLE_USES | {f"{LIB}.Icons"}}
+
+    (sent,) = _saved(session)
+    file = Path(sent.split('"')[1])
+    assert sent == f'saveTotalModelDebug("{file.as_posix()}", {SIMPLE})'
+    assert file.is_absolute() and not file.parent.exists()
+    assert not config.work_dir.exists()
+    assert session.calls[-1] == "quit()"
+
+
+def test_openmodelica_an_error_it_logged_is_that_test_s_reason(monkeypatch, tmp_path):
+    """OMPython raises for an error omc logged, and its reading of the
+    messages empties `getErrorString()`: the exception's text is the
+    reason. The next test is still asked."""
+    gone = f"{LIB}.Examples.Gone"
+
+    def save(file):
+        if file.endswith("/0.mo"):
+            return RuntimeError(
+                f"[OMC log for 'sendExpression(saveTotalModelDebug(...), False)']: "
+                f"[scripting:error:0]\n  Class {gone} not found in scope <top>."
+            )
+        return _written("openmodelica_SimpleTest.mo")(file)
+
+    backend, session = _openmodelica(
+        monkeypatch, _config(tmp_path, "OpenModelica"), save
+    )
+    answers = backend.uses([_tm(gone), _tm(SIMPLE)])
+    assert answers[gone] == (
+        f"[scripting:error:0] Class {gone} not found in scope <top>."
+    )
+    assert answers[SIMPLE] == SIMPLE_USES | {f"{LIB}.Icons"}
+    assert len(_saved(session)) == 2
+
+
+@pytest.mark.parametrize(
+    ("reply", "said"),
+    [
+        # omc 1.27.2, for a class it does not hold: no reply, no message
+        (None, "nothing"),
+        (False, "false"),
+    ],
+)
+def test_openmodelica_no_answer_and_no_message_still_gives_a_reason(
+    monkeypatch, tmp_path, reply, said
+):
+    gone = f"{LIB}.Examples.Gone"
+    backend, _ = _openmodelica(
+        monkeypatch, _config(tmp_path, "OpenModelica"), lambda file: reply
+    )
+    assert backend.uses([_tm(gone)]) == {
+        gone: f"omc answered {said} for saveTotalModelDebug of {gone}"
+    }
+
+
+def test_openmodelica_is_closed_when_the_answer_cannot_be_read(monkeypatch, tmp_path):
+    """omc said it saved, and wrote nothing: the run stops, omc is closed."""
+    config = _config(tmp_path, "OpenModelica")
+    backend, session = _openmodelica(monkeypatch, config, lambda file: True)
+    with pytest.raises(FileNotFoundError):
+        backend.uses([_tm(SIMPLE)])
+    assert session.calls[-1] == "quit()"
+    assert not config.work_dir.exists()

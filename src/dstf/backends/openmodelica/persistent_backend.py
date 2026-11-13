@@ -1012,8 +1012,12 @@ class PersistentOpenModelicaBackend(PersistentBackendBase, OpenModelicaBackend):
 
     #: CANCEL is the worker's: ``OpenModelicaWorker.cancel_running`` (omc's
     #: children) with the watchdog's kill behind it. The batch class, one
-    #: ``omc`` subprocess per test, has no such stop.
-    capabilities = OpenModelicaBackend.capabilities | {Capability.CANCEL}
+    #: ``omc`` subprocess per test, has no such stop. USES asks a live omc
+    #: (:meth:`uses`), as a run without ``--batch`` does.
+    capabilities = OpenModelicaBackend.capabilities | {
+        Capability.CANCEL,
+        Capability.USES,
+    }
 
     @classmethod
     def preflight(cls, config) -> None:
@@ -1054,3 +1058,56 @@ class PersistentOpenModelicaBackend(PersistentBackendBase, OpenModelicaBackend):
             if libs:
                 return libs
         return None
+
+    def uses(self, tests: list[TestModel]) -> dict[str, frozenset[str] | str]:
+        """What each test's model uses, by omc's ``saveTotalModelDebug(file,
+        model)``: one file of the model and every class it uses, read by
+        :func:`~dstf.discovery.mo_parser.declared_classes`. Not
+        ``saveTotalModel``, which refuses a library that names an optional
+        library it does not load. omc says of this function that it "might
+        save things which are not actually used": the list can hold a class
+        the model does not use (an emptied ``Icons`` package); it has not
+        been seen to miss one.
+
+        A one-shot worker, loaded as a run's is; its files go to a
+        temporary directory removed afterwards. A name is kept when its
+        first part is a top package of the project
+        (:func:`~dstf.discovery.uses.top_packages`): the model omc wraps the
+        test in and the libraries loaded by name (``Modelica``) are none.
+        """
+        import tempfile
+
+        from ...discovery.uses import one_line, project_classes, top_packages
+
+        tops = top_packages(self.config)
+        answers: dict[str, frozenset[str] | str] = {}
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            worker = OpenModelicaWorker(
+                -1, self.config, self.om_config, load_omc_session()
+            )
+            try:
+                worker.start_within()
+                for n, test in enumerate(tests):
+                    file = Path(tmp) / f"{n}.mo"
+                    # The raw reply, never the bool helper: OMPython raises
+                    # on an error omc logged, and its text is the reason (a
+                    # later getErrorString() reads nothing).
+                    reply, said = _raw_reply(
+                        worker.session,
+                        f'saveTotalModelDebug("{file.as_posix()}", {test.model_id})',
+                    )
+                    if said is None and reply == "true":
+                        text = file.read_text(encoding="utf-8", errors="replace")
+                        answers[test.model_id] = project_classes(text, tops)
+                    else:
+                        answers[test.model_id] = one_line(
+                            said or "",
+                            f"omc answered {reply or 'nothing'} for "
+                            f"saveTotalModelDebug of {test.model_id}",
+                        )
+            finally:
+                try:
+                    worker.close()
+                except Exception:
+                    pass
+        return answers
