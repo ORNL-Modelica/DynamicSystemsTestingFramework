@@ -535,7 +535,8 @@ class _ClassSpan:
     that ends its one statement."""
 
     name: str
-    #: Its keyword: one of :data:`_CLASS_TOKEN_RE`'s.
+    #: Its keyword: one of the pattern's it was found by
+    #: (:data:`_CLASS_TOKEN_RE`, :data:`_DECLARED_TOKEN_RE`).
     kind: str
     start: int
     body: int
@@ -597,10 +598,13 @@ def _statement_end(stripped: str, start: int, end: int) -> int:
     return end
 
 
-def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
+def _direct_classes(
+    stripped: str, start: int, end: int, token: re.Pattern[str] = _CLASS_TOKEN_RE
+) -> list[_ClassSpan]:
     """The classes declared DIRECTLY in ``stripped[start:end]`` — a file, or
     one class's body — in source order; a class nested deeper belongs to
-    the one that holds it.
+    the one that holds it. ``token`` is the declarations looked for: those
+    of :data:`_CLASS_TOKEN_RE`, or every kind (:data:`_DECLARED_TOKEN_RE`).
 
     A stack of open declarations, closed by the ``end`` that names the top
     one: ``end if;`` / ``end for;`` and the ``end`` of a kind not tracked
@@ -619,7 +623,7 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
     out: list[_ClassSpan] = []
     stack: list[tuple[str, str, int, int, bool]] = []
     depth, at = 0, start
-    for m in _CLASS_TOKEN_RE.finditer(stripped, start, end):
+    for m in token.finditer(stripped, start, end):
         for found in _BRACKET_RE.finditer(stripped, at, m.start()):
             if found.group(1):
                 depth += 1 if found.group(1) in _OPENERS else -1
@@ -652,6 +656,45 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
             out.append(
                 _ClassSpan(name, kind, m.start(), m.end(), after, True, depth, partial)
             )
+    return out
+
+
+#: :data:`_CLASS_TOKEN_RE` with the two kinds it leaves out, in the same
+#: groups: a ``type`` and an ``operator`` (``operator '+' ... end '+';``).
+#: ``operator record R`` and ``operator function f`` are a record and a
+#: function here too: the lookahead leaves them to their second word.
+_DECLARED_TOKEN_RE = re.compile(
+    r"\b(?:(?P<partial>partial)\s+(?:(?:pure|impure|operator|expandable)\s+)?)?"
+    r"(?P<kind>model|block|class|package|function|record|connector|type"
+    r"|operator(?!\s+(?:record|function)\b))\s+"
+    rf"(?:extends\s+)?{_NAME}(?P<short>\s*=)?"
+    rf"|\bend\s+{_NAME}\s*;"
+)
+
+
+def declared_classes(text: str) -> list[str]:
+    """Every class a Modelica text declares, by its name qualified within
+    the text (``Lib``, ``Lib.A``, ``Lib.A.f``), in source order.
+
+    Nested classes, short classes (``type T = Real(...)``, ``model A =
+    B(...)``), types and operators are included; ``model extends A`` is
+    named ``A``. A class written inside a modification (``redeclare model
+    HT = Ideal`` in a component's brackets) is no class of the text and is
+    left out. It reads what a simulator writes of a model and everything
+    it uses (``dstf uses``), and a one-file library."""
+    stripped = _strip_modelica_literals(text)
+    out: list[str] = []
+
+    def walk(start: int, end: int, prefix: str) -> None:
+        for span in _direct_classes(stripped, start, end, _DECLARED_TOKEN_RE):
+            if span.depth:
+                continue
+            name = f"{prefix}.{span.name}" if prefix else span.name
+            out.append(name)
+            if not span.short:
+                walk(span.body, span.end, name)
+
+    walk(0, len(stripped), "")
     return out
 
 
