@@ -9,11 +9,13 @@ command is doing, and why it could not answer, goes to stderr.
 
 import argparse
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import Config, ConfigError
-from ..discovery.test_registry import discover_tests
+from ..discovery.test_registry import TestModel, discover_tests
+from ..discovery.uses import Changes
 from .common import _build_config, _filter_tests
 
 
@@ -71,18 +73,145 @@ def _believed(
     return got
 
 
-def cmd_uses(args: argparse.Namespace) -> int:
-    """List, for each class named or changed since ``--since``, the tests
-    whose model uses it."""
-    from ..backends import BackendUnavailableError, get_backend_class, select_backend
-    from ..discovery.uses import is_class, users
+class Refused(Exception):
+    """Why no answer could be had: the sentence for stderr (``str``) and
+    the command's exit code."""
 
-    config = _build_config(args)
+    def __init__(self, sentence: str, code: int):
+        super().__init__(sentence)
+        self.code = code
+
+
+def can_answer(config: Config) -> bool:
+    """Whether the project's backend can say what a test uses."""
+    from ..backends import get_backend_class
+
     try:
         cls = get_backend_class(config)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
-    if not _answering(cls):
+    return _answering(cls)
+
+
+def ask(
+    config: Config, tests: list[TestModel], say: Callable[[str], None]
+) -> dict[str, frozenset[str] | str]:
+    """What the project's simulator says each of ``tests`` uses, or, per
+    test, why it is not believed (:func:`_believed`): the kind that stays
+    alive is started and asked. Raises :class:`Refused` (exit 1) when it
+    could not be started or asked at all."""
+    from ..backends import BackendUnavailableError, select_backend
+
+    try:
+        backend = select_backend(config, persistent=True, to_run=True)
+    except BackendUnavailableError as exc:
+        raise Refused(str(exc), 1) from exc
+    asked = "1 test uses" if len(tests) == 1 else f"{len(tests)} tests use"
+    say(f"Asking {backend.label} what {asked} ...")
+    try:
+        said = backend.uses(tests)
+    except Exception as exc:
+        # The simulator did not start, or stopped answering: no test was
+        # answered for, and none is counted.
+        raise Refused(f"{backend.label} could not be asked: {exc}", 1) from exc
+    return {t.model_id: _believed(said, t.model_id, backend.label) for t in tests}
+
+
+@dataclass(frozen=True)
+class Selection:
+    """The tests a change touches: what ``uses --since`` lists and
+    ``run --changed-since`` runs (:func:`select_since`)."""
+
+    #: What differs (:func:`dstf.discovery.uses.changed_since`).
+    changes: Changes
+    #: The "Changed since" block, as printed before the answer.
+    block: list[str]
+    #: The tests asked about, in discovery's order.
+    tests: list[TestModel]
+    #: The classes asked: those named first, then the changed ones.
+    classes: list[str]
+    #: Each test's answer or the reason it has none; None when no
+    #: simulator was asked (a file counts every test, or no class to ask).
+    answers: dict[str, frozenset[str] | str] | None
+
+    @property
+    def every_test(self) -> bool:
+        """A changed file counts every test."""
+        return bool(self.changes.every_test)
+
+    @property
+    def unasked(self) -> dict[str, str]:
+        """The tests that could not be asked, each with its reason."""
+        return {
+            m: got for m, got in (self.answers or {}).items() if isinstance(got, str)
+        }
+
+    @property
+    def selected(self) -> list[TestModel]:
+        """The tests that use a class asked and those that could not be
+        asked, in discovery's order; every test when a file counts every
+        test."""
+        if self.every_test:
+            return list(self.tests)
+        if self.answers is None:
+            return []
+        asked = set(self.classes)
+        selected = []
+        for test in self.tests:
+            got = self.answers[test.model_id]
+            if isinstance(got, str) or asked & got:
+                selected.append(test)
+        return selected
+
+    @property
+    def files(self) -> int:
+        """How many files differ."""
+        return sum(len(repo.files) for repo in self.changes.repos)
+
+    @property
+    def commits(self) -> list[str]:
+        """The revision as it resolved in each repository, short."""
+        return [repo.commit.short for repo in self.changes.repos]
+
+
+def select_since(
+    config: Config,
+    rev: str,
+    tests: Callable[[], list[TestModel]],
+    say: Callable[[str], None],
+    named: Sequence[str] = (),
+) -> Selection:
+    """The tests that use a class changed since ``rev`` or one ``named``,
+    in one question to the simulator. ``tests`` is called once the
+    revision has been read, so git's refusal comes before discovery's
+    warnings; ``say`` takes the progress lines. Raises :class:`Refused`:
+    git cannot answer (2), no test to ask (1), the simulator could not be
+    started or asked (1)."""
+    from ..discovery.uses import CannotTell, changed_since
+    from ..storage.git_revisions import GitError
+
+    try:
+        changes = changed_since(config, rev, say)
+    except (CannotTell, GitError) as exc:
+        raise Refused(f"Error: {exc}", 2) from exc
+    found = tests()
+    if not found:
+        raise Refused("No tests found.", 1)
+    # Named classes first, as given; then the changed ones, by name.
+    classes = list(dict.fromkeys([*named, *changes.classes]))
+    answers = None
+    if not changes.every_test and classes:
+        answers = ask(config, found, say)
+    return Selection(changes, _changed_block(changes, rev), found, classes, answers)
+
+
+def cmd_uses(args: argparse.Namespace) -> int:
+    """List, for each class named or changed since ``--since``, the tests
+    whose model uses it."""
+    from ..discovery.uses import is_class, users
+
+    config = _build_config(args)
+    if not can_answer(config):
         print(f"{config.backend_name} cannot say what a test uses.", file=sys.stderr)
         hint = _hint(config)
         if hint:
@@ -104,54 +233,37 @@ def cmd_uses(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 2
-    changes = None
-    if args.since is not None:
-        from ..discovery.uses import CannotTell, changed_since
-        from ..storage.git_revisions import GitError
 
-        try:
-            changes = changed_since(
-                config, args.since, lambda line: print(line, file=sys.stderr)
-            )
-        except (CannotTell, GitError) as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 2
-    tests = _filter_tests(discover_tests(config), args.filter, args.package)
-    if not tests:
-        print("No tests found.", file=sys.stderr)
-        return 1
+    def say(line: str) -> None:
+        print(line, file=sys.stderr)
 
-    # Named classes first, as given; then the changed ones, by name.
-    classes = list(dict.fromkeys(args.classes))
+    def discover() -> list[TestModel]:
+        return _filter_tests(discover_tests(config), args.filter, args.package)
+
+    named = list(dict.fromkeys(args.classes))
     block: list[str] = []
-    if changes is not None:
-        block = _changed_block(changes, args.since)
-        if changes.every_test:
-            print("\n".join(block))
-            print(_every_test(changes, len(tests), len(classes)))
-            _write(args.output, [t.model_id for t in tests])
-            return 0
-        if not changes.classes and not classes:
-            print("\n".join(block))
-            _write(args.output, [])
-            return 0
-        classes = list(dict.fromkeys([*classes, *changes.classes]))
     try:
-        backend = select_backend(config, persistent=True, to_run=True)
-    except BackendUnavailableError as exc:
+        if args.since is not None:
+            chosen = select_since(config, args.since, discover, say, named)
+            tests, classes, block = chosen.tests, chosen.classes, chosen.block
+            if chosen.every_test:
+                print("\n".join(block))
+                print(_every_test(chosen.changes, len(tests), len(named)))
+                _write(args.output, [t.model_id for t in tests])
+                return 0
+            if chosen.answers is None:
+                print("\n".join(block))
+                _write(args.output, [])
+                return 0
+            answers = chosen.answers
+        else:
+            tests, classes = discover(), named
+            if not tests:
+                raise Refused("No tests found.", 1)
+            answers = ask(config, tests, say)
+    except Refused as exc:
         print(exc, file=sys.stderr)
-        return 1
-
-    asked = "1 test uses" if len(tests) == 1 else f"{len(tests)} tests use"
-    print(f"Asking {backend.label} what {asked} ...", file=sys.stderr)
-    try:
-        said = backend.uses(tests)
-    except Exception as exc:
-        # The simulator did not start, or stopped answering: no test was
-        # answered for, and none is counted.
-        print(f"{backend.label} could not be asked: {exc}", file=sys.stderr)
-        return 1
-    answers = {t.model_id: _believed(said, t.model_id, backend.label) for t in tests}
+        return exc.code
 
     # The changes are printed with the answer, never without it: stdout
     # holds nothing when the simulator could not be asked.
