@@ -39,8 +39,8 @@ from dstf.storage.git_revisions import GitError
         ("X.mo", True, "Top"),
         ("A/B/package.mo", True, "Top.A"),
         ("A/package.mo", True, "Top"),
-        # the root's own package.mo gone: the top cannot be named
-        ("package.mo", True, None),
+        # the root's own package.mo gone: its package, as for any other
+        ("package.mo", True, "Top"),
         # a name that is no plain identifier: the nearest package above
         # whose names all are (a quoted class is stored under another
         # spelling)
@@ -305,7 +305,7 @@ def test_a_nested_repository_is_named_and_its_files_are_not_compared(project):
     (inner.top / "V.mo").write_text("within Lib.Vendored;\nmodel V\n Real x;\nend V;\n")
     changes, _ = _since(Config(config_file=project.lib / "testing.json"))
     [root] = changes.repos[0].roots
-    assert (root.files, root.not_compared) == ((), ("Vendored",))
+    assert (root.files, root.unlooked) == ((), ("Vendored",))
 
 
 def test_one_repository_holding_several_roots(project):
@@ -398,3 +398,92 @@ def test_a_library_in_no_repository_is_an_error(tmp_path, monkeypatch):
     with pytest.raises(GitError) as exc:
         _since(config)
     assert str(exc.value) == f"not a git repository: {lib}"
+
+
+@pytest.mark.parametrize("entry", ["file", "folder", "repository"])
+def test_a_tracked_folder_holding_a_git_entry_is_still_compared(project, entry):
+    """A path the revision holds is this repository's, whatever the folder
+    holds now: only the search for NEW .mo files skips such a folder."""
+    a = project.lib / "A"
+    if entry == "file":
+        (a / ".git").write_text("")
+    elif entry == "folder":
+        (a / ".git").mkdir()
+    else:
+        GitRepo(a)
+    (a / "M.mo").write_text("within Lib.A;\nmodel M\n  Real x;\nend M;\n")
+    (a / "New.mo").write_text("within Lib.A;\nmodel New\nend New;\n")
+    changes, _ = _since(Config(config_file=project.lib / "testing.json"))
+    assert _changed(changes) == {"A/M.mo": (False, ("Lib.A.M",), None)}
+    assert changes.repos[0].roots[0].unlooked == ("A",)
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        ("core.autocrlf", "true"),
+        ("core.autocrlf", "input"),
+        ("attributes", "* text=auto"),
+    ],
+)
+def test_files_stored_with_crlf_are_unchanged_in_a_clean_checkout(project, setting):
+    """git converts no file STORED with carriage returns (its safety rule,
+    read from the index, which `hash-object` does not load): a clean
+    checkout must not read as changed, and an edit still does."""
+    lib = project.lib
+    for path in ("A/M.mo", "A/package.mo", "Resources/Data/table.txt"):
+        (lib / path).write_bytes((lib / path).read_bytes().replace(b"\n", b"\r\n"))
+    project.commit("stored with CRLF")
+    key, value = setting
+    if key == "attributes":
+        (project.top / ".git" / "info").mkdir(exist_ok=True)
+        (project.top / ".git" / "info" / "attributes").write_text(value + "\n")
+    else:
+        project.git("config", key, value)
+    config = Config(config_file=lib / "testing.json")
+    assert _changed(_since(config)[0]) == {}
+    m = lib / "A" / "M.mo"
+    m.write_bytes(m.read_bytes().replace(b"model M", b"model M2"))
+    assert _changed(_since(config)[0]) == {"A/M.mo": (False, ("Lib.A.M",), None)}
+
+
+def test_a_library_whose_top_name_its_file_does_not_declare_has_none(project):
+    """Config reads the name by a pattern a comment can fool (`of`): a
+    change is then not asked under a name no answer holds."""
+    lib = project.lib
+    (lib / "package.mo").write_text(
+        "within ;\n// the top package of the library\npackage Lib\nend Lib;\n"
+    )
+    project.commit("a comment")
+    config = Config(config_file=lib / "testing.json")
+    assert config.library_name == "of"  # the premise
+    (lib / "A" / "M.mo").write_text("within Lib.A;\nmodel M\n  Real x;\nend M;\n")
+    assert _changed(_since(config)[0]) == {"A/M.mo": (False, (), NO_TOP)}
+
+
+def test_the_files_compared_count_the_added_ones(project):
+    (project.lib / "A" / "New.mo").write_text("within Lib.A;\nmodel New\nend New;\n")
+    (project.lib / "A" / "Gone.mo").unlink()
+    _, said = _since(Config(config_file=project.lib / "testing.json"))
+    # the 8 at the revision (Gone.mo among them) and the new one
+    assert said == ["Comparing 9 files with HEAD ..."]
+
+
+def test_a_one_file_dependency_given_through_a_link(project, tmp_path):
+    """The link is followed to the file a simulator loads: the repository
+    that holds THAT file's folder is the one compared, not the link's
+    folder (which is in none)."""
+    top = project.top
+    (top / "One.mo").write_text("within ;\npackage One\n  model M end M;\nend One;\n")
+    project.commit("a one-file dependency")
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "elsewhere" / "One.mo").symlink_to(top / "One.mo")
+    config = json.loads((project.lib / "testing.json").read_text())
+    config["dependencies"] = [str(tmp_path / "elsewhere" / "One.mo")]
+    (project.lib / "testing.json").write_text(json.dumps(config))
+    (top / "One.mo").write_text(
+        "within ;\npackage One\n  model M Real x; end M;\nend One;\n"
+    )
+    changes, _ = _since(Config(config_file=project.lib / "testing.json"))
+    assert changes.unversioned == ()
+    assert _changed(changes) == {"One.mo": (False, ("One",), None)}

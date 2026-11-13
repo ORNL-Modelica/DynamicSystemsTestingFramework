@@ -827,11 +827,107 @@ def test_since_what_a_root_without_a_name_and_a_nested_repository_print(repo, ca
     assert out == (
         f"Changed since HEAD ({short} a dependency and a nested repository): 1 file\n"
         f"  {LIB}:\n"
-        "    Vendored/   another repository: not compared\n"
+        "    Vendored/   holds a .git entry: new .mo files are not looked for\n"
         f"  {os.path.realpath(dep)}:\n"
         "    package.mo  deleted (its top package cannot be named)\n"
         "1 changed file cannot be asked as a class: every test is counted "
         "(14 tests).\n"
+    )
+
+
+#: What the block says of a folder it does not search for new files.
+UNLOOKED = "holds a .git entry: new .mo files are not looked for"
+
+
+def test_since_a_row_that_is_no_class_is_never_cut(repo, capsys):
+    """Past twenty rows the ordinary class rows are cut, never a notice:
+    a folder not searched comes first and stays."""
+    for i in range(21):
+        (repo.lib / "Examples" / f"New{i:02}.mo").write_text(
+            f"within {EXAMPLES};\nmodel New{i:02}\nend New{i:02};\n"
+        )
+    GitRepo(repo.lib / "Vendored")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0
+    lines = out.splitlines()
+    assert lines[:3] == [
+        f"Changed since HEAD ({repo.short} the library as it was): 21 files",
+        f"  {'Vendored/'.ljust(17)}  {UNLOOKED}",
+        f"  Examples/New00.mo  {EXAMPLES}.New00",
+    ]
+    assert lines[22] == "  … and 1 more"
+    assert _asked(out) == [f"{EXAMPLES}.New{i:02}" for i in range(21)]
+
+
+def test_since_a_file_that_counts_every_test_is_named_past_the_cap(repo, capsys):
+    """Twenty-two changed classes in the library, and a data file in a
+    dependency: the data file is the reason every test counts, and is
+    named."""
+    dep = _dependency(repo.lib.parent / "Dep")
+    (dep / "table.txt").write_text("1 2 3\n")
+    repo.data["dependencies"] = ["../../../Dep"]
+    _write_config(repo)
+    repo.git.commit("a dependency")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    for i in range(22):
+        (repo.lib / "Examples" / f"New{i:02}.mo").write_text(
+            f"within {EXAMPLES};\nmodel New{i:02}\nend New{i:02};\n"
+        )
+    (dep / "table.txt").write_text("1 2 4\n")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0 and repo.asked == []
+    lines = out.splitlines()
+    assert lines[0] == f"Changed since HEAD ({short} a dependency): 23 files"
+    assert lines[1] == f"  {LIB}:"
+    assert len([line for line in lines if line.startswith("    Examples/New")]) == 20
+    assert lines[-4:] == [
+        "  Dep:",
+        f"    {'table.txt'.ljust(17)}  (no class stores it)",
+        "  … and 2 more",
+        "1 file that no class stores changed: every test is counted (14 tests).",
+    ]
+
+
+def test_since_links_are_named_and_not_followed(repo, capsys, tmp_path):
+    """A linked folder is not entered — an edit of what it points at is not
+    seen, and the block says so; a linked class file is compared by the
+    name it points at only."""
+    kept = tmp_path / "kept" / "Shared"
+    kept.mkdir(parents=True)
+    (kept / "package.mo").write_text(f"within {LIB};\npackage Shared\nend Shared;\n")
+    (kept / "S.mo").write_text(f"within {LIB}.Shared;\nmodel S\nend S;\n")
+    (repo.lib / "Shared").symlink_to(kept)
+    (repo.lib / "Components" / "Link.mo").symlink_to("UnitTests.mo")
+    repo.git.commit("a linked package and a linked class")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    (kept / "S.mo").write_text(f"within {LIB}.Shared;\nmodel S\n Real x;\nend S;\n")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0 and repo.asked == []
+    assert out == (
+        f"Nothing changed since HEAD ({short} a linked package and a linked class).\n"
+        "  Shared/             a link: not compared\n"
+        "  Components/Link.mo  a link: compared by its target's name only\n"
+    )
+    _touch(repo, "Components", "UnitTests.mo")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert out.startswith(
+        f"Changed since HEAD ({short} a linked package and a linked class): 1 file\n"
+        "  Shared/                  a link: not compared\n"
+        "  Components/Link.mo       a link: compared by its target's name only\n"
+        f"  Components/UnitTests.mo  {UNIT_TESTS}\n"
+    )
+
+
+def test_since_a_library_folder_that_is_not_the_top_package_is_refused(repo, capsys):
+    """With the library's own package.mo deleted, the project is read as
+    its first sub-package: what changed cannot be told from there."""
+    (repo.lib / "package.mo").unlink()
+    rc, out, err = _uses(repo, capsys, "--since", "HEAD")
+    assert (rc, out) == (2, "")
+    assert err == (
+        f"Error: {repo.lib / 'Components' / 'package.mo'} is inside package {LIB}: "
+        "it is not the library's top package, so what changed cannot be told. "
+        "Give the library's own folder (--source-path).\n"
     )
 
 

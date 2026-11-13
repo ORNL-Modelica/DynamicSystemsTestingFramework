@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .library_state import dependency_file, dependency_root
-from .mo_parser import UnclosedClass, declared_classes, is_declared
+from .mo_parser import UnclosedClass, _extract_within, declared_classes, is_declared
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -152,9 +152,19 @@ def source_roots(config: Config) -> list[SourceRoot]:
     """The library's root, then each dependency given as a path, in the
     order ``dependencies`` lists them. A root is named by what the file it
     is loaded by declares, never by its directory's name; one that declares
-    a name an earlier root holds is not that class, and has no name."""
-    roots = [SourceRoot(config.library_dir.resolve(), (str(config.library_name),))]
-    taken = set(roots[0].tops)
+    a name an earlier root holds is not that class, and has no name. The
+    library's root has none either when its ``package.mo`` does not declare
+    the name the project is read by (Config reads it by a pattern a
+    comment can fool): a change there is not asked under a name no answer
+    holds."""
+    library = str(config.library_name)
+    names = _top_names(config.library_dir / "package.mo")
+    roots = [
+        SourceRoot(
+            config.library_dir.resolve(), (library,) if names == [library] else ()
+        )
+    ]
+    taken = {library}
     for entry in config.dependencies:
         root = dependency_root(entry)
         if root is None:
@@ -181,8 +191,8 @@ def class_of(top: str, path: str, deleted: bool) -> str | None:
     ``<top>.A.B`` (the root's own ``package.mo``: ``<top>``). A DELETED
     file is asked as the package that held it — the tests that used its
     class can no longer be asked for it, so the holder's users are counted
-    (more than used it, on purpose); with the root's own ``package.mo``
-    gone, the top package cannot be named. A folder or file whose name is
+    (more than used it, on purpose); the root's own ``package.mo``, as
+    ``<top>``. A folder or file whose name is
     no plain identifier is read as the nearest package above it that is
     one. Any other file — not ``.mo`` — is stored by no class (a caller
     leaves ``package.order`` out first: it orders a browser's tree)."""
@@ -191,11 +201,14 @@ def class_of(top: str, path: str, deleted: bool) -> str | None:
         return None
     parts = folders if name == "package.mo" else [*folders, name[: -len(".mo")]]
     if deleted:
-        if not parts:
-            return None
         parts = parts[:-1]
     plain = takewhile(_IDENTIFIER.fullmatch, parts)
     return ".".join([top, *plain])
+
+
+class CannotTell(Exception):
+    """What changed cannot be told for this project; the text is one
+    sentence that says why and what to do."""
 
 
 #: Why a changed file counts every test.
@@ -222,9 +235,14 @@ class RootChanges:
     root: SourceRoot
     #: Those that count every test first, then by path.
     files: tuple[ChangedFile, ...]
-    #: The folders under the root that are another repository (a nested
-    #: one, a submodule): their files are not compared.
-    not_compared: tuple[str, ...] = ()
+    #: The folders under the root that hold a ``.git`` entry (a nested
+    #: repository, a submodule): their files the revision holds are
+    #: compared, but new ``.mo`` files there are not looked for.
+    unlooked: tuple[str, ...] = ()
+    #: The linked folders under the root: not entered, not compared.
+    linked_folders: tuple[str, ...] = ()
+    #: The linked ``.mo`` files: compared by the name they point at only.
+    linked_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -280,47 +298,62 @@ def _dstf_files(config: Config, root: Path) -> Callable[[Path], bool]:
     return is_dstf
 
 
-def _modelica_on_disk(
-    root: Path, is_dstf: Callable[[Path], bool]
-) -> tuple[list[str], list[str]]:
-    """The ``.mo`` files under a directory root now, by path inside it, and
-    the folders under it that are another repository. A linked directory
-    is not entered (git holds the link, not what is under it); a ``.mo``
-    link is a file of its own. DSTF's own files are left out."""
-    found: list[str] = []
-    nested: list[str] = []
+@dataclass(frozen=True)
+class _OnDisk:
+    """What a walk of a directory root found, by path inside it."""
+
+    mo_files: list[str]
+    unlooked: list[str]
+    linked_folders: list[str]
+    linked_files: list[str]
+
+
+def _walk(root: Path, is_dstf: Callable[[Path], bool]) -> _OnDisk:
+    """The ``.mo`` files under a directory root now. A linked directory is
+    not entered (git holds the link, not what is under it), and is named; a
+    ``.mo`` link is a file of its own, named too. A folder that holds a
+    ``.git`` entry (another repository, or one of its traces) is not
+    searched, and is named. DSTF's own files are left out."""
+    found = _OnDisk([], [], [], [])
     for here, dirs, files in os.walk(root):
         inside = Path(here).relative_to(root).as_posix()
+        prefix = "" if inside == "." else f"{inside}/"
         if inside != "." and (".git" in dirs or ".git" in files):
-            nested.append(inside)
+            found.unlooked.append(inside)
             dirs[:] = []
             continue
-        dirs[:] = sorted(d for d in dirs if d != ".git")
+        for name in sorted(dirs):
+            link = os.path.join(here, name)
+            if name != ".git" and os.path.islink(link) and not is_dstf(Path(link)):
+                found.linked_folders.append(prefix + name)
+        dirs[:] = sorted(
+            d for d in dirs if d != ".git" and not os.path.islink(os.path.join(here, d))
+        )
         for name in files:
             if name.endswith(".mo") and not is_dstf(Path(here, name)):
-                found.append(name if inside == "." else f"{inside}/{name}")
-    return found, sorted(nested)
+                found.mo_files.append(prefix + name)
+                if os.path.islink(os.path.join(here, name)):
+                    found.linked_files.append(prefix + name)
+    return found
 
 
 def _compare(
     git: Repository, commit: Commit, root: SourceRoot, is_dstf: Callable[[Path], bool]
-) -> tuple[dict[str, str], list[str], list[str]]:
-    """A root's files at the revision (path → blob id), the candidates on
-    disk to hash beside them, and its nested repositories — DSTF's own
-    files left out of both."""
+) -> tuple[dict[str, str], _OnDisk]:
+    """A root's files at the revision (path → blob id), DSTF's own left
+    out, and what a walk of the disk found. Every path the revision holds
+    is compared, in whatever folder it is now."""
     at_rev = git.files(commit)
     if root.one_file:
         name = root.path.name
-        at_rev = {name: at_rev[name]} if name in at_rev else {}
-        return at_rev, [name], []
-    on_disk, nested = _modelica_on_disk(root.path, is_dstf)
+        return ({name: at_rev[name]} if name in at_rev else {}), _OnDisk(
+            [name], [], [], []
+        )
+    on_disk = _walk(root.path, is_dstf)
     at_rev = {
-        path: blob
-        for path, blob in at_rev.items()
-        if not is_dstf(root.path / path)
-        and not any(path.startswith(f"{n}/") for n in nested)
+        path: blob for path, blob in at_rev.items() if not is_dstf(root.path / path)
     }
-    return at_rev, on_disk, nested
+    return at_rev, on_disk
 
 
 def _changed_file(root: SourceRoot, path: str, deleted: bool) -> ChangedFile:
@@ -329,9 +362,9 @@ def _changed_file(root: SourceRoot, path: str, deleted: bool) -> ChangedFile:
     if root.one_file:
         return ChangedFile(path, deleted, root.tops)
     asked = class_of(root.tops[0], path, deleted)
-    if asked is not None:
-        return ChangedFile(path, deleted, (asked,))
-    return ChangedFile(path, deleted, (), NO_TOP if path.endswith(".mo") else NO_CLASS)
+    if asked is None:
+        return ChangedFile(path, deleted, (), NO_CLASS)
+    return ChangedFile(path, deleted, (asked,))
 
 
 def changed_since(config: Config, rev: str, say: Callable[[str], None]) -> Changes:
@@ -345,6 +378,9 @@ def changed_since(config: Config, rev: str, say: Callable[[str], None]) -> Chang
     disk's as git would store it. ``package.order`` is left out.
 
     Raises:
+        CannotTell: The library's folder is not its top package's (its
+            ``package.mo`` is ``within`` another): Config reads a library
+            whose own ``package.mo`` is gone as its first sub-package.
         GitError: The library is in no repository; a repository does not
             know ``rev`` (the sentence names the roots it holds when the
             project is in several, since a commit hash is known in one);
@@ -353,6 +389,17 @@ def changed_since(config: Config, rev: str, say: Callable[[str], None]) -> Chang
     """
     from ..storage.git_revisions import GitError, NotARepository, Repository
 
+    top_file = config.library_dir / "package.mo"
+    try:
+        within = _extract_within(top_file.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        within = ""
+    if within:
+        raise CannotTell(
+            f"{top_file} is inside package {within}: it is not the library's top "
+            "package, so what changed cannot be told. Give the library's own "
+            "folder (--source-path)."
+        )
     held: dict[Path, list[tuple[SourceRoot, Repository]]] = {}
     unversioned: list[SourceRoot] = []
     for i, root in enumerate(source_roots(config)):
@@ -388,11 +435,11 @@ def changed_since(config: Config, rev: str, say: Callable[[str], None]) -> Chang
             (root, git, *_compare(git, commit, root, _dstf_files(config, root.path)))
             for root, git in roots
         ]
-        n = sum(len({*at_rev, *on_disk}) for _, _, at_rev, on_disk, _ in compared)
+        n = sum(len({*at_rev, *disk.mo_files}) for _, _, at_rev, disk in compared)
         say(f"Comparing {n} file{'' if n == 1 else 's'} with {rev} ...")
         changes = []
-        for root, git, at_rev, on_disk, nested in compared:
-            now = git.blobs_on_disk(sorted({*at_rev, *on_disk}))
+        for root, git, at_rev, disk in compared:
+            now = git.blobs_on_disk(sorted({*at_rev, *disk.mo_files}), stored=at_rev)
             files = []
             for path in {*at_rev, *now}:
                 if path.split("/")[-1] == "package.order":
@@ -401,6 +448,14 @@ def changed_since(config: Config, rev: str, say: Callable[[str], None]) -> Chang
                     continue
                 files.append(_changed_file(root, path, deleted=path not in now))
             files.sort(key=lambda f: (f.reason is None, f.path))
-            changes.append(RootChanges(root, tuple(files), tuple(nested)))
+            changes.append(
+                RootChanges(
+                    root,
+                    tuple(files),
+                    tuple(disk.unlooked),
+                    tuple(disk.linked_folders),
+                    tuple(sorted(disk.linked_files)),
+                )
+            )
         repos.append(RepoChanges(top, commit, tuple(changes)))
     return Changes(tuple(repos), tuple(unversioned))

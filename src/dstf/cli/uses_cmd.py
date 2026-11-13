@@ -106,14 +106,14 @@ def cmd_uses(args: argparse.Namespace) -> int:
                 return 2
     changes = None
     if args.since is not None:
-        from ..discovery.uses import changed_since
+        from ..discovery.uses import CannotTell, changed_since
         from ..storage.git_revisions import GitError
 
         try:
             changes = changed_since(
                 config, args.since, lambda line: print(line, file=sys.stderr)
             )
-        except GitError as exc:
+        except (CannotTell, GitError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
     tests = _filter_tests(discover_tests(config), args.filter, args.package)
@@ -209,8 +209,14 @@ def _count(n: int, noun: str) -> str:
 #: The longest subject of a commit that is printed, in characters.
 SUBJECT_LIMIT = 60
 
-#: The most files listed per repository; the rest are counted.
+#: The most class rows listed per repository; the rest are counted.
 LISTED = 20
+
+#: What the block says of a folder holding a ``.git`` entry, a linked
+#: folder and a linked ``.mo`` file.
+UNLOOKED = "holds a .git entry: new .mo files are not looked for"
+LINKED_FOLDER = "a link: not compared"
+LINKED_FILE = "a link: compared by its target's name only"
 
 
 def _changed_block(changes, rev: str) -> list[str]:
@@ -237,15 +243,21 @@ def _changed_block(changes, rev: str) -> list[str]:
             lines.append(
                 f"Nothing changed since {at}{f' in {where}' if several_repos else ''}."
             )
-        rows: list[tuple[str | None, str, str]] = []
+        # Per root, the notices first — a file that counts every test, a
+        # folder not searched, a link — and never cut: the cap is on the
+        # ordinary class rows, which are all asked whether shown or not.
+        shown: list[tuple[str | None, str, str]] = []
+        budget = LISTED
         for root in repo.roots:
             heading = root.root.label if several_roots else None
-            rows += [(heading, f.path, _what(f)) for f in root.files]
-            rows += [
-                (heading, f"{p}/", "another repository: not compared")
-                for p in root.not_compared
-            ]
-        shown, rest = rows[:LISTED], len(rows) - LISTED
+            shown += [(heading, f.path, _what(f)) for f in root.files if f.reason]
+            shown += [(heading, f"{p}/", UNLOOKED) for p in root.unlooked]
+            shown += [(heading, f"{p}/", LINKED_FOLDER) for p in root.linked_folders]
+            shown += [(heading, p, LINKED_FILE) for p in root.linked_files]
+            classes = [f for f in root.files if not f.reason]
+            shown += [(heading, f.path, _what(f)) for f in classes[:budget]]
+            budget = max(0, budget - len(classes))
+        rest = sum(1 for f in repo.files if not f.reason) - LISTED
         width = max((len(path) for _, path, _ in shown), default=0)
         last = None
         for heading, path, what in shown:
