@@ -529,7 +529,7 @@ class TestUsesGate:
             assert has_flag is (cls.uses is not Backend.uses), cls.__name__
             if has_flag:
                 declared.add(cls.__name__)
-        assert declared == set()
+        assert declared == {"PersistentDymolaBackend"}
 
     def test_declaring_it_without_the_method_trips_at_registration(self):
         from dstf.backends import _REGISTRY, register

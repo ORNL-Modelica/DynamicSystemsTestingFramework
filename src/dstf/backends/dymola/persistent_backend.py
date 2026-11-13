@@ -859,6 +859,7 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
             Capability.FMU_EXPORT,
             Capability.LIVE_RESULTS,
             Capability.CANCEL,
+            Capability.USES,
         }
     )
 
@@ -949,5 +950,67 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
                 worker.close()
             except Exception:
                 pass
+
+    def uses(self, tests: list[TestModel]) -> dict[str, frozenset[str] | str]:
+        """What each test's model uses, by Dymola's ``saveTotalModel(file,
+        model, skipStandard=true)``: one file of the model and every class
+        it uses, the Modelica Standard Library left out, read by
+        :func:`~dstf.discovery.mo_parser.declared_classes`.
+
+        A one-shot worker, as :meth:`export_fmu`'s, whose work dir is a
+        temporary directory removed afterwards: the project's work dir is
+        not touched. Loading the library leaves Dymola in the library's
+        directory, so it is moved back into the temporary one before it is
+        asked, and every file is named by its absolute path.
+
+        A name is kept when its first part is a top package of the project
+        (:func:`~dstf.discovery.uses.top_packages`); the model Dymola wraps
+        the test in is at top level and is none.
+        """
+        import copy
+        import tempfile
+
+        from ...discovery.uses import one_line, project_classes, top_packages
+
+        di_cls = load_dymola_interface(self.interface_of(self.config))
+        # Dymola's interface prints its connection noise to stdout, which
+        # is `dstf uses`'s answer: muted for a Dymola this process closed.
+        _install_dymola_log_filter()
+        _patch_dymola_for_parallel_startup()
+        tops = top_packages(self.config)
+        answers: dict[str, frozenset[str] | str] = {}
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            # A copy, not `dataclasses.replace`: that would resolve the
+            # configuration, testing.json's reading included, again.
+            config = copy.copy(self.config)
+            config.work_dir = Path(tmp)
+            worker = DymolaWorker(
+                worker_id=-1,
+                config=config,
+                dymola_config=self.dymola_config,
+                dymola_interface_cls=di_cls,
+            )
+            try:
+                worker.start_within()
+                worker.dymola.cd(tmp)
+                for n, test in enumerate(tests):
+                    file = Path(tmp) / f"{n}.mo"
+                    if worker.dymola.saveTotalModel(
+                        str(file), test.model_id, skipStandard=True
+                    ):
+                        text = file.read_text(encoding="utf-8", errors="replace")
+                        answers[test.model_id] = project_classes(text, tops)
+                    else:
+                        answers[test.model_id] = one_line(
+                            worker._last_error(),
+                            f"Dymola did not save {test.model_id} and said "
+                            "nothing of why",
+                        )
+            finally:
+                try:
+                    worker.close()
+                except Exception:
+                    pass
+        return answers
 
     # run_tests is inherited from PersistentBackendBase.
