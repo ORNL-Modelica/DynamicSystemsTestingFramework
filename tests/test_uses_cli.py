@@ -808,6 +808,33 @@ def test_neither_a_class_nor_since_is_a_usage_error(env, capsys):
     assert err.endswith("dstf uses: error: name a CLASS, or give --since REV\n")
 
 
+def test_since_what_a_root_without_a_name_and_a_nested_repository_print(repo, capsys):
+    """A dependency whose package.mo is gone cannot be asked as a class:
+    every test is counted. A nested repository is named, not compared."""
+    dep = _dependency(repo.lib.parent / "Dep")
+    repo.data["dependencies"] = ["../../../Dep"]
+    _write_config(repo)
+    inner = GitRepo(repo.lib / "Vendored")
+    (inner.top / "package.mo").write_text(
+        f"within {LIB};\npackage Vendored\nend Vendored;\n"
+    )
+    inner.commit("the inner repository")
+    repo.git.commit("a dependency and a nested repository")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    (dep / "package.mo").unlink()
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0 and repo.asked == []
+    assert out == (
+        f"Changed since HEAD ({short} a dependency and a nested repository): 1 file\n"
+        f"  {LIB}:\n"
+        "    Vendored/   another repository: not compared\n"
+        f"  {os.path.realpath(dep)}:\n"
+        "    package.mo  deleted (its top package cannot be named)\n"
+        "1 changed file cannot be asked as a class: every test is counted "
+        "(14 tests).\n"
+    )
+
+
 # --- --since: which refusal is said first ----------------------------------
 
 
