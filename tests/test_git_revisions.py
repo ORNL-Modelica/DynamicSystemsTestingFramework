@@ -325,3 +325,37 @@ def test_a_filter_driver_s_clean_command_is_run(lib, tmp_path):
     files = git.files(git.commit(sha))
     assert git.blobs_on_disk(["A/M.mo"]) == {"A/M.mo": files["A/M.mo"]}
     assert mark.exists()
+
+
+def test_git_s_location_variables_of_a_hook_are_not_read(lib, tmp_path, monkeypatch):
+    """Inside a git hook, `GIT_DIR` (and `GIT_WORK_TREE`, `GIT_INDEX_FILE`)
+    name the hook's repository: read here, every file would be another
+    repository's, or none."""
+    repo, folder, sha = lib
+    other = GitRepo(tmp_path / "other")
+    (other.top / "x.txt").write_text("x")
+    other.commit("another repository")
+    monkeypatch.setenv("GIT_DIR", str(other.top / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other.top))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(other.top / ".git" / "index"))
+    git = Repository.holding(folder)
+    assert git.top == repo.top
+    files = git.files(git.commit(sha))
+    assert sorted(files) == ["A/Gone.mo", "A/M.mo", "A/package.mo", "package.mo"]
+    assert git.blobs_on_disk(files) == files
+
+
+def test_a_file_git_cannot_read_is_an_error_not_a_shorter_answer(lib):
+    """One file it cannot open ends `hash-object`: the ids it gave are not
+    an answer for every file."""
+    _, folder, sha = lib
+    locked = folder / "A" / "M.mo"
+    locked.chmod(0)
+    try:
+        if os.access(locked, os.R_OK):
+            pytest.skip("this user reads any file")
+        git = Repository.holding(folder)
+        with pytest.raises(GitError, match="^cannot hash the files of src/Lib in "):
+            git.blobs_on_disk(["package.mo", "A/M.mo", "A/package.mo"])
+    finally:
+        locked.chmod(0o644)

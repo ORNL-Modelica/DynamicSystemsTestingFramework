@@ -17,17 +17,21 @@ Reading never writes the repository. Only ``rev-parse``, ``log -1``,
 of which touches the index; ``git diff`` against the work tree refreshes
 the index of every stat-dirty file (even with optional locks off), and
 ``git diff --name-only`` reports a renamed file by its new name only, so
-neither is used, and neither is ``git status`` (``tests/test_git_revisions.py``
-hashes ``.git`` before and after over a touched file). What a folder holds
-ON DISK is read from the disk by its caller, not from git: an untracked file
-is exactly what an accept leaves before ``git add``.
+neither is used. Nor is ``git status``: it reports what differs from the
+index, not from a revision (``tests/test_git_revisions.py`` hashes ``.git``
+before and after over a touched file). What a folder holds ON DISK is read
+from the disk by its caller, not from git: an untracked file is exactly
+what an accept leaves before ``git add``. Git's location variables
+(``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_INDEX_FILE``, which git sets for a
+hook it runs) are not passed on: the repository is the folder's.
 
-One boundary, the user's own: :meth:`Repository.blobs_on_disk` hashes a
-file with the repository's conversions applied, as ``git add`` would. Git's
-own (line endings, ``ident``) write nothing; a ``filter`` driver's clean
-command is the user's program, run as ``git status`` runs it, and may keep
-what it is given — git-lfs stores a copy of a changed file under
-``.git/lfs/objects``.
+Two boundaries, neither DSTF's own. :meth:`Repository.blobs_on_disk`
+hashes a file with the repository's conversions applied; git's own (line
+endings, ``ident``) write nothing, but a ``filter`` driver's clean command
+is the user's program, run as ``git status`` runs it, and may keep what it
+is given — git-lfs stores a copy of a changed file under
+``.git/lfs/objects``. And in a partial (treeless) clone, reading an older
+revision's tree makes git fetch the objects it lacks into ``.git``.
 """
 
 from __future__ import annotations
@@ -35,13 +39,23 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 #: Optional locks off for every command (``git --no-optional-locks``).
 _ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"}
+
+#: Where git finds its repository, set by git for a hook it runs: read
+#: here, they would name the hook's repository, not the folder's.
+_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+
+
+def _env() -> dict[str, str]:
+    """The environment every git command here runs in."""
+    env = {k: v for k, v in os.environ.items() if k not in _LOCATION}
+    return {**env, **_ENV}
 
 
 class GitError(Exception):
@@ -72,7 +86,7 @@ def _run(
             ["git", "--no-optional-locks", *args],
             cwd=cwd,
             capture_output=True,
-            env={**os.environ, **_ENV},
+            env=_env(),
             **({"stdin": subprocess.DEVNULL} if given is None else {"input": given}),
         )
     except FileNotFoundError as e:
@@ -180,25 +194,33 @@ class Repository:
                 out[path.decode("utf-8", "surrogateescape")[start:]] = blob.decode()
         return out
 
-    def blobs_on_disk(self, paths: Iterable[str]) -> dict[str, str]:
-        """The blob id git would store each of ``paths`` under — a path
-        inside the folder, as :meth:`files` spells it — for what is on disk
-        now. A file is hashed with the repository's conversions applied, as
-        ``git add`` would (line endings, ``ident``, a ``filter`` driver's
-        clean command): a file checked out with CRLF line endings and
-        stored with LF is the blob it was. A symbolic link is the blob of
-        its target's name, as git stores one, never what it points at. A
-        path that is neither — not there, or a directory — is left out.
+    def blobs_on_disk(
+        self, paths: Iterable[str], stored: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
+        """The blob id of what is on disk now for each of ``paths`` — a path
+        inside the folder, as :meth:`files` spells it. A file is hashed with
+        the repository's conversions applied (line endings, ``ident``, a
+        ``filter`` driver's clean command): a file checked out with CRLF
+        line endings and stored with LF is the blob it was. A symbolic link
+        is the blob of its target's name, as git stores one, never what it
+        points at. A path that is neither — not there, or a directory — is
+        left out.
 
-        One ``git hash-object --stdin-paths`` for every file, without
-        ``-w``: nothing is stored. It reads each path from the work tree's
-        top, whatever directory it starts in, and stops at the first it
-        cannot read, so only regular files are given, and as many ids as
-        paths must come back. A link is one ``git hash-object --stdin
-        --no-filters`` each: the id is git's to compute (a repository may
-        name its objects by SHA-256)."""
+        ``stored`` is each path's id at the revision compared against. A
+        file whose converted id is not its stored id is hashed once more as
+        it is, and is its stored id when that matches: ``hash-object`` does
+        not read the index, so it converts a file git would leave alone — one
+        STORED with CRLF, under ``core.autocrlf`` or ``text=auto`` — and a
+        clean checkout of it would read as changed. An edit differs both
+        ways.
+
+        ``git hash-object --stdin-paths`` without ``-w``: nothing is stored.
+        It reads each path from the work tree's top, whatever directory it
+        starts in, and stops at the first it cannot read, so only regular
+        files are given, and as many ids as paths must come back. A link is
+        one ``git hash-object --stdin --no-filters`` each: the id is git's
+        to compute (a repository may name its objects by SHA-256)."""
         base = self.top / self.folder if self.folder else self.top
-        prefix = f"{self.folder}/" if self.folder else ""
         files: list[str] = []
         out: dict[str, str] = {}
         for path in paths:
@@ -218,10 +240,22 @@ class Repository:
                 out[path] = proc.stdout.decode().strip()
             elif stat.S_ISREG(mode):
                 files.append(path)
+        out.update(self._hashed(files))
+        stored = stored or {}
+        other = [p for p in files if p in stored and out[p] != stored[p]]
+        for path, raw in self._hashed(other, "--no-filters").items():
+            if raw == stored[path]:
+                out[path] = raw
+        return out
+
+    def _hashed(self, files: list[str], *flags: str) -> dict[str, str]:
+        """``files`` — regular files, by path inside the folder — to their
+        blob ids, by one ``git hash-object --stdin-paths``."""
         if not files:
-            return out
+            return {}
+        prefix = f"{self.folder}/" if self.folder else ""
         proc = _run(
-            ["hash-object", "--stdin-paths"],
+            ["hash-object", *flags, "--stdin-paths"],
             self.top,
             b"".join(_quoted(prefix + path) + b"\n" for path in files),
         )
@@ -231,8 +265,7 @@ class Repository:
                 f"cannot hash the files of {self.folder or '.'} in {self.top}: "
                 f"{_said(proc)}"
             )
-        out.update(zip(files, ids, strict=True))
-        return out
+        return dict(zip(files, ids, strict=True))
 
     @contextmanager
     def reader(self) -> Iterator[Callable[[str], bytes]]:
@@ -245,7 +278,7 @@ class Repository:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                env={**os.environ, **_ENV},
+                env=_env(),
             )
         except FileNotFoundError as e:
             raise GitError("git is not installed here (no git on the PATH)") from e
