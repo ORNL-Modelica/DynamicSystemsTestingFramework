@@ -13,68 +13,68 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 5 | ~~Condensed HTML with progressive disclosure~~ | M | High | **DONE** — key stats cards at top, condensed variable table, full details/stats/params/diagnostics in collapsible sections. Jinja2 templates + `comparison_data.json` sidecar |
 | 6 | ~~Auto-generate HTML report suite~~ | M | High | **DONE** — `--report` generates index page + per-test reports with plots; JS filter buttons; opens in browser |
 | 7 | Configurable variable ordering | M | Medium | Config plumbing + sort logic in reports and references |
-| 8 | Interactive tolerance editing | M | Medium | Phase 1-4 DONE (NRMSE tolerance, tube with 3 width modes, interactive Plotly reports, Shift+click/drag tube editing on plot); remaining: cubic interpolation, independent upper/lower point arrays |
+| 8 | Interactive tolerance editing | M | Medium | Tolerances and tubes are edited on the plot in `dstf author` (D149); the report page's Shift+click editing in the entry below was removed with that page's editors (D125). Remaining: cubic interpolation, independent upper/lower point arrays |
 | 9 | One-click "open in Dymola" | M | Medium | .mos generation straightforward; protocol handler is platform-specific |
 | 10 | Interactive setup wizard | M | Low | Nice onboarding but power users skip it quickly |
 | 11 | Test discovery + potential test helper | H | High | Extends/folder scanning, user-configurable criteria, suggest tests needing spec/UnitTests |
-| 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
+| 12 | ~~Model health analysis from reference data~~ | H | High | **CLOSED** — out of scope: analysis of stored results belongs in a downstream tool that reads DSTF's files (D66; D161 for timing trends) |
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
-| 14 | Link to reference JSON file from HTML | L | Medium | Artifacts link to sim files but not the ref JSON; filename shown as text in ref_info but not clickable **Built**: the dashboard's Reference column and the per-test page's Reference Info link the reference JSON (with `--report`). |
+| 14 | ~~Link to reference JSON file from HTML~~ | L | Medium | **DONE** — the dashboard's Reference column and the per-test page's Reference Info link the reference JSON (with `--report`) |
 | 15 | WebGL for large traces (scattergl) | L | High | Switch to `scattergl` when trace >5k points; SVG unusable beyond ~10k |
 | 16 | ~~LTTB data decimation~~ | M | High | **DONE** — shipped in Phase 6.0 as Python-side decimation on the HTML embed (`reporting/decimate.py`). Applied at `Config.max_embedded_samples` (default 1000) to the `TRAJECTORIES` embed; `comparison_data.json` stays full-res. Browser-side LTTB on zoom is idea #48 (lazy-fetch). |
-| 17 | Linked panel zoom | L | Medium | Sync x-axis across trajectory/abs-error/NRMSE panels via `plotly_relayout` |
+| 17 | ~~Linked panel zoom~~ | L | Medium | **CLOSED** — no longer applies: the error series are drawn on two extra axes of a plot's one figure, so there are no separate panels to keep in step |
 | 18 | Worst-violation annotation | L | Medium | Arrow + callout at worst error point on trajectory plot; data already in context |
-| 19 | Zoom-dependent statistics | L | Medium | Recompute NRMSE/max-error for visible window on zoom; ~40 lines JS |
+| 19 | ~~Zoom-dependent statistics~~ | L | Medium | **CLOSED** as written — it was JavaScript in the report page, which computes nothing since D125. A score over part of a run is a criterion's `window` (#46) |
 | 20 | Sparkline error profiles | L | Low | Inline SVG polylines in variable sidebar; ~20 lines JS |
 | 21 | Summary heatmap on index page | M | High | Variables × tests grid colored by NRMSE; click-to-navigate |
 | 22 | Color-coded trajectories | M | Low | Line colored by local error magnitude via 5-8 band traces |
 | 23 | Frechet distance & area between curves | L | Medium | `similaritymeasures` package; supplementary diagnostic metrics |
 | 24 | Spectral coherence comparison | M | Medium | `scipy.signal.coherence`; frequency-domain agreement per variable |
-| 25 | X-direction time tolerance | M | High | Handle solver-dependent event timing shifts; concept from pyfunnel |
+| 25 | X-direction time tolerance | M | High | Handle solver-dependent event timing shifts; concept from pyfunnel **Built in part** (D84): a `points` criterion and an `event-timing` criterion each take a `time_tolerance`. Open: a tolerance in time over a whole trajectory (the tube is in Y only). |
 | 26 | ISO 18571 failure diagnostics | M | Medium | Phase/magnitude/slope decomposition via `objective-rating-metrics` |
 | 27 | Phase-space plots | M | Low | Variable vs variable plots; data already embedded |
 | 28 | JSON size management for large suites | M | Medium | Sidecar files + lazy fetch when embedded JSON exceeds ~20 MB |
-| 29 | Progressive enhancement: optional server | H | Medium | Thin FastAPI layer for accept-from-browser, re-compare, lazy loading |
+| 29 | ~~Progressive enhancement: optional server~~ | H | Medium | **CLOSED** — replaced by `dstf author` (D125): the tool accepts results, edits criteria and queues simulations from the browser |
 | 30 | Notebook integration helper | L | Low | Data-loading utility for `comparison_data.json` in Jupyter |
 | 31 | ~~Parallel process progress reporting~~ | M | High | **DONE** — `ProgressReporter` writes `status.json` + auto-refreshing `dashboard.html` to work_dir; per-test status, worker attribution, ETA, links to per-test work dir + reports |
-| 32 | Parallelize report generation | M | Medium | `--report` is sequential matplotlib/Jinja2 per test; embarrassingly parallel **Built**: `--parallel N` renders the report suite on N threads (`compare --report --parallel N`). |
+| 32 | ~~Parallelize report generation~~ | M | Medium | **DONE** — `--parallel N` renders the report suite on N threads (`compare --report --parallel N`) |
 | 33 | ~~Batch actions from HTML report~~ | M | High | **DONE** — checkbox column + action panel on index page. Bulk selectors (+ Failed/Sim Failed/No Baseline/Warnings/Stale), copy filter list, download selected.txt, copy run command. Live command preview |
 | 34 | ~~NRMSE panel annotations + metric clarity~~ | L | Medium | **DONE** — avg-NRMSE line + shaded fail zone (above tolerance) on both matplotlib and Plotly NRMSE panels; "Pass/Fail Criterion" column added to variable table (mode-aware: NRMSE-vs-tolerance, %-inside-tube, or final-error-vs-tolerance) |
 | 35 | ~~Filter by test list file~~ | L | Medium | **DONE** — `--filter` accepts glob, comma-separated list, or `@file` (one pattern per line, `#` comments) |
 | 36 | Cross-platform reference comparison | H | High | Compare results across OS/simulator versions; use alternate ref as baseline |
 | 37 | ~~Per-test report section reordering~~ | L | Low | **DONE** — Sim Params → Statistics → Diagnostics now sit above Variables in both `comparison.html` and `interactive.html`; structural warnings rendered as prominent yellow box near top |
 | 38 | ~~Incremental run + report workflow~~ | M | High | **DONE** — persistent test_keys (`assign_test_keys` in `simulators/base.py`); `--merge` expands report scope to all known tests; `--rerun [CATEGORIES]` selects tests by prior status (default: failed; implies --merge); `last_run_at` shown in index column (relative time + tooltip) and per-test report header; stale rows greyed out |
-| 39 | Live log tailing for per-test progress | M | Medium | Inside a Dymola batch, individual test transitions are invisible. Tail stdout/translation_log.txt and parse "Translating ModelX" / "Integration terminated" markers to flip dashboard status mid-batch. Per-backend log-marker hook |
+| 39 | ~~Live log tailing for per-test progress~~ | M | Medium | **CLOSED** — no longer applies: persistent workers are the default and report each test's phase as it runs; only the `--batch` fallback still reports per batch |
 | 40 | ~~Persistent Dymola workers with dynamic dispatch~~ | H | High | **DONE** — now the default (`--batch` inverse escape hatch). `DymolaInterface` auto-discovered (`.whl`/`.egg`), launches parallelized via `dymola_lock` patch, PID-tracked via `._dymola_process.pid`. Per-test timeout watchdog with disk-check rescue (trusts dsfinal.txt + reached stop_time). Worker restart (cap 3). Per-phase timing breakdown (translate/sim/other/total, rounded to 2 decimals), phase visible live on dashboard. Noise suppression during kills via `DymolaLogger` monkey-patch. `check-dymola` diagnoses loader |
 | 41 | Dashboard refinements | L | Low | Filter buttons on dashboard (failed only, running only), keyboard-jump to next failure, dark mode. Index page got sortable columns + timing columns — dashboard could match **Built in part**: the dashboard's count pills are its status filter, and dark mode is `"theme": "dark"` in `testing.json` (D148); keyboard-jump is not built. |
-| 42 | Quick-save selected results to reference | M | High | CLI: `accept --filter X` reads existing work_dir results and writes to reference, no resim. HTML report: "Copy accept command" button next to "Copy rerun command". Pairs with Phase 1.7 multi-baseline (accept writes to `primary` baseline by default; `--baseline <name>` overrides) **Built**: `dstf compare --accept [--filter X]` stores the last run's results without re-simulating, and the dashboard's Command menu builds that command for a selection; `dstf author`'s Accept does it for the checked tests. |
+| 42 | ~~Quick-save selected results to reference~~ | M | High | **DONE** (D93) — `dstf compare --accept [--filter X]` stores the last run's results without re-simulating, and the dashboard's Command menu builds that command for a selection; `dstf author`'s Accept does it for the checked tests. There is no separate `accept` command |
 | 43 | Per-test timeout + other per-test knobs in test_spec | L | Medium | Extend `test_spec.json` to allow per-test `timeout`, `batch_size_hint`, etc. Currently only simulation/comparison settings are per-test. Show in per-test report (Sim Params section). Belongs in same schema expansion as MetricTree **Built** for the timeout: `simulation.timeout` in a `test_spec.json` entry. |
 | 44 | Dymola-interface resilience tracking | M | Medium | Port-bind race on worker startup (~1/20 fails), "Mismatch request/response ID in JSON-RPC call", "Remote end closed connection without response". Existing worker-restart rescues most. Could add: post-port-find `SO_REUSEADDR`+bind-probe before returning, broader noise-pattern filter, exponential-backoff retry on RPC mismatch |
-| 45 | Python-driven tests (user-code backend) | H | High | New sibling backend `CustomPythonRunner` + `PythonTestRecognizer` for `.py` test files. Contract = `run(context) -> SimulationResult` dataclass (time, variables, diagnostics, metadata); framework owns persistence. User implementation is free — fmpy-with-custom-inputs, pyomo, scipy.integrate, custom solvers, CSV loaders — framework only enforces the return shape. Prerequisite: refactor `FmpyRunner` to produce `SimulationResult` first, proving the contract on the existing case. Single backend per testing.json stays the pattern (no per-test dispatch). Post Phase-6-MVP; pairs with the deferred D65 FMU-path semantic-gap closure. **Built** (D80) as `PythonBackend`: a subprocess per test calling the user's `simulate(stop_time, tolerance) -> dict`; tests come from `test_spec.json`, with no `.py` recognizer. |
+| 45 | ~~Python-driven tests (user-code backend)~~ | H | High | **DONE** (D80) as `PythonBackend`: a subprocess per test calling the user's `simulate(stop_time, tolerance) -> dict`; tests come from `test_spec.json`, with no `.py` recognizer |
 | 46 | ~~Time-windowed leaf metrics~~ | M | High | **DONE** (A-tier close-out). Backend (6.1.1) + UI (A1) both shipped. `render_window_controls_html` emits universal start/end inputs for tree-backed leaves; `collect_leaf_paths` produces JSON-Pointer leaf paths; `buildPatchData` round-trips via RFC 6902 `add`/`remove` on `<leaf_path>/window`. Deferred stretch: range-brush on the trajectory plot (scalar inputs are v1). |
-| 47 | Time-array dedup in interactive.html (6.0.1) | M | High | Every variable currently embeds `act_time` + `ref_time` per trajectory — within a single test these are shared across all variables, so a 50-var test embeds 100 redundant time arrays. Dedup = emit one shared pair per test + reference-by-index per variable; compounds ~50% payload reduction on top of LTTB decimation. Would raise the 6.0 cap from 1000 back to 2000 under the same 5 MB budget. Touches template JS at 6+ call sites (`TRAJECTORIES[idx].act_time`) — coordinated Python + Jinja + JS change. |
-| 48 | Lazy-fetch full-res on zoom (6.0.2) | M | High | Tier-2 of the payload strategy: JS detects zoom events via `plotly_relayout`, fetches `comparison_data.json` (full-resolution, already on disk next to the HTML), slices to the visible x-window, rerenders the window at native fidelity. Works from `file://` URLs — no server needed. Restores full visual fidelity for users who actually need it without inflating the standalone-HTML payload. |
+| 47 | ~~Time-array dedup in interactive.html (6.0.1)~~ | M | High | **CLOSED** — no longer applies: the `TRAJECTORIES` embed is gone. Since D125 a page holds one Python-built figure per plot, and the 5 MB budget was dropped |
+| 48 | ~~Lazy-fetch full-res on zoom (6.0.2)~~ | M | High | **CLOSED** as written — it was JavaScript in the report page, which computes nothing since D125. A page with thinned traces says so in a banner and names the full-resolution file (`comparison_data.json`) |
 | 49 | Per-test max_embedded_samples override (6.0.3) | L | Medium | Extend `test_spec.json` `comparison` block with an optional `max_embedded_samples` field — escape hatch for tests with pathological signals (stiff ringing, sharp events) that legitimately need higher embedded fidelity than the global cap. Per-test resolution order same as tolerance (variable_override → test → config → default). Small, additive; can land anytime. |
 | 50 | ~~Companion + soft_check overlay rendering (6.3 slice)~~ | M | High | **DONE** (A-tier close-out). `reporting/overlay_loader.py` loads JSON + wide-CSV companions (graceful degradation on missing/invalid), plus soft_checks. Per-plot picker defaults off; test-level summary lists unrendered overlays. Soft_checks render purple dotted, companions green dashdot; LTTB decimation integrated. |
 | 51 | ~~Multi-simulator sibling-result overlays as companions~~ | M | High | **DONE (partial)** — sibling-backend auto-companion overlays shipped in commit `d3d6cfb` (post-D69 follow-up). `load_overlays` auto-scans `<reference_root>/<other_backend>/<os>/ref_*.json` for the same `model_id` at report time; renders as `kind="sibling-backend"` blue-dashed overlays with per-plot picker. D71 (2026-04-23) extended picker UI to the no-baseline code path so fresh-backend workflows see the same toggle UX. **Still open**: (a) user-labelled overlay names (currently `sibling_dymola` / `sibling_fmu`); (b) opt-in `"auto_companions"` config knob to restrict which sibling roots are scanned (all sibling backends auto-discovered today). |
 | 52 | ~~Wrap-in-combinator + combinator-kind editing in reporter~~ | L | Medium | **DONE** (D72, 2026-04-23). Kind dropdown in combinator header (5 options); ⊕ wrap button on every node; ⊖ unwrap on single-child combinators. Seeded defaults for k-of-n / weighted. No new patch ops — wholesale `/metrics` replace envelope. +17 Playwright tests. Multi-select wrap + live validation halos deferred. |
-| 53 | `check-openmodelica` CLI subcommand | L | Low | Peer of `check-dymola`. Verifies omc on PATH + MSL installed + OMPython importable + omc version. Prints diagnostic table. Useful onboarding for new users, especially on machines where `installPackage(Modelica)` hasn't been run. ~½ day. D70 deferred. **Built**: `dstf check-openmodelica` (and `dstf check-julia`). |
+| 53 | ~~`check-openmodelica` CLI subcommand~~ | L | Low | **DONE** as `dstf check [backend]` (D159): one command says where each backend is on this machine and diagnoses one of them. The per-backend `check-*` commands it replaced are gone |
 | 54 | OM FMU export via `buildModelFMU` | M | Medium | Wire OpenModelica into the `Capability.FMU_EXPORT` cross-backend chain. Currently Dymola-only (and experimental per D65). Would let the D63 `produce_dymola_via_fmpy_baseline` chain reciprocate — `produce_openmodelica_via_fmpy_baseline` — for cross-backend regression on OM-authored models. ~1–2 days. D69 deferred. |
 | 55 | ~~Julia ModelingToolkit backend~~ | H | High | **DONE** (D77 + D78 + D79). Fourth `SimulatorRunner` shipped. Subprocess-per-test batch path (D77) + persistent-worker stdin/stdout JSON protocol (D78) + JuliaMtkTestingLib with 7 tests (D79). `examples/julia/JuliaMtkTestingLib/Examples/*.jl` — each exports `build_mtk_system()` → `(sys, u0, ps)`. Framework driver (`run_test.jl` / `run_persistent.jl`) invokes `structural_simplify` + `ODEProblem` + `solve`, writes JSON result. Observables + unknowns both materialized. 14 cross-library companions wired (both directions) between JuliaMtkTestingLib and ModelicaTestingLib via portable relative paths. Dyad still untested — should work via the same MTK path (Dyad compiles to MTK). `SimulationResult` refactor never needed; `TestResult` in `simulators/base.py` was already the shared typed return.<br><br>**Still open follow-ons**: EventTest / IntervalTest / NoUnitTest / SimulateOnlyTest Julia ports; MTK FMU export via `ModelingToolkit.generate_fmu`; Dyad validation sample; JuliaCall-based embedded persistent path (probably not needed — subprocess is fast enough). |
-| 56 | Declared-peaks provenance UI polish | L | Low | D76 stamps `derived_from_window: {start, end}` on peaks added via Detect or Shift+click. Could extend: hover tooltip on the peak marker on the spectrum subplot (not just the table row); "Set window from provenance" button per peak row to snap the leaf's current window to that peak's derivation window. Small ergonomic wins; ship when someone asks. |
+| 56 | ~~Declared-peaks provenance UI polish~~ | L | Low | **CLOSED** — no longer applies: the report page's editors are gone (D125), and nothing stamps `derived_from_window` any more |
 | 57 | Experiment-data alignment preprocessing | M | Medium | Time-offset / amplitude-scale alignment for CSV baselines before scoring. Belongs in the comparison layer as a preprocessing wrapper or new ComparisonMode. Wait for concrete user demand — D66 says calibration-adjacent work belongs downstream. |
 | 58 | Persistent-worker Python (PythonCall / stdin-JSON) | M | Low | Long-lived Python subprocess with stdin-dispatch, like JuliaPersistentRunner. Per-test startup is ~30-100 ms today; pays off once a suite has hundreds of Python tests. Mirror the D77→D78 Julia progression. |
 | 59 | ~~Baseline-free modes short-circuit NO_REF~~ | L | Low | **DONE** (D83, 2026-04-24). New `ComparisonMode.is_baseline_free()` on the base (default False); overridden True on `RangeMode`, `EventTimingMode` (iff `events` declared), `DominantFrequencyMode` (iff `peaks` declared). When every leaf in a test's tree is baseline-free AND the baseline is missing, `compare_all` now proceeds to `compare_test` (reference={}) instead of collapsing to NO_REF. Mixed trees stay NO_REF. +5 tests (791 → 796). |
-| 60 | Extract shared "declared-items table editor" helper | L | Low | Dom-frequency's declared-peaks editor and event-timing's declared-events editor (D82) share ~74% of structure (table render, source dropdown, detect button, add/delete). Extract a factory: `createDeclaredItemsEditor({getItems, itemToRow, onAdd, onDetect, renderMatch})` — both editors become ~30-line call sites. Follow-up; YAGNI-deferred until the second editor shipped so the factory shape is concrete. |
+| 60 | ~~Extract shared "declared-items table editor" helper~~ | L | Low | **CLOSED** — built in D87 (`createDeclaredItemsTable`), then removed with the report page's editors (D125) |
 | 61 | ~~Points editor — draggable plot markers (Full scope)~~ | M | Low | **DONE** — wired to the shared createPointPlotEditor factory. Shift+click on plot adds a point at (clicked_x, clicked_y) with explicit value; shift+drag on a diamond marker moves time + value (promoting ref-relative points to explicit-value); shift+right-click on a marker removes it. Same abstraction tube + dom-frequency use. |
-| 62 | CLI subcommand parity + standardization | L | Medium | Subcommands grew organically and have inconsistent flag coverage. Concrete known gap: `dstf compare` has no `--parallel`, so the read-and-compare phase always runs serially even when the user has cores available; on a 100-test suite this is the dominant time cost when re-comparing without re-simulating. Other gaps probably exist (audit needed): `--work-dir` / `--timeout` / `--merge` / `--rerun` / `--accept` / `-i` / `--report` are scattered unevenly across `run` vs `compare` vs `manifest`. **Hard constraint from user: no code expansion — same or reduction in LOC**. Right approach is argparse parent parsers (`parents=[...]`) — define groups once (FilterGroup, ParallelismGroup, ReportGroup, etc.), each subcommand opts in to the groups it needs. Flag declarations dedupe across subcommands, the inevitable next subcommand inherits the canonical flag set. Extend `test_argparse_subcommands_match_dispatch_table` to also assert each subcommand declares the flags from its declared groups. ~½ day; net-negative LOC. |
+| 62 | ~~CLI subcommand parity + standardization~~ | L | Medium | **DONE** by D160, by another design than the one first proposed here: each flag is defined once and one table says which command reads it (`cli/parser.py`), so a command offers exactly the flags it reads. `compare --parallel` exists: it sets the threads that render `--report` pages; scoring is not threaded, by choice |
 | 63 | Failure-cluster summary in run report | L | Medium | Today the dashboard / per-test report shows each failure individually with its `error_message`. When the same root cause hits many tests (e.g. the TRANSFORM Dymola Linux run had 84 failures all with the new `"Translation failed: license tier too small for this model"` classification), users have to skim each row to notice the pattern. Idea: after the run, group failures by their classified `error_message`, and surface the top-N clusters in the index page header — e.g., `"242 passed, 84 failed (84 / 84 = 'license tier too small' — likely a Dymola license-tier issue, not test bugs)"`. Builds on the `_classify_translation_error` helper added in 790ddde; same dispatch could classify simulation failures too once we have their patterns. Discovered while running TRANSFORM on Dymola Linux 2026-04-29 — would have saved minutes of digging through individual translation_log.txt files to confirm the failures were all-the-same-cause. ~10 LOC in the report-suite generator. |
 | 64 | Header-only ref scan on index build | L | Low | `RefIndex` reads and `json.loads` a whole `ref_<code>.json` just to pull `model_id` + `status` off the top: one file per lookup, every file of the folder for a listing (`list_models`, which every run's `reference_manifest.json` calls). On a suite the size of TRANSFORM (~326 baselines, each carrying full trajectories) that is tens of MB parsed on every CLI invocation that touches the store. Options: a tiny sidecar index written on accept, or a streaming/partial parse that stops after the metadata keys (`json` has no partial-parse entry point, so this means a hand-rolled scan or `ijson`). Noticed during the D-7 docstring sweep (Phase C-ii) — the comment there claimed a first-few-KB read that the code never did. |
-| 65 | Baseline-history overlay (before/after across commits) | M | High | Owner, 2026-10-30, from TRANSFORM PR #118: one plot per variable overlaying a test's baseline as it was at several git revisions of the reference root (e.g. unfixed → after each fix commit → final). It made a multi-commit model fix reviewable at a glance, and the overlay surfaced a t=0 value (DRACS riser flow −502 kg/s, a start-up transient gone within 5 ms) that the per-commit pass/fail runs had not. Done that day by hand: a ~50-line matplotlib script reading `git show <rev>:ReferenceResults/.../ref_NNNN.json` (a revision before D165 names the file by that number; after, by `ref_<code>.json`), plus a `compare --reference-root <copy with old refs>`. Fits DSTF rather than a skill: the overlay loader (#50, #51) already renders companions and sibling-backend refs, so git revisions are one more overlay source. Sketch: `--overlay-rev REV[,REV...]` on `compare --report` / `author` (label = commit subject), and a `dstf plot --rev ...` that needs no run. Open: static PNG export for viewing away from the machine (per-test reports load Plotly from `reports/`). |
+| 65 | Baseline-history overlay (before/after across commits) | M | High | Owner, 2026-10-30, from TRANSFORM PR #118: one plot per variable overlaying a test's baseline as it was at several git revisions of the reference root (e.g. unfixed → after each fix commit → final). It made a multi-commit model fix reviewable at a glance, and the overlay surfaced a t=0 value (DRACS riser flow −502 kg/s, a start-up transient gone within 5 ms) that the per-commit pass/fail runs had not. Done that day by hand: a ~50-line matplotlib script reading `git show <rev>:ReferenceResults/.../ref_NNNN.json` (a revision before D165 names the file by that number; after, by `ref_<code>.json`), plus a `compare --reference-root <copy with old refs>`. Fits DSTF rather than a skill: the overlay loader (#50, #51) already renders companions and sibling-backend refs, so git revisions are one more overlay source. Sketch: `--overlay-rev REV[,REV...]` on `compare --report` / `author` (label = commit subject), and a `dstf plot --rev ...` that needs no run. Open: static PNG export for viewing away from the machine (per-test reports load Plotly from `reports/`). **Built in part** (1.5.0): `dstf baseline plot REV1 REV2 …` overlays a test's baseline at several revisions, with the change from the first under it, as PNGs and a `gallery.html`; `dstf plot` does the same for runs. Open: the overlay inside report pages and `dstf author` (`--overlay-rev`). |
 | 66 | ~~Browser tests split across CI runners~~ | L | Medium | **DONE** — the `browser` job is a matrix of three runners, each running `--shard I/3`: every third selected test, dealt round-robin in collection order (`tests/_shard.py`), so no list of files has to be balanced or kept in step. See the entry below. |
 | 67 | `dstf plot`: a failed run's partial result | L | Medium | A failed run is never drawn today. It could be drawn up to where it stopped, labelled with the stop time, its Change measured only over the time both runs hold. **Deferred** by the owner, 2026-11-12. See the entry below. |
 
-**Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
+**Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23; the order is of that date, only the struck items were updated, 2026-11-12):
 
 - **A. Finish half-shipped features** (fully closed out as of D72):
   - ~~**#46 UI surfacing**~~ — DONE (A-tier close-out).
@@ -85,13 +85,13 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **B. User-facing new features** (pick one — each 1–2+ weeks):
   - **Phase 7 rule-based recommender** (signal → tree proposals; bounded vocabulary; see D66).
   - **TRANSFORM upstream portability PR** — the 46 `each`-modifier fixes surfaced by the OM sweep. External PR, not a change to this repo. Lifts OM pass rate 72% → ~85%. ~1 day.
-  - **#45 python-driven tests + FMU-path semantic-gap closure** (D65 follow-on) — share a `SimulationResult` dataclass refactor. Unlocks pyomo / scipy / custom solvers + real industrial FMU testing.
+  - ~~**#45 python-driven tests**~~ (DONE, D80) **+ FMU-path semantic-gap closure** (D65 follow-on, open) — share a `SimulationResult` dataclass refactor. Unlocks pyomo / scipy / custom solvers + real industrial FMU testing.
 
 - **C. Performance / fidelity follow-ups** (nobody's blocked yet; ship opportunistically):
-  - **#47 time-array dedup (6.0.1)** — compounds on 6.0; lifts default cap 1000 → 2000.
-  - **#48 lazy-fetch on zoom (6.0.2)** — full-fidelity drill-down from decimated base.
+  - ~~**#47 time-array dedup (6.0.1)**~~ — CLOSED, no longer applies (D125).
+  - ~~**#48 lazy-fetch on zoom (6.0.2)**~~ — CLOSED as written (D125).
   - **#49 per-test override (6.0.3)** — escape hatch; ship when someone asks.
-  - **#53 `check-openmodelica` CLI subcommand** — trivial onboarding polish (~½ day).
+  - ~~**#53 `check-openmodelica` CLI subcommand**~~ — DONE as `dstf check` (D159).
   - **#54 OM FMU export via `buildModelFMU`** — wire OM into the cross-backend chain (~1–2 days).
   - Drag-to-edit range handles (6.1.4 stretch).
 
@@ -100,13 +100,13 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 - **E. New leaves + foundational** (additive, slot in anytime):
   - **Phase 9 dataset types** unlock #23 Fréchet, #24 spectral coherence, #26 ISO 18571, #25 x-tolerance/pyfunnel.
-  - Small HTML polish: #7 variable ordering, #9 open-in-Dymola, #14 link to ref JSON, #17 linked panel zoom, #18 worst-violation annotation, #19 zoom-dependent stats.
-  - Larger: #11 test-discovery helper, #12 model-health analysis, #15 WebGL scattergl.
+  - Small HTML polish: #7 variable ordering, #9 open-in-Dymola, ~~#14 link to ref JSON~~ (DONE), ~~#17 linked panel zoom~~ (CLOSED), #18 worst-violation annotation, ~~#19 zoom-dependent stats~~ (CLOSED).
+  - Larger: #11 test-discovery helper, ~~#12 model-health analysis~~ (CLOSED, out of scope), #15 WebGL scattergl.
 
 **Immediate default** (post D79): A-tier + #55 Julia fully closed. Four backends, two test libraries, reporter-as-IDE feature-complete. **Recommended B-tier picks for the next session** — any of:
 - **Phase 7 rule-based recommender** (~2-3 days skeleton, ~1-2 weeks full). New `recommender/` package. Lowers onboarding for new users.
 - **TRANSFORM upstream portability PR** (~1 day external). 46 `each`-modifier fixes, lifts OM pass rate 72% → ~85%.
-- **#45 Python-driven tests** (~2-3 days MVP). Natural pairing with the proven Julia subprocess+TestResult contract — template is essentially "replace `julia` with `python` in the D77 runner."
+- ~~**#45 Python-driven tests**~~ (DONE, D80; ~2-3 days MVP). Natural pairing with the proven Julia subprocess+TestResult contract — template is essentially "replace `julia` with `python` in the D77 runner."
 
 **Julia follow-ons** (C-tier, ship opportunistically): MTK FMU export, Dyad sample, port EventTest/IntervalTest/NoUnitTest/SimulateOnlyTest to Julia.
 
@@ -199,6 +199,8 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 ## Interactive tolerance editing and tolerance tubes (partially done)
 
+**Status, 2026-11**: the report-page editing of Phases 3 and 4 below was removed with that page's editors (D125). Tolerances and tubes are now edited on the plot in `dstf author` (D149), and `spec-update` is `dstf spec update`. The Remaining list still holds.
+
 **Phase 1 — DONE**: Per-test and per-variable NRMSE tolerance overrides via `comparison.variable_overrides` in test_spec.json and reference JSON. Multi-level tolerance resolution. `tolerance_used` recorded per variable.
 
 **Phase 2 — DONE**: Tube-based comparison mode. Configured per-variable with `"mode": "tube"`. Three width modes via `tube_width_mode`: `"rel"` (fraction of |reference|, default in UI), `"band"` (offset in signal units), `"absolute"` (literal y-axis bounds). Legacy format: `max(tube_abs, tube_rel * |ref|)`. Supports constant and time-varying tubes via `tube_points`. Strict pass/fail. Metrics: `tube_points_inside`, `tube_worst_violation`, `tube_worst_violation_time`. NRMSE still computed alongside.
@@ -211,7 +213,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Independent upper/lower point arrays — allow different numbers of control points per side (e.g., 3 upper, 5 lower). Requires splitting the `{time, upper, lower}` tuple model into two separate spline definitions, with corresponding changes to table UI, export format, and backend comparator. Per-point sync/unsync (some points symmetric, others not) is a lighter variant of the same idea.
 - Cubic interpolation mode for time-varying tubes
 
-## Model health analysis from reference data
+## ~~Model health analysis from reference data~~ — CLOSED, out of scope
+
+- Analysis of stored results belongs in a downstream tool that reads DSTF's files (D66; D161 for timing trends). The notes below are kept for whoever builds one.
 
 - Mine stored reference data (statistics + variable trajectories) to surface potential model quality issues across the library
 - **Structural complexity flags**: rank models by number of nonlinear systems (before/after manipulation), numerical Jacobians, mixed systems — highlights models that may benefit from simplification or reformulation
@@ -223,7 +227,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Output as console table, CSV for spreadsheet analysis, or HTML dashboard
 - Useful for library maintainers to prioritize optimization work across hundreds of models
 
-## Link to reference JSON file from HTML report
+## ~~Link to reference JSON file from HTML report~~ (DONE)
+
+- Built: the dashboard's Reference column and the per-test page's Reference Info link the file.
 
 - Artifacts section links to simulation files (dslog.txt, dsin.txt, dsres.mat, etc.) but not to the reference JSON file (e.g., `ref_9bbf24e6f8aa.json`)
 - The reference filename is already shown as text in the "Reference Information" table via `ref_info` (see `context_builder.py`, `_build_ref_info`) but it's not a clickable link
@@ -239,7 +245,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Caveats: `scattergl` supports `fill:'toself'` for tube envelopes but `hoveron:'fills'` doesn't work (hover only on data points); line `dash` styles are limited; `shape: 'spline'` not supported
 - Threshold guidelines: <5k SVG fine, 5k-100k use scattergl, >100k also needs LTTB
 
-## Performance: LTTB data decimation for large traces
+## ~~Performance: LTTB data decimation for large traces~~ (DONE)
+
+- Built on the Python side, not in the browser: see row 16 of the table.
 
 - Implement browser-side Largest-Triangle-Three-Buckets (LTTB) downsampling (~50 lines of JS)
 - LTTB preserves visual peaks and valleys far better than uniform sampling or min/max binning
@@ -259,7 +267,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - HTML detects `file://` vs `http:` protocol and adapts
 - Alternative: base64-encoded Float64Array is 10-50x faster to parse than JSON number arrays (8 bytes per number vs ~15-20 bytes in JSON text)
 
-## Linked panel zoom synchronization
+## ~~Linked panel zoom synchronization~~ — CLOSED, no longer applies
+
+- The error series are drawn on two extra axes of a plot's one figure, so there are no separate panels to keep in step.
 
 - Three panels per variable (trajectory, abs error, NRMSE) are currently independent Plotly charts — separate divs, not subplots, no shared axes
 - Zooming on the trajectory panel should sync x-axis range to the error panels
@@ -274,7 +284,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Show only for failed variables to avoid clutter; could add a "Show annotations" toggle
 - ~15 lines of JS: add `Plotly.relayout(el, {annotations: [...]})` after `renderPlots()`
 
-## Zoom-dependent statistics
+## ~~Zoom-dependent statistics~~ — CLOSED as written (D125)
+
+- The report page computes nothing since D125. A score over part of a run is a criterion's `window` (#46).
 
 - Small stats bar between trajectory and error panels showing NRMSE, max error, and point count for the visible x-range
 - Hook `plotly_relayout` → get `xaxis.range[0/1]` → slice cached arrays (`el._commonTime`, `el._actOnCommon`, `el._refOnCommon`) → recompute
@@ -327,6 +339,8 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 ## X-direction (time) tolerance
 
+**Built in part** (D84): a `points` criterion and an `event-timing` criterion each take a `time_tolerance`, so the first bullet below no longer holds for those two. Still open: a tolerance in time over a whole trajectory (the tube is in Y only).
+
 - Current comparator assumes exact time alignment by interpolating actual onto reference time grid
 - Small time shifts from solver differences (event timing, step size selection) cause false failures
 - Concept from **pyfunnel** (LBNL, `pip install pyfunnel`, v2.0.1): builds L1-norm tolerance rectangles around each reference point with both x and y tolerance, constructs upper/lower envelope polygons from rectangle corners
@@ -349,7 +363,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Caveat: time is invisible in phase plots — a point at the correct (x,y) but wrong time looks fine; add time-colored segments or interval markers to show direction/timing
 - Quantitative phase-space comparison (Frechet distance on the path) is a natural extension
 
-## Progressive enhancement: optional server mode
+## ~~Progressive enhancement: optional server mode~~ — CLOSED, replaced by `dstf author` (D125)
+
+- `dstf author` is the served tool: it accepts results, edits criteria and queues simulations from the browser. The report pages stay read-only files.
 
 - Keep self-contained HTML as the base; if served through a thin FastAPI server, enable additional features
 - "Accept as baseline" button → server writes to reference store
@@ -366,7 +382,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Not a parallel reporting pipeline — just a clean API for engineers who want to do custom analysis
 - Use static Plotly plots in notebooks (survive `nbconvert` to HTML); ipywidgets for live sessions but accept they won't export
 
-## Parallel process progress reporting
+## ~~Parallel process progress reporting~~ (DONE)
 
 - Currently, parallel simulation (`--parallel N`) shows no output until all workers finish — looks frozen on large suites
 - Standard approaches:
@@ -376,7 +392,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Key constraint: Dymola batch execution groups multiple tests per worker, so progress granularity is per-batch, not per-test. Could report "Batch 3/10: translating ModelName..." by parsing partial dslog output
 - Consider also a `--quiet` / `--verbose` flag to control output level
 
-## Parallelize report generation
+## ~~Parallelize report generation~~ (DONE)
+
+- Built: `compare --report --parallel N` renders the pages on N threads.
 
 - `--report` generates matplotlib PNGs + Jinja2 HTML sequentially per test — dominates wall time on large suites (matplotlib is slow for many plots)
 - matplotlib releases the GIL during rendering, so `ThreadPoolExecutor` or `ProcessPoolExecutor` should work
@@ -384,7 +402,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Could also defer PNG generation entirely: the interactive report uses Plotly (no PNGs needed), so PNGs could be optional (`--report --no-png` or only generate on demand)
 - Alternative: switch to Plotly-only static export via `kaleido` — faster than matplotlib for bulk generation
 
-## Batch actions from HTML report
+## ~~Batch actions from HTML report~~ (DONE)
 
 - Add checkboxes next to each test in the index page for multi-select
 - Action buttons: "Rerun selected", "Accept selected", "Disable"
@@ -393,7 +411,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Could also generate a filter file compatible with `--filter @tests.txt` (#35)
 - "Disable" would need a status field in test_spec or reference JSON (a baseline's `status` is `active` or `skip`, and only `manifest show` reads `skip`) — design this carefully to avoid scope creep
 
-## NRMSE panel annotations + metric clarity
+## ~~NRMSE panel annotations + metric clarity~~ (DONE)
 
 - On the per-variable NRMSE error plot:
   - Vertical dashed line at the time of max absolute error (data already in `max_abs_error_time`)
@@ -406,7 +424,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - Consider whether users should be able to select alternative pass/fail metrics (e.g., max error instead of NRMSE) — this would tie into the strategy pattern refactoring
 - Related: #18 (worst-violation annotation on trajectory plot), #19 (zoom-dependent statistics)
 
-## Filter by test list file
+## ~~Filter by test list file~~ (DONE)
 
 - Allow `--filter` to accept a file path: `--filter @tests.txt` where each line is a model ID or glob pattern
 - Also support comma-separated inline lists: `--filter "Model1,Model2,Model3"`
@@ -424,14 +442,14 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Use case 3: **Simulator version comparison** — same OS but different Dymola versions (e.g., "Dymola 2024" vs "Dymola 2025" in the simulator name). Currently these map to the same backend ("Dymola") and same reference partition. Would need version-aware partitioning or a comparison mode
 - Output: summary table or heatmap of per-test differences across platforms/versions
 
-## Per-test report section reordering
+## ~~Per-test report section reordering~~ (DONE)
 
 - Currently the per-test comparison report (comparison.html / interactive.html) shows variables first, with simulator info, statistics, and diagnostics in collapsible sections below
 - Preferred order: **Simulator → Statistics → Diagnostics → Variables** (all still collapsible)
 - Rationale: when investigating a failure, you want structural context (did nonlinear system count change? did events increase?) before diving into per-variable error plots
 - Implementation: reorder sections in the Jinja2 templates (`comparison.html`, `interactive.html`)
 
-## Incremental run + report workflow
+## ~~Incremental run + report workflow~~ (DONE)
 
 - **Problem**: running 200 tests takes 30 minutes. If 3 fail and you fix the models, you want to rerun just those 3 and see an updated full report — not wait another 30 minutes
 - **Current state**: `run --filter Model1,Model2` reruns those tests, but creates a new batch manifest that only covers 2 tests. `compare --report` reads the latest manifest and only sees those 2. The other 198 tests' results are still on disk in their `test_NNNN` directories but aren't picked up
@@ -453,7 +471,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Diagnostic finals (CPUtime, EventCounter) were already merged into simulation stats table with change highlighting
 - Fixed metadata table column header from "Simulation" to "Current"
 
-## Quick-save selected results to reference (#42)
+## ~~Quick-save selected results to reference (#42)~~ (DONE, D93)
+
+- Built as `dstf compare --accept [--filter X]`, not as a separate `accept` command; the dashboard's Command menu builds the command for a selection.
 
 - **Motivation**: Current accept workflow requires either `-i` (one-at-a-time review) or `--accept` (all at once). Neither is ideal when the user has already reviewed the HTML report and knows which subset of results to accept. Forcing a resim via `run --filter X --accept` is wasteful when the results are already on disk from the previous run.
 - **Proposed CLI**: `dstf accept --filter X` — reads `work_dir` artefacts and writes to reference, no simulation. Mirrors the `run --filter` UX exactly. Accepts `@file` and glob syntax.
@@ -485,7 +505,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Diagnostic telemetry**: emit a per-worker `resilience_events.json` sidecar in `work_dir` counting start-failures, RPC-mismatches, and worker-restarts so users can see whether parallelism is healthy.
 - **When to work on**: watch for frequency in real-world use. If it's 1-in-20 starts and the rescue always works, leave it. If it grows or masks real failures, promote to Phase 2 work.
 
-## Python-driven tests (user-code backend) (#45)
+## ~~Python-driven tests (user-code backend) (#45)~~ (DONE, D80)
+
+- Built as `PythonBackend`: a subprocess per test calling the user's `simulate(stop_time, tolerance) -> dict`. The contract below (`run(context) -> SimulationResult`, a `.py` recognizer) is the proposal, not what shipped.
 
 - **Motivation**: The current `FmpyRunner` calls `fmpy.simulate_fmu(...)` with defaults — no external inputs, no start-value overrides, no CS-vs-ME choice, no step-level callbacks. D65 flagged this as the "FMU-path semantic gap" and scope-labeled the cross-backend chain **EXPERIMENTAL**. Beyond FMU-driven workflows, users also want to plug in custom solvers, pyomo post-processing, scipy.integrate models, analytical comparisons, or even CSV loaders into the same regression framework. The framework should *not* grow handlers for each — it should define a return contract and let user python produce trajectories however it wants.
 - **Proposal — result contract**: Introduce a `SimulationResult` dataclass as the sole python-level contract:
@@ -508,7 +530,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Scope discipline — NOT a pytest replacement**: `run(context) -> SimulationResult` only. User python produces a trajectory; the framework's MetricTree scores it. User code does NOT run its own assertions or pass/fail logic. If someone wants property/fuzz testing, parametric sweeps that dispatch on internal state, or assertion-style unit tests, that's pytest's job (D66 scope identity).
 - **Integration with Phase 6 MVP**: **out of scope**. Post-MVP; pairs with the deferred D65 FMU-path semantic-gap closure phase. The `SimulationResult` refactor is smaller and could land earlier as a standalone cleanup if a natural opportunity arises.
 
-## Time-windowed leaf metrics (#46)
+## ~~Time-windowed leaf metrics (#46)~~ (DONE)
 
 - **Motivation**: Many regression criteria are naturally piecewise — NRMSE matters during the steady-state tail, tube matters during the transient, points is window-irrelevant. Today users either accept a single global score or hand-author overlapping leaves that each recompute on the full trajectory. A time window is the missing axis.
 - **Proposal**: A uniform `"window": {"start": <t>, "end": <t>}` field on every leaf (optional; defaults to full trajectory). Evaluated by slicing the actual + reference trajectories to the window before handing off to the existing `ComparisonMode`. Both endpoints optional — open-ended on either side supported.
@@ -523,7 +545,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Recommendation for Phase 6**: the scalar-field version (two inputs, no brush) fits inside the MVP budget if bundled into 6.1.1. Flag as a candidate for inclusion at the **6.1.1 auto-derive machinery** checkpoint — if the config-to-UI generator can absorb window as a shared cross-mode subschema without leaking into each mode's Config, include it; if it forces mode-specific coupling, defer to post-MVP.
 - **Exit criteria if included**: every mode's config gains an optional `window`; comparator slices before leaf evaluation; UI auto-derives; one new fixture test exercising a piecewise-AND tree.
 
-## Time-array dedup in interactive.html — 6.0.1 follow-up (#47)
+## ~~Time-array dedup in interactive.html — 6.0.1 follow-up (#47)~~ — CLOSED, no longer applies (D125)
+
+- The `TRAJECTORIES` embed this entry reshapes is gone: a page holds one Python-built figure per plot, and the 5 MB budget was dropped.
 
 - **Motivation**: Phase 6.0 introduced an LTTB decimation cap at 1000 samples/var because the same trajectory currently embeds four arrays per variable (`act_time`, `act_values`, `ref_time`, `ref_values`). A 50-var test at the 5 MB budget only fits cap=1000, not the PHASE_6_PLAN-intended cap=2000. The binding constraint is structural redundancy — within any single test, every variable shares the same `act_time` (from one simulation) and `ref_time` (from one baseline). Embedding them 50 times per test is pure waste.
 - **Proposal**: hoist the shared time arrays once to a per-test container:
@@ -541,7 +565,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Testing**: extend `test_report_size_budget.py` to assert that after 6.0.1 the cap=2000 still fits in 5 MB. Add JS smoke check via golden-file HTML snapshot (part of 6.1 testing infrastructure).
 - **When**: after 6.0 MVP ships; bundled with or just before 6.1.1 work starts so the reporter is structurally clean for the per-leaf panel additions.
 
-## Lazy-fetch full-res on zoom — 6.0.2 follow-up (#48)
+## ~~Lazy-fetch full-res on zoom — 6.0.2 follow-up (#48)~~ — CLOSED as written (D125)
+
+- The report page computes nothing since D125. A page with thinned traces says so in a banner and names the full-resolution file (`comparison_data.json`).
 
 - **Motivation**: The decimation cap in 6.0 gives a fast, standalone "at-a-glance" visual. Users zooming in for detail see the same down-sampled curve, which is wrong — the full-resolution data is already on disk next to the HTML in `comparison_data.json`. Tier-2 of the payload strategy: fetch it on demand.
 - **Proposal**: hook Plotly's `plotly_relayout` event → read the new x-axis range → if the window contains significantly more decimated points than originally kept there (say > 2× compression loss), `fetch('./comparison_data.json')`, slice to the visible x-window, rerender that trace at full fidelity. Subsequent zooms reuse the already-fetched array.
@@ -567,7 +593,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Size-regression safety**: the budget test should still pass; this just gives individual tests an opt-out, it doesn't raise the default.
 - **When**: after 6.0 ships. Low urgency — ship only when a real test surfaces the need.
 
-## Companion + soft_check overlay rendering — 6.3 first slice (#50)
+## ~~Companion + soft_check overlay rendering — 6.3 first slice (#50)~~ (DONE)
 
 - **Motivation**: Phase 6 MVP shipped the baseline-role split in full (primary / companion / soft_check) — on disk, in the CLI (`companion add/list/freeze/remove`, `soft-check list/remove`, `import-baseline`), and in the validator. But the **reporter only plots the primary**. Companions persist as pointers but aren't loaded or rendered; soft_checks are scored against (via `against:` inside `warn`) but aren't visually overlaid either. A user who runs `companion add BouncingBall rig ./rig_data.csv` sees nothing in the HTML report. That's the part of D66's three-role model we haven't delivered yet.
 - **Proposal**:
