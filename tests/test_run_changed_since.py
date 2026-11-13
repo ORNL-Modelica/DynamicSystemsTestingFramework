@@ -188,15 +188,22 @@ def test_the_run_s_files_say_what_it_was_selected_by(proj, capsys):
     assert verdicts["selection"] == block
     assert [t["model_id"] for t in verdicts["tests"]] == [SIMPLE]
 
-    # a compare over the work dir still says the last run was a selection
+    # a compare over the work dir still says the last run was a selection,
+    # in its files and on its pages
+    page = proj.cwd / "page.html"
     rc = main(
         ["compare", "--config", str(proj.config), "--work-dir", str(proj.work)]
-        + ["--no-browser"]
+        + ["--no-browser", "--report-format", "html", "-o", str(page)]
     )
     capsys.readouterr()
     assert rc == 0
     assert _read(proj.work, "status.json")["selection"] == block
     assert _read(proj.work, "verdicts.json")["selection"] == block
+    said = (
+        "Not a full run. 1 of 14 tests was run: the one that uses what changed "
+        "since HEAD (1 file). The other 13 were not run."
+    )
+    assert _painted(proj.work / "dashboard.html") == _painted(page) == said
 
     # a later run without the flag: null, and nothing said of a selection
     rc, out, err = _run(proj, capsys, "--filter", SIMPLE)
@@ -204,6 +211,7 @@ def test_the_run_s_files_say_what_it_was_selected_by(proj, capsys):
     assert _read(proj.work, "status.json")["selection"] is None
     assert _read(proj.work, "verdicts.json")["selection"] is None
     assert "\nResults: 1/1 passed\n" in out
+    assert _painted(proj.work / "dashboard.html") is None
 
 
 def test_the_filter_narrows_first_and_all_of_it_selected_is_no_partial_run(
