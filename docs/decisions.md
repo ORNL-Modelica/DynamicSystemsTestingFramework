@@ -9637,8 +9637,8 @@ library that was not loaded), so it is not used.
   every edit, and asking costs seconds.
 
 **Not in this decision.** A change named by a git revision (`--since`:
-D167), a `run` that simulates only the touched tests, and Julia, Python or
-FMU backends.
+D167), a `run` that simulates only the touched tests (`run
+--changed-since`: D168), and Julia, Python or FMU backends.
 
 ## D167 — What changed since a revision: git is only read (2026-11-13)
 
@@ -9727,5 +9727,68 @@ change is given by naming a class "or since a git revision").
   enough (the measurement above). A later optimisation if the cost matters.
 
 **Not in this decision.** A `run` option that simulates only the touched
-tests; source types other than Modelica (`--since` there is refused, exit
-1).
+tests (D168); source types other than Modelica (`--since` there is
+refused, exit 1).
+
+## D168 — A selected run says it is not a full run (2026-11-13)
+
+**Context.** `dstf uses --since REV` (D167) lists the tests a change
+touches, and `--filter @FILE` runs them: two commands, and the second exits
+1 when the list is empty. On a large library the point is speed while you
+work; the owner's rule stands: "our goal is to improve efficiency, a full
+run is still the final line of defence". A run of some of the tests that
+reads like a run of all of them would undo that rule in silence.
+
+**Decision.** `dstf run --changed-since REV` (owner, 2026-11-13).
+
+1. *One selection.* The tests are the ones `dstf uses --since REV` lists,
+   chosen by the same function (`cli/uses_cmd.select_since`), of those
+   `--filter` and `--package` leave: the users of a class changed since
+   `REV`, and the tests the simulator could not be asked about. A changed
+   file no class stores runs every test, and no simulator is asked.
+   `dstf uses` prints what it printed before.
+2. *Chosen before anything is written.* Right after the filter, before the
+   manifest's check of orphans (which can move a corrupt manifest aside),
+   the reference store, the work directory, the dashboard and a browser
+   tab.
+3. *Nothing to run is a pass.* Nothing changed, or no test uses what
+   changed: exit 0, and nothing is written — no work directory, no report
+   file at `--output`; an earlier run's files stay as they are. A pull
+   request that touches no test's class has nothing to fail.
+4. *What cannot be answered refuses the run; it never widens it in
+   silence.* A project that is not Modelica, and a backend that cannot say
+   what a test uses, are config errors (exit 2, as `--batch` on a backend
+   without workers that stay alive); git that cannot answer is exit 2; a
+   simulator that could not be started or asked is exit 1, with
+   `dstf uses`'s sentence. Beside `--rerun` the flag is refused: a rerun
+   chooses its tests from the last run's results. The simulator asked is
+   the kind whose workers stay alive, also beside `--batch`, and it is
+   closed before the run starts its own: one Dymola licence seat is
+   enough.
+5. *Wherever the result is read, it says it was not a full run.* The
+   console's `Selected 2 of 14 tests: … Not a full run.` and
+   `Results: 2/2 passed (2 of 14 tests selected; not a full run)`; on the
+   dashboard, a notice line of its own under the status line (the owner
+   chose it from a picture of three); `selection` in `status.json` and
+   `verdicts.json` (null for every other run), which `verdicts.json`
+   copies from `status.json`, so a later `compare` still says it; and the
+   cell of `dstf summary`. With every test the filter left selected, the
+   block is written and nothing calls the run partial.
+6. *A test that could not be asked is never said to use what changed.*
+   Every line that counts the tests says how many of them were run because
+   they could not be asked.
+7. *A first paint is the run's own.* The live page the browser opens on is
+   written before this run's `status.json`, so it is given the run's
+   selection; the snapshot on disk is still the last run's.
+
+**Rejected.**
+- *Every test when the backend cannot answer*: a slow run that looks like
+  the fast one, and nothing says why.
+- *`dstf uses`'s hint to add `--backend X`* on `run`: it would change the
+  simulator the tests run with and the baselines they are scored against.
+- *Exit 1 with nothing to run*, as an empty `--filter` gives: a pull
+  request that changes no class a test uses would fail.
+
+**Not in this decision.** `compare --changed-since`; JUnit saying a run
+was selected; the dashboard's Command menu offering the flag; the same
+selection in `dstf author`; source types other than Modelica.

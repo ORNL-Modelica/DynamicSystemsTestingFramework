@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and its "Contracts inside the framework"; a plug-in author's side is `docs/guides/plugin.md` and the API reference.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D149 on-plot editing, D150 the simulation queue, D151 live results, D152 a criterion over an array family, D153 the baseline's points, D154 strict keys and the unscorable-criterion delta rule, D155 one act is one pending edit, D160 the command line as a tree, flags only where they apply, D162 diagnostic variables, one name one meaning, D165 a baseline named from its model id, D166 which tests use a class, asked of the simulator, D167 what changed since a git revision). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D149 on-plot editing, D150 the simulation queue, D151 live results, D152 a criterion over an array family, D153 the baseline's points, D154 strict keys and the unscorable-criterion delta rule, D155 one act is one pending edit, D160 the command line as a tree, flags only where they apply, D162 diagnostic variables, one name one meaning, D165 a baseline named from its model id, D166 which tests use a class, asked of the simulator, D167 what changed since a git revision, D168 a selected run says it is not a full run). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -16,7 +16,7 @@
 DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli/                      # CLI package. parser.py: the command tree (build_arg_parser) — every command, the flags each reads
-│   │                             #      and its help; main.py: the dispatch table; uses_cmd.py: `dstf uses` (D166, `--since` D167). Commands: discover, uses, run, compare, summary, plot, diff, author,
+│   │                             #      and its help; main.py: the dispatch table; uses_cmd.py: `dstf uses` (D166, `--since` D167) and select_since, the one selection `run --changed-since` shares (D168). Commands: discover, uses, run, compare, summary, plot, diff, author,
 │   │                             #      check (where each backend is on this machine, and whether the project's is ready), and the
 │   │                             #      groups spec (add / update / schema), baseline (export / diff / plot), soft-check (add / list / remove),
 │   │                             #      companion (add / list / freeze / remove), manifest (show / dump / cleanup)
@@ -25,7 +25,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      takes its defaults from and `spec schema testing` publishes; a backend's settings
 │   │                             #      block is declared in the same shape (Setting) and checked by the same check
 │   ├── json_types.py             # whether a JSON value is of the type its key takes, and how a refusal says it (both strict files)
-│   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
+│   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper (selection=: what chose the tests, written to status.json, D168)
 │   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse (spec_parser: the ONE decoder of the spec file, which every command and the tool read it through), plots (a test's plots, derived from its criteria, + the `plots` extras key), RFC 6902 patch_apply,
 │   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write),
 │   │                             #      unit_tests.py (the ONE place a UnitTests variable is named: <instance>.x[i] + its expression),

@@ -615,8 +615,9 @@ When nothing changed, the command says `Nothing changed since main (…).` and
 starts no simulator, unless you also named a CLASS, which is then answered
 for; with `-o` it writes an empty file. A job that chains the two must
 expect what `dstf run --filter @uses.txt` does then: it prints
-`No tests matched the filter.` and exits 1. A `run` option that handles this
-itself is the next step.
+`No tests matched the filter.` and exits 1. `dstf run --changed-since REV`
+([below](#run-only-those-tests)) does both in one step, and exits 0 with
+nothing to run.
 
 ```bash
 dstf uses --since main --config testing.json -o uses.txt
@@ -654,6 +655,56 @@ driver's clean command is your program, run as `git status` runs it, and
 git-lfs keeps a copy of a changed file under `.git/lfs/objects`; and in a
 partial (treeless) clone, reading `REV`'s tree makes git fetch the objects
 it lacks.
+
+### Run only those tests
+
+`dstf run --changed-since REV` simulates and scores only the tests
+`dstf uses --since REV` lists, chosen by the same code. The simulator is
+asked first and closed; then the run starts its own.
+
+```bash
+dstf run --config testing.json --changed-since main
+```
+
+```text
+Changed since main (36431bf dstf uses --since REV: the tests your changes touch): 2 files
+  Examples/SimpleTest.mo  ModelicaTestingLib.Examples.SimpleTest
+  Icons/Example.mo        ModelicaTestingLib.Icons.Example
+Selected 2 of 14 tests: the ones that use what changed. Not a full run.
+...
+Results: 2/2 passed (2 of 14 tests selected; not a full run)
+```
+
+The tests are chosen from those `--filter` and `--package` leave, and
+`2 of 14` counts those. A test the simulator could not be asked about is
+run, and named under `Could not be asked:` with its reason. A changed file
+no class stores runs every test:
+`1 file that no class stores changed: every test is run (14 tests).`
+
+Wherever the result is read, it says it was not a full run: a line under
+the dashboard's status line (`Not a full run. 2 of 14 tests were run: the
+ones that use what changed since main (2 files). The other 12 were not
+run.`), `selection` in `status.json` and `verdicts.json`, and the cell of
+`dstf summary` (`2/2 (2 of 14 tests selected)`). A later `compare` over the
+work directory still says so; a later run without the flag does not.
+
+When nothing changed, it prints `No test to run.`; when no test uses what
+changed, `No test uses what changed: no test to run.` Both exit 0 and write
+nothing: no work directory, no dashboard, no browser tab, no report file
+(the one `--output` names neither), and an earlier run's files stay as
+they are.
+
+It is refused, and nothing runs, beside `--rerun` (a rerun chooses its
+tests from the last run's results); on a project that is not Modelica or a
+backend that cannot say what a test uses (exit 2); when git cannot answer
+(exit 2); and when the simulator could not be started or asked (exit 1).
+With `--batch` the question still goes through the backend's workers that
+stay alive. `--merge`, `--accept` and `-i` work beside it as they do beside
+`--filter`.
+
+It is for speed while you work: the limits of `--since` above are its
+limits, and a full run stays the check before a release or a merge to
+`main`.
 
 ## Next
 
