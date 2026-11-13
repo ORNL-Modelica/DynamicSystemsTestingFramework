@@ -1388,10 +1388,10 @@ def _add_run(tree: _Tree, top) -> None:
             to run: no test is in --rerun's categories, or no test uses
             what changed since --changed-since's REV (then nothing is
             written, not even the file --output names); 1 when a test
-            failed, failed to simulate or timed out, when
-            nothing ran at all, when an accept skipped a test, or when the
-            simulator could not be asked what the tests use; 2 for a config
-            error, and for --changed-since when git cannot answer.
+            failed, failed to simulate or timed out, when nothing ran at
+            all, when an accept skipped a test, or when the simulator could
+            not be asked what the tests use; 2 for a config error, and for
+            --changed-since when git cannot answer.
             """,
         examples=(
             "dstf run --config testing.json",

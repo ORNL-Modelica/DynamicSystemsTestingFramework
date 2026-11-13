@@ -425,6 +425,12 @@ def test_beside_batch_the_simulator_is_still_asked_through_its_workers(proj, cap
         "also beside --batch: run without --changed-since.\n"
     )
     assert not proj.work.exists() and proj.simulated == []
+    # without --batch, the sentence `dstf uses` says, and no more
+    rc, out, err = _run(
+        proj, capsys, "--changed-since", "HEAD", "--backend", NO_WORKERS
+    )
+    assert (rc, out) == (1, "")
+    assert err.endswith("The fake's worker interface is not installed.\n"), err
 
 
 def test_a_project_that_is_not_modelica_is_a_config_error(tmp_path, capsys):
