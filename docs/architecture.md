@@ -27,7 +27,7 @@ The framework is a pipeline of six typed, plug-in layers:
 
 **Backend capabilities** are declared on the backend contract, not inferred from type:
 - `capabilities: frozenset[Capability]` (`PERSISTENT_WORKERS`, `BATCH_FALLBACK`,
-  `FMU_EXPORT`, `LIVE_RESULTS`, `CANCEL`) and `produced_datasets: frozenset[DatasetType]`.
+  `FMU_EXPORT`, `LIVE_RESULTS`, `CANCEL`, `USES`) and `produced_datasets: frozenset[DatasetType]`.
 Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` → `FMPy.simulate()`) are composed from capabilities, not hardcoded modes.
 
 ### Layer ↔ Code mapping (Current)
@@ -483,7 +483,7 @@ Two manifest files are written to the work directory before simulation starts:
 
 ```
 Backend (ABC)
-  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT, LIVE_RESULTS, CANCEL
+  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT, LIVE_RESULTS, CANCEL, USES
   ├── artifact_files: tuple[tuple[str, str], ...]  # (filename, label) pairs for the report
   ├── saves_tracked_signals_only: bool            # the result file holds the tracked variables alone
   ├── result_statistics: tuple[str, ...]          # the solver's statistics among its names (CPUtime, NonlinearSystems.)
@@ -536,6 +536,7 @@ Each backend declares its capabilities via `frozenset[Capability]`:
 - `FMU_EXPORT` — can export an FMU from the source (`PersistentDymolaBackend` only today — the batch `DymolaBackend` has no `.mos` export path and does not declare it; OM deferred per D69).
 - `CANCEL` — can stop a test that is running, from another thread: the simulation queue's Cancel (the three persistent variants and `PythonBackend`; see "The simulation pool" below).
 - `LIVE_RESULTS` — the result file grows while the run is in progress; `live_result_path(test_dir)` names it and `backends/common/live_mat.py`'s `LiveMatReader` follows it (Dymola and OpenModelica; see "Live results" below).
+- `USES` — the simulator says which classes a test's model uses: `uses(tests)` answers, per test, the classes under the project's top packages (the library and each dependency given as a path), or the simulator's reason for a test it could not answer for (`dstf uses`, D166). `PersistentDymolaBackend` (`saveTotalModel`, `skipStandard=true`) and `PersistentOpenModelicaBackend` (`saveTotalModelDebug`): a one-shot worker writes one file of the model and everything it uses into a temporary directory, which `discovery/mo_parser.py`'s `declared_classes` reads and `discovery/uses.py` cuts to the project's classes. The command reads the flag on `persistent_backend_cls() or cls`, the class a run without `--batch` uses.
 
 `backends.select_backend(config, persistent=True)` — which `cli/run_cmds.py`'s `_get_backend` wraps for the CLI — swaps to the persistent variant only when the backend **declares** `PERSISTENT_WORKERS`; a backend without the flag takes the batch path. A persistent preflight that raises `RuntimeError` aborts with a message pointing at `--batch` (no silent fallback). The cross-backend chain gates the same way on `FMU_EXPORT`.
 

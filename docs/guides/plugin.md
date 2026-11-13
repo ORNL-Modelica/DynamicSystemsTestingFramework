@@ -102,6 +102,7 @@ method it needs.
 | `FMU_EXPORT` | `export_fmu(test, output_dir)` |
 | `LIVE_RESULTS` | `live_result_path(test_dir)`, the file that grows while a test runs |
 | `CANCEL` | `cancel_test(test_key)`; in the class whose workers stay open, the `Worker` stops the test |
+| `USES` | `uses(tests)`: per test, the classes its model uses, asked of the simulator (`dstf uses`); declared on the class whose workers stay open, where there is one |
 | `PERSISTENT_WORKERS` | `persistent_backend_cls()`, the class whose workers stay open |
 | `BATCH_FALLBACK` | `run_single_test` or `run_tests`: a run with no worker that stays open |
 
