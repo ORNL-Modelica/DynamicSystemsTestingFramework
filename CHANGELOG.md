@@ -8,6 +8,11 @@ this file says when they do.
 
 ## [Unreleased]
 
+### Fixed
+
+- Ctrl-C stops any command with one line (`Interrupted.`) and exit code 130,
+  not a traceback.
+
 ## [1.6.0] - 2026-11-12
 
 ### Added
