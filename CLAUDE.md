@@ -40,7 +40,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      the ONE place an install is looked for; each backend declares its `settings` table)
 │   │                             #      (openmodelica/init_xml.py: the system size omc writes to <model>_init.xml, read into the
 │   │                             #      statistics key Dymola's translation log fills — translation.continuous_time_states)
-│   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), tree-kill, result variables, JSON-driver base, result_files (any variable of a result file),
+│   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), tree-kill, result variables, JSON-driver base, result_files (any variable of a result file), total_model.py (the loop `Backend.uses` runs: one question per test, the file the tool wrote read or that test's reason),
 │   │   │                         #      statistics.py (the zero-count rule: a system-size list's summaries, written and read in one place;
 │   │   │                         #      and diagnostic_final: a listed name's final as the event-count warning, the dashboard's CPU time and the Statistics rows read it)
 │   │   ├── pool.py               # SimulationPool: a FIFO queue of tests over a backend's runners that stays open (the tool's queue)

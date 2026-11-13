@@ -2,11 +2,12 @@
 name qualified within the text — what `dstf uses` reads of the file a
 simulator writes of a model and everything it uses."""
 
+import re
 from pathlib import Path
 
 import pytest
 
-from dstf.discovery.mo_parser import declared_classes
+from dstf.discovery.mo_parser import UnclosedClass, declared_classes
 
 FIXTURES = Path(__file__).parent / "fixtures" / "uses"
 
@@ -172,3 +173,35 @@ LIBRARY = [
 def test_the_files_the_real_tools_write(file, expected):
     text = (FIXTURES / file).read_text(encoding="utf-8")
     assert declared_classes(text) == expected
+
+
+def test_a_class_keyword_inside_a_quoted_name_declares_nothing():
+    """`Real 'a model b'` is a component: read as `model b` it opened a
+    class that never closed, and the whole file read as no class at all."""
+    text = """package Lib
+  model T
+    Real 'a model b' = 1;
+    Real 'end T;' = 2;
+    Lib.U u;
+  end T;
+  model U end U;
+end Lib;
+model T_total
+  extends Lib.T;
+end T_total;
+"""
+    assert declared_classes(text) == ["Lib", "Lib.T", "Lib.U", "T_total"]
+
+
+@pytest.mark.parametrize(
+    ("text", "inside"),
+    [
+        ("package Lib\n  model T\n    Real x;\n  end T;\n", "Lib"),
+        ("package Lib\n  model T\n    Real x;\n", "Lib.T"),
+    ],
+)
+def test_a_text_that_ends_inside_a_class_is_refused(text, inside):
+    """A file cut off is no list of what the model uses: an empty or short
+    list would say the test uses nothing."""
+    with pytest.raises(UnclosedClass, match=rf"ends inside class {re.escape(inside)}$"):
+        declared_classes(text)

@@ -1077,37 +1077,36 @@ class PersistentOpenModelicaBackend(PersistentBackendBase, OpenModelicaBackend):
         """
         import tempfile
 
-        from ...discovery.uses import one_line, project_classes, top_packages
+        from ...discovery.uses import one_line, top_packages
+        from ..common.total_model import ask_each
 
         tops = top_packages(self.config)
-        answers: dict[str, frozenset[str] | str] = {}
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             worker = OpenModelicaWorker(
                 -1, self.config, self.om_config, load_omc_session()
             )
+
+            def ask(test: TestModel, file: Path) -> str | None:
+                # The raw reply, never the bool helper: OMPython raises on
+                # an error omc logged, and its text is the reason (a later
+                # getErrorString() reads nothing).
+                reply, said = _raw_reply(
+                    worker.session,
+                    f'saveTotalModelDebug("{file.as_posix()}", {test.model_id})',
+                )
+                if said is None and reply == "true":
+                    return None
+                return one_line(
+                    said or "",
+                    f"omc answered {reply or 'nothing'} for "
+                    f"saveTotalModelDebug of {test.model_id}",
+                )
+
             try:
                 worker.start_within()
-                for n, test in enumerate(tests):
-                    file = Path(tmp) / f"{n}.mo"
-                    # The raw reply, never the bool helper: OMPython raises
-                    # on an error omc logged, and its text is the reason (a
-                    # later getErrorString() reads nothing).
-                    reply, said = _raw_reply(
-                        worker.session,
-                        f'saveTotalModelDebug("{file.as_posix()}", {test.model_id})',
-                    )
-                    if said is None and reply == "true":
-                        text = file.read_text(encoding="utf-8", errors="replace")
-                        answers[test.model_id] = project_classes(text, tops)
-                    else:
-                        answers[test.model_id] = one_line(
-                            said or "",
-                            f"omc answered {reply or 'nothing'} for "
-                            f"saveTotalModelDebug of {test.model_id}",
-                        )
+                return ask_each(tests, Path(tmp), ask, "OpenModelica", tops)
             finally:
                 try:
                     worker.close()
                 except Exception:
                     pass
-        return answers

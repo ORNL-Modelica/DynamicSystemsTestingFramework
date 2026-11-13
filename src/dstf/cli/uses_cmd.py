@@ -46,6 +46,22 @@ def _hint(config: Config) -> str | None:
     return f"{' and '.join(can)} {verb} installed here and can: add --backend {first}."
 
 
+def _believed(
+    said: dict[str, frozenset[str] | str], model_id: str, label: str
+) -> frozenset[str] | str:
+    """What the backend said of one test, or why it is not believed — and
+    the test then counts as using every class, as one it could not ask
+    does: it left the test out, or its answer does not hold the test's own
+    model, which every answer holds (:meth:`Backend.uses`). Such an answer
+    would read as a test that uses nothing."""
+    if model_id not in said:
+        return f"{label} gave no answer for it"
+    got = said[model_id]
+    if not isinstance(got, str) and model_id not in got:
+        return f"{label}'s answer does not hold the test's own model"
+    return got
+
+
 def cmd_uses(args: argparse.Namespace) -> int:
     """List, for each class named, the tests whose model uses it."""
     from ..backends import BackendUnavailableError, get_backend_class, select_backend
@@ -89,12 +105,7 @@ def cmd_uses(args: argparse.Namespace) -> int:
         # answered for, and none is counted.
         print(f"{backend.label} could not be asked: {exc}", file=sys.stderr)
         return 1
-    # A test the backend left out was not answered for: it counts as using
-    # every class, as one it could not ask does.
-    answers = {
-        t.model_id: said.get(t.model_id, f"{backend.label} gave no answer for it")
-        for t in tests
-    }
+    answers = {t.model_id: _believed(said, t.model_id, backend.label) for t in tests}
 
     total = len(tests)
     union: set[str] = set()

@@ -217,6 +217,25 @@ def test_a_test_the_backend_left_out_counts_as_not_asked(env, capsys):
     )
 
 
+def test_an_answer_without_the_test_s_own_model_is_not_believed(env, capsys):
+    """An answer always holds the model's own class: one that does not
+    (an empty file read as nothing, a plug-in's slip) would say the test
+    uses nothing. The test could not be asked, and counts as a user."""
+    simple = f"{LIB}.Examples.SimpleTest"
+    answer = env.answer
+    env.answer = lambda m: frozenset() if m == simple else answer(m)
+    out_file = env.cwd / "uses.txt"
+    rc, out, _ = _uses(env, capsys, EXAMPLE, "-o", str(out_file))
+    assert rc == 0
+    assert out == (
+        f"{EXAMPLE} is used by 1 of 14 tests:\n"
+        "Could not be asked (counted as using it):\n"
+        f"  {simple} — FakeUses's answer does not hold the test's own model\n"
+        f"Wrote {out_file}: 1 tests\n"
+    )
+    assert out_file.read_text(encoding="utf-8") == f"{simple}\n"
+
+
 def test_filter_and_package_narrow_the_tests_asked(env, capsys):
     rc, out, _ = _uses(env, capsys, UNIT_TESTS, "--filter", f"{LIB}.Examples.S*")
     assert rc == 0

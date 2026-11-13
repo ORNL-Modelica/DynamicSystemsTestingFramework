@@ -564,18 +564,24 @@ _NAME = r"(\w+|'(?:[^'\\]|\\.)*')"
 #: is, and so that their ``end`` closes them. ``operator`` and ``type`` are
 #: not: an ``operator record`` is a record, and the ``end`` of an operator
 #: closes nothing on the stack.
+#:
+#: Last, with no group: a quoted name anywhere else (a component's,
+#: ``Real 'a model b'``), taken whole so that a keyword inside it is none.
+#: Read as ``model b``, it opened a class that never closed.
+_QUOTED = r"'(?:\\[^\n]|[^'\n])*'?"
 _CLASS_TOKEN_RE = re.compile(
     r"\b(?:(?P<partial>partial)\s+(?:(?:pure|impure|operator|expandable)\s+)?)?"
     r"(?P<kind>model|block|class|package|function|record|connector)\s+"
     rf"(?:extends\s+)?{_NAME}(?P<short>\s*=)?"
     rf"|\bend\s+{_NAME}\s*;"
+    rf"|{_QUOTED}"
 )
 
 _OPENERS, _CLOSERS = "([{", ")]}"
 #: A bracket of stripped source (group 1) — or a quoted name, which is code
 #: there and whose brackets open and close nothing (``Real 'a(b' = 1;``). It
 #: ends as the lexer ends it: at its closing ``'`` or at the end of its line.
-_BRACKET_RE = re.compile(r"'(?:\\[^\n]|[^'\n])*'?|([()\[\]{}])")
+_BRACKET_RE = re.compile(rf"{_QUOTED}|([()\[\]{{}}])")
 
 
 def _statement_end(stripped: str, start: int, end: int) -> int:
@@ -601,6 +607,12 @@ def _statement_end(stripped: str, start: int, end: int) -> int:
 def _direct_classes(
     stripped: str, start: int, end: int, token: re.Pattern[str] = _CLASS_TOKEN_RE
 ) -> list[_ClassSpan]:
+    return _scan(stripped, start, end, token)[0]
+
+
+def _scan(
+    stripped: str, start: int, end: int, token: re.Pattern[str]
+) -> tuple[list[_ClassSpan], list[str]]:
     """The classes declared DIRECTLY in ``stripped[start:end]`` — a file, or
     one class's body — in source order; a class nested deeper belongs to
     the one that holds it. ``token`` is the declarations looked for: those
@@ -619,6 +631,9 @@ def _direct_classes(
     is no class of this text by name. Taken for one, it hid the class ``HT``
     declared after it, which was then found with no annotation — so did a
     class redeclared in a sibling short class's modification.
+
+    :func:`_scan` also returns the names still open where the text ends,
+    outermost first: a text cut off inside a class.
     """
     out: list[_ClassSpan] = []
     stack: list[tuple[str, str, int, int, bool]] = []
@@ -631,6 +646,8 @@ def _direct_classes(
         # `end Name;` has no keyword; a declaration has its kind and name.
         closed, kind, name = m.group(5), m.group("kind"), m.group(3)
         partial = m.group("partial") is not None
+        if closed is None and kind is None:
+            continue  # a quoted name: no declaration, whatever it holds
         if closed is not None:
             if stack and stack[-1][0] == closed:
                 opened_name, opened_kind, opened, body, was_partial = stack.pop()
@@ -656,7 +673,7 @@ def _direct_classes(
             out.append(
                 _ClassSpan(name, kind, m.start(), m.end(), after, True, depth, partial)
             )
-    return out
+    return out, [opened[0] for opened in stack]
 
 
 #: :data:`_CLASS_TOKEN_RE` with the two kinds it leaves out, in the same
@@ -669,7 +686,13 @@ _DECLARED_TOKEN_RE = re.compile(
     r"|operator(?!\s+(?:record|function)\b))\s+"
     rf"(?:extends\s+)?{_NAME}(?P<short>\s*=)?"
     rf"|\bend\s+{_NAME}\s*;"
+    rf"|{_QUOTED}"
 )
+
+
+class UnclosedClass(ValueError):
+    """A Modelica text ends inside a class: it was cut off, and what it
+    declares is not known. ``str()`` names the class."""
 
 
 def declared_classes(text: str) -> list[str]:
@@ -681,20 +704,31 @@ def declared_classes(text: str) -> list[str]:
     named ``A``. A class written inside a modification (``redeclare model
     HT = Ideal`` in a component's brackets) is no class of the text and is
     left out. It reads what a simulator writes of a model and everything
-    it uses (``dstf uses``), and a one-file library."""
+    it uses (``dstf uses``), and a one-file library.
+
+    Raises:
+        UnclosedClass: The text ends inside a class (a file cut off): a
+            short list would read as a model that uses little.
+    """
     stripped = _strip_modelica_literals(text)
+    top, still_open = _scan(stripped, 0, len(stripped), _DECLARED_TOKEN_RE)
+    if still_open:
+        raise UnclosedClass(f"the text ends inside class {'.'.join(still_open)}")
     out: list[str] = []
 
-    def walk(start: int, end: int, prefix: str) -> None:
-        for span in _direct_classes(stripped, start, end, _DECLARED_TOKEN_RE):
+    def walk(spans: list[_ClassSpan], prefix: str) -> None:
+        for span in spans:
             if span.depth:
                 continue
             name = f"{prefix}.{span.name}" if prefix else span.name
             out.append(name)
             if not span.short:
-                walk(span.body, span.end, name)
+                inside = _direct_classes(
+                    stripped, span.body, span.end, _DECLARED_TOKEN_RE
+                )
+                walk(inside, name)
 
-    walk(0, len(stripped), "")
+    walk(top, "")
     return out
 
 

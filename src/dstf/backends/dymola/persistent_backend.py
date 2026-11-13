@@ -970,7 +970,8 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         import copy
         import tempfile
 
-        from ...discovery.uses import one_line, project_classes, top_packages
+        from ...discovery.uses import one_line, top_packages
+        from ..common.total_model import ask_each
 
         di_cls = load_dymola_interface(self.interface_of(self.config))
         # Dymola's interface prints its connection noise to stdout, which
@@ -978,7 +979,6 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         _install_dymola_log_filter()
         _patch_dymola_for_parallel_startup()
         tops = top_packages(self.config)
-        answers: dict[str, frozenset[str] | str] = {}
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             # A copy, not `dataclasses.replace`: that would resolve the
             # configuration, testing.json's reading included, again.
@@ -990,27 +990,25 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
                 dymola_config=self.dymola_config,
                 dymola_interface_cls=di_cls,
             )
+
+            def ask(test: TestModel, file: Path) -> str | None:
+                if worker.dymola.saveTotalModel(
+                    str(file), test.model_id, skipStandard=True
+                ):
+                    return None
+                return one_line(
+                    worker._last_error(),
+                    f"Dymola did not save {test.model_id} and said nothing of why",
+                )
+
             try:
                 worker.start_within()
                 worker.dymola.cd(tmp)
-                for n, test in enumerate(tests):
-                    file = Path(tmp) / f"{n}.mo"
-                    if worker.dymola.saveTotalModel(
-                        str(file), test.model_id, skipStandard=True
-                    ):
-                        text = file.read_text(encoding="utf-8", errors="replace")
-                        answers[test.model_id] = project_classes(text, tops)
-                    else:
-                        answers[test.model_id] = one_line(
-                            worker._last_error(),
-                            f"Dymola did not save {test.model_id} and said "
-                            "nothing of why",
-                        )
+                return ask_each(tests, Path(tmp), ask, "Dymola", tops)
             finally:
                 try:
                     worker.close()
                 except Exception:
                     pass
-        return answers
 
     # run_tests is inherited from PersistentBackendBase.

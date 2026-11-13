@@ -328,11 +328,86 @@ def test_openmodelica_no_answer_and_no_message_still_gives_a_reason(
     }
 
 
-def test_openmodelica_is_closed_when_the_answer_cannot_be_read(monkeypatch, tmp_path):
-    """omc said it saved, and wrote nothing: the run stops, omc is closed."""
-    config = _config(tmp_path, "OpenModelica")
-    backend, session = _openmodelica(monkeypatch, config, lambda file: True)
-    with pytest.raises(FileNotFoundError):
-        backend.uses([_tm(SIMPLE)])
-    assert session.calls[-1] == "quit()"
-    assert not config.work_dir.exists()
+# --------------------------------------------------------------------------
+# Both: what the tool wrote is read, or is that test's reason
+# --------------------------------------------------------------------------
+
+
+def _either(name: str, monkeypatch, tmp_path, save):
+    """The backend ``name`` over its fake, whose question about a test is
+    ``save(file)``: True when the tool says it wrote ``file``. Returns the
+    backend and a callable that says whether the tool was closed."""
+    config = _config(tmp_path, name)
+    if name == "Dymola":
+        backend, made = _dymola(monkeypatch, config, save)
+        return backend, lambda: all(m.closed for m in made) and len(made) == 1
+    backend, session = _openmodelica(monkeypatch, config, save)
+    return backend, lambda: session.calls[-1] == "quit()"
+
+
+TOOLS = ["Dymola", "OpenModelica"]
+#: SimpleTest as a tool writes it, with a component of a quoted name that
+#: holds a class keyword.
+QUOTED = f"""package {LIB}
+  package Examples
+    model SimpleTest
+      Real 'a model b' = 1;
+      Components.UnitTests unitTests(n = 1, x = {{'a model b'}});
+    end SimpleTest;
+  end Examples;
+  package Components
+    model UnitTests
+      parameter Integer n = 0;
+      input Real x[n];
+    end UnitTests;
+  end Components;
+end {LIB};
+model SimpleTest_total
+  extends {LIB}.Examples.SimpleTest;
+end SimpleTest_total;
+"""
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_a_quoted_name_holding_a_class_keyword_hides_nothing(
+    tool, monkeypatch, tmp_path
+):
+    def save(file):
+        Path(file).write_text(QUOTED)
+        return True
+
+    backend, _ = _either(tool, monkeypatch, tmp_path, save)
+    assert backend.uses([_tm(SIMPLE)]) == {SIMPLE: SIMPLE_USES}
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+@pytest.mark.parametrize(
+    ("written", "why"),
+    [
+        (None, "no file"),
+        ("", "the file is empty"),
+        (
+            f"package {LIB}\n  package Examples\n    model SimpleTest\n",
+            f"the text ends inside class {LIB}.Examples.SimpleTest",
+        ),
+    ],
+)
+def test_a_file_that_cannot_be_read_is_that_test_s_reason(
+    tool, written, why, monkeypatch, tmp_path
+):
+    """The tool said it saved, and wrote nothing, nothing at all, or a file
+    cut off: that test could not be asked, and the next one still is."""
+
+    def save(file):
+        if Path(file).name == "0.mo":
+            if written is not None:
+                Path(file).write_text(written)
+            return True
+        return _written(f"{tool.lower()}_SimpleTest.mo")(file)
+
+    backend, closed = _either(tool, monkeypatch, tmp_path, save)
+    gone = f"{LIB}.Examples.Gone"
+    answers = backend.uses([_tm(gone), _tm(SIMPLE)])
+    assert answers[gone] == f"{tool} wrote no readable model for it: {why}"
+    assert SIMPLE_USES <= answers[SIMPLE]
+    assert closed()
