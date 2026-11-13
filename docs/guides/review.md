@@ -497,6 +497,57 @@ under a label (a DIR given twice, or one inside another), or `--base` names
 no label. It prints facts: whether a failure blocks the change is the
 reviewer's call. `--format json` writes the same facts as data.
 
+## See which tests use a class
+
+Before you change a class, `dstf uses` says which tests it can move: the
+tests whose model uses it, as the model itself, a component, a base class, a
+function, a type, or a package that holds one of them.
+
+```bash
+dstf uses ModelicaTestingLib.Components.UnitTests --config testing.json
+```
+
+```text
+Asking OpenModelica what 14 tests use ...
+ModelicaTestingLib.Components.UnitTests is used by 10 of 14 tests:
+  ModelicaTestingLib.Examples.ConstantTest
+  ...
+```
+
+The answer comes from the simulator, not from DSTF's reading of the source:
+the project's backend is started, asked what each test's model depends on,
+and closed. Nothing is simulated. Dymola (by `saveTotalModel`) and
+OpenModelica (by `saveTotalModelDebug`) can answer. A backend that cannot
+says so, and names another backend installed here that can (`OpenModelica
+is installed here and can: add --backend OpenModelica.`). OpenModelica's
+list can hold a test that does not use the class, because omc may save a
+class the model does not use (it keeps an emptied `Icons` package of the
+library in every test's file); it has not been seen to miss one. Dymola
+saves what a model uses of non-encrypted libraries only, so a class of an
+encrypted library is not seen.
+
+A test the simulator could not answer for is listed apart with its reason,
+under `Could not be asked (counted as using it)`, and counts as using every
+class you named. Name several classes, and a last line counts the tests that
+use at least one of them. `--filter` and `--package` narrow the tests that
+are asked.
+
+`-o FILE` writes those tests, one model id per line, the ones that could not
+be asked included. Run only them:
+
+```bash
+dstf uses ModelicaTestingLib.Components.UnitTests --config testing.json -o uses.txt
+dstf run --config testing.json --filter @uses.txt
+```
+
+Nothing else is written: not in the project, the work directory or the
+current directory. A name that is no class of the library, or of a
+dependency given as a path, is refused with exit code 2 before anything
+starts.
+
+A run of the tests a class touches is a quick check while you work. A full
+run stays the check before a release.
+
 ## Next
 
 - [CI](ci.md): run the tests on every pull request.

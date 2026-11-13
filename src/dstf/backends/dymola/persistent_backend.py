@@ -38,6 +38,7 @@ from ...discovery.library_state import (
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import read_mat_time_extents
 from ..common.proc_kill import live_children
+from ..common.total_model import QUESTION_BOUND
 from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
 from .backend import DymolaBackend, DymolaConfig
@@ -107,6 +108,11 @@ def _patch_dymola_for_parallel_startup() -> None:
 #: request method notes it here for the logger's filter.
 _requesting = threading.local()
 _dymola_logger_patched = False
+
+
+#: The packages ``saveTotalModel(..., skipStandard=true)`` leaves out of
+#: its file: the Modelica Standard Library's.
+STANDARD_PACKAGES = frozenset({"Modelica", "ModelicaServices", "Complex"})
 
 
 def _install_dymola_log_filter() -> None:
@@ -268,8 +274,7 @@ class DymolaWorker(Worker):
             ok = self.dymola.openModel(str(dep_pkg))
             if not ok:
                 raise RuntimeError(
-                    f"Worker {self.worker_id}: failed to load dependency "
-                    f"{dep_pkg} — {self._last_error()}"
+                    f"failed to load dependency {dep_pkg} — {self._last_error()}"
                 )
 
         # Load main library
@@ -278,8 +283,7 @@ class DymolaWorker(Worker):
         ok = self.dymola.openModel(str(main_pkg))
         if not ok:
             raise RuntimeError(
-                f"Worker {self.worker_id}: failed to load library {main_pkg} "
-                f"— {self._last_error()}"
+                f"failed to load library {main_pkg} — {self._last_error()}"
             )
 
         # Framework settings (mirror startup.mos). ExecuteCommand returns the
@@ -838,6 +842,11 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
     ``run_tests`` template wins over the batch ``.mos`` backend's override.
     """
 
+    #: The seconds one question of :meth:`uses` may take before the
+    #: simulator is taken for hung, closed, and the tests left are not
+    #: asked (``backends.common.total_model``).
+    question_bound = QUESTION_BOUND
+
     worker_cls = DymolaWorker
     backend_label = "Dymola"
 
@@ -859,6 +868,7 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
             Capability.FMU_EXPORT,
             Capability.LIVE_RESULTS,
             Capability.CANCEL,
+            Capability.USES,
         }
     )
 
@@ -949,5 +959,74 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
                 worker.close()
             except Exception:
                 pass
+
+    def uses(self, tests: list[TestModel]) -> dict[str, frozenset[str] | str]:
+        """What each test's model uses, by Dymola's ``saveTotalModel(file,
+        model, skipStandard=true)``: one file of the model and every class
+        it uses, the standard packages (:data:`STANDARD_PACKAGES`) left out
+        unless one of them is the project's, read by
+        :func:`~dstf.discovery.mo_parser.declared_classes`. Dymola saves
+        what the model uses of non-encrypted libraries only: a class of an
+        encrypted library is not seen.
+
+        A one-shot worker, as :meth:`export_fmu`'s, whose work dir is a
+        temporary directory removed afterwards: the project's work dir is
+        not touched. Loading the library leaves Dymola in the library's
+        directory, so it is moved back into the temporary one before it is
+        asked, and every file is named by its absolute path.
+
+        A name is kept when its first part is a top package of the project
+        (:func:`~dstf.discovery.uses.top_packages`); the model Dymola wraps
+        the test in is at top level and is none.
+        """
+        import copy
+        import tempfile
+
+        from ...discovery.uses import one_line, top_packages
+        from ..common.total_model import ask_each
+
+        di_cls = load_dymola_interface(self.interface_of(self.config))
+        # Dymola's interface prints its connection noise to stdout, which
+        # is `dstf uses`'s answer: muted for a Dymola this process closed.
+        _install_dymola_log_filter()
+        _patch_dymola_for_parallel_startup()
+        tops = top_packages(self.config)
+        # `skipStandard` leaves the standard packages out of the file: kept
+        # when one of them is the project's (given as a path), or each of
+        # its classes would read as used by none.
+        skip = not (STANDARD_PACKAGES & tops.keys())
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            # A copy, not `dataclasses.replace`: that would resolve the
+            # configuration, testing.json's reading included, again.
+            config = copy.copy(self.config)
+            config.work_dir = Path(tmp)
+            worker = DymolaWorker(
+                worker_id=-1,
+                config=config,
+                dymola_config=self.dymola_config,
+                dymola_interface_cls=di_cls,
+            )
+
+            def ask(test: TestModel, file: Path) -> str | None:
+                if worker.dymola.saveTotalModel(
+                    str(file), test.model_id, skipStandard=skip
+                ):
+                    return None
+                return one_line(
+                    worker._last_error(),
+                    f"Dymola did not save {test.model_id} and said nothing of why",
+                )
+
+            try:
+                worker.start_within()
+                worker.dymola.cd(tmp)
+                return ask_each(
+                    tests, Path(tmp), ask, "Dymola", tops, self.question_bound
+                )
+            finally:
+                try:
+                    worker.close()
+                except Exception:
+                    pass
 
     # run_tests is inherited from PersistentBackendBase.

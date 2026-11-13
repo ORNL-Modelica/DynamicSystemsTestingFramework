@@ -9564,3 +9564,78 @@ the committed script, keeping Dymola/windows `ref_0011.json` of the two
 `--keep`: 977 files renamed, `ref_0326.json` and three high-water files
 deleted, 335 / 335 / 307 files left, only the `"test_id"` line gone from
 each, and a second run had nothing to do.
+
+## D166 — Which tests use a class: the simulator answers (2026-11-13)
+
+**Context.** Before a class of the library is changed, the question is
+which tests that change can move. A full run answers it by running
+everything; on a large library that is hours. DSTF reads the source only as
+far as discovery needs (a test's `UnitTests` component, its `experiment`
+annotation), not as a compiler does: it does not resolve imports,
+`extends`, redeclarations or a class looked up through a package. The
+simulators do. Measured 2026-11-13 over a real library of 340 tests: Dymola
+2026x's `saveTotalModel(file, model, skipStandard=true)` wrote one file per
+test in 19 s, OpenModelica 1.27.2's `saveTotalModelDebug(file, model)` in
+13 s, each byte-identical on a repeat; each file is the library's package
+pruned to what the model uses, then a model that wraps the test at top
+level. In a check of 32 classes neither tool's list missed a test.
+OpenModelica's `saveTotalModel` refused that library (it names an optional
+library that was not loaded), so it is not used.
+
+**Decision.** `dstf uses CLASS [CLASS ...]` (owner, 2026-11-13).
+
+1. *Each backend answers for its own simulator.* A new capability,
+   `Capability.USES`, with `Backend.uses(tests)`: per test, the classes its
+   model uses, or the simulator's reason, on one line, for a test it could
+   not answer for. Dymola and OpenModelica declare it on their persistent
+   classes, the ones a run without `--batch` uses; the command reads it
+   there. A backend that cannot answer says so (exit 1), and a hint names
+   every other entry or backend that reads the project's source type,
+   declares the capability and is found on this machine — by what backends
+   declare, never by name.
+2. *One reader of the answer.* `mo_parser.declared_classes` lists every
+   class a Modelica text declares, types and operators included. A name is
+   the project's when its first part is a top package of the library or of
+   a dependency given as a path, named by what its file declares: the
+   wrapper model is not, nor a library loaded by name (omc writes the parts
+   of `Modelica` it used at top level).
+3. *What cannot be answered counts as touched* (owner: "a full run is still
+   the final line of defence"). A test the simulator could not answer for
+   is listed apart and counted as using every class named; the simulator
+   not starting is a failure (exit 1), never "every test".
+4. *The list only.* The tests that use each class, and with `-o` their
+   union as a file `--filter @FILE` reads. Not the chain from a test down
+   to the class.
+5. *A name is checked before anything starts.* A name that is no class of
+   the library or of a path dependency (a top package, or a class under one
+   of any kind) is refused with exit 2.
+6. *Nothing is written but `-o`.* The simulator's files go to a temporary
+   directory that is removed; Dymola is moved into it after loading the
+   library, which leaves it in the library's directory.
+7. *OpenModelica may list more.* omc says of `saveTotalModelDebug` that it
+   "might save things which are not actually used": it keeps an emptied
+   `Icons` package of the library in every test's file. Its list can hold a
+   test that does not use a class; it has not been seen to miss one. The
+   help and the guide say so.
+8. *Dymola sees non-encrypted libraries only*, by its own description of
+   `saveTotalModel`, and `skipStandard=true` leaves the Modelica Standard
+   Library's packages (`Modelica`, `ModelicaServices`, `Complex`) out of
+   the file. They are kept when one of them is a top package of the
+   project (given as a path, or the library under test), so that its
+   classes are not read as used by none.
+
+**Rejected.**
+- *DSTF's own map of what each model uses*, built by reading the source:
+  it would be a Modelica front end inside DSTF, kept right against every
+  backend's language and every library's lookups (owner: "i don't want
+  dstf to maintain search/map for every backend and want to rely on the
+  backends to provide functionalities where possible").
+- *One tool answering for another tool's run* (OpenModelica's answer used
+  for a Dymola project): two simulators need not resolve a library alike.
+  Not built now; a backend that cannot answer names the one that can.
+- *A stored map*, written once and read on later runs: it goes stale with
+  every edit, and asking costs seconds.
+
+**Not in this decision.** A change named by a git revision (`--since`), a
+`run` that simulates only the touched tests, and Julia, Python or FMU
+backends.

@@ -166,6 +166,7 @@ def test_the_top_level_help_keeps_its_examples_and_the_project_flags(monkeypatch
 #: commands' lines swapped, or one copied over another, is seen.
 _SUMMARY_WORDS = {
     "discover": "List the tests",
+    "uses": "use a class",
     "run": "Simulate",
     "compare": "without simulating",
     "summary": "several runs",
@@ -719,6 +720,8 @@ _AFTER_ONLY = {"--backend", "--backend-path", "--work-dir"}
 READS: dict[str, set[str]] = {
     # the library and the spec; no reference partition, no work dir
     "discover": _PROJECT,
+    # the library, the spec and the simulator that is asked; no work dir
+    "uses": _PROJECT | {"--backend", "--backend-path"},
     "run": _PROJECT | _AFTER_ONLY,
     "compare": _PROJECT | _AFTER_ONLY,
     # its runs are named by LABEL=DIR: no project
@@ -763,6 +766,7 @@ ARGV: dict[str, list[str]] = {
     # its optional positional given, so a value after a refused flag is not
     # taken for it
     "check": ["Dymola"],
+    "uses": ["Lib.M"],
     "spec schema": ["test_spec"],
     "spec add": ["Lib.M"],
     "spec update": ["patch.json"],
@@ -1258,6 +1262,7 @@ def _actions(option: str):
 _OUTPUTS = {
     "run": ["--report-format", "junit"],
     "compare": ["--report-format", "junit"],
+    "uses": ["Lib.M"],
     "spec schema": [],
     "baseline export": [],
     "baseline diff": ["HEAD"],
@@ -1403,6 +1408,7 @@ def test_soft_check_add_s_source_that_holds_no_object_is_said(tmp_path, capsys):
 def test_output_has_its_short_form_everywhere():
     found = _actions("--output")
     assert [path for path, _ in found] == [
+        "uses",
         "run",
         "compare",
         "summary",
@@ -1795,6 +1801,7 @@ CREATES = {
 IN_A_LIBRARY = {
     "discover": [],
     "check": [],
+    "uses": ["Lib.A", "--backend", "OpenModelica"],
     "run": ["--backend", "OpenModelica", "--no-browser"],
     "compare": ["--backend", "OpenModelica"],
     "spec add": ["Lib.A"],

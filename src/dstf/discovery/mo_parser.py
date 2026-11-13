@@ -535,7 +535,8 @@ class _ClassSpan:
     that ends its one statement."""
 
     name: str
-    #: Its keyword: one of :data:`_CLASS_TOKEN_RE`'s.
+    #: Its keyword: one of the pattern's it was found by
+    #: (:data:`_CLASS_TOKEN_RE`, :data:`_DECLARED_TOKEN_RE`).
     kind: str
     start: int
     body: int
@@ -563,18 +564,24 @@ _NAME = r"(\w+|'(?:[^'\\]|\\.)*')"
 #: is, and so that their ``end`` closes them. ``operator`` and ``type`` are
 #: not: an ``operator record`` is a record, and the ``end`` of an operator
 #: closes nothing on the stack.
+#:
+#: Last, with no group: a quoted name anywhere else (a component's,
+#: ``Real 'a model b'``), taken whole so that a keyword inside it is none.
+#: Read as ``model b``, it opened a class that never closed.
+_QUOTED = r"'(?:\\[^\n]|[^'\n])*'?"
 _CLASS_TOKEN_RE = re.compile(
     r"\b(?:(?P<partial>partial)\s+(?:(?:pure|impure|operator|expandable)\s+)?)?"
     r"(?P<kind>model|block|class|package|function|record|connector)\s+"
     rf"(?:extends\s+)?{_NAME}(?P<short>\s*=)?"
     rf"|\bend\s+{_NAME}\s*;"
+    rf"|{_QUOTED}"
 )
 
 _OPENERS, _CLOSERS = "([{", ")]}"
 #: A bracket of stripped source (group 1) — or a quoted name, which is code
 #: there and whose brackets open and close nothing (``Real 'a(b' = 1;``). It
 #: ends as the lexer ends it: at its closing ``'`` or at the end of its line.
-_BRACKET_RE = re.compile(r"'(?:\\[^\n]|[^'\n])*'?|([()\[\]{}])")
+_BRACKET_RE = re.compile(rf"{_QUOTED}|([()\[\]{{}}])")
 
 
 def _statement_end(stripped: str, start: int, end: int) -> int:
@@ -597,10 +604,19 @@ def _statement_end(stripped: str, start: int, end: int) -> int:
     return end
 
 
-def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
+def _direct_classes(
+    stripped: str, start: int, end: int, token: re.Pattern[str] = _CLASS_TOKEN_RE
+) -> list[_ClassSpan]:
+    return _scan(stripped, start, end, token)[0]
+
+
+def _scan(
+    stripped: str, start: int, end: int, token: re.Pattern[str]
+) -> tuple[list[_ClassSpan], list[str]]:
     """The classes declared DIRECTLY in ``stripped[start:end]`` — a file, or
     one class's body — in source order; a class nested deeper belongs to
-    the one that holds it.
+    the one that holds it. ``token`` is the declarations looked for: those
+    of :data:`_CLASS_TOKEN_RE`, or every kind (:data:`_DECLARED_TOKEN_RE`).
 
     A stack of open declarations, closed by the ``end`` that names the top
     one: ``end if;`` / ``end for;`` and the ``end`` of a kind not tracked
@@ -615,11 +631,14 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
     is no class of this text by name. Taken for one, it hid the class ``HT``
     declared after it, which was then found with no annotation — so did a
     class redeclared in a sibling short class's modification.
+
+    :func:`_scan` also returns the names still open where the text ends,
+    outermost first: a text cut off inside a class.
     """
     out: list[_ClassSpan] = []
     stack: list[tuple[str, str, int, int, bool]] = []
     depth, at = 0, start
-    for m in _CLASS_TOKEN_RE.finditer(stripped, start, end):
+    for m in token.finditer(stripped, start, end):
         for found in _BRACKET_RE.finditer(stripped, at, m.start()):
             if found.group(1):
                 depth += 1 if found.group(1) in _OPENERS else -1
@@ -627,6 +646,8 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
         # `end Name;` has no keyword; a declaration has its kind and name.
         closed, kind, name = m.group(5), m.group("kind"), m.group(3)
         partial = m.group("partial") is not None
+        if closed is None and kind is None:
+            continue  # a quoted name: no declaration, whatever it holds
         if closed is not None:
             if stack and stack[-1][0] == closed:
                 opened_name, opened_kind, opened, body, was_partial = stack.pop()
@@ -652,15 +673,85 @@ def _direct_classes(stripped: str, start: int, end: int) -> list[_ClassSpan]:
             out.append(
                 _ClassSpan(name, kind, m.start(), m.end(), after, True, depth, partial)
             )
+    return out, [opened[0] for opened in stack]
+
+
+#: :data:`_CLASS_TOKEN_RE` with the two kinds it leaves out, in the same
+#: groups: a ``type`` and an ``operator`` (``operator '+' ... end '+';``).
+#: ``operator record R`` and ``operator function f`` are a record and a
+#: function here too: the lookahead leaves them to their second word.
+_DECLARED_TOKEN_RE = re.compile(
+    r"\b(?:(?P<partial>partial)\s+(?:(?:pure|impure|operator|expandable)\s+)?)?"
+    r"(?P<kind>model|block|class|package|function|record|connector|type"
+    r"|operator(?!\s+(?:record|function)\b))\s+"
+    rf"(?:extends\s+)?{_NAME}(?P<short>\s*=)?"
+    rf"|\bend\s+{_NAME}\s*;"
+    rf"|{_QUOTED}"
+)
+
+
+class UnclosedClass(ValueError):
+    """A Modelica text ends inside a class: it was cut off, and what it
+    declares is not known. ``str()`` names the class."""
+
+
+def declared_classes(text: str) -> list[str]:
+    """Every class a Modelica text declares, by its name qualified within
+    the text (``Lib``, ``Lib.A``, ``Lib.A.f``), in source order.
+
+    Nested classes, short classes (``type T = Real(...)``, ``model A =
+    B(...)``), types and operators are included; ``model extends A`` is
+    named ``A``. A class written inside a modification (``redeclare model
+    HT = Ideal`` in a component's brackets) is no class of the text and is
+    left out. It reads what a simulator writes of a model and everything
+    it uses (``dstf uses``), and a one-file library.
+
+    Raises:
+        UnclosedClass: The text ends inside a class (a file cut off): a
+            short list would read as a model that uses little.
+    """
+    stripped = _strip_modelica_literals(text)
+    top, still_open = _scan(stripped, 0, len(stripped), _DECLARED_TOKEN_RE)
+    if still_open:
+        raise UnclosedClass(f"the text ends inside class {'.'.join(still_open)}")
+    out: list[str] = []
+
+    def walk(spans: list[_ClassSpan], prefix: str) -> None:
+        for span in spans:
+            if span.depth:
+                continue
+            name = f"{prefix}.{span.name}" if prefix else span.name
+            out.append(name)
+            if not span.short:
+                inside = _direct_classes(
+                    stripped, span.body, span.end, _DECLARED_TOKEN_RE
+                )
+                walk(inside, name)
+
+    walk(top, "")
     return out
 
 
+def is_declared(library_dir: Path, library_name: str, name: str) -> bool:
+    """Whether ``name`` is a class of the library in ``library_dir`` whose
+    top package is ``library_name``: the library itself, or a class under
+    it of any kind — a ``type`` and an ``operator`` included, which
+    :func:`find_class` (a test's model) passes over."""
+    if name == library_name:
+        return (library_dir / "package.mo").is_file()
+    return find_class(library_dir, library_name, name, _DECLARED_TOKEN_RE) is not None
+
+
 def find_class(
-    library_dir: Path, library_name: str, model_id: str
+    library_dir: Path,
+    library_name: str,
+    model_id: str,
+    token: re.Pattern[str] = _CLASS_TOKEN_RE,
 ) -> LocatedClass | None:
     """Locate the class ``model_id`` in the library's files and read its
     own ``experiment(...)`` annotation — for a test that names a model no
-    recognizer found (declared in ``test_spec.json`` only).
+    recognizer found (declared in ``test_spec.json`` only). ``token`` is the
+    declarations a class is looked for among (:func:`_direct_classes`).
 
     A Modelica class is stored as its own file (``A/B/C.mo``), as a
     directory (``A/B/C/package.mo``), or inside the file of a class that
@@ -693,14 +784,17 @@ def find_class(
         for path in candidates:
             if not path.is_file():
                 continue
-            found = _class_in_file(path, [library_name, *owner], nested)
+            found = _class_in_file(path, [library_name, *owner], nested, token)
             if found is not None:
                 return found
     return None
 
 
 def _class_in_file(
-    path: Path, top: list[str], nested: list[str]
+    path: Path,
+    top: list[str],
+    nested: list[str],
+    token: re.Pattern[str] = _CLASS_TOKEN_RE,
 ) -> LocatedClass | None:
     """The class ``nested`` deep inside the file's top class ``top`` (the
     top class itself for an empty ``nested``), or None when the file does
@@ -712,20 +806,20 @@ def _class_in_file(
     if _extract_within(text) != ".".join(top[:-1]):
         return None
     stripped = _strip_modelica_literals(text)
-    span = _named(_direct_classes(stripped, 0, len(stripped)), top[-1])
+    span = _named(_direct_classes(stripped, 0, len(stripped), token), top[-1])
     for name in nested:
         if span is None:
             return None
         # A short class has no body: the classes of its own are the ones
         # its modification redeclares, one bracket into its statement.
-        inside = _direct_classes(stripped, span.body, span.end)
+        inside = _direct_classes(stripped, span.body, span.end, token)
         span = _named(inside, name, depth=1 if span.short else 0)
     if span is None:
         return None
     # Blanked 1:1, so `_parse_experiment`'s offsets into the original text
     # (its string-valued fields) still hold.
     own = list(text[span.start : span.end])
-    for child in _direct_classes(stripped, span.body, span.end):
+    for child in _direct_classes(stripped, span.body, span.end, token):
         for i in range(child.start - span.start, child.end - span.start):
             if own[i] != "\n":
                 own[i] = " "

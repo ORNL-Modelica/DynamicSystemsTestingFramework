@@ -8,6 +8,16 @@ this file says when they do.
 
 ## [Unreleased]
 
+### Added
+
+- `dstf uses CLASS [CLASS ...]`: the tests whose model uses each class,
+  asked of the project's simulator (Dymola by `saveTotalModel`, OpenModelica
+  by `saveTotalModelDebug`; nothing is simulated). A test the simulator
+  could not answer for is listed apart and counted as using every class.
+  `-o FILE` writes the tests for `dstf run --filter @FILE`. OpenModelica's
+  list can hold a test that does not use the class. A backend can answer
+  by declaring the new `Capability.USES` and `Backend.uses`.
+
 ### Changed
 
 - `dstf plot` with three runs or more ranks a section, and gives its

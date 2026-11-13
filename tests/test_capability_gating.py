@@ -507,3 +507,70 @@ class TestLiveResultsGate:
             assert _REGISTRY["HonestLiveBackend"] is Honest
         finally:
             _REGISTRY.pop("HonestLiveBackend", None)
+
+
+class TestUsesGate:
+    """``Capability.USES`` (``dstf uses``) and ``Backend.uses``. The flag
+    sits on the class a run without ``--batch`` uses — the persistent
+    variant, which ``register`` never sees — so the pairing of flag and
+    method on the built-ins is held here."""
+
+    def _classes(self):
+        for name, cls in _all_registered_backends().items():
+            yield name, cls
+            persistent = cls.persistent_backend_cls()
+            if persistent is not None:
+                yield name, persistent
+
+    def test_the_flag_and_the_method_go_together_on_every_builtin(self):
+        declared = set()
+        for _, cls in self._classes():
+            has_flag = Capability.USES in cls.capabilities
+            assert has_flag is (cls.uses is not Backend.uses), cls.__name__
+            if has_flag:
+                declared.add(cls.__name__)
+        assert declared == {"PersistentDymolaBackend", "PersistentOpenModelicaBackend"}
+
+    def test_declaring_it_without_the_method_trips_at_registration(self):
+        from dstf.backends import _REGISTRY, register
+
+        try:
+            with pytest.raises(TypeError, match=r"Capability\.USES.*uses\(\)"):
+
+                @register("BogusUsesBackend")
+                class Bogus(Backend):
+                    capabilities = frozenset({Capability.USES})
+
+                    def read_result(self, test, test_key, run_result):
+                        raise NotImplementedError
+
+            assert "BogusUsesBackend" not in _REGISTRY
+        finally:
+            _REGISTRY.pop("BogusUsesBackend", None)
+
+    def test_declaring_it_with_the_method_registers(self):
+        from dstf.backends import _REGISTRY, register
+
+        try:
+
+            @register("HonestUsesBackend")
+            class Honest(Backend):
+                capabilities = frozenset({Capability.USES})
+
+                def uses(self, tests):
+                    return {}
+
+                def read_result(self, test, test_key, run_result):
+                    raise NotImplementedError
+
+            assert _REGISTRY["HonestUsesBackend"] is Honest
+        finally:
+            _REGISTRY.pop("HonestUsesBackend", None)
+
+    def test_a_backend_that_cannot_answer_says_so(self):
+        class Plain(Backend):
+            def read_result(self, test, test_key, run_result):
+                raise NotImplementedError
+
+        with pytest.raises(NotImplementedError, match=r"Plain cannot say what a test"):
+            Plain.uses(Plain.__new__(Plain), [])
