@@ -60,6 +60,9 @@ def _matrix_cell(summary: Summary, cell: Cell | None) -> str:
         also.append(_also_none(cell.none_on_base, summary.base))
     if also:
         others = "; ".join(filter(None, [others, ", ".join(also)]))
+    if cell.selected:
+        n, of = cell.selected
+        others = "; ".join(filter(None, [others, f"{n} of {of} tests selected"]))
     text = f"{cell.passed}/{cell.total}"
     return f"{text} ({others})" if others else text
 
@@ -157,6 +160,11 @@ def as_markdown(summary: Summary) -> str:
             f' "{NO_BASELINE}" = NO_REF: nothing stored to score against, so not '
             "a failure."
         )
+    if any(cell.selected for cell in summary.cells.values()):
+        key += (
+            ' "N of M tests selected" = the run simulated only the tests a '
+            "change touches (run --changed-since): not a full run."
+        )
     lines += ["", key, ""]
     for folder in summary.folders:
         for label in summary.labels:
@@ -189,6 +197,7 @@ def as_json(summary: Summary) -> str:
                     "not_new": cell.not_new,
                     "none_on_base": cell.none_on_base,
                     "base_note": cell.base_note,
+                    "selection": cell.selection,
                     "not_passing": [asdict(r) for r in cell.not_passing],
                 }
             )
