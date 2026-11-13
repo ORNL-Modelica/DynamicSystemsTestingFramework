@@ -9640,7 +9640,7 @@ library that was not loaded), so it is not used.
 D167), a `run` that simulates only the touched tests, and Julia, Python or
 FMU backends.
 
-## D167 — What changed since a revision: git read, never written (2026-11-13)
+## D167 — What changed since a revision: git is only read (2026-11-13)
 
 **Context.** `dstf uses` (D166) answers for classes you name. While you
 work, the question is the reverse: which tests do my changes since `main`
@@ -9660,7 +9660,11 @@ change is given by naming a class "or since a git revision").
    file `REV` holds against the disk, plus every `.mo` file on disk; one
    that only one side has, or whose blob ids differ, differs. The disk's
    blob id is git's own (`hash-object` with the repository's conversions),
-   so a CRLF checkout of an LF file is unchanged. A new file that is not
+   so a CRLF checkout of an LF file is unchanged. `hash-object` reads no
+   index, so it also converts a file git would leave alone (one STORED with
+   CRLF, under `core.autocrlf` or `text=auto`): a file whose converted id
+   is not REV's is hashed once more as it is, and is unchanged when either
+   id is REV's — an edit differs both ways. A new file that is not
    `.mo` is not a candidate: it matters once a `.mo` file names it, and
    that file is then a change.
 2. *A file to a class.* `A/B/C.mo` is `<Top>.A.B.C` and `A/B/package.mo`
@@ -9672,8 +9676,12 @@ change is given by naming a class "or since a git revision").
    answered counts as touched). Any other changed file under a root (data,
    C source, an image; a README when the library is its repository's top),
    and any file of a root whose top package cannot be named (unreadable,
-   cut off, a name an earlier root holds, its `package.mo` gone). No
-   simulator is started then, and `-o` holds every test.
+   cut off, a name an earlier root holds, its `package.mo` gone, or for the
+   library a name its `package.mo` does not declare). No simulator is
+   started then, and `-o` holds every test. A library folder whose
+   `package.mo` is `within` another package is refused (exit 2): Config
+   reads a library whose own `package.mo` is gone as its first
+   sub-package, from which what changed cannot be told.
 4. *DSTF's own files are not source.* The reference root when it is inside
    a root, and the project's testing.json and test_spec.json: otherwise an
    accept would count every test. A reference root that IS the library, or
@@ -9683,25 +9691,35 @@ change is given by naming a class "or since a git revision").
    that does not know it is an error (exit 2) that names the roots it
    holds — a branch or a tag every repository has, not a commit hash. A
    dependency in no repository is not compared, and said; the library in
-   none is an error. A nested repository or submodule under a root is named
-   and not compared. A linked directory is not entered: git holds the link,
-   which is compared by its target's name.
+   none is an error. Every path `REV` holds is compared, whatever folder
+   holds it now; a folder holding a `.git` entry (a nested repository, a
+   submodule) is not searched for NEW `.mo` files, and is named. A linked
+   directory is not entered — git holds the link, which is compared by its
+   target's name — and a linked `.mo` file is compared by that name only;
+   both are named.
 6. *Git is only read.* `rev-parse`, `log`, `ls-tree`, `cat-file` and
-   `hash-object` without `-w`. Not `git diff` or `git status`: both refresh
-   the index of a stat-dirty file, even with optional locks off (a review
-   saw `git --no-optional-locks diff --name-only` rewrite `.git/index`). The
-   one boundary is the user's own: a `filter` driver's clean command is run
-   as `git status` runs it, and git-lfs keeps a copy of a changed file under
-   `.git/lfs/objects`.
+   `hash-object` without `-w`. Not `git diff`: it refreshes the index of a
+   stat-dirty file even with optional locks off (a review saw
+   `git --no-optional-locks diff --name-only` rewrite `.git/index`). Not
+   `git status` either, though with optional locks off it left `.git`
+   byte-identical in the same review: it reports what differs from the
+   INDEX, not from `REV`. Two boundaries are not DSTF's own: a `filter`
+   driver's clean command is the user's program, run as `git status` runs
+   it, and git-lfs keeps a copy of a changed file under `.git/lfs/objects`;
+   and in a partial (treeless) clone, reading an older revision's tree
+   makes git fetch the objects it lacks.
 7. *The output.* Per repository, a line naming `REV` as it resolved there
    (short hash, subject cut to 60 characters), then each changed file with
-   its class — at most 20 per repository, all of them asked — then the
+   its class — at most 20 class rows per repository, all of them asked; a
+   row that is no class (a file that counts every test, a folder not
+   searched, a link) comes first and is never cut — then the
    answer exactly as for named classes: named classes first, then the
    changed ones by name, each once. Nothing changed: one line, no simulator,
    an empty `-o`. The block is printed with the answer, never without it.
 
 **Rejected.**
-- *`git diff --name-only` / `git status`*: they write the index (6).
+- *`git diff --name-only`*: it writes the index (6). *`git status`*: it
+  compares with the index, not with `REV` (6).
 - *Hashing the bytes on disk ourselves*: every file of a checkout with
   line-ending conversion would read as changed.
 - *A pre-filter by `git diff-index`* (only stat-dirty files hashed): it

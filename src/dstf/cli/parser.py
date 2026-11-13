@@ -1287,7 +1287,8 @@ def _add_uses(tree: _Tree, top) -> None:
             files are listed first, each with its class. A deleted file is
             asked as the package that held it. A changed file no class
             stores (a data table, C source, an image) counts every test,
-            and no simulator is started; nor is one when nothing changed.
+            and no simulator is started; nor is one when nothing changed
+            and no CLASS is named.
             package.order, the reference root inside the library,
             testing.json and test_spec.json are not compared. Git is only
             read.

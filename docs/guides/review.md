@@ -574,15 +574,18 @@ ModelicaTestingLib.Examples.SimpleTest is used by 1 of 14 tests:
 
 What is compared: every file under the library's directory and under each
 dependency given as a path (a one-file dependency `Name.mo`: that file) as
-`REV` holds it, against the disk, by content as git would store it — a
-checkout that converts line endings is not a change. A `.mo` file on disk
+`REV` holds it, against the disk, by content as git stores it — a checkout
+that converts line endings is not a change, whether the files are stored
+with LF or CRLF. A `.mo` file on disk
 that `REV` does not hold is a change. Each changed file is asked as the
 class it stores:
 
 - `A/B/C.mo` is the class `<Top>.A.B.C`, where `<Top>` is the top package
   its root's `package.mo` declares (not its directory's name), and
-  `A/B/package.mo` the package `<Top>.A.B`. A changed top `package.mo` is
-  the top package itself, which every test uses: every test is counted.
+  `A/B/package.mo` the package `<Top>.A.B`. The library's own top
+  `package.mo` is the library itself, which every test uses: every test is
+  counted. A dependency's is its top package, used by the tests that use
+  the dependency.
 - A deleted file is asked as the package that held it: its own users can no
   longer be asked for it, so the package's are counted, which can be more
   than used it.
@@ -592,7 +595,13 @@ class it stores:
   model.
 - DSTF's own files are not compared: the reference root when it is inside
   the library (as the bundled library keeps it), and the project's
-  testing.json and test_spec.json. Accepting a baseline is no change.
+  testing.json and test_spec.json. Accepting a baseline is no change, and
+  an edit of test_spec.json or testing.json is no change to a class: it
+  selects no test.
+- A library folder whose `package.mo` is `within` another package is
+  refused (exit 2): with the library's own `package.mo` deleted, the
+  project is read as its first sub-package, and what changed cannot be told
+  from there. Give the library's own folder with `--source-path`.
 
 Any other changed file — a data table, C source, an image; and, when the
 library is the top of its repository, its README or a CI file — is stored by
@@ -603,9 +612,11 @@ A non-Modelica file that is NEW since `REV` is not seen on its own: it
 counts once a Modelica file that names it changes.
 
 When nothing changed, the command says `Nothing changed since main (…).` and
-starts no simulator; with `-o` it writes an empty file. A job that chains the
-two must expect what `dstf run --filter @uses.txt` does then: it prints
-`No tests matched the filter.` and exits 1.
+starts no simulator, unless you also named a CLASS, which is then answered
+for; with `-o` it writes an empty file. A job that chains the two must
+expect what `dstf run --filter @uses.txt` does then: it prints
+`No tests matched the filter.` and exits 1. A `run` option that handles this
+itself is the next step.
 
 ```bash
 dstf uses --since main --config testing.json -o uses.txt
@@ -623,16 +634,26 @@ line of its own. `REV` must be known in each repository the project uses — a
 branch or a tag both have; a commit hash works only when every root is in one
 repository. A dependency in no repository (an unpacked release) is not
 compared, and the output says so; the library in no repository is an error
-(exit 2), as is a revision a repository does not know. A nested repository
-or a submodule inside the library is named and not compared, and a linked
-directory is not entered (git holds the link, which is compared by where it
-points).
+(exit 2), as is a revision a repository does not know. Every file `REV`
+holds is compared, whatever folder holds it now; a folder that holds a
+`.git` entry (a nested repository, a submodule) is not searched for NEW
+`.mo` files, and is named. Links are not followed, and each is named: a
+linked directory is not entered and not compared (an edit of a file it
+points at is not seen); a linked `.mo` file is compared by the name it
+points at only (an edit of that file is seen only under the target's own
+path, if the target is in the library). Rows like these, and a file that
+counts every test, come first in the block and are never cut; past 20
+class rows per repository the rest are counted (`… and 5 more`), and all are
+asked.
 
-Git is only read: no `git diff` or `git status`, which write the index. A
-file is hashed as `git add` would hash it, with the repository's conversions;
-one of them is yours: a `filter` driver's clean command (git-lfs) is run as
-`git status` runs it, and git-lfs keeps a copy of a changed file under
-`.git/lfs/objects`.
+Git is only read: no `git diff`, which writes the index, and no `git
+status`, which compares with the index rather than with `REV`. A file is
+hashed with the repository's conversions, and hashed again as it is when
+that is what `REV` stores. Two things are not DSTF's to prevent: a `filter`
+driver's clean command is your program, run as `git status` runs it, and
+git-lfs keeps a copy of a changed file under `.git/lfs/objects`; and in a
+partial (treeless) clone, reading `REV`'s tree makes git fetch the objects
+it lacks.
 
 ## Next
 
