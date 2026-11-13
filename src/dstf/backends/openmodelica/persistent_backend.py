@@ -309,11 +309,18 @@ def _resolve_session_pid(session) -> int | None:
             pid = None
         if pid:
             return int(pid)
-    proc = getattr(getattr(session, "omc_process", None), "_omc_process", None)
-    pid = getattr(proc, "pid", None)
+    pid = getattr(_session_process(session), "pid", None)
     if pid:
         return int(pid)
     return None
+
+
+def _session_process(session) -> object | None:
+    """The ``subprocess.Popen`` of the omc behind *session*, where the
+    OMPython build keeps one within reach (``omc_process._omc_process``);
+    else ``None``. The worker hands it to ``_track_launch`` so a killed omc
+    is waited for."""
+    return getattr(getattr(session, "omc_process", None), "_omc_process", None)
 
 
 #: What omc writes to its log as it comes up, on every start — the last
@@ -405,7 +412,7 @@ class OpenModelicaWorker(Worker):
         # OMPython launches omc and waits for its port file inside one call
         # (well under a second on a healthy install, 10 s at its own bound),
         # so this is the first moment the PID can be read.
-        self._track_launch(pid)
+        self._track_launch(pid, _session_process(self.session))
 
         self._exec(f'setCommandLineOptions("--std={self.om_config.std_version}")')
 

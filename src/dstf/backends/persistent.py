@@ -19,6 +19,7 @@ imported from there.
 import contextlib
 import logging
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -27,7 +28,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..config import Config
 from ..config_shape import default
@@ -148,6 +149,10 @@ class Worker(ABC):
     #: How often ``close()`` re-walks the process tree while the graceful
     #: shutdown runs, looking for children spawned inside that window.
     _ORPHAN_POLL_SECONDS: float = 0.25
+    #: How long ``_reap_launched`` waits for a killed process to be gone.
+    #: A kill takes effect within milliseconds; the bound is for one that was
+    #: refused, so that a close never hangs on it.
+    _REAP_SECONDS: float = 5.0
     #: Seconds a start gets when ``testing.json`` sets no
     #: ``worker_startup_timeout``: that key's default, from its table. The
     #: bound is for a tool that hangs: one
@@ -194,6 +199,10 @@ class Worker(ABC):
         #: them out of reach of a tree walk. The create time is what makes
         #: the recorded PID safe to kill afterwards.
         self._orphan_children: set[tuple[int, float]] = set()
+        #: The handles of the simulator processes this worker launched
+        #: itself (``subprocess.Popen``), kept so a killed one is waited
+        #: for (``_reap_launched``).
+        self._launched: list[Any] = []
         #: Consecutive restarts charged against this worker by the dispatch
         #: loop's budget; reset when a test succeeds without a kill.
         self._n_restarts: int = 0
@@ -525,7 +534,7 @@ class Worker(ABC):
             raise exc
         raise WorkerStartError(str(exc)) from exc
 
-    def _track_launch(self, pid: int | None) -> None:
+    def _track_launch(self, pid: int | None, process: object | None = None) -> None:
         """Record the simulator's process, the moment :meth:`start` has launched it.
 
         When the start was already given up, it kills the process instead and
@@ -533,16 +542,28 @@ class Worker(ABC):
 
         Args:
             pid: The process ID, or None when the backend could not learn it.
+            process: The process's ``subprocess.Popen``, when this worker's
+                side launched it and can reach it. :meth:`close` then waits
+                for the process it killed, so it is not left a zombie for the
+                rest of the run. Hand it over where nothing else would wait:
+                a call still parked on the connection after a timeout keeps
+                the handle alive, and unwaited. An object with no ``wait``
+                is ignored.
 
         Raises:
             WorkerStartError: The start was given up.
         """
         self.pids = {int(pid)} if pid else set()
+        if callable(getattr(process, "wait", None)):
+            self._launched.append(process)
         if self._start_abandoned:
             if pid:
                 # No name guard: the launch call handed this PID over a
                 # moment ago and still holds its handle — it is not reused.
                 kill_process_tree(int(pid))
+            # Not waited for here: the PID stays on record until the close
+            # that follows this raise (``_start_bounded``), and a PID that
+            # was waited for is free for another process to take.
             raise WorkerStartError("its start was given up")
 
     def abandon_start(self) -> None:
@@ -729,6 +750,52 @@ class Worker(ABC):
             kill_process_tree(pid, create_time=create_time)
         self.pids = set()
         self._orphan_children = set()
+        self._reap_launched()
+
+    def _reap_launched(self) -> None:
+        """Wait for the killed processes this worker launched itself.
+
+        A killed child stays in the process table, as a zombie, until its
+        parent waits for it. Nothing else does while the handle is still
+        referenced, and after a timeout it is for the rest of the run: the
+        abandoned exec thread is parked in a call on the connection that
+        holds it. A suite with many timeouts then collects one dead entry
+        per restarted worker (seen live, 2026-11-12: 12 of omc after 36
+        minutes).
+
+        Through the handle, never ``os.waitpid`` on the PID: the handle
+        then knows its process ended, so a late ``kill()`` or ``wait()``
+        on it cannot reach a newer process that got the same PID.
+
+        Called once the PIDs are off the record: a PID that was waited for
+        is free for another process to take.
+
+        A process still running after ``_REAP_SECONDS`` (the kill was
+        refused) keeps its handle for the next call. Never raises.
+        """
+        # Taken in one step: a start on another thread may be handing a
+        # process over, and its handle must land in the list that is kept.
+        handles, self._launched = self._launched, []
+        for process in handles:
+            try:
+                process.wait(timeout=self._REAP_SECONDS)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Worker %s: process %s still runs %g s after its kill; "
+                    "it is waited for again at the next close",
+                    self.worker_id,
+                    getattr(process, "pid", "?"),
+                    self._REAP_SECONDS,
+                )
+                self._launched.append(process)
+            except Exception:
+                # A kill path must never raise; an unreadable handle is
+                # dropped, as if it had never been handed over.
+                logger.debug(
+                    "Worker %s: waiting for a killed process raised",
+                    self.worker_id,
+                    exc_info=True,
+                )
 
     def run_test_with_timeout(
         self,
