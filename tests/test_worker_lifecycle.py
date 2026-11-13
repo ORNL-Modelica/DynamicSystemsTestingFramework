@@ -388,7 +388,9 @@ class TestKilledToolIsWaitedFor:
             proc.kill()
             proc.wait(10)
 
-    def test_a_start_given_up_before_the_launch_waits_for_what_it_kills(self, tmp_path):
+    def test_a_tool_killed_at_its_birth_is_waited_for_too(self, tmp_path):
+        """A start given up before the launch kills the tool the moment it
+        is handed over; the close that follows waits for it."""
         release, ended = threading.Event(), threading.Event()
         launched: list[subprocess.Popen] = []
 
@@ -408,7 +410,9 @@ class TestKilledToolIsWaitedFor:
             release.set()
             assert ended.wait(10)
 
-            assert launched[0].returncode is not None
+            # `returncode` is read, never `poll()`: only the worker's own
+            # wait can set it.
+            _wait_until(lambda: launched[0].returncode is not None)
             assert not _is_zombie(launched[0].pid)
         finally:
             release.set()
@@ -422,7 +426,7 @@ class TestKilledToolIsWaitedFor:
         waits: list[float] = []
 
         class _Stubborn:
-            pid = 4_000_000  # no such process: nothing is killed
+            pid = None
 
             def wait(self, timeout):
                 waits.append(timeout)

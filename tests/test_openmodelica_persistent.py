@@ -26,13 +26,21 @@ from dstf.storage.batch_manifest import BatchManifest
 
 
 @pytest.fixture(autouse=True)
-def _fake_pids_name_no_process(monkeypatch):
+def _fake_pids_name_no_process(monkeypatch, request):
     """A FakeSession's PID is made up, which the watchdog's death watch
     would read as "omc died". That watch has its own tests, over real
-    processes (test_worker_lifecycle.py)."""
+    processes (test_worker_lifecycle.py).
+
+    And a made-up PID is never killed: on a machine where omc runs, the
+    number may be a real omc of somebody else's. The tests over a real omc
+    (``ompython``) keep the real kill."""
     monkeypatch.setattr(
         "dstf.backends.persistent.process_gone", lambda pids, name_hint=None: False
     )
+    if request.node.get_closest_marker("ompython") is None:
+        monkeypatch.setattr(
+            "dstf.backends.persistent.kill_process_tree", lambda *a, **kw: None
+        )
 
 
 class FakeSession:
