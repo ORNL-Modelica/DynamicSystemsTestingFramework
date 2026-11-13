@@ -4,28 +4,42 @@ Plain ``git`` through ``subprocess`` — no library. What it offers: the
 repository that holds a folder (:meth:`Repository.holding`), a revision as
 a commit with its short hash and subject (:meth:`Repository.commit`), its
 committer date (:meth:`Repository.date`), the files under the folder at a commit with their blob ids
-(:meth:`Repository.files`), and a blob's bytes (:meth:`Repository.reader`,
-one ``git cat-file --batch`` for every read).
+(:meth:`Repository.files`), a blob's bytes (:meth:`Repository.reader`,
+one ``git cat-file --batch`` for every read), and the blob id git would give
+each file on disk now (:meth:`Repository.blobs_on_disk`).
 
 Every git failure is a :class:`GitError` whose text is one sentence naming
 the path or the revision (``not a git repository: …``, ``unknown revision
 'xyz' in …``): a command prints it and exits 2, never a traceback.
 
 Reading never writes the repository. Only ``rev-parse``, ``log -1``,
-``ls-tree`` and ``cat-file`` run here, none of which touches the index;
-``git diff`` against the work tree refreshes the index of every stat-dirty
-file, and ``git diff --name-only`` reports a renamed file by its new name
-only, so neither is used (``tests/test_git_revisions.py`` hashes ``.git``
+``ls-tree``, ``cat-file`` and ``hash-object`` without ``-w`` run here, none
+of which touches the index; ``git diff`` against the work tree refreshes
+the index of every stat-dirty file (even with optional locks off), and
+``git diff --name-only`` reports a renamed file by its new name only, so
+neither is used. Nor is ``git status``: it reports what differs from the
+index, not from a revision (``tests/test_git_revisions.py`` hashes ``.git``
 before and after over a touched file). What a folder holds ON DISK is read
 from the disk by its caller, not from git: an untracked file is exactly
-what an accept leaves before ``git add``.
+what an accept leaves before ``git add``. Git's location variables
+(``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_INDEX_FILE``, which git sets for a
+hook it runs) are not passed on: the repository is the folder's.
+
+Two boundaries, neither DSTF's own. :meth:`Repository.blobs_on_disk`
+hashes a file with the repository's conversions applied; git's own (line
+endings, ``ident``) write nothing, but a ``filter`` driver's clean command
+is the user's program, run as ``git status`` runs it, and may keep what it
+is given — git-lfs stores a copy of a changed file under
+``.git/lfs/objects``. And in a partial (treeless) clone, reading an older
+revision's tree makes git fetch the objects it lacks into ``.git``.
 """
 
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,10 +47,24 @@ from pathlib import Path
 #: Optional locks off for every command (``git --no-optional-locks``).
 _ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"}
 
+#: Where git finds its repository, set by git for a hook it runs: read
+#: here, they would name the hook's repository, not the folder's.
+_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+
+
+def _env() -> dict[str, str]:
+    """The environment every git command here runs in."""
+    env = {k: v for k, v in os.environ.items() if k not in _LOCATION}
+    return {**env, **_ENV}
+
 
 class GitError(Exception):
     """Git could not answer; the text is one sentence that names the path
     or the revision."""
+
+
+class NotARepository(GitError):
+    """The folder is in no git repository: ``not a git repository: …``."""
 
 
 @dataclass(frozen=True)
@@ -48,14 +76,18 @@ class Commit:
     subject: str
 
 
-def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+def _run(
+    args: list[str], cwd: Path, given: bytes | None = None
+) -> subprocess.CompletedProcess:
+    """``git <args>`` in ``cwd``; ``given`` is what it reads on its
+    standard input, nothing without."""
     try:
         return subprocess.run(
             ["git", "--no-optional-locks", *args],
             cwd=cwd,
             capture_output=True,
-            env={**os.environ, **_ENV},
-            stdin=subprocess.DEVNULL,
+            env=_env(),
+            **({"stdin": subprocess.DEVNULL} if given is None else {"input": given}),
         )
     except FileNotFoundError as e:
         raise GitError("git is not installed here (no git on the PATH)") from e
@@ -66,6 +98,22 @@ def _said(proc: subprocess.CompletedProcess) -> str:
     names."""
     lines = proc.stderr.decode("utf-8", "replace").strip().splitlines()
     return lines[-1] if lines else f"git exited with {proc.returncode}"
+
+
+def _quoted(path: str) -> bytes:
+    """``path`` as one line of ``git hash-object --stdin-paths``, which has
+    no ``-z``: C-quoted, as git reads a line that starts with a double
+    quote — so a name that starts with one, holds a line break or ends in a
+    carriage return (which git strips from a line) is read as it is."""
+    out = bytearray(b'"')
+    for byte in os.fsencode(path):
+        if byte in b'"\\':
+            out += b"\\" + bytes([byte])
+        elif byte < 0x20 or byte == 0x7F:
+            out += b"\\%03o" % byte
+        else:
+            out.append(byte)
+    return bytes(out + b'"')
 
 
 class Repository:
@@ -86,7 +134,7 @@ class Repository:
         proc = _run(["rev-parse", "--show-toplevel", "--show-prefix"], folder)
         if proc.returncode != 0:
             if b"not a git repository" in proc.stderr:
-                raise GitError(f"not a git repository: {folder}")
+                raise NotARepository(f"not a git repository: {folder}")
             raise GitError(f"{folder}: {_said(proc)}")
         top, prefix = (proc.stdout.decode("utf-8").splitlines() + [""])[:2]
         return cls(Path(top), prefix.rstrip("/"))
@@ -146,6 +194,79 @@ class Repository:
                 out[path.decode("utf-8", "surrogateescape")[start:]] = blob.decode()
         return out
 
+    def blobs_on_disk(
+        self, paths: Iterable[str], stored: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
+        """The blob id of what is on disk now for each of ``paths`` — a path
+        inside the folder, as :meth:`files` spells it. A file is hashed with
+        the repository's conversions applied (line endings, ``ident``, a
+        ``filter`` driver's clean command): a file checked out with CRLF
+        line endings and stored with LF is the blob it was. A symbolic link
+        is the blob of its target's name, as git stores one, never what it
+        points at. A path that is neither — not there, or a directory — is
+        left out.
+
+        ``stored`` is each path's id at the revision compared against. A
+        file whose converted id is not its stored id is hashed once more as
+        it is, and is its stored id when that matches: ``hash-object`` does
+        not read the index, so it converts a file git would leave alone — one
+        STORED with CRLF, under ``core.autocrlf`` or ``text=auto`` — and a
+        clean checkout of it would read as changed. An edit differs both
+        ways.
+
+        ``git hash-object --stdin-paths`` without ``-w``: nothing is stored.
+        It reads each path from the work tree's top, whatever directory it
+        starts in, and stops at the first it cannot read, so only regular
+        files are given, and as many ids as paths must come back. A link is
+        one ``git hash-object --stdin --no-filters`` each: the id is git's
+        to compute (a repository may name its objects by SHA-256)."""
+        base = self.top / self.folder if self.folder else self.top
+        files: list[str] = []
+        out: dict[str, str] = {}
+        for path in paths:
+            here = base / path
+            try:
+                mode = here.lstat().st_mode
+            except OSError:
+                continue
+            if stat.S_ISLNK(mode):
+                proc = _run(
+                    ["hash-object", "--stdin", "--no-filters"],
+                    self.top,
+                    os.fsencode(os.readlink(here)),
+                )
+                if proc.returncode != 0:
+                    raise GitError(f"cannot hash the link {here}: {_said(proc)}")
+                out[path] = proc.stdout.decode().strip()
+            elif stat.S_ISREG(mode):
+                files.append(path)
+        out.update(self._hashed(files))
+        stored = stored or {}
+        other = [p for p in files if p in stored and out[p] != stored[p]]
+        for path, raw in self._hashed(other, "--no-filters").items():
+            if raw == stored[path]:
+                out[path] = raw
+        return out
+
+    def _hashed(self, files: list[str], *flags: str) -> dict[str, str]:
+        """``files`` — regular files, by path inside the folder — to their
+        blob ids, by one ``git hash-object --stdin-paths``."""
+        if not files:
+            return {}
+        prefix = f"{self.folder}/" if self.folder else ""
+        proc = _run(
+            ["hash-object", *flags, "--stdin-paths"],
+            self.top,
+            b"".join(_quoted(prefix + path) + b"\n" for path in files),
+        )
+        ids = proc.stdout.decode().split()
+        if proc.returncode != 0 or len(ids) != len(files):
+            raise GitError(
+                f"cannot hash the files of {self.folder or '.'} in {self.top}: "
+                f"{_said(proc)}"
+            )
+        return dict(zip(files, ids, strict=True))
+
     @contextmanager
     def reader(self) -> Iterator[Callable[[str], bytes]]:
         """A function from a blob id to its bytes, over one ``git cat-file
@@ -157,7 +278,7 @@ class Repository:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                env={**os.environ, **_ENV},
+                env=_env(),
             )
         except FileNotFoundError as e:
             raise GitError("git is not installed here (no git on the PATH)") from e

@@ -5,6 +5,8 @@ sentence the command prints, its exit codes, its file, and the hint."""
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -12,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import PROJECT_ROOT
+from conftest import PROJECT_ROOT, GitRepo
 from dstf.backends import _REGISTRY, Backend, register
 from dstf.backends.dymola import interface_loader
 from dstf.backends.locate import EXECUTABLE, SEARCH, Found, Located, Rule
@@ -481,3 +483,518 @@ def test_no_hint_when_none_can_answer_for_the_source_type(env, capsys, tmp_path)
     out, err = capsys.readouterr()
     assert (rc, out) == (1, "")
     assert err == "Python cannot say what a test uses.\n"
+
+
+# --------------------------------------------------------------------------
+# --since: the classes changed since a git revision
+# --------------------------------------------------------------------------
+
+#: Found before `nothing_installed` empties PATH.
+GIT = shutil.which("git")
+SIMPLE = f"{LIB}.Examples.SimpleTest"
+EXAMPLES = f"{LIB}.Examples"
+
+
+@pytest.fixture
+def repo(env, nothing_installed, monkeypatch):
+    """`env`'s project committed once in a repository whose top is the
+    directory that HOLDS the library. `env` empties PATH so that no
+    simulator is found: git is put back on it, and the code under test
+    reads no git configuration but the repository's."""
+    assert GIT is not None
+    (nothing_installed / "git").symlink_to(GIT)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    env.git = GitRepo(env.lib.parent)
+    env.first = env.git.commit("the library as it was")
+    env.short = env.git.git("rev-parse", "--short", "HEAD")
+    return env
+
+
+def _touch(repo, *parts: str) -> None:
+    """An uncommitted edit of a file of the library: a comment."""
+    path = repo.lib.joinpath(*parts)
+    path.write_text(path.read_text(encoding="utf-8") + "// edited\n", encoding="utf-8")
+
+
+def _asked(out: str) -> list[str]:
+    """The classes the answer has a block for, in order."""
+    return [
+        line.split(" is ")[0]
+        for line in out.splitlines()
+        if not line.startswith(" ") and " is " in line
+    ]
+
+
+def _dependency(where: Path, name: str = "Dep") -> Path:
+    where.mkdir(parents=True)
+    (where / "package.mo").write_text(
+        f"within ;\npackage {name}\n  model M end M;\nend {name};\n"
+    )
+    return where
+
+
+def test_since_an_uncommitted_edit_is_a_changed_class_asked_as_a_named_one(
+    repo, capsys
+):
+    _touch(repo, "Components", "UnitTests.mo")
+    rc, out, err = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0, err
+    assert out == (
+        f"Changed since HEAD ({repo.short} the library as it was): 1 file\n"
+        f"  Components/UnitTests.mo  {UNIT_TESTS}\n"
+        f"{UNIT_TESTS} is used by 10 of 14 tests:\n" + "".join(f"  {t}\n" for t in WITH)
+    )
+    assert re.fullmatch(
+        r"Comparing \d+ files with HEAD \.\.\.\nAsking FakeUses what 14 tests use \.\.\.\n",
+        err,
+    )
+
+
+def test_since_named_classes_first_then_the_changed_ones_by_name_each_once(
+    repo, capsys
+):
+    """By class name, not by path: `Examples/SimpleTest.mo` sorts before
+    `Examples/package.mo`, its class after the package's."""
+    _touch(repo, "Examples", "package.mo")
+    _touch(repo, "Examples", "SimpleTest.mo")
+    _touch(repo, "Components", "UnitTests.mo")
+    rc, out, _ = _uses(repo, capsys, EXAMPLE, UNIT_TESTS, EXAMPLE, "--since", "HEAD")
+    assert rc == 0
+    assert out.startswith(
+        f"Changed since HEAD ({repo.short} the library as it was): 3 files\n"
+        f"  Components/UnitTests.mo  {UNIT_TESTS}\n"
+        f"  Examples/SimpleTest.mo   {SIMPLE}\n"
+        f"  Examples/package.mo      {EXAMPLES}\n"
+    )
+    assert _asked(out) == [EXAMPLE, UNIT_TESTS, EXAMPLES, SIMPLE]
+    assert out.endswith("14 of 14 tests use at least one of them.\n")
+    assert len(repo.asked) == 1
+
+
+def test_since_a_deleted_class_file_counts_the_package_that_held_it(repo, capsys):
+    (repo.lib / "Examples" / "SimpleTest.mo").unlink()
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0
+    assert out.startswith(
+        f"Changed since HEAD ({repo.short} the library as it was): 1 file\n"
+        f"  Examples/SimpleTest.mo  deleted → {EXAMPLES}\n"
+        f"{EXAMPLES} is used by 14 of 14 tests:\n"
+    )
+
+
+def test_since_nothing_changed_starts_no_simulator(repo, capsys):
+    rc, out, err = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0 and repo.asked == []
+    assert out == f"Nothing changed since HEAD ({repo.short} the library as it was).\n"
+    assert not err.startswith("Asking") and "Asking" not in err
+
+
+def test_since_nothing_changed_writes_an_empty_file_that_selects_no_test(repo, capsys):
+    out_file = repo.cwd / "uses.txt"
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD", "-o", str(out_file))
+    assert rc == 0 and repo.asked == []
+    assert out == (
+        f"Nothing changed since HEAD ({repo.short} the library as it was).\n"
+        f"Wrote {out_file}: 0 tests\n"
+    )
+    assert out_file.read_bytes() == b""
+    rc = main(["discover", "--config", str(repo.config), "--filter", f"@{out_file}"])
+    out, _ = capsys.readouterr()
+    assert (rc, out) == (1, "No tests found.\n")
+
+
+def test_since_nothing_changed_still_answers_for_a_class_named(repo, capsys):
+    rc, out, _ = _uses(repo, capsys, SIMPLE, "--since", "HEAD")
+    assert rc == 0
+    assert out == (
+        f"Nothing changed since HEAD ({repo.short} the library as it was).\n"
+        f"{SIMPLE} is used by 1 of 14 tests:\n  {SIMPLE}\n"
+    )
+
+
+def test_since_a_file_no_class_stores_counts_every_test_and_starts_no_simulator(
+    repo, capsys
+):
+    image = repo.lib / "Resources" / "Images" / "ThermostatBuildingTest.png"
+    image.write_bytes(image.read_bytes() + b"\0")
+    _touch(repo, "Examples", "SimpleTest.mo")
+    out_file = repo.cwd / "uses.txt"
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD", "-o", str(out_file))
+    assert rc == 0 and repo.asked == []
+    assert out == (
+        f"Changed since HEAD ({repo.short} the library as it was): 2 files\n"
+        "  Resources/Images/ThermostatBuildingTest.png  (no class stores it)\n"
+        f"  Examples/SimpleTest.mo                       {SIMPLE}\n"
+        "1 file that no class stores changed: every test is counted (14 tests).\n"
+        f"Wrote {out_file}: 14 tests\n"
+    )
+    assert len(out_file.read_text(encoding="utf-8").splitlines()) == 14
+    # a class named is not asked either, and the line says so
+    rc, out, _ = _uses(repo, capsys, UNIT_TESTS, "--since", "HEAD", "--package", SIMPLE)
+    assert rc == 0 and repo.asked == []
+    assert out.endswith(
+        "1 file that no class stores changed: every test is counted (1 test); "
+        "the class named is not asked.\n"
+    )
+
+
+def test_since_dstf_s_own_files_are_not_changes(repo, capsys):
+    """The bundled library keeps its reference root inside itself: an
+    accepted baseline or an edited spec is no change of the library."""
+    refs = repo.lib / "Resources" / "ReferenceResults"
+    spec = refs / "test_spec.json"
+    spec.write_text(json.dumps(json.loads(spec.read_text(encoding="utf-8")), indent=1))
+    baseline = next((refs / "OpenModelica").rglob("ref_*.json"))
+    baseline.write_text(baseline.read_text(encoding="utf-8") + "\n")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0 and repo.asked == []
+    assert out.startswith("Nothing changed since HEAD (")
+
+
+def test_since_a_changed_class_is_not_put_through_the_class_check(repo, capsys):
+    """A file that differs is what it is: a .mo file in a folder that is no
+    package is asked for, and no test uses it."""
+    (repo.lib / "Scratch").mkdir()
+    (repo.lib / "Scratch" / "Try.mo").write_text("model Try end Try;\n")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0
+    assert out.endswith(f"{LIB}.Scratch.Try is used by none of the 14 tests.\n")
+
+
+def test_since_lists_twenty_files_and_asks_for_every_class(repo, capsys):
+    for i in range(25):
+        (repo.lib / "Examples" / f"New{i:02}.mo").write_text(
+            f"within {EXAMPLES};\nmodel New{i:02}\nend New{i:02};\n"
+        )
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0
+    head = out.splitlines()[:22]
+    assert (
+        head[0] == f"Changed since HEAD ({repo.short} the library as it was): 25 files"
+    )
+    assert head[1:21] == [
+        f"  Examples/New{i:02}.mo  {EXAMPLES}.New{i:02}" for i in range(20)
+    ]
+    assert head[21] == "  … and 5 more"
+    assert _asked(out) == [f"{EXAMPLES}.New{i:02}" for i in range(25)]
+
+
+def test_since_a_long_subject_is_cut(repo, capsys):
+    subject = "a subject far longer than one line of the block would ever hold, cut"
+    _touch(repo, "Examples", "SimpleTest.mo")
+    repo.git.commit(subject)
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD~1")
+    assert rc == 0
+    short = repo.git.git("rev-parse", "--short", "HEAD~1")
+    assert out.startswith(
+        f"Changed since HEAD~1 ({short} the library as it was): 1 file\n"
+    )
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    assert out == (
+        f"Nothing changed since HEAD ({short} a subject far longer than one line "
+        "of the block would ever…).\n"
+    )
+
+
+def test_since_the_simulator_failing_prints_no_change(repo, capsys):
+    """stdout holds the answer or nothing: the changes are printed with
+    the answer."""
+    _touch(repo, "Examples", "SimpleTest.mo")
+    repo.fails = RuntimeError("no licence")
+    rc, out, err = _uses(repo, capsys, "--since", "HEAD")
+    assert (rc, out) == (1, "")
+    assert err.endswith("FakeUses could not be asked: no licence\n")
+
+
+def test_since_one_repository_holding_several_roots_has_one_line(repo, capsys):
+    """A dependency's folder and a one-file dependency beside the library:
+    one revision, each root's files under its top package."""
+    _dependency(repo.lib.parent / "Dep 1.0")
+    (repo.lib.parent / "One.mo").write_text(
+        "within ;\npackage Uno\nend Uno;\npackage Due\nend Due;\n"
+    )
+    repo.data["dependencies"] = ["../../../Dep 1.0", "../../../One.mo"]
+    _write_config(repo)
+    repo.git.commit("two dependencies")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    (repo.lib.parent / "Dep 1.0" / "package.mo").write_text(
+        "within ;\npackage Dep\n  model M Real x; end M;\nend Dep;\n"
+    )
+    (repo.lib.parent / "One.mo").write_text(
+        (repo.lib.parent / "One.mo").read_text() + "// edited\n"
+    )
+    _touch(repo, "Examples", "SimpleTest.mo")
+    rc, out, err = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0, err
+    assert out.startswith(
+        f"Changed since HEAD ({short} two dependencies): 3 files\n"
+        f"  {LIB}:\n"
+        f"    Examples/SimpleTest.mo  {SIMPLE}\n"
+        "  Dep:\n"
+        "    package.mo              Dep\n"
+        "  Uno / Due:\n"
+        "    One.mo                  Uno, Due\n"
+        "Dep is used by none of the 14 tests.\n"
+    )
+    assert _asked(out) == ["Dep", "Due", SIMPLE, "Uno"]
+
+
+def test_since_a_root_in_a_second_repository_has_its_own_line(repo, capsys, tmp_path):
+    dep = _dependency(tmp_path / "elsewhere" / "Dep 1.0")
+    other = GitRepo(dep)
+    other.commit("the dependency")
+    dep_short = other.git("rev-parse", "--short", "HEAD")
+    repo.data["dependencies"] = [str(dep)]
+    _write_config(repo)
+    repo.git.commit("name the dependency")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    _touch(repo, "Examples", "SimpleTest.mo")
+    rc, out, err = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0, err
+    assert out.startswith(
+        f"Changed since HEAD ({short} name the dependency): 1 file\n"
+        f"  {LIB}:\n"
+        f"    Examples/SimpleTest.mo  {SIMPLE}\n"
+        f"Nothing changed since HEAD ({dep_short} the dependency) in Dep.\n"
+        f"{SIMPLE} is used by 1 of 14 tests:\n"
+    )
+    (dep / "package.mo").write_text("within ;\npackage Dep\n  // x\nend Dep;\n")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert f"Changed since HEAD ({dep_short} the dependency): 1 file\n" in out
+    assert "  Dep:\n    package.mo  Dep\n" in out
+    # a commit only the library's repository knows
+    rc, out, err = _uses(repo, capsys, "--since", repo.first)
+    assert (rc, out) == (2, "")
+    assert err == (
+        f"Error: unknown revision '{repo.first}' in {dep} (it holds Dep): give a "
+        "revision every repository of the project knows, a branch or a tag\n"
+    )
+
+
+def test_since_a_dependency_in_no_repository_is_said_and_not_compared(
+    repo, capsys, tmp_path, monkeypatch
+):
+    dep = _dependency(tmp_path / "unpacked" / "Dep 1.0")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path / "unpacked"))
+    repo.data["dependencies"] = [str(dep)]
+    _write_config(repo)
+    rc, out, err = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0
+    assert out == (
+        f"Nothing changed since HEAD ({repo.short} the library as it was).\n"
+        "Dep: not under git, not compared.\n"
+    )
+    assert err.startswith("Dep is in no git repository: its files are not compared.\n")
+
+
+def test_since_a_project_in_no_repository_is_exit_2(
+    env, nothing_installed, capsys, monkeypatch
+):
+    (nothing_installed / "git").symlink_to(GIT)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(env.lib.parent.parent))
+    rc, out, err = _uses(env, capsys, "--since", "HEAD")
+    assert (rc, out) == (2, "")
+    assert err == f"Error: not a git repository: {env.lib}\n"
+
+
+def test_neither_a_class_nor_since_is_a_usage_error(env, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["uses", "--config", str(env.config)])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert err.startswith("usage: dstf uses ")
+    assert err.endswith("dstf uses: error: name a CLASS, or give --since REV\n")
+
+
+def test_since_what_a_root_without_a_name_and_a_nested_repository_print(repo, capsys):
+    """A dependency whose package.mo is gone cannot be asked as a class:
+    every test is counted. A nested repository is named, not compared."""
+    dep = _dependency(repo.lib.parent / "Dep")
+    repo.data["dependencies"] = ["../../../Dep"]
+    _write_config(repo)
+    inner = GitRepo(repo.lib / "Vendored")
+    (inner.top / "package.mo").write_text(
+        f"within {LIB};\npackage Vendored\nend Vendored;\n"
+    )
+    inner.commit("the inner repository")
+    repo.git.commit("a dependency and a nested repository")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    (dep / "package.mo").unlink()
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0 and repo.asked == []
+    assert out == (
+        f"Changed since HEAD ({short} a dependency and a nested repository): 1 file\n"
+        f"  {LIB}:\n"
+        "    Vendored/   holds a .git entry: new .mo files are not looked for\n"
+        f"  {os.path.realpath(dep)}:\n"
+        "    package.mo  deleted (its top package cannot be named)\n"
+        "1 changed file cannot be asked as a class: every test is counted "
+        "(14 tests).\n"
+    )
+
+
+#: What the block says of a folder it does not search for new files.
+UNLOOKED = "holds a .git entry: new .mo files are not looked for"
+
+
+def test_since_a_row_that_is_no_class_is_never_cut(repo, capsys):
+    """Past twenty rows the ordinary class rows are cut, never a notice:
+    a folder not searched comes first and stays."""
+    for i in range(21):
+        (repo.lib / "Examples" / f"New{i:02}.mo").write_text(
+            f"within {EXAMPLES};\nmodel New{i:02}\nend New{i:02};\n"
+        )
+    GitRepo(repo.lib / "Vendored")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0
+    lines = out.splitlines()
+    assert lines[:3] == [
+        f"Changed since HEAD ({repo.short} the library as it was): 21 files",
+        f"  {'Vendored/'.ljust(17)}  {UNLOOKED}",
+        f"  Examples/New00.mo  {EXAMPLES}.New00",
+    ]
+    assert lines[22] == "  … and 1 more"
+    assert _asked(out) == [f"{EXAMPLES}.New{i:02}" for i in range(21)]
+
+
+def test_since_a_file_that_counts_every_test_is_named_past_the_cap(repo, capsys):
+    """Twenty-two changed classes in the library, and a data file in a
+    dependency: the data file is the reason every test counts, and is
+    named."""
+    dep = _dependency(repo.lib.parent / "Dep")
+    (dep / "table.txt").write_text("1 2 3\n")
+    repo.data["dependencies"] = ["../../../Dep"]
+    _write_config(repo)
+    repo.git.commit("a dependency")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    for i in range(22):
+        (repo.lib / "Examples" / f"New{i:02}.mo").write_text(
+            f"within {EXAMPLES};\nmodel New{i:02}\nend New{i:02};\n"
+        )
+    (dep / "table.txt").write_text("1 2 4\n")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0 and repo.asked == []
+    lines = out.splitlines()
+    assert lines[0] == f"Changed since HEAD ({short} a dependency): 23 files"
+    assert lines[1] == f"  {LIB}:"
+    assert len([line for line in lines if line.startswith("    Examples/New")]) == 20
+    assert lines[-4:] == [
+        "  Dep:",
+        f"    {'table.txt'.ljust(17)}  (no class stores it)",
+        "  … and 2 more",
+        "1 file that no class stores changed: every test is counted (14 tests).",
+    ]
+
+
+def test_since_links_are_named_and_not_followed(repo, capsys, tmp_path):
+    """A linked folder is not entered — an edit of what it points at is not
+    seen, and the block says so; a linked class file is compared by the
+    name it points at only."""
+    kept = tmp_path / "kept" / "Shared"
+    kept.mkdir(parents=True)
+    (kept / "package.mo").write_text(f"within {LIB};\npackage Shared\nend Shared;\n")
+    (kept / "S.mo").write_text(f"within {LIB}.Shared;\nmodel S\nend S;\n")
+    (repo.lib / "Shared").symlink_to(kept)
+    (repo.lib / "Components" / "Link.mo").symlink_to("UnitTests.mo")
+    repo.git.commit("a linked package and a linked class")
+    short = repo.git.git("rev-parse", "--short", "HEAD")
+    (kept / "S.mo").write_text(f"within {LIB}.Shared;\nmodel S\n Real x;\nend S;\n")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert rc == 0 and repo.asked == []
+    assert out == (
+        f"Nothing changed since HEAD ({short} a linked package and a linked class).\n"
+        "  Shared/             a link: not compared\n"
+        "  Components/Link.mo  a link: compared by its target's name only\n"
+    )
+    _touch(repo, "Components", "UnitTests.mo")
+    rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
+    assert out.startswith(
+        f"Changed since HEAD ({short} a linked package and a linked class): 1 file\n"
+        "  Shared/                  a link: not compared\n"
+        "  Components/Link.mo       a link: compared by its target's name only\n"
+        f"  Components/UnitTests.mo  {UNIT_TESTS}\n"
+    )
+
+
+def test_since_a_library_folder_that_is_not_the_top_package_is_refused(repo, capsys):
+    """With the library's own package.mo deleted, the project is read as
+    its first sub-package: what changed cannot be told from there."""
+    (repo.lib / "package.mo").unlink()
+    rc, out, err = _uses(repo, capsys, "--since", "HEAD")
+    assert (rc, out) == (2, "")
+    assert err == (
+        f"Error: {repo.lib / 'Components' / 'package.mo'} is inside package {LIB}: "
+        "it is not the library's top package, so what changed cannot be told. "
+        "Give the library's own folder (--source-path).\n"
+    )
+
+
+# --- --since: which refusal is said first ----------------------------------
+
+
+def test_since_the_capability_is_said_before_the_revision(repo, capsys):
+    rc, out, err = _uses(repo, capsys, "--since", "nope", "--backend", CANNOT)
+    assert (rc, out) == (1, "")
+    assert err.startswith("FakeCannot cannot say what a test uses.\n")
+
+
+def test_since_an_unknown_class_is_said_before_the_revision(repo, capsys):
+    rc, out, err = _uses(repo, capsys, f"{LIB}.Nope", "--since", "nope")
+    assert (rc, out) == (2, "")
+    assert err.startswith(f"Error: {LIB}.Nope is no class of the library")
+
+
+def test_since_an_unknown_revision_is_said_before_no_test_to_ask(repo, capsys):
+    rc, out, err = _uses(repo, capsys, "--since", "nope", "--package", f"{LIB}.Nope")
+    assert (rc, out) == (2, "")
+    assert err == f"Error: unknown revision 'nope' in {repo.lib.parent}\n"
+
+
+def test_since_no_test_to_ask_is_said_before_nothing_changed(repo, capsys):
+    out_file = repo.cwd / "uses.txt"
+    rc, out, err = _uses(
+        repo, capsys, "--since", "HEAD", "--package", f"{LIB}.Nope", "-o", str(out_file)
+    )
+    assert (rc, out) == (1, "")
+    assert err.endswith("No tests found.\n")
+    assert not out_file.exists()
+
+
+def test_since_on_a_project_that_is_not_modelica_says_so(env, capsys, tmp_path):
+    """Pinned with a backend that CAN answer for another source type: with
+    the bundled ones the capability check says its sentence first."""
+
+    @register("FakePyUses")
+    class FakePyUses(Backend):
+        capabilities = frozenset({Capability.USES})
+        source_types = frozenset({"python"})
+
+        def read_result(self, test, test_key, run_result):
+            raise AssertionError("uses reads no result")
+
+        def uses(self, tests):
+            raise AssertionError("never asked")
+
+    try:
+        lib = tmp_path / "py"
+        shutil.copytree(
+            PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
+            lib,
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        config = lib / "Resources" / "ReferenceResults" / "testing.json"
+        data = json.loads(config.read_text(encoding="utf-8"))
+        data.pop("backends", None)
+        data["backend"] = "FakePyUses"
+        config.write_text(json.dumps(data), encoding="utf-8")
+        rc = main(["uses", "--since", "HEAD", "--config", str(config)])
+        out, err = capsys.readouterr()
+        assert (rc, out) == (1, "")
+        assert err == (
+            "--since reads a Modelica library's files; this project's "
+            "source_type is python.\n"
+        )
+    finally:
+        del _REGISTRY["FakePyUses"]
