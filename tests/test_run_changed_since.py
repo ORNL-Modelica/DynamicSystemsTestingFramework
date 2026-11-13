@@ -265,6 +265,57 @@ def test_a_file_no_class_stores_runs_every_test_and_asks_no_simulator(proj, caps
     assert (selection["selected"], selection["of"]) == (14, 14)
 
 
+def _painted(page: Path) -> str | None:
+    """The run notice of the page, as text; None when it has none."""
+    import re
+
+    import markupsafe
+
+    found = re.search(
+        r'<div class="run-notice" id="run-notice">(.*?)</div>',
+        page.read_text(encoding="utf-8"),
+        re.S,
+    )
+    return markupsafe.Markup(found.group(1)).striptags() if found else None
+
+
+def test_the_first_paint_says_this_run_s_selection_not_the_last_run_s(
+    proj, capsys, monkeypatch
+):
+    """The page a browser tab opens on, and the one the run paints as it
+    starts, are written before this run's status.json: each says what THIS
+    run is, at both sites (the command's, the pipeline's)."""
+    painted = []
+    # the browser the command opens, and the moment the run starts
+    monkeypatch.setattr(
+        "dstf.reporting.report_suite._launch_opener",
+        lambda page: painted.append(("opened", _painted(page))),
+    )
+    fake = _REGISTRY[RUNS]
+    run_tests = fake.run_tests
+
+    def started(self, tests):
+        painted.append(("started", _painted(self.config.work_dir / "dashboard.html")))
+        return run_tests(self, tests)
+
+    monkeypatch.setattr(fake, "run_tests", started)
+    _touch(proj, "Examples", "SimpleTest.mo")
+    argv = ["run", "--config", str(proj.config), "--work-dir", str(proj.work)]
+    assert main([*argv, "--changed-since", "HEAD"]) == 0
+    selected = painted[:]
+    painted.clear()
+    main([*argv, "--filter", f"{LIB}.Examples.S*"])
+    assert painted == [("opened", None), ("started", None)]
+    painted.clear()
+    assert main([*argv, "--changed-since", "HEAD"]) == 0
+    capsys.readouterr()
+    said = (
+        "Not a full run. 1 of 14 tests is being run: the one that uses what "
+        "changed since HEAD (1 file). The other 13 are not run."
+    )
+    assert selected == painted == [("opened", said), ("started", said)]
+
+
 # --------------------------------------------------------------------------
 # Nothing to run: exit 0, and nothing is written
 # --------------------------------------------------------------------------

@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import markupsafe
+import pytest
 
 from dstf.reporting.dashboard_render import (
     build_dashboard_context,
@@ -2249,3 +2250,129 @@ def test_a_run_given_pair_of_a_flag_no_command_writes_is_not_read(tmp_path):
     flags = compare_rerun_flags(config)
     assert "--timeout 7" in flags["run"], flags
     assert not any("no-such-flag" in line for line in flags.values()), flags
+
+
+# ---------------------------------------------------------------------------
+# A run of only the tests a change touches (`run --changed-since`)
+# ---------------------------------------------------------------------------
+
+_NOTICE = re.compile(r'<div class="run-notice" id="run-notice">(.*?)</div>', re.S)
+
+
+def _selection(n: int, of: int, files: int = 2, unasked: int = 0, rev="base") -> dict:
+    return {
+        "changed_since": rev,
+        "commits": ["da94e89"],
+        "files": files,
+        "selected": n,
+        "of": of,
+        "could_not_be_asked": unasked,
+    }
+
+
+def _notice(tmp_path: Path, selection, mode: str) -> str | None:
+    """The page's notice as a reader reads it — tags dropped, entities
+    read — or None when the page has none."""
+    _write_status_json(
+        tmp_path,
+        {
+            "total": 0,
+            "elapsed": 1.0,
+            "counts": {},
+            "tests": [],
+            "updated_at": 0.0,
+            "selection": selection,
+        },
+    )
+    (render_live if mode == "live" else render_final)(tmp_path)
+    found = _NOTICE.search((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    if found is None:
+        return None
+    return markupsafe.Markup(found.group(1)).striptags()
+
+
+@pytest.mark.parametrize(
+    ("selection", "mode", "said"),
+    [
+        (
+            _selection(2, 14),
+            "final",
+            "Not a full run. 2 of 14 tests were run: the ones that use what "
+            "changed since base (2 files). The other 12 were not run.",
+        ),
+        (
+            _selection(2, 14),
+            "live",
+            "Not a full run. 2 of 14 tests are being run: the ones that use what "
+            "changed since base (2 files). The other 12 are not run.",
+        ),
+        (
+            _selection(1, 2, files=1),
+            "final",
+            "Not a full run. 1 of 2 tests was run: the one that uses what "
+            "changed since base (1 file). The other 1 was not run.",
+        ),
+        (
+            _selection(1, 2, files=1),
+            "live",
+            "Not a full run. 1 of 2 tests is being run: the one that uses what "
+            "changed since base (1 file). The other 1 is not run.",
+        ),
+        (
+            _selection(5, 14, unasked=2),
+            "final",
+            "Not a full run. 5 of 14 tests were run: the ones that use what "
+            "changed since base (2 files), and 2 that could not be asked what "
+            "they use. The other 9 were not run.",
+        ),
+        (
+            _selection(2, 14, unasked=1),
+            "final",
+            "Not a full run. 2 of 14 tests were run: the one that uses what "
+            "changed since base (2 files), and 1 that could not be asked what "
+            "it uses. The other 12 were not run.",
+        ),
+        (
+            _selection(3, 14, unasked=3),
+            "final",
+            "Not a full run. 3 of 14 tests were run: the simulator could not say "
+            "what they use, and 2 files changed since base. The other 11 were "
+            "not run.",
+        ),
+    ],
+)
+def test_a_selected_run_says_it_is_not_a_full_run(tmp_path, selection, mode, said):
+    assert _notice(tmp_path, selection, mode) == said
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        None,  # a run without --changed-since
+        _selection(14, 14),  # every test selected
+        "base",  # a block that is not one
+        {"selected": 2, "of": "14", "files": 2},
+    ],
+)
+@pytest.mark.parametrize("mode", ["live", "final"])
+def test_a_full_run_has_no_notice(tmp_path, selection, mode):
+    assert _notice(tmp_path, selection, mode) is None
+
+
+def test_a_snapshot_without_the_key_has_no_notice(tmp_path):
+    """status.json written before the key existed."""
+    _write_status_json(
+        tmp_path,
+        {"total": 0, "elapsed": 1.0, "counts": {}, "tests": [], "updated_at": 0.0},
+    )
+    render_final(tmp_path)
+    assert 'class="run-notice"' not in (tmp_path / "dashboard.html").read_text()
+
+
+def test_the_revision_is_the_user_s_text_and_is_escaped(tmp_path):
+    _notice(tmp_path, _selection(2, 14, rev='<b>&"x'), "final")
+    page = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    notice = _NOTICE.search(page)
+    assert notice is not None
+    assert "<code>&lt;b&gt;&amp;&#34;x</code>" in notice.group(1)
+    assert "<b>" not in notice.group(1)

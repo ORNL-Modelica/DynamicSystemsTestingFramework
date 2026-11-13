@@ -268,7 +268,12 @@ def run_pipeline(
     # it a moment earlier too, before opening a browser tab on it.
     from .reporting.dashboard_render import build_rerun_flags, render_live
 
-    render_live(work_dir, rerun_flags=build_rerun_flags(config), theme=config.theme)
+    render_live(
+        work_dir,
+        rerun_flags=build_rerun_flags(config),
+        theme=config.theme,
+        selection=selection,
+    )
 
     # Set on every call: a backend that ran a selected run before must not
     # carry its block into this one.

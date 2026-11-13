@@ -410,7 +410,10 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     config.work_dir.mkdir(parents=True, exist_ok=True)
     render_live(
-        config.work_dir, rerun_flags=build_rerun_flags(config), theme=config.theme
+        config.work_dir,
+        rerun_flags=build_rerun_flags(config),
+        theme=config.theme,
+        selection=selection,
     )
     # A path that scores renders the final page itself, with its
     # comparisons, before the work that follows (the review, the report

@@ -9,6 +9,10 @@
 body { font-family: var(--dstf-font); margin: 1.5em; background: var(--dstf-page); color: var(--dstf-text); }
 h1 { margin-bottom: 0.2em; font-size: 1.4em; }
 .status-bar { font-size: 0.85em; color: var(--dstf-text-secondary); margin-bottom: 1em; }
+/* A run of only the tests a change touches (run --changed-since): a line of
+ * its own under the status line, in the sticky region. */
+.run-notice { font-size: 0.85em; margin: -0.4em 0 1em; padding: 0.35em 0.7em; background: var(--dstf-warn-tint); border-left: 4px solid var(--dstf-warn-fill); border-radius: 3px; color: var(--dstf-text); }
+.run-notice code { font-family: var(--dstf-mono); }
 .counters { display: flex; gap: 0.6em; flex-wrap: wrap; margin-bottom: 1em; }
 /* Sticky top region: h1 + status-bar + progress bar + counter pills stay
  * visible as the table body scrolls. The thead rows below stack at
@@ -187,6 +191,9 @@ body.has-selection { padding-bottom: 5em; }
     <span id="header-wall-final">…</span>
   {% endif %}
 </div>
+{% if run_notice %}
+<div class="run-notice" id="run-notice"><strong>Not a full run.</strong> {{ run_notice.before }} <code>{{ run_notice.rev }}</code>{{ run_notice.after }}</div>
+{% endif %}
 
 <div class="bar" id="progress-bar"></div>
 <div class="counters" id="counters" title="Click a pill to toggle its filter; click Total to clear"></div>
