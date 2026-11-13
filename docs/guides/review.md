@@ -522,7 +522,9 @@ says so, and names another backend installed here that can (`OpenModelica
 is installed here and can: add --backend OpenModelica.`). OpenModelica's
 list can hold a test that does not use the class, because omc may save a
 class the model does not use (it keeps an emptied `Icons` package of the
-library in every test's file); it has not been seen to miss one.
+library in every test's file); it has not been seen to miss one. Dymola
+saves what a model uses of non-encrypted libraries only, so a class of an
+encrypted library is not seen.
 
 A test the simulator could not answer for is listed apart with its reason,
 under `Could not be asked (counted as using it)`, and counts as using every

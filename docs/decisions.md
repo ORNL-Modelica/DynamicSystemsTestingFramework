@@ -9617,6 +9617,12 @@ library that was not loaded), so it is not used.
    `Icons` package of the library in every test's file. Its list can hold a
    test that does not use a class; it has not been seen to miss one. The
    help and the guide say so.
+8. *Dymola sees non-encrypted libraries only*, by its own description of
+   `saveTotalModel`, and `skipStandard=true` leaves the Modelica Standard
+   Library's packages (`Modelica`, `ModelicaServices`, `Complex`) out of
+   the file. They are kept when one of them is a top package of the
+   project (given as a path, or the library under test), so that its
+   classes are not read as used by none.
 
 **Rejected.**
 - *DSTF's own map of what each model uses*, built by reading the source:

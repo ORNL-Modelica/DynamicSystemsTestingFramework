@@ -109,6 +109,11 @@ _requesting = threading.local()
 _dymola_logger_patched = False
 
 
+#: The packages ``saveTotalModel(..., skipStandard=true)`` leaves out of
+#: its file: the Modelica Standard Library's.
+STANDARD_PACKAGES = frozenset({"Modelica", "ModelicaServices", "Complex"})
+
+
 def _install_dymola_log_filter() -> None:
     """Monkey-patch Dymola's interface so the connection noise of a Dymola
     THIS process closed is not printed.
@@ -954,8 +959,11 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
     def uses(self, tests: list[TestModel]) -> dict[str, frozenset[str] | str]:
         """What each test's model uses, by Dymola's ``saveTotalModel(file,
         model, skipStandard=true)``: one file of the model and every class
-        it uses, the Modelica Standard Library left out, read by
-        :func:`~dstf.discovery.mo_parser.declared_classes`.
+        it uses, the standard packages (:data:`STANDARD_PACKAGES`) left out
+        unless one of them is the project's, read by
+        :func:`~dstf.discovery.mo_parser.declared_classes`. Dymola saves
+        what the model uses of non-encrypted libraries only: a class of an
+        encrypted library is not seen.
 
         A one-shot worker, as :meth:`export_fmu`'s, whose work dir is a
         temporary directory removed afterwards: the project's work dir is
@@ -979,6 +987,10 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         _install_dymola_log_filter()
         _patch_dymola_for_parallel_startup()
         tops = top_packages(self.config)
+        # `skipStandard` leaves the standard packages out of the file: kept
+        # when one of them is the project's (given as a path), or each of
+        # its classes would read as used by none.
+        skip = not (STANDARD_PACKAGES & tops.keys())
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             # A copy, not `dataclasses.replace`: that would resolve the
             # configuration, testing.json's reading included, again.
@@ -993,7 +1005,7 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
 
             def ask(test: TestModel, file: Path) -> str | None:
                 if worker.dymola.saveTotalModel(
-                    str(file), test.model_id, skipStandard=True
+                    str(file), test.model_id, skipStandard=skip
                 ):
                     return None
                 return one_line(

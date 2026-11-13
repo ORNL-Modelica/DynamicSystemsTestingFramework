@@ -197,6 +197,23 @@ def test_dymola_is_closed_when_it_stops_answering(monkeypatch, tmp_path):
     assert not config.work_dir.exists()
 
 
+@pytest.mark.parametrize("standard", ["Modelica", "ModelicaServices", "Complex"])
+def test_dymola_keeps_the_standard_packages_when_one_is_the_project_s(
+    standard, monkeypatch, tmp_path
+):
+    """`skipStandard=true` leaves the Modelica Standard Library's packages
+    out of the file: given as a path, they are the project's, and each of
+    their classes would read as used by none."""
+    lib = tmp_path / f"{standard} 4.1.0"
+    lib.mkdir()
+    (lib / "package.mo").write_text(f"package {standard}\nend {standard};\n")
+    config = _config(tmp_path, "Dymola", dependencies=[str(lib)])
+    backend, made = _dymola(monkeypatch, config, _written("dymola_SimpleTest.mo"))
+    backend.uses([_tm(SIMPLE)])
+    ((_, _, kw, _),) = made[0].saved
+    assert kw == {"skipStandard": False}
+
+
 def test_a_path_dependency_s_classes_are_the_project_s(monkeypatch, tmp_path):
     """A dependency given as a path is named by the package its file
     declares, not by its directory; a library loaded by name is not the
