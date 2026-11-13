@@ -1,4 +1,7 @@
-"""``dstf uses``: which tests use a class, asked of the project's simulator.
+"""``dstf uses``: which tests use a class, asked of the project's simulator
+— the classes named, and with ``--since`` those changed since a git
+revision (:func:`dstf.discovery.uses.changed_since`); this module only
+prints.
 
 stdout is the answer — ``dstf uses X > file`` holds nothing else; what the
 command is doing, and why it could not answer, goes to stderr.
@@ -6,6 +9,7 @@ command is doing, and why it could not answer, goes to stderr.
 
 import argparse
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 from ..config import Config, ConfigError
@@ -68,7 +72,8 @@ def _believed(
 
 
 def cmd_uses(args: argparse.Namespace) -> int:
-    """List, for each class named, the tests whose model uses it."""
+    """List, for each class named or changed since ``--since``, the tests
+    whose model uses it."""
     from ..backends import BackendUnavailableError, get_backend_class, select_backend
     from ..discovery.uses import is_class, users
 
@@ -83,6 +88,13 @@ def cmd_uses(args: argparse.Namespace) -> int:
         if hint:
             print(hint, file=sys.stderr)
         return 1
+    if args.since is not None and config.source_type != "modelica":
+        print(
+            "--since reads a Modelica library's files; this project's "
+            f"source_type is {config.source_type}.",
+            file=sys.stderr,
+        )
+        return 1
     if config.source_type == "modelica":
         for name in args.classes:
             if not is_class(config, name):
@@ -92,10 +104,38 @@ def cmd_uses(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 2
+    changes = None
+    if args.since is not None:
+        from ..discovery.uses import changed_since
+        from ..storage.git_revisions import GitError
+
+        try:
+            changes = changed_since(
+                config, args.since, lambda line: print(line, file=sys.stderr)
+            )
+        except GitError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
     tests = _filter_tests(discover_tests(config), args.filter, args.package)
     if not tests:
         print("No tests found.", file=sys.stderr)
         return 1
+
+    # Named classes first, as given; then the changed ones, by name.
+    classes = list(dict.fromkeys(args.classes))
+    block: list[str] = []
+    if changes is not None:
+        block = _changed_block(changes, args.since)
+        if changes.every_test:
+            print("\n".join(block))
+            print(_every_test(changes, len(tests), len(classes)))
+            _write(args.output, [t.model_id for t in tests])
+            return 0
+        if not changes.classes and not classes:
+            print("\n".join(block))
+            _write(args.output, [])
+            return 0
+        classes = list(dict.fromkeys([*classes, *changes.classes]))
     try:
         backend = select_backend(config, persistent=True, to_run=True)
     except BackendUnavailableError as exc:
@@ -113,10 +153,14 @@ def cmd_uses(args: argparse.Namespace) -> int:
         return 1
     answers = {t.model_id: _believed(said, t.model_id, backend.label) for t in tests}
 
+    # The changes are printed with the answer, never without it: stdout
+    # holds nothing when the simulator could not be asked.
+    for line in block:
+        print(line)
     total = len(tests)
     union: set[str] = set()
     unasked: list[str] = []
-    for name in args.classes:
+    for name in classes:
         using, unasked = users(answers, name)
         union.update(using, unasked)
         n = len(using) + len(unasked)
@@ -132,11 +176,11 @@ def cmd_uses(args: argparse.Namespace) -> int:
         for test in using:
             print(f"  {test}")
     if unasked:
-        each = "it" if len(args.classes) == 1 else "each"
+        each = "it" if len(classes) == 1 else "each"
         print(f"Could not be asked (counted as using {each}):")
         for test in unasked:
             print(f"  {test} — {answers[test]}")
-    if len(args.classes) > 1:
+    if len(classes) > 1:
         k = len(union)
         if k == 0:
             print("No test uses any of them.")
@@ -144,12 +188,106 @@ def cmd_uses(args: argparse.Namespace) -> int:
             among = _among(k, total)
             verb = "uses" if k == 1 else "use"
             print(f"{among[0].upper()}{among[1:]} {verb} at least one of them.")
-    if args.output is not None:
-        Path(args.output).write_text(
-            "".join(f"{test}\n" for test in sorted(union)), encoding="utf-8"
-        )
-        print(f"Wrote {args.output}: {len(union)} test{'' if len(union) == 1 else 's'}")
+    _write(args.output, union)
     return 0
+
+
+def _write(output: str | None, tests: Iterable[str]) -> None:
+    """``--output``: the tests one per line, sorted — an empty file for
+    none — and the line that says so."""
+    if output is None:
+        return
+    ids = sorted(tests)
+    Path(output).write_text("".join(f"{test}\n" for test in ids), encoding="utf-8")
+    print(f"Wrote {output}: {_count(len(ids), 'test')}")
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+#: The longest subject of a commit that is printed, in characters.
+SUBJECT_LIMIT = 60
+
+#: The most files listed per repository; the rest are counted.
+LISTED = 20
+
+
+def _changed_block(changes, rev: str) -> list[str]:
+    """What differs since ``rev``, as printed before the answer: per
+    repository, a line naming the revision as it resolved there, then the
+    files (each with the class asked, the package a deleted one is asked
+    as, or why it counts every test), under their root's name when the
+    project has several roots; then the roots in no repository."""
+    several_repos = len(changes.repos) > 1
+    several_roots = (
+        sum(len(repo.roots) for repo in changes.repos) + len(changes.unversioned) > 1
+    )
+    lines: list[str] = []
+    for repo in changes.repos:
+        subject = repo.commit.subject
+        if len(subject) > SUBJECT_LIMIT:
+            subject = subject[: SUBJECT_LIMIT - 1] + "…"
+        at = f"{rev} ({repo.commit.short} {subject})"
+        files = repo.files
+        if files:
+            lines.append(f"Changed since {at}: {_count(len(files), 'file')}")
+        else:
+            where = ", ".join(r.root.label for r in repo.roots)
+            lines.append(
+                f"Nothing changed since {at}{f' in {where}' if several_repos else ''}."
+            )
+        rows: list[tuple[str | None, str, str]] = []
+        for root in repo.roots:
+            heading = root.root.label if several_roots else None
+            rows += [(heading, f.path, _what(f)) for f in root.files]
+            rows += [
+                (heading, f"{p}/", "another repository: not compared")
+                for p in root.not_compared
+            ]
+        shown, rest = rows[:LISTED], len(rows) - LISTED
+        width = max((len(path) for _, path, _ in shown), default=0)
+        last = None
+        for heading, path, what in shown:
+            if heading is not None and heading != last:
+                lines.append(f"  {heading}:")
+                last = heading
+            indent = "    " if heading is not None else "  "
+            lines.append(f"{indent}{path.ljust(width)}  {what}")
+        if rest > 0:
+            lines.append(f"  … and {rest} more")
+    lines += [
+        f"{root.label}: not under git, not compared." for root in changes.unversioned
+    ]
+    return lines
+
+
+def _what(f) -> str:
+    """A changed file's class, as its line says it."""
+    if f.reason:
+        return f"{'deleted ' if f.deleted else ''}({f.reason})"
+    asked = ", ".join(f.classes)
+    return f"deleted → {asked}" if f.deleted else asked
+
+
+def _every_test(changes, tests: int, named: int) -> str:
+    """The line that says every test is counted, and why."""
+    from ..discovery.uses import NO_CLASS
+
+    files = changes.every_test
+    n = len(files)
+    if all(f.reason == NO_CLASS for f in files):
+        why = f"{_count(n, 'file')} that no class stores changed"
+    else:
+        why = f"{_count(n, 'changed file')} cannot be asked as a class"
+    line = f"{why}: every test is counted ({_count(tests, 'test')})"
+    if named:
+        line += (
+            "; the class named is not asked"
+            if named == 1
+            else "; the classes named are not asked"
+        )
+    return line + "."
 
 
 def _among(n: int, total: int) -> str:

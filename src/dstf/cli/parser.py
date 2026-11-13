@@ -58,6 +58,12 @@ class _Node(argparse.ArgumentParser):
 
     is_group = False
 
+    #: A command's rule over its arguments together that argparse cannot
+    #: state (``uses``: a CLASS or ``--since``): the parsed arguments to
+    #: the sentence of the usage error, None when they hold. Checked once
+    #: the line is parsed, before any Config is built (:class:`_Root`).
+    needs: Callable[[argparse.Namespace], str | None] | None = None
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **{**kwargs, "allow_abbrev": False})
 
@@ -133,6 +139,10 @@ class _Root(argparse.ArgumentParser):
         refusal = _unread_beside(path, leaf, parsed)
         if refusal:
             leaf.error(refusal)
+        needs = getattr(leaf, "needs", None)
+        missing = needs(parsed) if needs is not None else None
+        if missing:
+            leaf.error(missing)
         return parsed, extras
 
     def _refuse_misplaced(self, argv: list[str]) -> None:
@@ -1044,7 +1054,7 @@ _REPORTS = ("report_format", "output", "report", "no_browser")
 #: handler reads each one is ``tests/test_cli_tree.py``'s to prove.
 READS: dict[str, tuple[str, ...]] = {
     "discover": (*_ALL, *_SELECT),
-    "uses": (*_ALL, *_SELECT, "backend", "backend_path", "output"),
+    "uses": (*_ALL, *_SELECT, "backend", "backend_path", "output", "since"),
     "run": (
         *_ALL,
         *_SELECT,
@@ -1266,18 +1276,31 @@ def _add_uses(tree: _Tree, top) -> None:
             the model does not use); it has not been seen to miss one.
 
             A test the simulator could not answer for is listed apart, with
-            its reason, and counted as using every class named. With
+            its reason, and counted as using every class asked. With
             --output, the tests are written one per line: run only those
             with `dstf run --filter @FILE`. A full run stays the check
             before a release.
+
+            With --since REV, the classes asked are also those stored in
+            the Modelica files that differ between the git revision REV and
+            the files on disk, uncommitted edits included: the changed
+            files are listed first, each with its class. A deleted file is
+            asked as the package that held it. A changed file no class
+            stores (a data table, C source, an image) counts every test,
+            and no simulator is started; nor is one when nothing changed.
+            package.order, the reference root inside the library,
+            testing.json and test_spec.json are not compared. Git is only
+            read.
 
             Nothing is simulated, and nothing is written in the project,
             the work directory or the current directory but --output.
 
             Exit code: 0; 1 when the backend cannot say what a test uses,
-            or there is no test to ask, or it could not be started; 2 for a
+            or there is no test to ask, or it could not be started, or
+            --since is given for a project that is not Modelica; 2 for a
             name that is no class of the library or of a dependency given
-            as a path.
+            as a path, and for --since when git cannot answer (the library
+            is in no repository, a repository does not know REV).
             """,
         examples=(
             "dstf uses ModelicaTestingLib.Components.UnitTests --config testing.json",
@@ -1285,15 +1308,30 @@ def _add_uses(tree: _Tree, top) -> None:
             "ModelicaTestingLib.Icons.Example --config testing.json -o uses.txt",
             "dstf uses ModelicaTestingLib.Components.UnitTests --config testing.json "
             "--backend OpenModelica --filter 'ModelicaTestingLib.Examples.*'",
+            "dstf uses --since main --config testing.json -o uses.txt",
         ),
     )
     node.add_argument(
         "classes",
-        nargs="+",
+        nargs="*",
         metavar="CLASS",
         help="A class of the library or of a dependency given as a path, by "
         "its full name (ModelicaTestingLib.Components.UnitTests). Several "
-        "are SPACE-separated.",
+        "are SPACE-separated. At least one, without --since.",
+    )
+    node.add_argument(
+        "--since",
+        metavar="REV",
+        default=None,
+        help="Also ask for the classes stored in the Modelica files that "
+        "differ between the git revision REV (a branch, a tag, a commit: "
+        "main, v1.3.0, HEAD~1) and the files on disk, uncommitted edits "
+        "included. Default: only the classes named.",
+    )
+    node.needs = lambda args: (
+        None
+        if args.classes or args.since is not None
+        else "name a CLASS, or give --since REV"
     )
     _offer_selection(node)
     _offer(
@@ -1307,8 +1345,10 @@ def _add_uses(tree: _Tree, top) -> None:
         "output",
         default=None,
         help="A file to write the tests to, one model id per line, sorted: "
-        "the tests that use any class named, and those that could not be "
-        "asked. --filter @FILE reads it. Default: none is written.",
+        "the tests that use any class asked, and those that could not be "
+        "asked — every test when a changed file no class stores counts "
+        "every test, and none when nothing changed. --filter @FILE reads "
+        "it. Default: none is written.",
     )
 
 

@@ -366,10 +366,12 @@ def changed_since(config: Config, rev: str, say: Callable[[str], None]) -> Chang
             continue
         held.setdefault(git.top, []).append((root, git))
 
-    repos: list[RepoChanges] = []
+    # The revision in every repository before any file is compared: one
+    # that does not know it is said alone.
+    commits: dict[Path, Commit] = {}
     for top, roots in held.items():
         try:
-            commit = roots[0][1].commit(rev)
+            commits[top] = roots[0][1].commit(rev)
         except GitError as exc:
             if len(held) == 1:
                 raise
@@ -378,6 +380,10 @@ def changed_since(config: Config, rev: str, say: Callable[[str], None]) -> Chang
                 f"{exc} (it holds {holds}): give a revision every repository "
                 "of the project knows, a branch or a tag"
             ) from exc
+
+    repos: list[RepoChanges] = []
+    for top, roots in held.items():
+        commit = commits[top]
         compared = [
             (root, git, *_compare(git, commit, root, _dstf_files(config, root.path)))
             for root, git in roots
