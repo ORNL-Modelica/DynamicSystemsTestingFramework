@@ -227,7 +227,7 @@ def _changed_block(changes, rev: str) -> list[str]:
     for repo in changes.repos:
         subject = repo.commit.subject
         if len(subject) > SUBJECT_LIMIT:
-            subject = subject[: SUBJECT_LIMIT - 1] + "…"
+            subject = subject[: SUBJECT_LIMIT - 1].rstrip() + "…"
         at = f"{rev} ({repo.commit.short} {subject})"
         files = repo.files
         if files:

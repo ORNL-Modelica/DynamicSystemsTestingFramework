@@ -681,7 +681,7 @@ def test_since_lists_twenty_files_and_asks_for_every_class(repo, capsys):
 
 
 def test_since_a_long_subject_is_cut(repo, capsys):
-    subject = "a subject far longer than one line of the block should ever hold, cut"
+    subject = "a subject far longer than one line of the block would ever hold, cut"
     _touch(repo, "Examples", "SimpleTest.mo")
     repo.git.commit(subject)
     rc, out, _ = _uses(repo, capsys, "--since", "HEAD~1")
@@ -692,7 +692,10 @@ def test_since_a_long_subject_is_cut(repo, capsys):
     )
     rc, out, _ = _uses(repo, capsys, "--since", "HEAD")
     short = repo.git.git("rev-parse", "--short", "HEAD")
-    assert out == f"Nothing changed since HEAD ({short} {subject[:59]}…).\n"
+    assert out == (
+        f"Nothing changed since HEAD ({short} a subject far longer than one line "
+        "of the block would ever…).\n"
+    )
 
 
 def test_since_the_simulator_failing_prints_no_change(repo, capsys):
