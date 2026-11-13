@@ -874,6 +874,36 @@ class Backend(ABC):
             f"Backend must declare Capability.FMU_EXPORT and override export_fmu()."
         )
 
+    def uses(self, tests: list[TestModel]) -> dict[str, frozenset[str] | str]:
+        """What each test's model depends on, asked of the simulator.
+
+        Override it on a backend that declares
+        :attr:`~dstf.backends.types.Capability.USES` — on the class a run
+        without ``--batch`` uses, :meth:`persistent_backend_cls` where there
+        is one; the default raises. It starts the simulator, asks, and
+        closes it; it writes nothing outside a temporary directory it
+        removes.
+
+        Args:
+            tests: The tests to ask for.
+
+        Returns:
+            Per ``model_id``: the qualified names of every class its model
+            uses — the model's own class and the packages that hold it
+            included — over the project's library and the dependencies given
+            as a path; or a ``str``, the simulator's reason in one line, for
+            a test it could not answer for.
+
+        Raises:
+            NotImplementedError: The backend cannot say what a test uses.
+            Exception: The simulator did not start, or stopped answering;
+                no test was answered for.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot say what a test uses. "
+            f"Backend must declare Capability.USES and override uses()."
+        )
+
     def run_single_test(
         self,
         test: TestModel,

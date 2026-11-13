@@ -50,6 +50,8 @@ class Capability(str, Enum):
             :meth:`~dstf.backends.base.Backend.live_result_path`.
         CANCEL: The backend stops a running test when asked from another
             thread. Needs :meth:`~dstf.backends.base.Backend.cancel_test`.
+        USES: The backend's simulator says which classes a test's model
+            uses (``dstf uses``). Needs :meth:`~dstf.backends.base.Backend.uses`.
     """
 
     #: Backend can hold a loaded model in memory across multiple tests.
@@ -64,6 +66,9 @@ class Capability(str, Enum):
     #: Backend can stop a test that is running, from another thread (the
     #: simulation queue's cancel).
     CANCEL = "cancel"
+    #: Backend's simulator can say which classes a test's model uses
+    #: (``dstf uses``).
+    USES = "uses"
 
 
 class DatasetType(str, Enum):
