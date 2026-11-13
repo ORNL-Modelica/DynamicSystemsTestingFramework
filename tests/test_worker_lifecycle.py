@@ -359,6 +359,103 @@ class TestBoundedStart:
         )
 
 
+def _is_zombie(pid: int) -> bool:
+    try:
+        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+
+
+class TestKilledToolIsWaitedFor:
+    """A killed child stays in the process table until its parent waits for
+    it. After a timeout nothing else does: the abandoned exec thread keeps
+    the handle alive for the rest of the run. So the worker waits, through
+    the handle its `start` handed over."""
+
+    def test_a_closed_worker_leaves_no_zombie(self, tmp_path):
+        proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+        worker = _Worker(0, _config(tmp_path))
+        try:
+            worker._track_launch(proc.pid, proc)
+            worker.close()
+
+            # `returncode` is read, not `poll()`: a poll here would do the
+            # waiting this test is about.
+            assert proc.returncode is not None
+            assert not _is_zombie(proc.pid)
+            assert worker._launched == []
+        finally:
+            proc.kill()
+            proc.wait(10)
+
+    def test_a_start_given_up_before_the_launch_waits_for_what_it_kills(self, tmp_path):
+        release, ended = threading.Event(), threading.Event()
+        launched: list[subprocess.Popen] = []
+
+        def start(worker):
+            release.wait(30)
+            proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
+            launched.append(proc)
+            try:
+                worker._track_launch(proc.pid, proc)
+            finally:
+                ended.set()
+
+        worker = _Worker(0, _config(tmp_path), start=start)
+        try:
+            with pytest.raises(WorkerStartError):
+                worker.start_within(0.1)
+            release.set()
+            assert ended.wait(10)
+
+            assert launched[0].returncode is not None
+            assert not _is_zombie(launched[0].pid)
+        finally:
+            release.set()
+            for proc in launched:
+                proc.kill()
+                proc.wait(10)
+
+    def test_a_tool_that_outlives_the_kill_is_waited_for_again_later(self, tmp_path):
+        """The wait is bounded, so a close never hangs on a kill that was
+        refused; the handle is kept, and the next kill waits for it again."""
+        waits: list[float] = []
+
+        class _Stubborn:
+            pid = 4_000_000  # no such process: nothing is killed
+
+            def wait(self, timeout):
+                waits.append(timeout)
+                if len(waits) == 1:
+                    raise subprocess.TimeoutExpired("tool", timeout)
+                return 0
+
+        worker = _Worker(0, _config(tmp_path))
+        worker._REAP_SECONDS = 0.25
+        stubborn = _Stubborn()
+        worker._track_launch(None, stubborn)
+
+        worker._kill_tracked_pids()
+        assert worker._launched == [stubborn]
+
+        worker._kill_tracked_pids()
+        assert worker._launched == []
+        assert waits == [0.25, 0.25]
+
+    def test_a_handle_that_cannot_be_waited_for_costs_nothing(self, tmp_path):
+        class _Broken:
+            def wait(self, timeout):
+                raise OSError("the handle is closed")
+
+        worker = _Worker(0, _config(tmp_path))
+        worker._track_launch(None, SimpleNamespace(pid=1))  # no wait at all
+        assert worker._launched == []
+
+        worker._track_launch(None, _Broken())
+        worker._kill_tracked_pids()  # does not raise
+        assert worker._launched == []
+
+
 class _Backend(PersistentBackendBase):
     backend_label = "Stub"
     restart_retry_backoff_seconds = 0.01

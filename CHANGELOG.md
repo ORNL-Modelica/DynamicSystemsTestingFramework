@@ -25,6 +25,9 @@ this file says when they do.
 
 - Ctrl-C stops any command with one line (`Interrupted.`) and exit code 130,
   not a traceback.
+- OpenModelica: an omc that a worker killed (a timeout, a cancel) is no
+  longer left in the process table as a dead entry (`<defunct>`) until the
+  run ends; a long suite collected one per restarted worker.
 
 ## [1.6.0] - 2026-11-12
 

@@ -277,6 +277,37 @@ class TestWorkerStartup:
         worker.start()
         assert worker.pids == {54321}
 
+    def test_close_waits_for_the_omc_the_session_launched(self, tmp_path):
+        """The session's Popen is handed over at the start, so a killed omc
+        is waited for and not left a zombie."""
+        from dstf.backends.openmodelica.backend import (
+            OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
+        )
+
+        cfg = _make_config(tmp_path, dependencies=["Modelica"])
+        om_cfg = OpenModelicaConfig.from_config(cfg)
+        waits: list[float] = []
+
+        class _PopenSession(FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.omc_process = SimpleNamespace(
+                    _omc_process=SimpleNamespace(
+                        pid=4_000_000, wait=lambda timeout: waits.append(timeout)
+                    )
+                )
+
+            getpid = None
+
+        worker = OpenModelicaWorker(0, cfg, om_cfg, _PopenSession)
+        worker.start()
+        assert waits == []
+        worker.close()
+        assert waits == [worker._REAP_SECONDS]
+
     def test_unresolvable_pid_warns_about_the_missing_kill_target(
         self, tmp_path, caplog
     ):
@@ -1062,6 +1093,57 @@ class TestPersistentIntegration:
             assert result.sim_wall is not None
         finally:
             worker.close()
+
+    def test_a_worker_closed_with_a_call_in_flight_leaves_no_zombie_omc(self, tmp_path):
+        """What a timeout leaves: the exec thread parked in a call on the
+        session, which keeps the session, and with it omc's Popen, alive.
+        Nothing but the worker then waits for the killed omc."""
+        import threading
+        import time
+
+        import psutil
+
+        from dstf.backends.openmodelica.backend import (
+            OpenModelicaConfig,
+        )
+        from dstf.backends.openmodelica.persistent_backend import (
+            OpenModelicaWorker,
+        )
+        from dstf.backends.openmodelica.session_loader import (
+            load_omc_session,
+        )
+
+        lib_root = tmp_path / "EmptyLib"
+        lib_root.mkdir()
+        (lib_root / "package.mo").write_text("package EmptyLib end EmptyLib;")
+        cfg = Config(
+            source_path=lib_root,
+            reference_root=tmp_path / "refs",
+            backend_name="OpenModelica",
+            work_dir=tmp_path / "work",
+            dependencies=["Modelica"],
+            timeout=120,
+        )
+        om_cfg = OpenModelicaConfig.from_config(cfg)
+        worker = OpenModelicaWorker(0, cfg, om_cfg, load_omc_session())
+        worker.start()
+        (pid,) = worker.pids
+        session = worker.session
+        parked = threading.Thread(
+            target=lambda: session.sendExpression('system("sleep 60")'),
+            daemon=True,
+        )
+        try:
+            parked.start()
+            time.sleep(1.0)  # let the call reach omc
+        finally:
+            worker.close()
+
+        try:
+            status = psutil.Process(pid).status()
+        except psutil.NoSuchProcess:
+            status = "gone"
+        assert status == "gone"
 
 
 # ---------------------------------------------------------------------------
