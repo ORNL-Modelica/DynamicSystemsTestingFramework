@@ -26,7 +26,8 @@ Which tests: those named — drawn where any run holds them — else every test
 with a variable that moved or that only some runs hold, or a run that
 failed or holds no result, in a folder of two runs or more that hold it.
 Every other test two runs of a folder hold is named as one where nothing
-moved.
+moved, and a test one run of a folder holds alone as one only in that run —
+the tests of the current spec only: a test it no longer lists is not named.
 """
 
 from __future__ import annotations
@@ -78,6 +79,13 @@ class RunHistory:
     tests: list[TestHistory]
     #: every other test two runs of a folder hold, by model id
     nothing_moved: list[str]
+    #: every model id a drawn run holds: what a test's name is told apart in
+    held: list[str]
+    #: without tests named, each folder's tests (of the current spec) one
+    #: run of it holds alone:
+    #: (folder, that run's label, the model ids), folders in folder order,
+    #: labels in label order; not drawn
+    only: list[tuple[str, str, list[str]]]
     #: the tests were named (``--test``): each section's table holds every
     #: tracked value
     named: bool = False
@@ -333,8 +341,28 @@ def run_history(
         alone=alone,
         tests=out,
         nothing_moved=nothing,
+        held=ids,
+        only=[] if named is not None else _only(drawn, ids),
         named=named is not None,
     )
+
+
+def _only(
+    drawn: dict[str, list[tuple[Run, dict, set[str]]]], ids: list[str]
+) -> list[tuple[str, str, list[str]]]:
+    """Each folder's tests one of its runs holds alone, by that run's label:
+    the tests no section is drawn of (:func:`_section`)."""
+    out = []
+    for folder, read in drawn.items():
+        for run, _, held in read:
+            alone = [
+                m
+                for m in ids
+                if m in held and sum(m in other for _, _, other in read) == 1
+            ]
+            if alone:
+                out.append((folder, run.label, alone))
+    return out
 
 
 def _differs(section: FolderHistory) -> bool:
