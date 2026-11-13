@@ -5,11 +5,13 @@ writes of the model and everything it uses, read here.
 What the tool wrote and what cannot be read of it are the test's answer:
 a file missing, empty, cut off or unreadable is that test's reason, never
 an empty answer (a test that uses nothing) and never the end of the
-command.
+command. Each question is bounded in time: neither OMPython nor Dymola's
+interface gives up on a simulator that hangs or dies inside one.
 """
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Collection
 from pathlib import Path
 
@@ -43,21 +45,65 @@ def read_answer(file: Path, tops: Collection[str], tool: str) -> frozenset[str] 
     return one_line(f"{tool} wrote no readable model for it: {why}", tool)
 
 
+#: The seconds one question may take, by default (a backend's
+#: ``question_bound``): a real one takes under a second.
+QUESTION_BOUND = 120.0
+
+
+class _NoAnswer(Exception):
+    """The tool did not answer one question within its bound."""
+
+
+def _within(bound: float, ask: Ask, test: TestModel, file: Path) -> str | None:
+    """``ask(test, file)`` in a thread of its own, waited for ``bound``
+    seconds; its exception is raised here. A daemon thread: one still
+    parked in a call to a hung tool keeps no process alive."""
+    box: dict[str, object] = {}
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            box["said"] = ask(test, file)
+        except BaseException as exc:
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=_run, daemon=True, name="dstf-uses-question").start()
+    if not done.wait(bound):
+        raise _NoAnswer
+    if "exc" in box:
+        raise box["exc"]  # type: ignore[misc]
+    return box["said"]  # type: ignore[return-value]
+
+
 def ask_each(
     tests: list[TestModel],
     folder: Path,
     ask: Ask,
     tool: str,
     tops: Collection[str],
+    bound: float = QUESTION_BOUND,
 ) -> dict[str, frozenset[str] | str]:
     """Ask ``tool`` about each test in turn, its file ``<folder>/<n>.mo``:
     per ``model_id``, the project's classes in what it wrote, or its
     reason. An exception from ``ask`` (the tool stopped answering) is
-    raised: no test is answered for."""
+    raised: no test is answered for.
+
+    A question not answered within ``bound`` seconds ends the asking: that
+    test's reason says so, and every test after it is not asked and says
+    why — each counted as could-not-be-asked. The caller closes the tool,
+    which kills it."""
     answers: dict[str, frozenset[str] | str] = {}
     for n, test in enumerate(tests):
         file = folder / f"{n}.mo"
-        said = ask(test, file)
+        try:
+            said = _within(bound, ask, test, file)
+        except _NoAnswer:
+            answers[test.model_id] = f"{tool} did not answer within {bound:g} s"
+            for rest in tests[n + 1 :]:
+                answers[rest.model_id] = f"not asked: {tool} stopped answering"
+            break
         answers[test.model_id] = (
             said if said is not None else read_answer(file, tops, tool)
         )

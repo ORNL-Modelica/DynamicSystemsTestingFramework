@@ -41,6 +41,7 @@ from ...discovery.test_registry import TestModel, diagnostic_names
 from ..common.failure_message import failure_message
 from ..common.mat_reader import mat_reaches_time
 from ..common.proc_kill import live_children
+from ..common.total_model import QUESTION_BOUND
 from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
 from .backend import OpenModelicaBackend, OpenModelicaConfig
@@ -1007,6 +1008,11 @@ class PersistentOpenModelicaBackend(PersistentBackendBase, OpenModelicaBackend):
     ``run_tests`` template wins over the batch backend's per-test override.
     """
 
+    #: The seconds one question of :meth:`uses` may take before the
+    #: simulator is taken for hung, closed, and the tests left are not
+    #: asked (``backends.common.total_model``).
+    question_bound = QUESTION_BOUND
+
     worker_cls = OpenModelicaWorker
     backend_label = "OpenModelica"
 
@@ -1104,7 +1110,9 @@ class PersistentOpenModelicaBackend(PersistentBackendBase, OpenModelicaBackend):
 
             try:
                 worker.start_within()
-                return ask_each(tests, Path(tmp), ask, "OpenModelica", tops)
+                return ask_each(
+                    tests, Path(tmp), ask, "OpenModelica", tops, self.question_bound
+                )
             finally:
                 try:
                     worker.close()

@@ -428,3 +428,33 @@ def test_a_file_that_cannot_be_read_is_that_test_s_reason(
     assert answers[gone] == f"{tool} wrote no readable model for it: {why}"
     assert SIMPLE_USES <= answers[SIMPLE]
     assert closed()
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_a_question_not_answered_in_time_ends_the_asking(tool, monkeypatch, tmp_path):
+    """A simulator that hangs inside a question: that test's reason says
+    so, the rest are not asked and say why, the simulator is closed, and
+    `uses` returns — every test counted as could-not-be-asked."""
+    import threading
+
+    release = threading.Event()
+    asked: list[str] = []
+
+    def save(file):
+        asked.append(Path(file).name)
+        release.wait(30)
+        return True
+
+    backend, closed = _either(tool, monkeypatch, tmp_path, save)
+    backend.question_bound = 0.2
+    later = [f"{LIB}.Examples.A", f"{LIB}.Examples.B"]
+    try:
+        answers = backend.uses([_tm(SIMPLE), *map(_tm, later)])
+    finally:
+        release.set()
+    assert answers == {
+        SIMPLE: f"{tool} did not answer within 0.2 s",
+        **{m: f"not asked: {tool} stopped answering" for m in later},
+    }
+    assert asked == ["0.mo"]
+    assert closed()

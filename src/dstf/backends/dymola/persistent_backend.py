@@ -38,6 +38,7 @@ from ...discovery.library_state import (
 from ...discovery.test_registry import TestModel
 from ..common.mat_reader import read_mat_time_extents
 from ..common.proc_kill import live_children
+from ..common.total_model import QUESTION_BOUND
 from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
 from .backend import DymolaBackend, DymolaConfig
@@ -843,6 +844,11 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
     ``run_tests`` template wins over the batch ``.mos`` backend's override.
     """
 
+    #: The seconds one question of :meth:`uses` may take before the
+    #: simulator is taken for hung, closed, and the tests left are not
+    #: asked (``backends.common.total_model``).
+    question_bound = QUESTION_BOUND
+
     worker_cls = DymolaWorker
     backend_label = "Dymola"
 
@@ -1016,7 +1022,9 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
             try:
                 worker.start_within()
                 worker.dymola.cd(tmp)
-                return ask_each(tests, Path(tmp), ask, "Dymola", tops)
+                return ask_each(
+                    tests, Path(tmp), ask, "Dymola", tops, self.question_bound
+                )
             finally:
                 try:
                     worker.close()
