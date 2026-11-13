@@ -9636,6 +9636,78 @@ library that was not loaded), so it is not used.
 - *A stored map*, written once and read on later runs: it goes stale with
   every edit, and asking costs seconds.
 
-**Not in this decision.** A change named by a git revision (`--since`), a
-`run` that simulates only the touched tests, and Julia, Python or FMU
-backends.
+**Not in this decision.** A change named by a git revision (`--since`:
+D167), a `run` that simulates only the touched tests, and Julia, Python or
+FMU backends.
+
+## D167 — What changed since a revision: git read, never written (2026-11-13)
+
+**Context.** `dstf uses` (D166) answers for classes you name. While you
+work, the question is the reverse: which tests do my changes since `main`
+touch? Git knows which files differ; the files map to classes by Modelica's
+own storage rule (a class `A.B.C` is `A/B/C.mo` or `A/B/package.mo`). The
+simulator then answers for those classes as for named ones. Measured
+2026-11-13 on a real library of 4,298 files: hashing every file through one
+`git hash-object --stdin-paths` took 11 s on the slow Windows mount and
+0.2 s on a native disk.
+
+**Decision.** `dstf uses --since REV [CLASS ...]` (owner, 2026-11-13: a
+change is given by naming a class "or since a git revision").
+
+1. *What is compared.* The source roots: the library's directory and each
+   dependency given as a path (a one-file dependency `Name.mo`: that file,
+   compared in the repository holding its directory). Under each, every
+   file `REV` holds against the disk, plus every `.mo` file on disk; one
+   that only one side has, or whose blob ids differ, differs. The disk's
+   blob id is git's own (`hash-object` with the repository's conversions),
+   so a CRLF checkout of an LF file is unchanged. A new file that is not
+   `.mo` is not a candidate: it matters once a `.mo` file names it, and
+   that file is then a change.
+2. *A file to a class.* `A/B/C.mo` is `<Top>.A.B.C` and `A/B/package.mo`
+   the package `<Top>.A.B`, `<Top>` being what the root's file declares. A
+   deleted file is asked as the package that held it — more than used it,
+   on purpose. A name that is no plain identifier is read as the nearest
+   package above it that is one. `package.order` is not compared.
+3. *What cannot be a class counts every test* (the D166 rule: what cannot be
+   answered counts as touched). Any other changed file under a root (data,
+   C source, an image; a README when the library is its repository's top),
+   and any file of a root whose top package cannot be named (unreadable,
+   cut off, a name an earlier root holds, its `package.mo` gone). No
+   simulator is started then, and `-o` holds every test.
+4. *DSTF's own files are not source.* The reference root when it is inside
+   a root, and the project's testing.json and test_spec.json: otherwise an
+   accept would count every test. A reference root that IS the library, or
+   holds it, hides nothing.
+5. *Roots and repositories.* Each root is compared in the repository that
+   holds it; `REV` is resolved in each before any file is compared, and one
+   that does not know it is an error (exit 2) that names the roots it
+   holds — a branch or a tag every repository has, not a commit hash. A
+   dependency in no repository is not compared, and said; the library in
+   none is an error. A nested repository or submodule under a root is named
+   and not compared. A linked directory is not entered: git holds the link,
+   which is compared by its target's name.
+6. *Git is only read.* `rev-parse`, `log`, `ls-tree`, `cat-file` and
+   `hash-object` without `-w`. Not `git diff` or `git status`: both refresh
+   the index of a stat-dirty file, even with optional locks off (a review
+   saw `git --no-optional-locks diff --name-only` rewrite `.git/index`). The
+   one boundary is the user's own: a `filter` driver's clean command is run
+   as `git status` runs it, and git-lfs keeps a copy of a changed file under
+   `.git/lfs/objects`.
+7. *The output.* Per repository, a line naming `REV` as it resolved there
+   (short hash, subject cut to 60 characters), then each changed file with
+   its class — at most 20 per repository, all of them asked — then the
+   answer exactly as for named classes: named classes first, then the
+   changed ones by name, each once. Nothing changed: one line, no simulator,
+   an empty `-o`. The block is printed with the answer, never without it.
+
+**Rejected.**
+- *`git diff --name-only` / `git status`*: they write the index (6).
+- *Hashing the bytes on disk ourselves*: every file of a checkout with
+  line-ending conversion would read as changed.
+- *A pre-filter by `git diff-index`* (only stat-dirty files hashed): it
+  writes nothing, but has caveats; one process over every file is fast
+  enough (the measurement above). A later optimisation if the cost matters.
+
+**Not in this decision.** A `run` option that simulates only the touched
+tests; source types other than Modelica (`--since` there is refused, exit
+1).

@@ -144,7 +144,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - Cross-package dependencies add complexity
   - Some test models may not have clean dependency relationships
 - **Which tests a change touches** (owner, 2026-11-12). The same graph read the other way. In the owner's words: "understanding the causal links between things in a code. So for example, if you're going to change some underlying function to be able to know which models that will impact so that you can watch them carefully maybe re simulate all the ones that have been touched rather than having to re simulate the whole library. So this was about being more efficient." So: from the files or classes a change edits, the tests whose models use them, as a selection for `run` and a list to review. Not designed; grill before planning.
-  STATUS: Maturing (discussed 2026-11-13; step 1 built as `dstf uses`, D166; the rest not planned).
+  STATUS: Maturing (discussed 2026-11-13; step 1 built as `dstf uses`, D166, step 2 as `dstf uses --since`, D167; the rest not planned).
 
   DISCUSSED (round 1, 2026-11-13):
   - Options weighed: do nothing (pick tests by judgement, full run before a merge); a dependency map built by DSTF's own reader of `.mo` files; ask the simulator for each test's model and compare.
@@ -169,7 +169,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - So a Dymola user needs no OpenModelica for this, and gets the tighter answer. In the experiment the class names were read out of Dymola's file with OpenModelica; a Dymola-only route needs its own reading of the nested class names in that file (syntax only), which was not tried. Dymola needs a licence seat while it answers.
   - Next step: the owner's call. Grill before planning.
 
-  BUILT (step 1, 2026-11-13): `dstf uses CLASS [CLASS ...]` (D166) lists the tests whose model uses each class, asked of the project's own simulator — Dymola's `saveTotalModel` or OpenModelica's `saveTotalModelDebug` — with `-o FILE` for `dstf run --filter @FILE`. Still open: a change given since a git revision; a `run` option that simulates only the touched tests; and, a future item that is not planned, one tool's answer selecting the tests of another tool's run.
+  BUILT (step 1, 2026-11-13): `dstf uses CLASS [CLASS ...]` (D166) lists the tests whose model uses each class, asked of the project's own simulator — Dymola's `saveTotalModel` or OpenModelica's `saveTotalModelDebug` — with `-o FILE` for `dstf run --filter @FILE`. BUILT (step 2, 2026-11-13): `dstf uses --since REV` (D167) asks for the classes stored in the Modelica files that differ between a git revision and the disk. Still open: a `run` option that simulates only the touched tests; and, a future item that is not planned, one tool's answer selecting the tests of another tool's run.
 
 ## ~~Manifest compaction / ID reset~~ — CLOSED by D165
 

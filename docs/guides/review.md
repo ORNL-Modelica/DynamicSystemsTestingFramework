@@ -548,6 +548,92 @@ starts.
 A run of the tests a class touches is a quick check while you work. A full
 run stays the check before a release.
 
+### What changed since a revision
+
+`--since REV` asks for the classes your changes touch, read from git: the
+classes stored in the Modelica files that differ between the revision `REV`
+(a branch, a tag, a commit) and the files on disk, uncommitted edits
+included. Classes you name are asked too, first.
+
+```bash
+dstf uses --since main --config testing.json
+```
+
+```text
+Comparing 25 files with main ...
+Asking OpenModelica what 14 tests use ...
+Changed since main (06c9011 dstf uses: which tests use a class, asked of the simulator…): 2 files
+  Components/UnitTests.mo  ModelicaTestingLib.Components.UnitTests
+  Examples/SimpleTest.mo   ModelicaTestingLib.Examples.SimpleTest
+ModelicaTestingLib.Components.UnitTests is used by 10 of 14 tests:
+  ...
+ModelicaTestingLib.Examples.SimpleTest is used by 1 of 14 tests:
+  ModelicaTestingLib.Examples.SimpleTest
+10 of 14 tests use at least one of them.
+```
+
+What is compared: every file under the library's directory and under each
+dependency given as a path (a one-file dependency `Name.mo`: that file) as
+`REV` holds it, against the disk, by content as git would store it — a
+checkout that converts line endings is not a change. A `.mo` file on disk
+that `REV` does not hold is a change. Each changed file is asked as the
+class it stores:
+
+- `A/B/C.mo` is the class `<Top>.A.B.C`, where `<Top>` is the top package
+  its root's `package.mo` declares (not its directory's name), and
+  `A/B/package.mo` the package `<Top>.A.B`. A changed top `package.mo` is
+  the top package itself, which every test uses: every test is counted.
+- A deleted file is asked as the package that held it: its own users can no
+  longer be asked for it, so the package's are counted, which can be more
+  than used it.
+- A folder or file whose name is not a plain Modelica name (a quoted class)
+  is asked as the nearest package above it whose name is.
+- `package.order` is not compared: it orders a browser's tree and changes no
+  model.
+- DSTF's own files are not compared: the reference root when it is inside
+  the library (as the bundled library keeps it), and the project's
+  testing.json and test_spec.json. Accepting a baseline is no change.
+
+Any other changed file — a data table, C source, an image; and, when the
+library is the top of its repository, its README or a CI file — is stored by
+no class, so every test is counted, `-o` holds every test, and no simulator
+is started. The line says so:
+`1 file that no class stores changed: every test is counted (14 tests).`
+A non-Modelica file that is NEW since `REV` is not seen on its own: it
+counts once a Modelica file that names it changes.
+
+When nothing changed, the command says `Nothing changed since main (…).` and
+starts no simulator; with `-o` it writes an empty file. A job that chains the
+two must expect what `dstf run --filter @uses.txt` does then: it prints
+`No tests matched the filter.` and exits 1.
+
+```bash
+dstf uses --since main --config testing.json -o uses.txt
+dstf run --config testing.json --filter @uses.txt
+```
+
+`REV` is taken as it is: the disk is compared with that revision's tip. On a
+branch that is behind `main`, name the point it left `main`
+(`git merge-base main HEAD`), or the changes made on `main` since count
+too. A CI checkout fetches one commit by default (`actions/checkout@v4`), so
+`origin/main` is unknown there: give the checkout `fetch-depth: 0`.
+
+A dependency in another repository is compared in that repository, under a
+line of its own. `REV` must be known in each repository the project uses — a
+branch or a tag both have; a commit hash works only when every root is in one
+repository. A dependency in no repository (an unpacked release) is not
+compared, and the output says so; the library in no repository is an error
+(exit 2), as is a revision a repository does not know. A nested repository
+or a submodule inside the library is named and not compared, and a linked
+directory is not entered (git holds the link, which is compared by where it
+points).
+
+Git is only read: no `git diff` or `git status`, which write the index. A
+file is hashed as `git add` would hash it, with the repository's conversions;
+one of them is yours: a `filter` driver's clean command (git-lfs) is run as
+`git status` runs it, and git-lfs keeps a copy of a changed file under
+`.git/lfs/objects`.
+
 ## Next
 
 - [CI](ci.md): run the tests on every pull request.

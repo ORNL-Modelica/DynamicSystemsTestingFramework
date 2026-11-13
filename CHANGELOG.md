@@ -17,6 +17,11 @@ this file says when they do.
   `-o FILE` writes the tests for `dstf run --filter @FILE`. OpenModelica's
   list can hold a test that does not use the class. A backend can answer
   by declaring the new `Capability.USES` and `Backend.uses`.
+- `dstf uses --since REV`: the tests your changes touch — the classes stored
+  in the Modelica files that differ between the git revision `REV` and the
+  disk (uncommitted edits included) are asked as named ones, the changed
+  files listed first. A deleted file counts the package that held it; a
+  changed file no class stores counts every test. Git is only read.
 
 ### Changed
 
