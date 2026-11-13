@@ -72,6 +72,7 @@ jobs:
 The rule for 0 and 1 is `exit_code` in `dstf/reporting/status.py`, and the
 config error's 2 is `main` in `dstf/cli/main.py`; a command line the parser
 refuses exits 2 as well. `dstf check` exits 0 when the project's backend is
-usable, and 1 when it is not.
+usable, and 1 when it is not. Any command stopped with Ctrl-C prints
+`Interrupted.` and exits 130, the shell's code for an interrupt.
 
 A failure under a `warn` group never changes the exit code.

@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from conftest import GitRepo, fake_playwright, resaved_single
-from dstf.cli.main import main
+from dstf.cli.main import main, main_entry
 from dstf.reporting.baseline_gallery import GALLERY, MARKER
 
 
@@ -181,6 +181,21 @@ def test_a_run_interrupted_mid_render_leaves_a_directory_the_next_run_may_write(
     fake_playwright(monkeypatch)
     assert _plot(lib, out) == 0
     assert _files(out) == sorted([MARKER, GALLERY, *planned])
+
+
+def test_ctrl_c_at_the_console_script_is_one_line_and_exit_130(
+    tmp_path, monkeypatch, capsys
+):
+    """Ctrl-C is the user's stop, not a crash: the console script says so
+    in one line and exits with the shell's code for it, no traceback."""
+    lib = _lib(tmp_path, variables=3)
+    fake_playwright(monkeypatch, stop_at=2)
+    argv = ["baseline", "plot", lib.one, lib.two, "-o", str(tmp_path / "out")]
+    monkeypatch.setattr(sys, "argv", ["dstf", *argv, "--reference-root", str(lib.root)])
+    with pytest.raises(SystemExit) as stopped:
+        main_entry()
+    assert stopped.value.code == 130
+    assert capsys.readouterr().err.splitlines()[-1] == "Interrupted."
 
 
 def test_a_baseline_saved_again_at_single_precision_draws_nothing(tmp_path, capsys):

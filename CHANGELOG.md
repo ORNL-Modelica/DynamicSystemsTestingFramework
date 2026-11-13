@@ -12,12 +12,19 @@ this file says when they do.
 
 - `dstf plot` with three runs or more ranks a section, and gives its
   `Change`, by the largest move of ANY later run against the first (and a
-  point not finite in any of them), not the last run's only: a test that moved in `try1` and came back in `try2` is no
-  longer listed as if nothing had changed.
+  point not finite in any of them), not the last run's only: a test that
+  moved in `try1` and came back in `try2` is no longer listed as if nothing
+  had changed.
 - `dstf plot` names a test of the current test spec that only one run of a
-  backend/os holds, on the console and in `gallery.html` (`Dymola/linux: 3 tests only in fix, not drawn: …`);
-  before, a test the branch added was never mentioned. Its lines name a test
-  by its full model id where two tests share a short name.
+  backend/os holds, on the console and in `gallery.html` (`Dymola/linux: 3
+  tests only in fix, not drawn: …`); before, a test the branch added was
+  never mentioned. Its lines name a test by its full model id where two
+  tests share a short name.
+
+### Fixed
+
+- Ctrl-C stops any command with one line (`Interrupted.`) and exit code 130,
+  not a traceback.
 
 ## [1.6.0] - 2026-11-12
 
