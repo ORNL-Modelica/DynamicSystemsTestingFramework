@@ -74,6 +74,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 66 | ~~Browser tests split across CI runners~~ | L | Medium | **DONE** — the `browser` job is a matrix of three runners, each running `--shard I/3`: every third selected test, dealt round-robin in collection order (`tests/_shard.py`), so no list of files has to be balanced or kept in step. See the entry below. |
 | 67 | `dstf plot`: a failed run's partial result | L | Medium | A failed run is never drawn today. It could be drawn up to where it stopped, labelled with the stop time, its Change measured only over the time both runs hold. **Deferred** by the owner, 2026-11-12. See the entry below. |
 | 68 | Eigenvalues of a linearized system | H | ? | A test records the eigenvalues (modes) of its model linearized at an operating point, and a criterion compares them with the baseline's: an unordered match of a complex set, stability, damping. Not a separate build: it is one of three asks that need a baseline holding more than time series on one time axis. See the entry "What a baseline holds: events, eigenvalues, fitted baselines" below (owner, 2026-10-15; grill before planning). Given a number 2026-11-12 so the matrix lists it. |
+| 69 | Two variables of one result: drawn together, or one checked against the other | M | ? | A test names pairs of variables of its own result; each pair is either drawn on one plot and not judged, or checked: the first must stay within a tolerance of the second, reported apart from the baseline comparison. Asked from the TRANSFORM side, 2026-11-13: examples there carry a reference value (a book's answer, an analytic solution) beside the tracked one, and nothing compares the two, so an example that disagrees with its book still passes. Not discussed yet (grill before planning). See the entry below |
 
 **Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23; the order is of that date, only the struck items were updated, 2026-11-12):
 
@@ -761,6 +762,46 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **CI-status badge on the README** (2026-07-08, owner): the repo has the
   `quality` GitHub Action (ORNL-Modelica/DynamicSystemsTestingFramework); add
   its passing badge to the DSTF README top. Doable now (see this session).
+
+## Two variables of one result: drawn together, or one checked against the other (#69)
+
+Asked from the TRANSFORM side, 2026-11-13; added to this list at the owner's
+word the same day. Not discussed yet: what follows is the request, not a design.
+
+- **Why**: a library's examples can carry a reference value (a book's answer,
+  an analytic solution, a curve from a file) as a variable of the model,
+  beside the value the test tracks. Both are in every result file and nothing
+  compares them. A baseline locks the model's own value, so an example that
+  disagrees with its book still passes. The owner, as quoted in the request:
+  "the x_reference is for in-ide simulation checks as i orginally intended ...
+  then dstf can start applying these as companion plots OR add x_reference to
+  the unit testing when it should be checked for drift."
+- **Asked**: one generic, opt-in ability with no library's names built in. A
+  test names pairs of variables of the same result, and each pair is one of
+  - **plot**: the two drawn together. Shown, not judged.
+  - **check**: the first must stay within a stated tolerance of the second,
+    reported as its own line, so "moved against the baseline" and "disagrees
+    with its reference" can be told apart.
+
+  A test that names no pairs behaves as it does today.
+- **Not asked**: reading data files beside the model (a file reaches the
+  result through the model), parsing model text, or writing a reference
+  during a run.
+- **Open, for the discussion**:
+  - where a pair is declared (the test's entry in `test_spec.json`);
+  - for a check: the value at the last time point (a book's answer) or the
+    largest difference over the run (an analytic solution over time);
+  - the tolerance: relative per value with an absolute floor near zero; one
+    RMS over several values would mix units;
+  - array variables (`x[1]` with `x_reference[1]`, and so on).
+- **What exists today, to weigh first**:
+  - the plot half is close to a `plots` entry: `{"var": "a", "context":
+    ["b"]}` draws `b` grey on the plot of `a`, not scored. Whether that is
+    enough for the request has not been checked on a real example;
+  - the check half is close to "Derived variables + one shared expression
+    facility" below: a derived `a - b` under a `range` criterion, whose
+    bounds are in the spec and which reads no baseline. The same outlet as
+    there applies today: declare the difference in the model.
 
 ## Derived variables + one shared expression facility (owner, 2026-08-31)
 
