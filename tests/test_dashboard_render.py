@@ -2333,6 +2333,13 @@ def _notice(tmp_path: Path, selection, mode: str) -> str | None:
             "it uses. The other 12 were not run.",
         ),
         (
+            _selection(1, 14, files=1, unasked=1),
+            "final",
+            "Not a full run. 1 of 14 tests was run: the simulator could not say "
+            "what it uses, and 1 file changed since base. The other 13 were not "
+            "run.",
+        ),
+        (
             _selection(3, 14, unasked=3),
             "final",
             "Not a full run. 3 of 14 tests were run: the simulator could not say "
@@ -2374,5 +2381,6 @@ def test_the_revision_is_the_user_s_text_and_is_escaped(tmp_path):
     page = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     notice = _NOTICE.search(page)
     assert notice is not None
+    assert notice.group(1).startswith("<strong>Not a full run.</strong> ")
     assert "<code>&lt;b&gt;&amp;&#34;x</code>" in notice.group(1)
     assert "<b>" not in notice.group(1)

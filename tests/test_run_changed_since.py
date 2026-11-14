@@ -164,6 +164,7 @@ def test_only_the_tests_that_use_what_changed_are_simulated(proj, capsys):
         "Selected 2 of 14 tests: the ones that use what changed. Not a full run.\n"
     ), out
     assert "\nResults: 2/2 passed (2 of 14 tests selected; not a full run)\n" in out
+    assert "Could not be asked" not in out
     # the progress lines on stderr, as `dstf uses` says them
     assert err.startswith(
         "Comparing 25 files with HEAD ...\nAsking FakeRuns what 14 tests use ...\n"
@@ -260,6 +261,58 @@ def test_a_test_that_could_not_be_asked_is_run_and_never_said_to_use_it(proj, ca
         f"  {HEAT} — Error: class HeatRodTest not found.\n"
     ) in out, out
     assert _read(proj.work, "status.json")["selection"]["could_not_be_asked"] == 1
+
+
+def test_an_answer_given_as_a_list_selects_as_a_frozenset_does(proj, capsys):
+    """A plug-in's `uses` may answer with any collection of names."""
+    answer = proj.answer
+    proj.answer = lambda m: sorted(answer(m))
+    _touch(proj, "Examples", "SimpleTest.mo")
+    rc, out, err = _run(proj, capsys, "--changed-since", "HEAD")
+    assert rc == 0, out + err
+    assert proj.simulated == [SIMPLE]
+
+
+def test_when_no_selected_test_could_be_asked_none_is_said_to_use_it(proj, capsys):
+    proj.answer = lambda m: "Error: class not found."
+    _touch(proj, "Examples", "SimpleTest.mo")
+    rc, out, err = _run(
+        proj, capsys, "--changed-since", "HEAD", "--filter", f"{SIMPLE},{HEAT}"
+    )
+    assert (
+        "Selected all 2 tests: none could be asked what it uses, so each is run.\n"
+        "Could not be asked:\n"
+    ) in out, out
+    assert "use what changed" not in out and "uses what changed" not in out
+
+
+def test_past_twenty_the_tests_not_asked_are_counted(proj, capsys):
+    spec = proj.lib / "Resources" / "ReferenceResults" / "test_spec.json"
+    data = json.loads(spec.read_text(encoding="utf-8"))
+    missing = [f"{LIB}.Examples.Missing{i:02d}" for i in range(22)]
+    data["tests"] += [{"model": m} for m in missing]
+    spec.write_text(json.dumps(data), encoding="utf-8")
+    answer = proj.answer
+    proj.answer = lambda m: "Error: class not found." if "Missing" in m else answer(m)
+    _touch(proj, "Examples", "SimpleTest.mo")
+    rc, out, err = _run(proj, capsys, "--changed-since", "HEAD")
+    assert (
+        "Selected 23 of 36 tests: 1 uses what changed, 22 could not be asked what "
+        "they use and are run. Not a full run.\n"
+    ) in out, out
+    listed = [
+        line for line in out.splitlines() if line.endswith("— Error: class not found.")
+    ]
+    assert len(listed) == 20
+    assert f"  {missing[19]} — Error: class not found.\n  … and 2 more\n" in out
+
+
+def test_the_block_counts_the_files_that_differ_not_the_classes(proj, capsys):
+    image = proj.lib / "Resources" / "Images" / "ThermostatBuildingTest.png"
+    image.write_bytes(image.read_bytes() + b"\0")
+    _touch(proj, "Examples", "SimpleTest.mo")
+    _run(proj, capsys, "--changed-since", "HEAD", "--filter", SIMPLE)
+    assert _read(proj.work, "status.json")["selection"]["files"] == 2
 
 
 def test_a_file_no_class_stores_runs_every_test_and_asks_no_simulator(proj, capsys):
@@ -374,6 +427,21 @@ def test_nothing_to_run_leaves_an_earlier_run_s_files_as_they_are(proj, capsys):
     assert _files(proj.work) == before
 
 
+def test_nothing_to_run_leaves_a_corrupt_manifest_where_it_is(proj, capsys):
+    """The choice comes before the manifest's check of orphans, which moves
+    a corrupt batch_manifest.json aside."""
+    _touch(proj, "Examples", "SimpleTest.mo")
+    assert _run(proj, capsys, "--changed-since", "HEAD")[0] == 0
+    proj.git.commit("edited")
+    manifest = proj.work / "batch_manifest.json"
+    manifest.write_text("{ not json", encoding="utf-8")
+    before = _files(proj.work)
+    rc, out, err = _run(proj, capsys, "--changed-since", "HEAD")
+    assert rc == 0 and out.endswith("No test to run.\n"), out + err
+    assert _files(proj.work) == before
+    assert manifest.read_text(encoding="utf-8") == "{ not json"
+
+
 # --------------------------------------------------------------------------
 # Refused: one sentence, nothing simulated, nothing written
 # --------------------------------------------------------------------------
@@ -431,6 +499,14 @@ def test_beside_batch_the_simulator_is_still_asked_through_its_workers(proj, cap
     )
     assert (rc, out) == (1, "")
     assert err.endswith("The fake's worker interface is not installed.\n"), err
+
+
+def test_beside_batch_git_s_refusal_is_git_s_sentence_alone(proj, capsys):
+    rc, out, err = _run(
+        proj, capsys, "--changed-since", "nope", "--backend", NO_WORKERS, "--batch"
+    )
+    assert (rc, out) == (2, "")
+    assert err == f"Error: unknown revision 'nope' in {proj.lib.parent}\n"
 
 
 def test_a_project_that_is_not_modelica_is_a_config_error(tmp_path, capsys):

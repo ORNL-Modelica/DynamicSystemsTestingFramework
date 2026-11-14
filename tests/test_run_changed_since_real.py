@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
 
+import psutil
 import pytest
 
 from conftest import PROJECT_ROOT, GitRepo
@@ -20,20 +20,23 @@ LIB = "ModelicaTestingLib"
 TOUCHED = [f"{LIB}.Examples.SimpleTest", f"{LIB}.Examples.SimulateOnlyTest"]
 
 
-#: The process names of the simulators, as /proc spells them.
+#: The process names of the simulators, lower-cased (`omc`, `omc.exe`,
+#: `Dymola.exe`).
 SIMULATORS = ("omc", "dymola")
 
 
 def _simulators() -> set[int]:
-    """The simulator processes alive now."""
+    """The simulator processes this test's process started that are alive
+    now: its descendants only, so another program's simulator is not
+    counted."""
     found = set()
-    for proc in Path("/proc").iterdir():
+    for child in psutil.Process().children(recursive=True):
         try:
-            name = (proc / "comm").read_text().strip().lower()
-        except OSError:
+            name = child.name().lower()
+        except psutil.Error:
             continue
-        if proc.name.isdigit() and name.startswith(SIMULATORS):
-            found.add(int(proc.name))
+        if name.startswith(SIMULATORS):
+            found.add(child.pid)
     return found
 
 

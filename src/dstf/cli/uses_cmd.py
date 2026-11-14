@@ -159,7 +159,8 @@ class Selection:
         selected = []
         for test in self.tests:
             got = self.answers[test.model_id]
-            if isinstance(got, str) or asked & got:
+            # Any collection of names: a plug-in may answer with a list.
+            if isinstance(got, str) or asked.intersection(got):
                 selected.append(test)
         return selected
 
