@@ -667,7 +667,7 @@ dstf run --config testing.json --changed-since main
 ```
 
 ```text
-Changed since main (36431bf dstf uses --since REV: the tests your changes touch): 2 files
+Changed since main (1a2b3c4 Tune the thermostat example): 2 files
   Examples/SimpleTest.mo  ModelicaTestingLib.Examples.SimpleTest
   Icons/Example.mo        ModelicaTestingLib.Icons.Example
 Selected 2 of 14 tests: the ones that use what changed. Not a full run.
@@ -686,13 +686,14 @@ the dashboard's status line (`Not a full run. 2 of 14 tests were run: the
 ones that use what changed since main (2 files). The other 12 were not
 run.`), `selection` in `status.json` and `verdicts.json`, and the cell of
 `dstf summary` (`2/2 (2 of 14 tests selected)`). A later `compare` over the
-work directory still says so; a later run without the flag does not.
+work directory still says so; a later run without the flag does not. The
+JUnit file does not say it: it is a plain suite of the tests that ran.
 
 When nothing changed, it prints `No test to run.`; when no test uses what
 changed, `No test uses what changed: no test to run.` Both exit 0 and write
-nothing: no work directory, no dashboard, no browser tab, no report file
-(the one `--output` names neither), and an earlier run's files stay as
-they are.
+nothing: no work directory, no dashboard, no browser tab, and no report
+file, even when `--output` names one. An earlier run's files stay as they
+are.
 
 It is refused, and nothing runs, beside `--rerun` (a rerun chooses its
 tests from the last run's results); on a project that is not Modelica or a

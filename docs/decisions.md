@@ -9769,14 +9769,16 @@ reads like a run of all of them would undo that rule in silence.
    console's `Selected 2 of 14 tests: … Not a full run.` and
    `Results: 2/2 passed (2 of 14 tests selected; not a full run)`; on the
    dashboard, a notice line of its own under the status line (the owner
-   chose it from a picture of three); `selection` in `status.json` and
+   chose it from a picture of the two options beside the page as it
+   was); `selection` in `status.json` and
    `verdicts.json` (null for every other run), which `verdicts.json`
    copies from `status.json`, so a later `compare` still says it; and the
    cell of `dstf summary`. With every test the filter left selected, the
    block is written and nothing calls the run partial.
 6. *A test that could not be asked is never said to use what changed.*
-   Every line that counts the tests says how many of them were run because
-   they could not be asked.
+   The console's Selected line and the dashboard's notice say how many of
+   the tests were run because they could not be asked; no line anywhere
+   says such a test uses what changed.
 7. *A first paint is the run's own.* The live page the browser opens on is
    written before this run's `status.json`, so it is given the run's
    selection; the snapshot on disk is still the last run's.

@@ -105,13 +105,20 @@ jobs:
   base branch is then unknown to git.
 - **What is compared.** A pull request's checkout is the merge of its branch
   into the base, so `origin/<base>` against it is what the pull request
-  changes.
+  changes. When the base branch has moved on since that merge commit was
+  made, the base's later changes count too: more tests, never fewer.
 - **Nothing to run is a pass.** When the pull request changes no class a
   test uses, the run exits 0 and writes nothing: no work directory and no
   `results.xml`. `upload-artifact` only warns about a missing file; a step
   that reads `results.xml` must allow it to be missing.
-- The selected run is not a full run, and says so; the run on `main` is the
-  check.
+- **Files DSTF keeps are no change.** A pull request that changes only
+  test_spec.json, testing.json or a stored baseline changes no class
+  ([what is not compared](review.md#what-changed-since-a-revision)): the
+  selected job prints `Nothing changed` and passes without running
+  anything. The full run on `main` is what checks it.
+- The selected run is not a full run, and says so on the dashboard, in
+  `verdicts.json` and in `dstf summary`. The JUnit file does not: it is a
+  plain suite of the tests that ran. The run on `main` is the check.
 
 ## Exit codes
 
