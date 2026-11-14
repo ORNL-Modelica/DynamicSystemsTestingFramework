@@ -403,12 +403,69 @@ def _manifest_rows(work_dir: Path) -> dict[str, tuple[TestRow, float | None]]:
     return rows
 
 
+#: ``selection``'s default: the snapshot's. A first paint is given its
+#: run's own instead — status.json is still the LAST run's until the
+#: reporter's first write, and would say that run's notice, or none.
+AS_RECORDED: object = object()
+
+
+def _whole(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def run_notice(selection: object, mode: str) -> dict | None:
+    """The notice a run of only the tests a change touches carries
+    (``status.json``'s ``selection``, ``run --changed-since``), as the
+    sentence before the revision, the revision, and the sentence after it;
+    None for a run of every test the filter left, a run that selected all
+    of them, and a block that is not one."""
+    if not isinstance(selection, Mapping):
+        return None
+    n, of, files, unasked = (
+        selection.get(k) for k in ("selected", "of", "files", "could_not_be_asked")
+    )
+    if not (_whole(n) and _whole(of) and _whole(files) and n < of):
+        return None
+    unasked = unasked if _whole(unasked) and unasked <= n else 0
+    rest = of - n
+    if mode == "live":
+        ran = "is being run" if n == 1 else "are being run"
+        left = "is not run" if rest == 1 else "are not run"
+    else:
+        ran = "was run" if n == 1 else "were run"
+        left = "was not run" if rest == 1 else "were not run"
+    changed = f"{files} file{'' if files == 1 else 's'}"
+    others = f". The other {rest} {left}."
+    if unasked and unasked == n:
+        they = "it uses" if n == 1 else "they use"
+        before = (
+            f"{n} of {of} tests {ran}: the simulator could not say what "
+            f"{they}, and {changed} changed since"
+        )
+        after = others
+    else:
+        using = n - unasked
+        which = "the one that uses" if using == 1 else "the ones that use"
+        before = f"{n} of {of} tests {ran}: {which} what changed since"
+        after = f" ({changed})"
+        if unasked:
+            they = "it uses" if unasked == 1 else "they use"
+            after += f", and {unasked} that could not be asked what {they}"
+        after += others
+    return {
+        "before": before,
+        "rev": str(selection.get("changed_since", "")),
+        "after": after,
+    }
+
+
 def build_dashboard_context(
     work_dir: Path,
     mode: str,
     rerun_flags: Mapping[str, str] | None = None,
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
+    selection: object = AS_RECORDED,
 ) -> dict:
     """Build the Jinja context for dashboard.html.
 
@@ -428,6 +485,9 @@ def build_dashboard_context(
 
     The same template renders both; JS reads `DASHBOARD_MODE` to
     decide whether to start the fetch loop.
+
+    ``selection``: what the run's tests were chosen by (:func:`run_notice`)
+    — the snapshot's unless given.
     """
     snapshot = read_status(work_dir) or {
         "total": 0,
@@ -570,6 +630,12 @@ def build_dashboard_context(
         # Run provenance (backend/simulator/version/os) for the banner. None
         # for snapshots written before this field existed.
         "run_metadata": format_run_metadata(snapshot.get("metadata")),
+        # A run of only the tests a change touches says it is not a full
+        # run, in a line of its own under the status line.
+        "run_notice": run_notice(
+            snapshot.get("selection") if selection is AS_RECORDED else selection,
+            mode,
+        ),
     }
 
 
@@ -606,6 +672,7 @@ def _render(
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",
+    selection: object = AS_RECORDED,
 ) -> None:
     ctx = build_dashboard_context(
         work_dir,
@@ -613,6 +680,7 @@ def _render(
         rerun_flags=rerun_flags,
         comparisons=comparisons,
         results=results,
+        selection=selection,
     )
     template = _env.get_template("dashboard.html")
     # The token block per render, never at import: the theme is the
@@ -625,10 +693,17 @@ def _render(
 
 
 def render_live(
-    work_dir: Path, rerun_flags: Mapping[str, str] | None = None, theme: str = "default"
+    work_dir: Path,
+    rerun_flags: Mapping[str, str] | None = None,
+    theme: str = "default",
+    selection: object = AS_RECORDED,
 ) -> None:
-    """Render dashboard.html in live mode (auto-refreshes via meta tag)."""
-    _render(work_dir, mode="live", rerun_flags=rerun_flags, theme=theme)
+    """Render dashboard.html in live mode (auto-refreshes via meta tag).
+    A run's first paint gives its ``selection`` (``run --changed-since``'s
+    block, or None): the snapshot is still the last run's."""
+    _render(
+        work_dir, mode="live", rerun_flags=rerun_flags, theme=theme, selection=selection
+    )
 
 
 def render_final(

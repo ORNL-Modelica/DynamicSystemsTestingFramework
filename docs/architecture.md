@@ -41,7 +41,7 @@ Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` �
 | Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`, `ScalarMode`; `VariableComparison.diagnostics` carries structured extras | 7 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, spectral shapes, and single-number (reduction / stored-statistic) checks |
 | MetricTree | `comparison/metric_tree.py` (`AndCombinator`/`OrCombinator`/`KOfNCombinator`/`WarnCombinator`/`WeightedCombinator` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
 | Reference | Role-partitioned storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; soft_checks and companions in role subdirs beside it |
-| (the run itself) | `pipeline.py`: `run_pipeline(config, tests, *, backend, store, merge, candidates)` — id mapping, stale-state wipe, live dashboard, `run_tests`, cross-backend chains, scope widening, result read. Prints the backend's narration unless `backend.quiet` is set; no exits, no browser, no prompts; failures are exceptions; no scoring (the commands score). Belongs to no layer — it orchestrates a backend, a store and a work dir — so it sits beside `config.py`. | The CLI drives it (`cmd_run`); the authoring tool's queue drives the same steps one test at a time (`ItemRun` behind `open_pool`, in the same module) |
+| (the run itself) | `pipeline.py`: `run_pipeline(config, tests, *, backend, store, merge, candidates, selection)` — id mapping, stale-state wipe, live dashboard, `run_tests`, cross-backend chains, scope widening, result read. Prints the backend's narration unless `backend.quiet` is set; no exits, no browser, no prompts; failures are exceptions; no scoring (the commands score). Belongs to no layer — it orchestrates a backend, a store and a work dir — so it sits beside `config.py`. | The CLI drives it (`cmd_run`); the authoring tool's queue drives the same steps one test at a time (`ItemRun` behind `open_pool`, in the same module) |
 | (the run's CLI) | `cli/run_cmds.py`: `cmd_run` is the wrapper — selection and filtering, `_get_backend` (the CLI's wrapper over `backends.select_backend`), `run_pipeline`, then the outcome's notices, `--accept` / `-i` / the report. `cmd_compare` shares the same helpers without simulating. | — |
 
 Forward work: cross-backend verification beyond the Dymola→FMPy chain (each new primary backend needs its own `export_fmu`), and richer metrics (Fréchet, KS). The plug-in contracts are on the documentation site (`docs/guides/plugin.md`, the API reference) and in "Contracts inside the framework" below.
@@ -886,15 +886,18 @@ that cannot build the backend prints one `Config error: ...` line and exits 2.
 ### The run as a library
 
 `pipeline.run_pipeline(config, tests, *, backend, store, merge=False,
-candidates=None) -> RunOutcome` is the run itself, without a CLI around it:
-the ref-ID mapping, the stale-state wipe for the tests in scope, the live
-dashboard's first paint, `backend.run_tests`, the cross-backend chains, the
+candidates=None, selection=None) -> RunOutcome` is the run itself, without a
+CLI around it: the ref-ID mapping, the stale-state wipe for the tests in
+scope, the live dashboard's first paint, `backend.run_tests` (with
+`selection`, what chose the tests — `run --changed-since`'s block, D168 —
+set on the backend, which writes it to `status.json`), the cross-backend chains, the
 `merge` scope widening and the result read. It prints the backend's narration unless
 `backend.quiet` is set (below); it never exits the process, never opens a
 browser and never prompts; a backend that cannot start raises, and the caller
 decides whether that is an exit code or a red panel. It does not score and
 writes no `verdicts.json`: `cmd_run` and `cmd_compare` score.
-`cmd_run` is its CLI wrapper — selection, the outcome's notices printed,
+`cmd_run` is its CLI wrapper — selection (and `--changed-since`'s, D168),
+the outcome's notices printed,
 `--accept` / `-i` / the report. The authoring tool runs through the simulation
 pool instead (`open_pool`, below): the same per-test path, one test at a time.
 

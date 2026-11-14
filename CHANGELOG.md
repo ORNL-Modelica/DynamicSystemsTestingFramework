@@ -22,6 +22,11 @@ this file says when they do.
   disk (uncommitted edits included) are asked as named ones, the changed
   files listed first. A deleted file counts the package that held it; a
   changed file no class stores counts every test. Git is only read.
+- `dstf run --changed-since REV`: simulate and score only the tests
+  `dstf uses --since REV` lists. The run says it was not a full run on the
+  console, on the dashboard, in `status.json` and `verdicts.json`
+  (`selection`) and in `dstf summary`. With nothing to run it exits 0 and
+  writes nothing, not even the report file.
 
 ### Changed
 

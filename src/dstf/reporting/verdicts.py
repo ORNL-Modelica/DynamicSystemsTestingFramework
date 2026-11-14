@@ -64,6 +64,7 @@ def build_verdicts(
     tests: Iterable[Any],
     results: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
+    selection: Mapping[str, Any] | None = None,
 ) -> dict:
     """The document :func:`write_verdicts` writes: the scored tests in the
     order given, and their totals by status word — every word of the
@@ -81,6 +82,10 @@ def build_verdicts(
         # The run these verdicts are of: status.json's provenance block
         # (backend, tool version, os), or null where there is none.
         "metadata": dict(metadata) if metadata else None,
+        # What the run's tests were chosen by: status.json's ``selection``
+        # (`run --changed-since`: N of M tests, since which revision), or
+        # null for a run of every test the filter left.
+        "selection": dict(selection) if selection else None,
         "totals": {"total": len(comps), **totals},
         "exit_code": exit_code(comps),
         "tests": [
@@ -109,7 +114,14 @@ def write_verdicts(
 
     comps = list(comparisons)
     snapshot = read_status(work_dir) or {}
-    document = build_verdicts(comps, tests, results, snapshot.get("metadata"))
+    selection = snapshot.get("selection")
+    document = build_verdicts(
+        comps,
+        tests,
+        results,
+        snapshot.get("metadata"),
+        selection if isinstance(selection, dict) else None,
+    )
     path = work_dir / VERDICTS_FILE
     work_dir.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(

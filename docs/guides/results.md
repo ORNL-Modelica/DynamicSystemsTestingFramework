@@ -91,10 +91,18 @@ Two files in the work directory are written for programs:
   (`ref_id`: `ref_<code>`, or null), its status word (`PASS`, `FAIL`,
   `SIM_FAIL`, `NO_REF`, `NOT RUN`), a message where there is one, its warnings, and its criteria
   tree with each node's verdict, score and tolerance. Beside them, the totals
-  by status and the exit code they give.
+  by status and the exit code they give, the run's `metadata` (backend,
+  tool version, OS), and `selection`: null for a run of every test the
+  filter left; for a run started with `--changed-since`, what chose its
+  tests — the revision as given (`changed_since`), the commit it resolved
+  to in each repository (`commits`), how many files differ (`files`), how
+  many tests were run (`selected`) of how many the filter left (`of`), and
+  how many of them could not be asked what they use
+  (`could_not_be_asked`). `selected` below `of` is not a full run.
 - `status.json` — what became of each SIMULATION: `passed` there means the
   simulation finished, not that the test passed. Once a run is scored each
-  test also carries its `verdict`.
+  test also carries its `verdict`. Its `selection` is the run's, as above;
+  `verdicts.json` copies it from here, so a later `compare` keeps it.
 
 ```python
 import json

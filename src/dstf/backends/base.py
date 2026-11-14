@@ -623,6 +623,11 @@ class Backend(ABC):
     #: Declared on the class as well as set in ``__init__`` so a test double
     #: that never calls ``__init__`` still reads a value.
     quiet: bool = False
+    #: What the run this backend is about to make was chosen by: ``run
+    #: --changed-since``'s block, or None. The pipeline sets it before every
+    #: ``run_tests``, and :meth:`_prepare_run` hands it to the reporter that
+    #: writes ``status.json``. On the class, as ``quiet`` is.
+    selection: dict | None = None
     #: The keys of this backend's block in ``testing.json``'s ``backends``
     #: map: name → type, default and description, as ``testing.json``'s own
     #: keys are declared (:mod:`dstf.config_shape`). ``Config`` checks a
@@ -1108,6 +1113,7 @@ class Backend(ABC):
             metadata=run_metadata,
             theme=self.config.theme,
             run_given=run_given(self.config),
+            selection=self.selection,
         )
         self.progress = progress
 

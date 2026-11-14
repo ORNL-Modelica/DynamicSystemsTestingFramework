@@ -8,7 +8,7 @@ import pytest
 from dstf.cli.main import main
 
 
-def _run_dir(folder, statuses, *, backend="Python", os_="linux", metadata=True):
+def _run_dir(folder, statuses, *, backend="Python", os_="linux", metadata=True, **keys):
     folder.mkdir(parents=True, exist_ok=True)
     tests = [
         {"model_id": m, "status": s, "message": None, "warnings": [], "tree": None}
@@ -23,6 +23,8 @@ def _run_dir(folder, statuses, *, backend="Python", os_="linux", metadata=True):
         else None,
         "totals": totals,
         "tests": tests,
+        # what a later DSTF writes (`selection`), or nothing: an older file
+        **keys,
     }
     (folder / "verdicts.json").write_text(json.dumps(doc), encoding="utf-8")
     return folder
@@ -173,6 +175,56 @@ def test_json_is_written_to_the_output_file(runs, tmp_path, capsys):
     data = json.loads(out.read_text(encoding="utf-8"))
     head_cell = [c for c in data["cells"] if c["label"] == "head"][0]
     assert (head_cell["passed"], head_cell["not_new"]) == (0, 1)
+
+
+def _selected(n: int, of: int) -> dict:
+    """``selection`` as `run --changed-since` writes it."""
+    return {
+        "changed_since": "main",
+        "commits": ["da94e89"],
+        "files": 2,
+        "selected": n,
+        "of": of,
+        "could_not_be_asked": 0,
+    }
+
+
+def test_a_run_of_only_the_tests_a_change_touches_says_so(tmp_path, capsys):
+    full = _run_dir(tmp_path / "full", {"L.A": "PASS", "L.B": "FAIL", "L.C": "PASS"})
+    some = _run_dir(
+        tmp_path / "some", {"L.A": "PASS", "L.B": "FAIL"}, selection=_selected(2, 3)
+    )
+    every = _run_dir(tmp_path / "every", {"L.A": "PASS"}, selection=_selected(1, 1))
+    assert main(["summary", f"full={full}", f"some={some}", f"every={every}"]) == 0
+    out = capsys.readouterr().out
+    assert (
+        "| Python/linux | 2/3 (1 FAIL) | 1/2 (1 FAIL; 2 of 3 tests selected) | 1/1 |"
+    ) in out
+    assert (
+        '"N of M tests selected" = the run simulated only the tests a change '
+        "touches (run --changed-since): not a full run."
+    ) in out
+
+
+def test_the_json_gives_each_run_s_selection(tmp_path, capsys):
+    old = _run_dir(tmp_path / "old", {"L.A": "PASS"})
+    some = _run_dir(tmp_path / "some", {"L.A": "PASS"}, selection=_selected(1, 3))
+    out = tmp_path / "summary.json"
+    argv = ["summary", f"old={old}", f"some={some}", "--format", "json", "-o", str(out)]
+    assert main(argv) == 0
+    capsys.readouterr()
+    cells = json.loads(out.read_text(encoding="utf-8"))["cells"]
+    # a file written before the key existed reads as a full run
+    assert {c["label"]: c["selection"] for c in cells} == {
+        "old": None,
+        "some": _selected(1, 3),
+    }
+
+
+def test_no_run_selected_no_key_line(runs, capsys):
+    base, head = runs
+    assert main(["summary", f"base={base}", f"head={head}"]) == 0
+    assert "tests selected" not in capsys.readouterr().out
 
 
 def _refused(argv, capsys) -> str:

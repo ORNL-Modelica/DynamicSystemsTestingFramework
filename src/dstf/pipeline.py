@@ -204,6 +204,7 @@ def run_pipeline(
     store: ReferenceStore,
     merge: bool = False,
     candidates: list | None = None,
+    selection: dict | None = None,
 ) -> RunOutcome:
     """Run tests and read their results back: ``dstf run`` without the
     command line.
@@ -224,6 +225,9 @@ def run_pipeline(
             earlier runs recorded, as ``run --merge`` does.
         candidates: The tests that widening may draw from, in their order;
             without it, only ``tests``.
+        selection: What ``tests`` were chosen by — ``run --changed-since``'s
+            block — written to ``status.json`` under ``selection``; None,
+            the default, for any other run, and written as null.
 
     Returns:
         The run's manifests, the tests in scope and their results.
@@ -264,8 +268,16 @@ def run_pipeline(
     # it a moment earlier too, before opening a browser tab on it.
     from .reporting.dashboard_render import build_rerun_flags, render_live
 
-    render_live(work_dir, rerun_flags=build_rerun_flags(config), theme=config.theme)
+    render_live(
+        work_dir,
+        rerun_flags=build_rerun_flags(config),
+        theme=config.theme,
+        selection=selection,
+    )
 
+    # Set on every call: a backend that ran a selected run before must not
+    # carry its block into this one.
+    backend.selection = selection
     manifests = backend.run_tests(tests)
 
     # Enrich batch manifest with ref IDs now that store is available

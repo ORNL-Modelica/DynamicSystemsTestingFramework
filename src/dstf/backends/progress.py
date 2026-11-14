@@ -71,6 +71,7 @@ class ProgressReporter:
         metadata: dict | None = None,
         theme: str = "default",
         run_given: list | None = None,
+        selection: dict | None = None,
     ):
         self.work_dir = work_dir
         self.total = total
@@ -85,6 +86,12 @@ class ProgressReporter:
         # later `compare` renders the page with the run's own for every flag
         # it does not read itself (`--timeout`).
         self.run_given = run_given
+        # The tests this run was chosen by (`run --changed-since`'s block:
+        # the revision, the files that differ, N selected of M), or None
+        # for a run of every test the filter left. Written to status.json
+        # under "selection"; the dashboard says a run of fewer is not a
+        # full run, and verdicts.json copies it.
+        self.selection = selection
         # Run-level provenance (backend family/configured name/os/version). Serialized into
         # status.json under "metadata" and rendered as a banner by the
         # reporters. None → the "metadata" key stays null (backward compat with
@@ -244,6 +251,7 @@ class ProgressReporter:
             "tests": tests,
             "rerun_flags": self.rerun_flags,
             "run_given": self.run_given,
+            "selection": self.selection,
             "start_wall": self._start_wall,
             "updated_at": time.time(),
             "metadata": metadata,

@@ -173,6 +173,116 @@ def _default_stop_time_notes(tests: list, config) -> list[str]:
     ]
 
 
+#: The most tests a selected run names as not asked; the rest are counted.
+UNASKED_LISTED = 20
+
+
+def _selected_line(n: int, of: int, unasked: int) -> str:
+    """The line that says which tests ``--changed-since`` selected: ``n``
+    of the ``of`` tests the filter left, ``unasked`` of them because they
+    could not be asked what they use (never said to use what changed)."""
+    partial = " Not a full run." if n < of else ""
+    if of == 1:
+        head = "Selected the 1 test:"
+    elif n == of:
+        head = f"Selected all {of} tests:"
+    else:
+        head = f"Selected {n} of {of} tests:"
+    if unasked == 0:
+        if n == 1:
+            why = "it uses" if of == 1 else "the one that uses"
+        else:
+            why = "each uses" if n == of else "the ones that use"
+        return f"{head} {why} what changed.{partial}"
+    if unasked == n:
+        if n == 1:
+            why = "it could not be asked what it uses, so it is run."
+        elif n == of:
+            why = "none could be asked what it uses, so each is run."
+        else:
+            why = "none of them could be asked what it uses, so each is run."
+        return f"{head} {why}{partial}"
+    using = n - unasked
+    uses = "uses" if using == 1 else "use"
+    they = "it uses and is" if unasked == 1 else "they use and are"
+    return (
+        f"{head} {using} {uses} what changed, {unasked} could not be asked "
+        f"what {they} run.{partial}"
+    )
+
+
+def _select_changed(args: argparse.Namespace, config, tests: list):
+    """``--changed-since REV``: the tests of ``tests`` that use what
+    changed since REV and the ``selection`` block the run records — or the
+    exit code, when the selection is refused (1, 2) or leaves nothing to
+    run (0). Everything it says is printed here, and nothing is written:
+    the work directory is left as it is."""
+    from ..backends import BackendUnavailableError
+    from .uses_cmd import Refused, _every_test, can_answer, select_since
+
+    rev = args.changed_since
+    # The source type first: on a project that is not Modelica, whether its
+    # backend could answer is beside the point.
+    if config.source_type != "modelica":
+        raise ConfigError(
+            "--changed-since reads a Modelica library's files; this project's "
+            f"source_type is {config.source_type}."
+        )
+    if not can_answer(config):
+        raise ConfigError(
+            f"--changed-since does not apply to the {config.backend} backend: "
+            "it cannot say what a test uses. Run without --changed-since."
+        )
+    try:
+        chosen = select_since(
+            config, rev, lambda: tests, lambda line: print(line, file=sys.stderr)
+        )
+    except Refused as exc:
+        said = str(exc)
+        cause = exc.__cause__
+        if (
+            args.batch
+            and isinstance(cause, BackendUnavailableError)
+            and cause.batch_runs
+        ):
+            # The workers' interface is missing, which is what --batch is
+            # for; the run's own simulations would go without it, the
+            # question cannot.
+            said += (
+                "\n\n--changed-since asks through the backend's workers that "
+                "stay alive, also beside --batch: run without --changed-since."
+            )
+        print(said, file=sys.stderr)
+        return exc.code
+    for line in chosen.block:
+        print(line)
+    selected, of, unasked = chosen.selected, len(tests), chosen.unasked
+    if chosen.every_test:
+        print(_every_test(chosen.changes, of, 0, verb="run"))
+    elif not chosen.files:
+        print("No test to run.")
+        return 0
+    elif not selected:
+        print("No test uses what changed: no test to run.")
+        return 0
+    else:
+        print(_selected_line(len(selected), of, len(unasked)))
+    if unasked:
+        print("Could not be asked:")
+        for model_id, reason in list(unasked.items())[:UNASKED_LISTED]:
+            print(f"  {model_id} — {reason}")
+        if len(unasked) > UNASKED_LISTED:
+            print(f"  … and {len(unasked) - UNASKED_LISTED} more")
+    return selected, {
+        "changed_since": rev,
+        "commits": chosen.commits,
+        "files": chosen.files,
+        "selected": len(selected),
+        "of": of,
+        "could_not_be_asked": len(unasked),
+    }
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
@@ -185,6 +295,19 @@ def cmd_run(args: argparse.Namespace) -> int:
         _refuse_batch_without_workers(config)
     all_tests = discover_tests(config)
     tests = _filter_tests(all_tests, args.filter, args.package)
+    selection = None
+    if args.changed_since is not None:
+        # The whole choice before anything is read that may write (the
+        # manifest's check of orphans moves a corrupt one aside), and so
+        # before the work directory or a browser tab: nothing to run
+        # leaves an earlier run's files as they are.
+        if not tests:
+            print("No tests matched the filter.")
+            return 1
+        chosen = _select_changed(args, config, tests)
+        if isinstance(chosen, int):
+            return chosen
+        tests, selection = chosen
     _notify_orphans(config, all_tests)
 
     from ..storage.reference_store import ReferenceStore
@@ -287,7 +410,10 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     config.work_dir.mkdir(parents=True, exist_ok=True)
     render_live(
-        config.work_dir, rerun_flags=build_rerun_flags(config), theme=config.theme
+        config.work_dir,
+        rerun_flags=build_rerun_flags(config),
+        theme=config.theme,
+        selection=selection,
     )
     # A path that scores renders the final page itself, with its
     # comparisons, before the work that follows (the review, the report
@@ -311,6 +437,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 store=store,
                 merge=getattr(args, "merge", False),
                 candidates=all_tests,
+                selection=selection,
             )
         except RuntimeError as exc:
             # Backends raise on unrecoverable startup conditions (e.g. all persistent
@@ -393,7 +520,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             final_rendered = True
 
-            _show_reports(comparisons, results, scope_tests, store, config, args)
+            _show_reports(
+                comparisons,
+                results,
+                scope_tests,
+                store,
+                config,
+                args,
+                note=_selection_note(selection),
+            )
             return _exit_code(comparisons)
     finally:
         if not final_rendered:
@@ -538,12 +673,24 @@ def _rerun_flags(config, args) -> dict[str, str]:
     return build_rerun_flags(config)
 
 
-def _show_reports(comparisons, results, tests, store, config, args) -> None:
+def _selection_note(selection: dict | None) -> str | None:
+    """What the Results line adds for a run that simulated only some of
+    the tests (``--changed-since``); None for every other run."""
+    if selection is None or selection["selected"] == selection["of"]:
+        return None
+    return (
+        f"{selection['selected']} of {selection['of']} tests selected; not a full run"
+    )
+
+
+def _show_reports(
+    comparisons, results, tests, store, config, args, note: str | None = None
+) -> None:
     """What a scored ``run`` or ``compare`` shows — three independent
     things, and any combination does all of what it asks:
 
     * ``verdicts.json`` in the work dir and the console verdict table,
-      ALWAYS;
+      ALWAYS (``note``: what its Results line adds in brackets);
     * ``--report``: the per-test pages;
     * ``--report-format junit|html``: that file, at ``--output``.
 
@@ -559,7 +706,7 @@ def _show_reports(comparisons, results, tests, store, config, args) -> None:
     # What was decided, for a script: one file, on every scoring route, and
     # each test's verdict beside its simulation status in status.json.
     write_verdicts(config.work_dir, comparisons, tests, results)
-    print_report(comparisons)
+    print_report(comparisons, note=note)
     if getattr(args, "report", False):
         _generate_report_suite(
             comparisons,

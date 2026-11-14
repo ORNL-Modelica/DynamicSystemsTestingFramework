@@ -93,6 +93,19 @@ class Cell:
     #: why there is no such count where there is a base ("no main run for
     #: Dymola/linux"); "" otherwise
     base_note: str = ""
+    #: the file's ``selection`` (``run --changed-since``: the revision, N
+    #: selected of M); None for a run of every test, and in a file written
+    #: before the key existed
+    selection: dict | None = None
+
+    @property
+    def selected(self) -> tuple[int, int] | None:
+        """``(N, M)`` when the run simulated N of M tests, N < M: not a
+        full run. None otherwise."""
+        sel = self.selection or {}
+        n, of = sel.get("selected"), sel.get("of")
+        whole = all(isinstance(v, int) and not isinstance(v, bool) for v in (n, of))
+        return (n, of) if whole and 0 <= n < of else None
 
     @property
     def failing(self) -> list[NotPassing]:
@@ -302,6 +315,9 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
             not_new=not_new,
             none_on_base=none_on_base,
             base_note=note,
+            selection=(
+                data["selection"] if isinstance(data.get("selection"), dict) else None
+            ),
         )
     folders = sorted({folder for _, folder in read}, key=_folder_key)
     return Summary(labels=labels, folders=folders, cells=cells, base=base)

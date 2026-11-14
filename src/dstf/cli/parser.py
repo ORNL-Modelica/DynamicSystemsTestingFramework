@@ -381,9 +381,15 @@ UNREAD: tuple[Unread, ...] = (
     Unread(
         "run",
         ("merge",),
-        ("filter", "package", "rerun"),
+        ("filter", "package", "rerun", "changed_since"),
         "without them every test runs, and there is nothing to merge in",
         with_=False,
+    ),
+    Unread(
+        "run",
+        ("changed_since",),
+        ("rerun",),
+        "a rerun chooses its tests from the last run's results",
     ),
     Unread(
         "compare",
@@ -1071,6 +1077,7 @@ READS: dict[str, tuple[str, ...]] = {
         "timeout",
         "merge",
         "rerun",
+        "changed_since",
     ),
     "compare": (
         *_ALL,
@@ -1369,9 +1376,22 @@ def _add_run(tree: _Tree, top) -> None:
             instead of being scored; with -i each test is shown and accepted
             or skipped by hand.
 
-            Exit code: 0 when every test that ran passed; 1 when a test
+            With --changed-since REV, only the tests that use a class
+            changed since the git revision REV are simulated: the tests
+            `dstf uses --since REV` lists, asked of the same simulator,
+            which is closed before the run starts its own. The console, the
+            dashboard, status.json and verdicts.json say it was not a full
+            run. It is for speed while you work; a full run stays the check
+            before a release or a merge.
+
+            Exit code: 0 when every test that ran passed, and with nothing
+            to run: no test is in --rerun's categories, or no test uses
+            what changed since --changed-since's REV (then nothing is
+            written, not even the file --output names); 1 when a test
             failed, failed to simulate or timed out, when nothing ran at
-            all, or when an accept skipped a test; 2 for a config error.
+            all, when an accept skipped a test, or when the simulator could
+            not be asked what the tests use; 2 for a config error, and for
+            --changed-since when git cannot answer.
             """,
         examples=(
             "dstf run --config testing.json",
@@ -1380,6 +1400,7 @@ def _add_run(tree: _Tree, top) -> None:
             "dstf run --config testing.json --rerun failed,sim-failed --report",
             "dstf run --config testing.json --report-format junit -o results.xml --no-browser",
             "dstf run --config testing.json -i failed",
+            "dstf run --config testing.json --changed-since main",
         ),
         creates=True,
     )
@@ -1470,6 +1491,18 @@ def _add_run(tree: _Tree, top) -> None:
         f"categories — ONE comma-separated argument of: {_CATEGORIES} — and "
         "report the whole suite (it implies --merge). Default, with no "
         "value: failed. Exit 0 when no test is in them.",
+    )
+    node.add_argument(
+        "--changed-since",
+        metavar="REV",
+        default=None,
+        help="Simulate only the tests that use a class stored in the Modelica "
+        "files that differ between the git revision REV (a branch, a tag, a "
+        "commit: main, v1.3.0, HEAD~1) and the files on disk, uncommitted "
+        "edits included: the tests `dstf uses --since REV` lists, of those "
+        "--filter and --package leave. Not a full run, and it says so. Exit "
+        "0, with nothing written, when no test uses what changed. Default: "
+        "every test.",
     )
 
 
