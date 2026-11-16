@@ -117,12 +117,6 @@
 - `status` field: `active`, always written. Any other status (an old `skip` or `obsolete`) refuses the test by name; a baseline is removed by deleting its file
 - The listed names are `diagnostic_variables` in `testing.json` (default: `["CPUtime", "EventCounter"]`) plus a test entry's own (`diagnostic_names`)
 
-### Reference JSON values use precision-aware rounding
-- `_to_json_list()` checks the numpy array dtype and rounds accordingly
-- float32 (older Dymola): 7 significant digits — removes float32→float64 promotion noise
-- float64 (newer Dymola): 15 significant digits — preserves full double precision
-- Python's `%g` format auto-switches to scientific notation for very large/small values
-
 ### Two-phase .mat reading: names first, then selective data
 - Phase 1: `list_result_mat_variables()` reads only the `name` matrix from the MAT4 headers — fast even for 36MB files
 - Phase 2: `compute_needed_variables()` (`backends/common/result_variables.py`) resolves patterns against the name list to determine exactly which variables are needed
@@ -162,12 +156,6 @@
 - One chart per plot of the test (D140: one per scored variable or array family, then the watch plots): actual vs reference, plus the overlays the picker toggles
 - Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart — signed and absolute error on the right axis "Error [signal units]", NRMSE on its own "NRMSE [–]", each shown while a series on it is visible
 - `dstf spec update` applies a patch file, from the authoring tool's Export or written by hand — the page itself edits nothing (D125)
-
-## Anti-Patterns
-
-### Don't use `fnmatch` for Modelica variable matching
-- `pipe.T[1]` matches nothing because `[1]` is treated as a character class matching only `1`
-- Use the custom `_pattern_to_regex()` instead
 
 ### Backend-agnostic live progress via meta-refresh dashboard
 - `ProgressReporter` (`backends/progress.py`) holds in-memory `TestStatus` per test (`queued` / `running` / `passed` / `failed` / `timed_out` / `cancelled`) plus elapsed/detail/worker_id
@@ -228,13 +216,25 @@
 - `worker_id` for the dashboard comes from the actual pool thread slot via `threading.current_thread().name` (regex-matched suffix), not the batch index — stable attribution across many batches per worker
 - Tradeoff: smaller batches reload Dymola's library more often. Sweet spot is ~3-10 depending on per-test runtime
 
-### Don't run Dymola per-test in separate processes
-- Library loading overhead (30-60s) dominates. Batch execution loads once per worker.
-
 ### No-baseline plot generation
 - When a test has no reference baseline, variable plots are still generated showing the simulated trajectory
 - The plots draw the actual alone, since there is no reference to compare against
 - Enables visual review of new tests before accepting them as baselines
+
+### Platform and simulator facts the code is built around
+- **Windows MAX_PATH (260 characters)**: Modelica model paths nest deeply, so a file named after the model would pass the limit. A baseline is named by a fixed-length code computed from its model id (`ref_<12 hex digits>.json`, `storage/names.py`, D165): a report's tail `reports/ref_<code>/comparison_data.json` is 45 characters whatever the model. `testing_output/` work directories can still reach the limit with a deep library name and a long backend name
+- **Dymola's working directory after `openModel()`**: `openModel()` changes Dymola's cwd to the model's directory. So every test `cd()`s to its own directory after the libraries are loaded — `simulate.mos` starts with `cd()`, the persistent worker calls `cd()` before each test — a library reload in a live worker passes `changeDirectory=False`, and `startup.mos` writes its one file (the tool version) by absolute path
+- **Translation log flag needs Dymola 2025x or newer**: `Advanced.UI.TranslationInCommandLog := true;` is the flag from Dymola 2025x on; older versions may name it `Advanced.TranslationInCommandLog` (no `UI`). The framework hardcodes the 2025x+ spelling (`startup.mos` and the persistent worker)
+- **Dymola's default output grid**: with neither `numberOfIntervals` nor `Interval` in the experiment annotation, Dymola writes 500 intervals. An accept records the intervals the run had in the baseline's `simulation` section — the test's own setting, or, when it set neither, the result's distinct times minus one (`ReferenceStore`). It is a record: the next run does not read it back
+
+## Anti-Patterns
+
+### Don't use `fnmatch` for Modelica variable matching
+- `pipe.T[1]` matches nothing because `[1]` is treated as a character class matching only `1`
+- Use the custom `_pattern_to_regex()` instead
+
+### Don't run Dymola per-test in separate processes
+- Library loading overhead (30-60s) dominates. Batch execution loads once per worker.
 
 ### Don't store simulation artifacts in shared directories during parallel runs
 - `dsin.txt`, `dslog.txt`, `dsfinal.txt`, `dsres.mat` are overwritten by each simulation
