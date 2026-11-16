@@ -661,8 +661,9 @@ def test_the_rows_scroll_inside_the_panel_above_the_table(tmp_path, playwright_b
             _box(page, model_id).click()
         _queue(page, "Queue 6")
         expect(page.locator(".dstf-queue-row")).to_have_count(6, timeout=RUN_TIMEOUT)
-        # A's start is the queue's last change while A is held: each change
-        # draws the rows again, and a row read before it is gone after
+        # The rows are read once A runs. A's start, said after the pool's
+        # thread marked it running, changes no row and leaves them standing
+        # (test_queue_panel's test_an_event_that_changes_no_row_…)
         expect(page.locator(INDICATOR)).to_have_text(
             "1 running · 5 queued", timeout=RUN_TIMEOUT
         )
