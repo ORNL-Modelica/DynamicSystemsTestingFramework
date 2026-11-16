@@ -1,4 +1,4 @@
-"""Edit tree (§4.6 table, §4.7): the NODE and VARIABLE placements, exactly
+"""Edit tree: the NODE and VARIABLE placements, exactly
 one test selected. At NODE the panel IS that node's controls — add, wrap,
 edit on a k-of-n or weighted node, and remove — each form a ROW under the
 node's row (`Panel.row`), and on a combinator its kind as a dropdown in
@@ -114,9 +114,8 @@ def _typed(value: Any) -> bool:
     return value is not None and value != ""
 
 
-#: What each Wrap does to the tree, one sentence per kind (the 2026-09-21
-#: board, 1C). ``{what}`` is "criterion" for a leaf, "node" for a
-#: combinator.
+#: What each Wrap does to the tree, one sentence per kind. ``{what}`` is
+#: "criterion" for a leaf, "node" for a combinator.
 _WRAP_SENTENCES = {
     "and": "The {what} becomes the only child of a new and; add siblings to it "
     "with its +.",
@@ -139,7 +138,7 @@ _UNWRAP_VALUE = "unwrap…"
 _UNWRAP_TEXT = "unwrap — its children take its place"
 #: The kinds a node cannot take without fields: the dropdown opens the Edit
 #: form preset to one of them, and nothing is staged until Apply. And, or
-#: and warn have none — only these nodes' rows open it on a click (U5).
+#: and warn have none — only these nodes' rows open it on a click.
 _NEEDS_FIELDS = ("k-of-n", "weighted")
 #: The dropdown's option slot: the unwrap entry below a separator.
 _KIND_OPTION = (
@@ -175,7 +174,7 @@ _NO_THRESHOLD = "enter a threshold"
 _DEFAULT_DIRECTION = "less"
 #: A weighted node's ``direction``, as the Direction select reads it.
 _DIRECTIONS = {"less": "lower is better", "greater": "higher is better"}
-#: The Move to… icon's tooltip and accessible name (U4).
+#: The Move to… icon's tooltip and accessible name.
 _MOVE_TO = "Move to…"
 
 
@@ -229,9 +228,9 @@ class EditTree:
         model_id = next(iter(sel.tests))
         if sel.quantity is not None:
             # A Statistics row's `+` is drawn grey with the add form's
-            # reason where nothing can be added (A9): a why-line in place
+            # reason where nothing can be added: a why-line in place
             # of it, on every row, said the same thing twenty times (57 on
-            # a TRANSFORM card).
+            # one real library's card).
             return True
         tree, why = s.tree_or_reason(model_id)
         if tree is None:
@@ -255,7 +254,7 @@ class EditTree:
         elif sel.quantity is not None:
             _statistic_plus(ui, s, ui_panel, model_id, sel.quantity)
         else:
-            # The plot's criteria header (Q3 A): one `+`, its form a row
+            # The plot's criteria header: one `+`, its form a row
             # under the header, the new criterion's editor open after Add.
             _variable_plus(ui, s, ui_panel, model_id, str(sel.variable))
 
@@ -268,7 +267,7 @@ class EditTree:
         if action == "remove":
             return _patch(s, None, inputs)
         if action == "move":
-            # The whole new tree as ONE `add /metrics` (V1) — the root add
+            # The whole new tree as ONE `add /metrics` — the root add
             # a wrap uses: a flat test materializes nothing first, and two
             # moves in a row fold into one pending op (`Session.stage`).
             moved = planned_move(s, model_id, path, inputs["dest"])
@@ -350,7 +349,7 @@ def _patch(s: SessionView, tree: dict | None, inputs: dict[str, Any]) -> Patch |
             value = {"combinator": "and", "children": [node, *leaves]}
             return Patch(ops=[PatchOp(model_id, "add", ROOT, value)])
         # Beside any other leaf: right AFTER it, under its parent
-        # combinator (Q3 A) — where the `+` that was clicked is.
+        # combinator — where the `+` that was clicked is.
         parent, index = path.rsplit("/children/", 1)
         return Patch(
             ops=[
@@ -418,7 +417,7 @@ def _combinator_fields(
     children: int,
     fixed: str | None = None,
 ) -> tuple[Callable[[], dict[str, Any]], Callable[[Any], None]]:
-    """The kind select and ONLY the chosen kind's fields (board 1B), in a
+    """The kind select and ONLY the chosen kind's fields, in a
     column rebuilt on the select's change; a value typed for a kind is kept
     for when the user returns to it. Under them, ``sentence(kind)`` — what
     the action does for that kind (`dstf-why`). ``node`` prefills them: the
@@ -543,7 +542,7 @@ def _add_form(
     closes the row and reveals ``added`` — the new criterion's path; a
     refused Add keeps the row.
 
-    The picker (Q8) offers EVERY variable of the result file, tracked or
+    The picker offers EVERY variable of the result file, tracked or
     not — a criterion on one is what tracks it (the next run records it) —
     in two sections (`picker_rows.SECTIONS`): the plot's own series, and
     every other name, a listed name such as CPUtime among them. Its values
@@ -553,7 +552,7 @@ def _add_form(
     The names are read when the form OPENS, never when the `+` is drawn.
 
     Under the picker, while the variable picked is an element of an array
-    (`_family`), an Indices field (D152, the owner's R1): filled with every
+    (`_family`), an Indices field (D152): filled with every
     element the result has (``1:20``), it takes a range, a stepped range
     and a list (`families.parse_slice`), and Add writes one criterion per
     chosen element. Enter in it is Add. ``own``: the form was opened from
@@ -844,7 +843,7 @@ def _cluster(
     ui: Any, s: SessionView, ui_panel: Panel, model_id: str, path: str
 ) -> None:
     """One node's controls: flat round icon buttons, each form a ROW under
-    the node's row (`Panel.row`, the 2026-09-21 board, 1A-1D).
+    the node's row (`Panel.row`).
 
     A form is built on its icon's CLICK, from the tree as it is then, and
     cleared on Cancel, on an action that went through (a refused one keeps
@@ -987,7 +986,7 @@ def _cluster(
 
     _drag(s, ui_panel, model_id, path)
     if node.get("combinator") in _NEEDS_FIELDS:
-        # A click on the node's row opens its fields (U5, Q6) — the root's
+        # A click on the node's row opens its fields — the root's
         # too, or a k-of-n root's k could not be edited at all. and / or /
         # warn have none: their kind is all there is, and the dropdown
         # changes it, so their row's click does nothing.
@@ -1010,7 +1009,7 @@ def _cluster(
 
     with ui.row().classes("dstf-node-controls items-center no-wrap gap-0"):
         # A combinator takes the new criterion as its last child; a leaf
-        # has it right after itself (Q3 A).
+        # has it right after itself.
         where = "at the end of" if is_combinator else "after"
         icon(
             "add",
@@ -1031,7 +1030,7 @@ def _cluster(
             lambda: ui_panel.row(f"Wrap {text()} in a combinator", build_wrap),
         )
         if path != ROOT and ui_panel.can_move:
-            # Moving is the tree card's (V2); the root has nowhere to go.
+            # Moving is the tree card's; the root has nowhere to go.
             _move_menu(ui, s, ui_panel, model_id, path)
         if path != ROOT:  # the root has nothing to be removed from
             icon(
@@ -1052,7 +1051,7 @@ def _variable_plus(
     — or, under a root leaf, as ``and[leaf, new]`` — and revealing the new
     criterion's editor. Grey, with the reason, under a root that takes no
     child alone. A watch plot's variable the run did not record is offered
-    too: a criterion names it, and that tracks it (U2).
+    too: a criterion names it, and that tracks it.
 
     It reads the variable as the PAGE does — the scope handed down with
     the selection (`Selection.texts`: the expression its model wrote, with
@@ -1120,7 +1119,7 @@ def _validator(s: SessionView, model_id: str) -> Callable[[dict], None]:
 
 
 def moved_text(notes: tuple[str, ...]) -> str:
-    """What a move's row says (V4): "Moved." and each other change as a
+    """What a move's row says: "Moved." and each other change as a
     sentence of its own — "Moved. The empty warn was removed." A note that
     starts with a field's name keeps it as written: "Moved. k 3 → 2." """
 
@@ -1147,7 +1146,7 @@ def _submit_move(
 
 def _submit(s: SessionView, ui_panel: Panel, **inputs: Any) -> bool:
     """`Panel.submit` for every action but a move, and once it went through
-    where each node it kept went (`Panel.edited`, U5 R1): mapped BEFORE the
+    where each node it kept went (`Panel.edited`): mapped BEFORE the
     submit, from the ops `act` builds over the tree as it is now — as a
     move is planned before its submit: afterwards the paths name the new
     tree. An act that raises maps nothing; the submit raises it again, and
@@ -1167,7 +1166,7 @@ def _submit(s: SessionView, ui_panel: Panel, **inputs: Any) -> bool:
 
 
 def _drag(s: SessionView, ui_panel: Panel, model_id: str, path: str) -> None:
-    """The node's part in the host's drag (U4): a drop on its row is a
+    """The node's part in the host's drag: a drop on its row is a
     move to that zone's place (`zone_dest`); a drag from it — never from
     the root — asks the tree as it is at that moment which zones refuse,
     and why (`zone_map`, once per drag)."""
@@ -1189,11 +1188,11 @@ def _drag(s: SessionView, ui_panel: Panel, model_id: str, path: str) -> None:
 def _move_menu(
     ui: Any, s: SessionView, ui_panel: Panel, model_id: str, path: str
 ) -> None:
-    """Move to… (U4): an icon whose menu lists every place the node can go
+    """Move to…: an icon whose menu lists every place the node can go
     (`move_destinations`, in tree order) — BUILT AT THE CLICK, from the tree
     as it is then, like a form: the list is every place of the tree, and
     one per row built with the rows was ~20 s of rebuild on a 134-node
-    tree (Q6). A refused place is greyed with its reason as a second line,
+    tree. A refused place is greyed with its reason as a second line,
     where the node is greyed with none; the arrow keys skip both. Each
     place reads its node's text cut in the middle, then where in it — the
     row a "before" names cut in the middle too."""
@@ -1273,11 +1272,11 @@ def _move_menu(
 def _statistic_plus(
     ui: Any, s: SessionView, ui_panel: Panel, model_id: str, quantity: str
 ) -> None:
-    """A Statistics row's `+` (U3): no form — the requirement is the seed
+    """A Statistics row's `+`: no form — the requirement is the seed
     (a count exact, a time within its tolerance, inside a `warn` where it
     lands in an `and`; a `value` row's within 1% of the baseline's summary,
     else bounds around the run's number, else `VALUE_LEAF`), added at the
-    END of the root (Q6 b), or as ``and[leaf, new]`` under a root leaf; the
+    END of the root, or as ``and[leaf, new]`` under a root leaf; the
     new criterion's editor opens after it. Grey with the add form's reason
     where nothing can take it: a simulate-only test, a test with no tree to
     add to (the Session's `tree_or_reason`), a root that takes no child
@@ -1330,7 +1329,7 @@ def _kind_select(
     node: dict,
     open_edit: Callable[[str], None],
 ) -> None:
-    """A combinator's kind as a dropdown in its row (Q3 A), changed in
+    """A combinator's kind as a dropdown in its row, changed in
     place: and / or / warn stage at once; k-of-n / weighted open the Edit
     form preset to that kind (``open_edit``); `unwrap…`, below a separator,
     unwraps. A refused change says why in the row, and the select goes

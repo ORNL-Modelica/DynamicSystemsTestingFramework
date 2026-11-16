@@ -132,7 +132,7 @@ class Pill:
         self.label.set_text(text if text is not None else status)
 
 
-#: How much of a label with no index the tail keeps (Q20).
+#: How much of a label with no index the tail keeps.
 TAIL_CHARS = 12
 
 
@@ -140,7 +140,7 @@ def middle_split(text: str) -> tuple[str, str]:
     """``(head, tail)``: the tail is the text from the last ``[`` — the
     index says which element — or its last `TAIL_CHARS` characters when it
     has none, or when that ``[`` is further back than that: a tail from
-    ``volume[1]`` on took the width and hid the head (D140, Q20)."""
+    ``volume[1]`` on took the width and hid the head (D140)."""
     at = text.rfind("[")
     if at == -1 or len(text) - at > TAIL_CHARS:
         at = max(0, len(text) - TAIL_CHARS)
@@ -156,14 +156,14 @@ class _Part(TextElement):
 
 
 class MiddleCut(ui.element):
-    """A variable label cut in the MIDDLE (D140, Q20): the head — what the
+    """A variable label cut in the MIDDLE (D140): the head — what the
     variable is — ellipsized, the tail — which element — whole. Both are
-    inline-blocks in an inline-block (never a flex pair: HIGH 6 of the
-    plan's review), the head's width capped at the element's less the
-    tail's ``--tail`` (its length in ``ch``), so the element's innerText,
-    a copy of it and its accessible name are the whole label; its title is
-    too. ``text`` / ``set_text`` as a label's, so a reader of ``.text`` is
-    unchanged. Model ids keep their start cut (the Tests drawer)."""
+    inline-blocks in an inline-block (never a flex pair), the head's width
+    capped at the element's less the tail's ``--tail`` (its length in ``ch``),
+    so the element's innerText, a copy of it and its accessible name are the
+    whole label; its title is too. ``text`` / ``set_text`` as a label's, so a
+    reader of ``.text`` is unchanged. Model ids keep their start cut (the Tests
+    drawer)."""
 
     def __init__(self, text: str = "") -> None:
         super().__init__("span")

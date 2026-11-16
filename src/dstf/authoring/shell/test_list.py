@@ -1,9 +1,8 @@
-"""The tests as rows, grouped by package or flat (brief §3.2; DESIGN.md
-"Tables"): the Tests drawer's list (the Suite page's is a table,
-`suite_grid.py`). Each row is painted from the Suite's row model
-(`suite_rows`), so the two say the same status. A row's status and its
-unsaved edits repaint in place; the list is rebuilt only when the test
-set, the order or the layout moves."""
+"""The tests as rows, grouped by package or flat (DESIGN.md "Tables"): the
+Tests drawer's list (the Suite page's is a table, `suite_grid.py`). Each row is
+painted from the Suite's row model (`suite_rows`), so the two say the same
+status. A row's status and its unsaved edits repaint in place; the list is
+rebuilt only when the test set, the order or the layout moves."""
 
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ from ...reporting.theme import STATUS
 @dataclass
 class Row:
     """One test's row: the elements a click or a rescore updates in place —
-    the whole list is never resent (roadmap §2 "the row model")."""
+    the whole list is never resent."""
 
     model_id: str
     group: str
@@ -47,13 +46,12 @@ def _name(model_id: str, short: bool) -> str:
 
 def _full_name(button: ui.button, model_id: str) -> None:
     """A Full name, cut at its START (the stylesheet's `.dstf-cut-start`):
-    TRANSFORM's ids share long package prefixes, and cut at the end two of
-    them read alike. Drawn in place of Quasar's label, in the `.block` span
-    Quasar draws one in, the id in a `<bdi>`: the span is right-to-left,
-    and a bare `direction: rtl` moved a leading or trailing `_` or `.` to
-    the other end (Chromium); inside the isolate the id keeps its order.
-    Not isolates from `::before` / `::after`: those entered the button's
-    accessible name."""
+    A large library's ids share long package prefixes, and cut at the end two
+    of them read alike. Drawn in place of Quasar's label, in the `.block` span
+    Quasar draws one in, the id in a `<bdi>`: the span is right-to-left, and a
+    bare `direction: rtl` moved a leading or trailing `_` or `.` to the other
+    end (Chromium); inside the isolate the id keeps its order. Not isolates
+    from `::before` / `::after`: those entered the button's accessible name."""
     with button, ui.element("span").classes("block dstf-cut-start"):
         TextElement(tag="bdi", text=model_id)
 
@@ -123,8 +121,7 @@ class TestList:
                         _full_name(name, model_id)
                     # `color=None`: a Quasar badge otherwise carries
                     # `bg-primary`, whose `!important` beats the inline
-                    # status fill and paints every verdict blue (the review
-                    # of Task 4 of the 2026-09-20 Test page plan, in
+                    # status fill and paints every verdict blue (in
                     # Chromium).
                     edits = (
                         ui.label()
@@ -165,8 +162,7 @@ class TestList:
         row.badge.update()
         # Add and remove, never replace: NiceGUI hides an element by appending
         # a `hidden` class, and a replaced list dropped it — every filtered-out
-        # row came back on a rescore (the review's probe of Task 6 of the
-        # 2026-09-16 Suite page plan).
+        # row came back on a rescore.
         row.container.classes(
             remove=" ".join(f"dstf-tint-{s}" for s in STATUS),
             add=f"dstf-tint-{row.css}",

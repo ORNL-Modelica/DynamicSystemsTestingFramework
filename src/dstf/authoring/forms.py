@@ -1,4 +1,4 @@
-"""NiceGUI controls from a mode's Config dataclass (§4.7 "Edit criteria").
+"""NiceGUI controls from a mode's Config dataclass (the Edit criteria form).
 
 ``derive_schema`` describes the dataclass — field name, type, default,
 choices, label, help, bounds; this module turns each ``FieldSpec`` into one
@@ -24,20 +24,20 @@ from .typed_number import TypedNumber
 
 OnChange = Callable[[dict], None]
 
-#: What a source of a value in effect reads as (K3); the keys are
+#: What a source of a value in effect reads as; the keys are
 #: `TestComparison.tolerance_source`'s.
 SOURCES = {
     "test": "the test's tolerance",
     "reference": "the baseline's tolerance",
     "project": "the project's tolerance",
 }
-#: The one bottom-space rule of an editor row (K4): every one-line field
+#: The one bottom-space rule of an editor row: every one-line field
 #: reserves Quasar's bottom line, whether it holds a hint, a validation
 #: message or nothing, so the input lines of a row share one y. Without it
 #: a number with a validation rule reserved the line and nothing else did,
 #: and its input line sat 20 px above the row's.
 BOTTOM = "bottom-slots"
-#: A hint is on ONE line (K8): Quasar's bottom line is absolutely placed,
+#: A hint is on ONE line: Quasar's bottom line is absolutely placed,
 #: so its text never widens the field, and at the row's 140 px the hint
 #: "in effect: 0.01 (the test's tolerance)" wrapped to three lines under
 #: its field. A field with a hint is at least as wide as the hint: px per
@@ -133,7 +133,7 @@ def render_form(
     each control needs a width of its own. A multi-line control (a list
     shown as JSON) takes the whole line instead, whatever ``classes`` says.
 
-    ``in_effect`` (the tree view leaf's, K3) names the value a field
+    ``in_effect`` (the tree view leaf's) names the value a field
     applies while it is EMPTY: its hint line says it whenever the field is
     empty — at open, and after an own value is cleared — in place of the
     dataclass default as a placeholder, which is not what applies, and
@@ -164,8 +164,8 @@ def render_form(
         current = values.get(spec.name)  # the default is a placeholder, not a value
         if spec.type == "passthrough":
             # Structured data (tube control points, declared peaks,
-            # checkpoints): shown as JSON, read-only — on-plot editing (§5
-            # step 6) is where these get their controls.
+            # checkpoints): shown as JSON, read-only — on-plot editing is
+            # where these get their controls.
             form._passthrough[spec.name] = current
             form.controls[spec.name] = (
                 ui.textarea(

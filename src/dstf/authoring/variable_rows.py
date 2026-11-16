@@ -1,5 +1,5 @@
-"""The Variables drawer's rows (the roadmap's 3c; DESIGN.md "The Variables
-drawer"), as data: the page draws them and knows none of the rules.
+"""The Variables drawer's rows (DESIGN.md "The Variables drawer"), as
+data: the page draws them and knows none of the rules.
 
 Every variable of the last result, in groups, with arrays folded into one
 row the way the plots fold them (`discovery.plots.derive_plots`: by
@@ -105,7 +105,7 @@ def variable_groups(
     filter, asked of the name AND the label. Absent from either map, a name
     reads as itself.
 
-    The rows fold as the plots do (the owner's ruling O3,
+    The rows fold as the plots do (the owner's ruling,
     :func:`~dstf.discovery.plots.derive_plots`): by RESULT-FILE NAME, never
     by label, and each of the ``unit_tests`` names is a row of its own
     whatever its expression reads — three UnitTests variables whose

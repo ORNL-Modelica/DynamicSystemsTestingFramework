@@ -1,4 +1,4 @@
-"""The Test page's status strip (the owner's ruling Q2 A): a full-width
+"""The Test page's status strip (the owner's ruling): a full-width
 row directly under the test's row, inside the header that stays at the
 top. It says the test's situation (`authoring.situation`) in a tone, and
 fills the one next action: the shell's own Preview and save / Discard for
@@ -60,8 +60,8 @@ class StatusStrip:
                     marker="strip-discard",
                     why=False,
                 )
-                # The board's label, and the header's: the tooltip says
-                # which edits this one drops.
+                # The header's label: the tooltip says which edits this one
+                # drops.
                 with self.discard.button:
                     ui.tooltip(DISCARD_TIP)
                 # The queue's two: a queued test's next action is Remove, a
@@ -104,7 +104,7 @@ class StatusStrip:
         """Preview and save and Discard, shown while edits are pending;
         Preview and save is the filled next action unless the edits name a
         variable only a new run records — Queue is then the one filled (the
-        owner's O1), and Preview and save is quiet, still one click."""
+        owner's ruling), and Preview and save is quiet, still one click."""
         self.preview.set_visibility(editing)
         self.discard.container.set_visibility(editing)
         if filled:

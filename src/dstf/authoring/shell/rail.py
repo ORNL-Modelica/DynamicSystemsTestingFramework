@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from .test_page import TestPage
 
 RAIL = 40
-#: A dragged panel's bounds (K5): at least ``MIN_PANEL`` px, at most
+#: A dragged panel's bounds: at least ``MIN_PANEL`` px, at most
 #: ``MAX_FRACTION`` of the window AND the window less the rail and
 #: ``MIN_PLOTS`` px for the page's plots column (at 900 px, 60% left the
 #: plots 320 px and a context chip's × past its card). The browser clamps
@@ -57,9 +57,9 @@ def max_panel(window: float) -> float:
     return min(MAX_FRACTION * window, window - RAIL - MIN_PLOTS)
 
 
-#: The drawer's width in the BROWSER (K5), installed by `Rail.__init__` as
+#: The drawer's width in the BROWSER, installed by `Rail.__init__` as
 #: `window.__dstfDrawer`: the visible panel (`offsetParent`: both drawers'
-#: panels are in the row, one hidden, B10), the clamp to `MIN_PANEL` and
+#: panels are in the row, one hidden), the clamp to `MIN_PANEL` and
 #: `max_panel` — only the browser knows the window's width — and `apply`,
 #: which sets the panel's width and the drawer's `width` prop on NiceGUI's
 #: element store (`mounted_app.elements`, reactive, so Quasar re-lays the
@@ -200,7 +200,7 @@ NAMES = (("short", "Short"), ("full", "Full"))
 
 class TestsDrawer:
     """The Suite page's list, without checkboxes, and the drawers' one
-    control set (the owner's ruling Q7): the filter with `.*` / `Aa`, sort,
+    control set (the owner's ruling): the filter with `.*` / `Aa`, sort,
     group and names, and compact status pills with EDITED — every control
     the tab's (`TabState`), so a switch of test keeps them. This test is
     highlighted; a click opens that test in this tab, and pending edits are
@@ -364,8 +364,8 @@ class TestsDrawer:
         drawer hides nothing then. Cached on the needle, its toggles and
         the SET of ids, never their order: events repaint the rows as a
         queue's tests end, a rescore under the status sort reorders them,
-        and a pathological pattern cost 0.79 s of CPU per pass over 331 ids
-        (the plan's executing review)."""
+        and a pathological pattern cost 0.79 s of CPU per pass over 331
+        ids."""
         state = self.page.state
         ids = frozenset(self.list.rows)
         key = (state.tests_needle, state.tests_regex, state.tests_case, ids)

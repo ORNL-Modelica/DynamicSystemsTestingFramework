@@ -1,8 +1,7 @@
-"""The simulation queue on the page (D150; brief §3.6; the `Main` and
-`QueueIndicator` artboards): the header's indicator, on every page, and the
-queue panel on the Suite page — one row per item in run order, drawn from
-`authoring.queue_rows`. The panel also carries what the runs card it
-replaced did beside the job: the store writes' lines.
+"""The simulation queue on the page (D150): the header's indicator, on
+every page, and the queue panel on the Suite page — one row per item in run
+order, drawn from `authoring.queue_rows`. The panel also carries the store
+writes' lines.
 
 Nothing here reads a file or a clock of its own: the rows are the Session's
 queue as data, repainted on its `queue` events, and the shell's `poll` —

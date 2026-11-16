@@ -1,4 +1,4 @@
-"""The Session — the authoring tool with no UI (two-tier design, §4.5).
+"""The Session — the authoring tool with no UI.
 
 Opens a project, scores its tests from the last run on disk, holds the
 spec with the ops staged against it, and applies the outcomes capabilities
@@ -155,7 +155,7 @@ class Selection:
     """What a page has selected, handed to a capability through its
     SessionView (D129): the checked tests, the variable and the criterion's
     tree path. A page builds a new view when it changes; two browser tabs
-    keep two. Not the Session's — that was the old shell's one-tab shape.
+    keep two. Not the Session's: a selection is per tab.
     ``node_path``: the tree node whose controls are being drawn (NODE) — a
     leaf or a combinator; ``leaf_path`` only ever names a criterion;
     ``leaf_paths`` every member of a folded criteria row (FAMILY_CRITERION,
@@ -187,7 +187,7 @@ class Selection:
 
 @dataclass
 class _ModelReads:
-    """What one click re-read from disk before this cache (brief §2.2): the
+    """What one click would re-read from disk without this cache: the
     primary reference and the overlays; plus the decimated base view per
     variable — trajectories, overlays and error series, no leaves — held
     here and shared by `figure` and `plot_figure` through `_editable_view`,
@@ -398,10 +398,10 @@ def check_project(
     parses it — no scan of the library, no result read. ``ConfigError``
     with the sentence every other command prints.
 
-    ``dstf author`` runs it BEFORE it serves: the project used to be opened
-    only once the server was up, on a thread, so `"theme": "neon"`, a
-    `baseline_points` of 1 or an unknown spec key started the server,
-    logged a traceback and showed the error in the page — where `run` and
+    ``dstf author`` runs it BEFORE it serves: were the project first opened
+    once the server was up, on a thread, `"theme": "neon"`, a
+    `baseline_points` of 1 or an unknown spec key would start the server,
+    log a traceback and show the error in the page — where `run` and
     `compare` print one `Config error: …` line and exit 2."""
     config, _warning, _backend = resolve_project(
         config_path, backend=backend, work_dir=work_dir
@@ -588,11 +588,11 @@ class Session:
             # "scanning library…" before the first file — and the only scan
             # event for a source type that scans nothing (Python, FMU, Julia).
             self._emit("loading", phase="scan", done=0, total=0)
-            # The reference index, read here — off the UI loop, after the
-            # known rows, before the commit point: a page reads it as soon
-            # as `project` is set (its baseline's name), and over TRANSFORM
-            # the lazy scan (every ref file read whole) held the loop ~4 s
-            # from that first read, past the browser's ping budget: the
+            # The reference index, read here — off the UI loop, after the known
+            # rows, before the commit point: a page reads it as soon as
+            # `project` is set (its baseline's name), and over a large real
+            # library the lazy scan (every ref file read whole) held the loop
+            # ~4 s from that first read, past the browser's ping budget: the
             # socket dropped and the reconnect left the page stale.
             store.index.ensure_loaded()
             cached = load_scan(config)
@@ -715,8 +715,8 @@ class Session:
             self._store_scan_later(project.config, scan)
         changed = changed - set(kept)
         if changed:
-            # Only what changed is rescored: a one-file edit over
-            # TRANSFORM must not run 331 comparisons on the UI loop.
+            # Only what changed is rescored: a one-file edit over a large
+            # library must not run 331 comparisons on the UI loop.
             # A running model is not re-read: its directory is being
             # rewritten, and its result arrives when it ends.
             # The changed models' results are re-read with their new
@@ -996,7 +996,7 @@ class Session:
         plot-only names included. Nothing narrower: a card title, its
         criteria rows, its pills and its legend entries each disambiguated
         over their own little set, and the same variable read four
-        different ways on one page (the b147918 review).
+        different ways on one page.
 
         A name the scope does not carry is its own label, and the page
         reads it that way. Nothing is ever keyed by either reading —
@@ -1077,7 +1077,7 @@ class Session:
         variable the loaded result lacks and its result FILE holds — a
         backend that records every variable (Dymola, the JSON driver) has
         it already, and a re-read with the merged TestModel extracts it
-        (the owner's O2). A name the file lacks (OpenModelica, FMPy, a
+        (the owner's ruling). A name the file lacks (OpenModelica, FMPy, a
         typo) only a rerun records; the strip asks for that
         (`situation.new_variables`)."""
         project = self._require_project()
@@ -1194,7 +1194,7 @@ class Session:
         leaves come from the tree SPEC with pending ops applied — never
         :meth:`tree`, which materializes the tree and reads the baseline;
         no tree is one plot per tracked name or array. A UnitTests element
-        never folds (O3); a failed run has none. While a model runs whose
+        never folds; a failed run has none. While a model runs whose
         names were never read, nothing is missing."""
         project = self._require_project()
         test = project.test(model_id)
@@ -1369,7 +1369,7 @@ class Session:
             test,
             comp.metric_tree,
             self.variable_texts(model_id),
-            # the editor's "in effect" hints (K3); the report shows none
+            # the editor's "in effect" hints; the report shows none
             base,
         )
 
@@ -1657,16 +1657,16 @@ class Session:
             project.locate,
             edited=bool(candidate.pending),
         )  # ConfigError on a bad tree
-        # A criterion on a variable the result file holds but the last read
-        # did not extract: read again with the merged TestModel, which now
-        # tracks it, so it scores at once — no rerun (the owner's O2). Read
-        # BEFORE anything is replaced: a read that raises (the disk went
-        # away) leaves the Session as it was, as the docstring promises.
-        # Read directly, not through `_rebuild_tests(scanned=...)`: the
-        # effective spec is merged just above (on TRANSFORM a merge is most
-        # of a stage's cost; that would do it twice), and it would re-read
-        # AND rescore only the models it is handed — the other staged models
-        # must be rescored whether or not theirs is re-read.
+        # A criterion on a variable the result file holds but the last read did
+        # not extract: read again with the merged TestModel, which now tracks
+        # it, so it scores at once — no rerun (the owner's ruling). Read BEFORE
+        # anything is replaced: a read that raises (the disk went away) leaves
+        # the Session as it was, as the docstring promises. Read directly, not
+        # through `_rebuild_tests(scanned=...)`: the effective spec is merged
+        # just above (on a large library a merge is most of a stage's cost;
+        # that would do it twice), and it would re-read AND rescore only the
+        # models it is handed — the other staged models must be rescored
+        # whether or not theirs is re-read.
         reread = self._unread_in_file(models, tests)
         fresh = self._read_again(reread, tests) if reread else {}
         self.spec = candidate
@@ -1709,7 +1709,7 @@ class Session:
     ) -> dict[str, TestComparison | None]:
         """`saved_comparison` of each of ``models``, the loaded spec merged
         ONCE for all of them (the pending drawer asks for every edited
-        test's; a merge of TRANSFORM's spec is most of a call's cost)."""
+        test's; a merge of a large library's spec is most of a call's cost)."""
         edited = {op.model_id for op in self.spec.pending}
         out: dict[str, TestComparison | None] = {
             m: self.comparisons.get(m) for m in models if m not in edited
@@ -2269,7 +2269,8 @@ class Session:
         """On the UI loop, once the pool's thread said ``item`` ended: THAT
         test's result is taken from the item and it alone is rescored — with
         the criteria as they are now, pending edits included. Nothing else
-        is read: a reload per item read TRANSFORM's 331 results for each."""
+        is read: a reload per item read a large library's 331 results for
+        each."""
         model_id = item.model_id
         if self._live.get(model_id) is not item:
             return
@@ -2330,11 +2331,11 @@ class Session:
 
     def _drained(self) -> None:
         """``status.json`` and the dashboard, once nothing is queued or
-        running, for the items that ran since they were last written — not
-        per item: both are one run's snapshot, and the queue's live view is
-        the tool's own pages. Off the UI loop (the dashboard's render is
-        1.6 s over TRANSFORM's work dir with --report sidecars), on a
-        snapshot of the verdicts as they stand."""
+        running, for the items that ran since they were last written — not per
+        item: both are one run's snapshot, and the queue's live view is the
+        tool's own pages. Off the UI loop (the dashboard's render is 1.6 s over
+        a large real library's work dir with --report sidecars), on a snapshot
+        of the verdicts as they stand."""
         if self._live:
             return
         items, self._unwritten = self._unwritten, []

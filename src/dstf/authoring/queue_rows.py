@@ -344,8 +344,8 @@ def indicator(session: Session) -> Indicator:
 
 
 def stop_reason(session: Session) -> str | None:
-    """What Stop server says of the queue (brief §3.6: it confirms when the
-    queue is not empty): how many tests it still holds, or None."""
+    """What Stop server says of the queue (it confirms when the queue is
+    not empty): how many tests it still holds, or None."""
     held = sum(
         r.state in (ItemState.WAITING, ItemState.RUNNING) for r in queue_rows(session)
     )

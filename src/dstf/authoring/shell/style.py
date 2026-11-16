@@ -1,10 +1,9 @@
 """The shell's stylesheet on top of `reporting.theme.css_variables()`
 (DESIGN.md "Typography", "Header", "Spacing, shape, elevation", "Status
-badges"): the font token on the body and on Quasar's controls — the
-roadmap left the tool on Quasar's stack until this shell applied it — the
-off-white header with its hairline, the 32 px rows with their status tint,
-the filled badge, the sentence beside a greyed button. Every colour is a
-token; nothing here names a hex."""
+badges"): the font token on the body and on Quasar's controls (in place of
+Quasar's own font stack), the off-white header with its hairline, the 32 px
+rows with their status tint, the filled badge, the sentence beside a greyed
+button. Every colour is a token; nothing here names a hex."""
 
 from __future__ import annotations
 
@@ -724,8 +723,8 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
     + ".dstf-swatch-off { background: transparent; }\n"
     # Two classes: that alone beats the one-class status tints, whatever the
     # order (as one class it tied with them and read the fail tint,
-    # rgb(255,235,238) — the 3c review). The order that matters is after
-    # `.dstf-row:hover`, which has the same specificity: last, the current
-    # row stays lit under the mouse.
+    # rgb(255,235,238)). The order that matters is after `.dstf-row:hover`,
+    # which has the same specificity: last, the current row stays lit under the
+    # mouse.
     + ".dstf-row.dstf-row-current { background: var(--dstf-selection); }\n"
 )

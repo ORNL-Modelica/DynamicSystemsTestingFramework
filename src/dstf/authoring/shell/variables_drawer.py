@@ -1,5 +1,5 @@
-"""The Variables drawer (the roadmap's 3c; DESIGN.md "The Variables drawer";
-the owner's rulings Q5-Q7, 2026-09-25, and Q12-Q14, 2026-09-28): every
+"""The Variables drawer (DESIGN.md "The Variables drawer"; the owner's
+rulings of 2026-09-25 and 2026-09-28): every
 variable of the last result in `variable_rows`' groups, folded and
 filtered, each row checked against the selected plot. Its filter and its
 sort, group and names menus are the tab's (`TabState`), drawn by
@@ -50,10 +50,10 @@ ROWS, MEMBERS = 200, 50
 
 #: A family's swatch marks the row as an array: four blocks, one per stop
 #: of the accent ramp (the first hue's, `figures.families`), light to dark,
-#: as the owner-approved board drew it — discrete, never a gradient
-#: (DESIGN.md "Don't use gradients"). It is not the ramp its members are
-#: drawn in: a row is tied to no plot, and a plot gives a family its hue by
-#: the family's order on that plot.
+#: as the owner approved it — discrete, never a gradient (DESIGN.md "Don't use
+#: gradients"). It is not the ramp its members are drawn in: a row is tied to
+#: no plot, and a plot gives a family its hue by the family's order on that
+#: plot.
 _RAMP = HUES[0]
 
 
@@ -82,7 +82,7 @@ class _Reads:
     scope: dict[str, VariableText]
     plots: tuple[ResolvedPlot, ...]
     #: the names that are the test's UnitTests elements: rows of their own,
-    #: as they are plots of their own (O3)
+    #: as they are plots of their own
     unit_tests: frozenset[str]
     #: the names the test lists (`diagnostic_names`): the Diagnostics group
     diagnostics: tuple[str, ...]
@@ -90,7 +90,7 @@ class _Reads:
 
 def _slug(title: str) -> str:
     """A group title as one marker word: NiceGUI splits markers on
-    whitespace, and "(top level)" was two (the executing review)."""
+    whitespace, and "(top level)" would be two."""
     return re.sub(r"[^\w.$]+", "-", title).strip("-")
 
 
@@ -117,8 +117,8 @@ class VariablesDrawer:
         self.tracked: frozenset[str] = frozenset()
         #: The texts two or more of the drawn rows read as.
         self.alike: set[str] = set()
-        #: Why "+ new plot" is grey on every row — O2's gate, worded by the
-        #: run state — as the last build read it, or None.
+        #: Why "+ new plot" is grey on every row — `plots_withheld`'s gate,
+        #: worded by the run state — as the last build read it, or None.
         self.withheld: str | None = None
         #: The filter and its toggles are the tab's (`TabState`): a switch
         #: of test builds a new drawer, and it starts from them.
@@ -248,9 +248,9 @@ class VariablesDrawer:
 
     def _signature(self, reads: _Reads | None) -> object:
         """Everything a build draws from: the reads, the selected plot and
-        the number of plots, the run state and O2's gate, the filter and
-        the menus, the families opened, and the reason an empty result
-        gives."""
+        the number of plots, the run state and `plots_withheld`'s gate, the
+        filter and the menus, the families opened, and the reason an empty
+        result gives."""
         page = self.page
         head = (
             page.selected,
@@ -296,9 +296,10 @@ class VariablesDrawer:
             self.target.set_text("")
             return
         n = len(page.cards)
-        # O2's gate: a result that is not a success has no plots — nothing
-        # to add context to, and a watch plot made on it would draw nothing.
-        # Its run failed (`run_state`), as every line of the page says.
+        # `plots_withheld`'s gate: a result that is not a success has no plots
+        # — nothing to add context to, and a watch plot made on it would draw
+        # nothing. Its run failed (`run_state`), as every line of the page
+        # says.
         run = page.run_state()
         self.withheld = RUN_FAILED if page.plots_withheld() else None
         self.target.set_text(
@@ -428,7 +429,7 @@ class VariablesDrawer:
         # outran the one line they shared with the name, "plot N" and
         # "+ new plot" — and those, muted, on the second. A second line that
         # would hold nothing but the hover-only "+ new plot" collapses, the
-        # `+` at line 1's right (K6): a list of untracked names was every
+        # `+` at line 1's right: a list of untracked names was every
         # other line empty.
         two_lines = show_muted or bool(row.elsewhere)
         with (
@@ -578,10 +579,10 @@ class VariablesDrawer:
 
     def _new(self, row: VarRow) -> None:
         """A WATCH plot of the row's one variable, after every other plot,
-        selected. Read NOW: a variable some plot has as its subject — a
-        second click before the page caught up with the first — makes
-        none, and neither does a result that is not a success (O2's gate)
-        since the row was drawn."""
+        selected. Read NOW: a variable some plot has as its subject — a second
+        click before the page caught up with the first — makes none, and
+        neither does a result that is not a success (`plots_withheld`) since
+        the row was drawn."""
         page = self.page
         session = page.shell.session
         plots = session.plots(page.model_id)

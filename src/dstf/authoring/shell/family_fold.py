@@ -1,4 +1,4 @@
-"""A plot card's folded criteria rows (D152; the owner's R2): under an
+"""A plot card's folded criteria rows (D152): under an
 array family's plot, the elements whose criterion is one and the same read
 as ONE row — the metric, the family with the folded indices, a count by
 verdict — whose chevron unfolds it to its members' own rows and whose click
@@ -13,14 +13,14 @@ is moved. The criteria's rows stand where the card drew them, flat and in
 tree order; a fold's row is put in before its first member's, and a member
 is that same row with two attributes — ``data-member`` (its indent) and
 ``hidden`` (while its fold is closed). Attributes, never classes: a server
-repaint of a row's classes writes its whole class attribute (the U5 spike),
-and both survive every repaint. Where a row is SHOWN is its CSS ``order``
-in the column: a fold's row, then its members as one block, then — a
-sibling of the fold, never between two of its members — the row of an
-element with a criterion of its own. An editor being typed in is therefore
-never re-parented, moved or redrawn by a row joining or leaving a fold (a
-row moved in the document loses the focus inside it); the cost is that Tab
-goes through the rows in tree order, not in the order shown.
+repaint of a row's classes writes its whole class attribute, and both survive
+every repaint. Where a row is SHOWN is its CSS ``order`` in the column: a
+fold's row, then its members as one block, then — a sibling of the fold, never
+between two of its members — the row of an element with a criterion of its own.
+An editor being typed in is therefore never re-parented, moved or redrawn by a
+row joining or leaving a fold (a row moved in the document loses the focus
+inside it); the cost is that Tab goes through the rows in tree order, not in
+the order shown.
 
 Which folds are open is the browser tab's (`TabState.family_unfolded`),
 kept as their members' paths so it follows the members — a fold whose first
@@ -400,8 +400,7 @@ class Folding:
         and the rows are repainted from the tree — at once, since no event
         follows a close. Left as they were, a fold typed to its neighbour's
         value read as two rows of one criterion, and its Indices then
-        staged a second leaf on an element that had one (the executing
-        review's H1)."""
+        staged a second leaf on an element that had one."""
         if self.held:
             self.held = False
             self.paint(self.card._view())

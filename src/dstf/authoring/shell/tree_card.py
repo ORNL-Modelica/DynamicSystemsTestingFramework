@@ -1,15 +1,15 @@
-"""The criteria tree card (brief §3.2; the 2026-09-20 board, 1A / 1B):
-closed it is one line — the root's verdict, what the root is, the tally,
-and the first failures by name, each a jump to its criterion; open it is a
-row per node with that node's controls, which are whatever capabilities
-attach at the NODE placement. The card knows no capability by name.
+"""The criteria tree card: closed it is one line — the root's verdict, what the
+root is, the tally, and the first failures by name, each a jump to its
+criterion; open it is a row per node with that node's controls, which are
+whatever capabilities attach at the NODE placement. The card knows no
+capability by name.
 
 A refresh rebuilds the rows only when the tree's SHAPE moved — the paths,
 kinds and variables of its nodes. A verdict that flips, a readout, a
 combinator's own count: those repaint into the row that is already there.
 A cluster is elements enough that re-sending every row on every Session
-event was the cost the 3b review measured (40 leaves: ~1150 elements per
-sync with the tree open)."""
+event was the measured cost (40 leaves: ~1150 elements per sync with the
+tree open)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 NAMED = 2  #: failures the closed line names; the rest are counted
 
-#: One level's bar and the gap after it (U5, Q1): 6 px + 2 px.
+#: One level's bar and the gap after it: 6 px + 2 px.
 BAR_STEP = 8
 #: The row's gap between its parts (`gap-3`), the chevron's place and the
 #: drag handle's (`.dstf-chev-slot`, `.dstf-grip`), px.
@@ -43,8 +43,8 @@ _GAP, _CHEVRON, _GRIP = 12, 28, 20
 
 
 def content_left(depth: int) -> int:
-    """Where a row's content starts, right of its bars: its chevron's place
-    (U5, E4) — where a drag's "before" line starts (U4 C15)."""
+    """Where a row's content starts, right of its bars: its chevron's place,
+    where a drag's "before" line starts."""
     return BAR_STEP * depth + _GAP
 
 
@@ -58,7 +58,7 @@ def pill_left(depth: int) -> int:
 #: second "Moved." would not change it (`TreeCard.say`).
 _AGAIN = "\u200b"
 
-#: The drag (U4), drawn in the browser — only the drag's start and the drop
+#: The drag, drawn in the browser — only the drag's start and the drop
 #: reach the server. A row's top half is BEFORE it, its bottom half ONTO
 #: it (the owner's ruling, D1 as amended); the root has only onto. The map
 #: of each row's zones (`Panel.movable`'s ``zones``) arrives once per drag
@@ -168,13 +168,13 @@ _DRAG_END = """(e) => {
 }"""
 
 
-#: The hovered branch (U5, Y2), drawn in the browser: hovering a group's
+#: The hovered branch, drawn in the browser: hovering a group's
 #: row deepens that group's level bar on its row and every row under it; a
 #: criterion's row does the same for its parent group; the root, and a
 #: criterion right under it, deepen nothing. Marked on the BAR, never the
 #: row: a server repaint of a row's classes (`row.classes`) writes the
 #: row's whole class attribute and takes a client-set row class with it —
-#: the U5 spike measured it — and the server never re-classes a bar.
+#: measured in a real browser — and the server never re-classes a bar.
 _BRANCH = """(e) => {
   const rows = e.currentTarget;
   const row = e.target.closest && e.target.closest('[data-tree-path]');
@@ -207,13 +207,12 @@ _BRANCH_OFF = """(e) => {
   rows.dataset.branch = '';
 }"""
 
-#: A group folded or unfolded in the page (U5, Q3): its row's
-#: ``data-folded``, and every row and form slot under a folded group
-#: ``hidden`` — attributes, never classes (E2): a server repaint of a
-#: row's classes writes its whole class attribute (the U5 spike) and leaves
-#: its other attributes alone. No rows are rebuilt, so a drag's revision
-#: stays (U4 W5). The server is told, records it in the tab and sets the
-#: same attributes, so a later rebuild draws them too.
+#: A group folded or unfolded in the page: its row's ``data-folded``, and every
+#: row and form slot under a folded group ``hidden`` — attributes, never
+#: classes: a server repaint of a row's classes writes its whole class
+#: attribute and leaves its other attributes alone. No rows are rebuilt, so a
+#: drag's revision stays. The server is told, records it in the tab and sets
+#: the same attributes, so a later rebuild draws them too.
 _FOLD_CLICK = """(e) => {
   e.stopPropagation();  // a chevron's click is never its row's
   const row = e.target.closest('[data-tree-path]');
@@ -233,11 +232,11 @@ _FOLD_CLICK = """(e) => {
   emit(on);
 }"""
 
-#: A click on a row's own control is the control's, never the row's (U5):
+#: A click on a row's own control is the control's, never the row's:
 #: the row's click opens its editor or its fields.
 _STOP = "(e) => e.stopPropagation()"
 
-#: Enter or Space on a row that is a button (U5, F5) is its click — on the
+#: Enter or Space on a row that is a button is its click — on the
 #: row itself, never bubbled up from a control inside it; Space's default
 #: would scroll the page.
 _ROW_KEYS = (
@@ -248,7 +247,7 @@ _ROW_KEYS = (
 #: The drag's own MIME type (`_DRAG_COMMON`).
 MIME = "application/x-dstf-node"
 
-#: How long a drag rests on a folded group before it unfolds (Q10), ms.
+#: How long a drag rests on a folded group before it unfolds, ms.
 REST_MS = 700
 
 
@@ -268,7 +267,7 @@ def shape_of(view: dict | None) -> tuple[tuple[str, str, str, str], ...]:
     moved is one worth rebuilding anyway. The combinator is in it because
     the controls read it: `+` is grey under a warn or a weighted, and a
     node edited from weighted to and kept a grey `+` with the weighted
-    reason (the Task 6 review). The metric is NOT in it: a mode switch
+    reason. The metric is NOT in it: a mode switch
     repaints the row's name in place."""
     return tuple(
         (
@@ -328,7 +327,7 @@ def summary_text(view: dict) -> tuple[str, list[dict], int]:
     advisory and an unscored count when either is non-zero), the failing
     leaves the line NAMES — hard failures before advisory ones, at most
     `NAMED` of them — and how many failures are left over for "+k more".
-    Board 1A draws each failure's name once, and it is the thing that
+    The line draws each failure's name once, and it is the thing that
     jumps, so the tally does not repeat the names."""
     if view.get("unscored"):
         # Nothing scored because of a run (D151): the word, and no tally.
@@ -349,7 +348,7 @@ def summary_text(view: dict) -> tuple[str, list[dict], int]:
 
 
 def fold_text(node: dict) -> str:
-    """What a folded group's row adds (Q4, E6): its criteria, however deep,
+    """What a folded group's row adds: its criteria, however deep,
     counted by verdict — "· 3 hidden · 2 pass · 1 fail", with an advisory
     and an unscored count when either is non-zero, as the closed line's
     tally. A folded group inside it is inside it: each criterion is counted
@@ -409,12 +408,12 @@ class _Row:
         show: tuple[ui.element, ui.tooltip] | None = None,
     ) -> None:
         self.pill, self.text, self.readout, self.lead = pill, text, readout, lead
-        #: A group's fold summary (Q4), shown by CSS while its row is
+        #: A group's fold summary, shown by CSS while its row is
         #: folded: painted every time, so a fold needs no round trip.
         self.summary = summary
-        #: A group's chevron (Q3): named by the group's text.
+        #: A group's chevron: named by the group's text.
         self.chevron = chevron
-        #: A criterion's ⤓ and its tooltip (Q7): named by where it is
+        #: A criterion's ⤓ and its tooltip: named by where it is
         #: drawn, which a mode switch moves without rebuilding the row.
         self.show = show
 
@@ -471,11 +470,11 @@ class TreeCard:
         #: from its start and its drop is checked against (`dropped`).
         self.revision = 0
         self._shape: tuple[tuple[str, str, str, str], ...] = ()
-        #: Each group's chevron by its path (U5, Q3): the root has none.
+        #: Each group's chevron by its path: the root has none.
         self.chevrons: dict[str, ui.element] = {}
         #: The criteria's rows by path: a click on each opens its editor.
         self.leaves: set[str] = set()
-        #: The one criterion editor opened under a tree row (U5, Y4): its
+        #: The one criterion editor opened under a tree row: its
         #: leaf, its host and box, the leaf as authored when its fields
         #: were built, and its "Edit on its plot" link's place and whether
         #: it is drawn.
@@ -559,17 +558,17 @@ class TreeCard:
 
     def say(self, path: str, text: str) -> None:
         """A move's line under ``path``'s row, the row brought into view and
-        flashed (V4), and the same text told to the card's live region. One
+        flashed, and the same text told to the card's live region. One
         at a time; `unsay` takes the line away."""
         self.unsay()
         target, row = self.targets.get(path), self.rows_by_path.get(path)
         if target is None or target.slot is None or row is None:
             return
-        self.open_path(path)  # R2: a tree event shows its row
+        self.open_path(path)  # a tree event shows its row
         depth = path.count("/children/")
         with target.slot:
             # Under the row's pill: its bars, the chevron's place and the
-            # handle's (E4).
+            # handle's.
             self.said = (
                 ui.label(text)
                 .classes("dstf-moved text-xs")
@@ -595,11 +594,11 @@ class TreeCard:
             self.said.delete()
         self.said = None
 
-    # -- folding (U5) --------------------------------------------------------------
+    # -- folding --------------------------------------------------------------
 
     @property
     def folded(self) -> set[str]:
-        """This test's folded groups, the tab's (Q8)."""
+        """This test's folded groups, the tab's."""
         return set(self.page.state.tree_folded.get(self.page.model_id, []))
 
     def _keep(self, folded: set[str]) -> None:
@@ -612,9 +611,9 @@ class TreeCard:
     def _apply_folds(self) -> None:
         """The rows as the tab's folded set says — the attributes the page's
         script sets, by a props update of the elements that moved and no
-        rebuild (E2), so the two agree and the drag's revision stands. A
-        form under a row that is now hidden goes (E6: a form nobody can see
-        is no form, as Hide tree)."""
+        rebuild, so the two agree and the drag's revision stands. A
+        form under a row that is now hidden goes (a form nobody can see is
+        no form, as Hide tree)."""
         folded = self.folded
         for path, row in self.rows_by_path.items():
             hide = any(up in folded for up in _ancestors(path))
@@ -639,11 +638,11 @@ class TreeCard:
             if hide and target is not None:
                 self.page.drop_row(target)
                 if self.editor_path == path:
-                    # The editor under it goes the same way (F9).
+                    # The editor under it goes the same way.
                     self.page.drop_editor()
 
     def _fold(self, path: str, e: Any) -> None:
-        """A chevron's click (or a drag resting on its row, Q10): the page
+        """A chevron's click (or a drag resting on its row): the page
         has folded or unfolded the group already; the tab records it."""
         folded = self.folded
         on = e.args if isinstance(e.args, bool) else path not in folded
@@ -655,13 +654,13 @@ class TreeCard:
         self._apply_folds()
 
     def fold_all(self, on: bool) -> None:
-        """Collapse all / Expand all (Y7): every group of the test but the
+        """Collapse all / Expand all: every group of the test but the
         root, which is the tree (Show / Hide tree folds it)."""
         self._keep(set(self.chevrons) if on else set())
         self._apply_folds()
 
     def open_path(self, path: str) -> None:
-        """R2: unfold every folded group ``path`` is inside, and nothing
+        """Unfold every folded group ``path`` is inside, and nothing
         else — a group at ``path`` itself stays as it is. Only for what the
         tree itself shows under a row (a move's line, a refusal, a form);
         what is done outside the tree leaves the folds alone."""
@@ -672,7 +671,7 @@ class TreeCard:
             self._apply_folds()
 
     def rekey(self, paths: dict[str, str]) -> None:
-        """An edit went through (R1): every folded group is folded where the
+        """An edit went through: every folded group is folded where the
         edit put it (``paths``: each kept node, before -> after); one the
         edit removed is dropped. Applied by the sync that redraws the rows
         — the rows standing now are the old tree's."""
@@ -713,11 +712,11 @@ class TreeCard:
         self.rows.set_visibility(self.is_open)
         if not self.is_open:
             # A form nobody can see is no form: hiding the tree takes a
-            # form open under one of its rows away (the Task 5 review).
+            # form open under one of its rows away.
             for host in self.hosts:
                 if host.row is not None:
                     self.page.drop_row(host.row)
-            # And an editor nobody can see is no editor (U5).
+            # And an editor nobody can see is no editor.
             if self.editor is not None:
                 self.page.drop_editor()
         if view is None or not self.is_open:
@@ -737,8 +736,8 @@ class TreeCard:
         for node in nodes_of(view):
             self.painters[str(node.get("path"))].paint(node, listed)
         # The folded set may have been re-keyed under rows whose shape did
-        # not move (twin groups trading places, the U5 review): it is drawn
-        # on the rows standing, not left on the ones it was folded on.
+        # not move (twin groups trading places): it is drawn on the rows
+        # standing, not left on the ones it was folded on.
         self._apply_folds()
         # A host rebuilt to its why-line takes its row's click away.
         self.paint_clicks()
@@ -747,8 +746,8 @@ class TreeCard:
     def paint_clicks(self) -> None:
         """Each row whose click opens something — a criterion's (its
         editor), a group's a panel registered one for (its fields) — is a
-        button to the keyboard and says whether that is open under it now
-        (U5, F5); any other row is neither. Sent only where it moved."""
+        button to the keyboard and says whether that is open under it now;
+        any other row is neither. Sent only where it moved."""
         form = self.page.form[0] if self.page.form is not None else None
         for path, target in self.targets.items():
             row = target.row
@@ -766,7 +765,7 @@ class TreeCard:
             if moved:
                 row.update()
 
-    # -- the criterion editor under a tree row (U5) -----------------------------
+    # -- the criterion editor under a tree row -----------------------------
 
     def open_editor(self, path: str) -> bool:
         """``path``'s editor under its tree row: Done, the "Edit on its
@@ -778,7 +777,7 @@ class TreeCard:
         if target is None or row is None or target.slot is None:
             return False
         self.close_editor()
-        self.open_path(path)  # R2: an editor under a tree row is shown
+        self.open_path(path)  # an editor under a tree row is shown
         model = self.page.model_id
         self.editor_path = path
         row.classes(add="dstf-crit-open")
@@ -858,7 +857,7 @@ class TreeCard:
         self._paint_link()
 
     def _paint_link(self) -> None:
-        """Q12 (F2): "Edit on its plot" while the plot that holds the
+        """The "Edit on its plot" link, while the plot that holds the
         criterion — the first, as a jump opens it — offers more than this
         editor does: a capability placed at CRITERION and not here is
         available there (one that drags its handles). Asked of the
@@ -867,7 +866,7 @@ class TreeCard:
         Bound to no plot: the page finds the plot when it is clicked
         (`TestPage.edit_on_plot`) — this runs in a sync BEFORE the cards
         rebuild, and an index read here named the plot the criterion was
-        on until a later sync drew the link again (J3)."""
+        on until a later sync drew the link again."""
         if self.link_slot is None or self.link_slot.is_deleted:
             return
         path = self.editor_path
@@ -904,7 +903,7 @@ class TreeCard:
 
     def _reset_layout(self) -> None:
         """Reset layout, at the line's end while the test's EFFECTIVE entry
-        has a ``plots`` key (the owner's ruling, Q8 A) — on both of the
+        has a ``plots`` key (the owner's ruling) — on both of the
         line's branches: a test with no tree can have extras. It takes the
         context series and the watch plots; the derived plots are the
         tree's, and stay."""
@@ -955,9 +954,9 @@ class TreeCard:
             if self.is_open and any(
                 n.get("kind") != "leaf" for n in nodes_of(view)[1:]
             ):
-                # Y7: beside the tally, while the rows show and hold a group.
-                # Icons (H4, the U5 review): their words wrapped the line at
-                # 900 px. Named for a screen reader and by a tooltip.
+                # Beside the tally, while the rows show and hold a group.
+                # Icons: their words wrapped the line at 900 px. Named for a
+                # screen reader and by a tooltip.
                 for icon, on, name, marker in (
                     ("unfold_more", False, "Expand all groups", "tree:expand-all"),
                     ("unfold_less", True, "Collapse all groups", "tree:collapse-all"),
@@ -983,7 +982,7 @@ class TreeCard:
             host.clear()
         self.hosts, self.painters, self.rows_by_path = [], {}, {}
         self.targets, self.chevrons, self.leaves = {}, {}, set()
-        # A folded path that names no group any more is dropped (Y6): an
+        # A folded path that names no group any more is dropped: an
         # edit that said where its nodes went has re-keyed the set already
         # (`rekey`); this is for any other.
         groups = {
@@ -999,7 +998,7 @@ class TreeCard:
         self.paint_clicks()
 
     def _show_icon(self, node: dict, path: str) -> tuple[ui.element, ui.tooltip]:
-        """⤓ (Q7), at the start of the criterion's icon cluster: the
+        """⤓, at the start of the criterion's icon cluster: the
         criterion where it is drawn — its plot's row, or its Statistics
         row — scrolled to and flashed; nothing opens. The page owns the
         jump, as it owns the closed line's named buttons. Its click is
@@ -1029,7 +1028,7 @@ class TreeCard:
         row = ui.row().classes("dstf-tree-row items-center no-wrap gap-3 w-full")
         self.rows_by_path[path] = row
         # What the page's scripts read: the row's node, its depth and
-        # whether it is a group (the hovered branch, U5 Y2), and the root's
+        # whether it is a group (the hovered branch), and the root's
         # one drop zone.
         row.props["data-tree-path"] = path
         row.props["data-depth"] = str(depth)
@@ -1042,7 +1041,7 @@ class TreeCard:
             row.props["hidden"] = True
         if path in folded:
             row.props["data-folded"] = "1"
-        # The row IS the way in (U5): a criterion's editor opens under it,
+        # The row IS the way in: a criterion's editor opens under it,
         # a k-of-n's or a weighted's fields — whatever a panel registered
         # (`Panel.on_click`) — and Enter or Space does the same where the
         # row is a button (`paint_clicks`). Its own controls stop the click
@@ -1053,10 +1052,10 @@ class TreeCard:
         if not group:
             self.leaves.add(path)
         # `--indent` is where a "before" line starts: the row's content,
-        # right of its bars (U4 C15, U5 E4).
+        # right of its bars.
         with row.style(f"--indent: {content_left(depth)}px").mark(f"tree-row:{path}"):
-            # A bar per level (U5, Q1): what says what is under what, in
-            # place of an indent (Y3). Level i's colour cycles every four;
+            # A bar per level: what says what is under what, in
+            # place of an indent. Level i's colour cycles every four;
             # the root draws none.
             with (
                 ui.element("span")
@@ -1066,7 +1065,7 @@ class TreeCard:
             ):
                 for i in range(1, depth + 1):
                     ui.element("span").classes(f"dstf-bar dstf-lvl-{(i - 1) % 4 + 1}")
-            # The chevron's place (Q3), kept on every row — empty on a
+            # The chevron's place, kept on every row — empty on a
             # criterion — so the pills stay in line. The root's folds with
             # the card's Show / Hide tree.
             chevron: ui.element | None = None
@@ -1121,7 +1120,7 @@ class TreeCard:
                 .mark(f"tree-text:{path}")
             )
             if depth == 0:
-                # Q2: "and · 5 criteria · root" — the "· " is the tag's CSS.
+                # "and · 5 criteria · root" — the "· " is the tag's CSS.
                 ui.label("root").classes("dstf-root-tag").mark("tree:root-tag")
             summary: ui.label | None = None
             if chevron is not None:
@@ -1141,11 +1140,11 @@ class TreeCard:
                 show = self._show_icon(node, path)
             target = RowTarget(self.page, f"tree:{path}", row, path, None)
             target.lead = lead
-            # The tree card's rows are where a node moves from (V2).
+            # The tree card's rows are where a node moves from.
             target.drag = True
             target.grip = grip if depth else None
-            # And, on a group's row, where a click is a panel's to say (Q6,
-            # `Panel.on_click`); a criterion's click is its editor (J4).
+            # And, on a group's row, where a click is a panel's to say
+            # (`Panel.on_click`); a criterion's click is its editor.
             target.clickable = group
             self.targets[path] = target
             host = InlineHost(
@@ -1158,8 +1157,7 @@ class TreeCard:
                 apply=self.page.apply,
             )
             # A host drawn inside a row keeps to its own width, or the
-            # cluster sits left of where it belongs (the 3b review, in
-            # Chromium).
+            # cluster sits left of where it belongs (in Chromium).
             host.column.classes(remove="w-full", add="dstf-node-host")
         # The row's form slot, between it and the next node's row; the
         # host is built once its panels have somewhere to open a row.

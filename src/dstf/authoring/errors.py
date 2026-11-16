@@ -2,11 +2,11 @@
 
 The errors a person can cause — a patch the validator refuses, a drag a
 criterion cannot take, a move the tree refuses, a value out of range, a
-locked spec, a test the queue holds — read as their plain reason: the location is
-already on the screen, beside the row or the plot it came from. The
-validator's refusal of a tree of warnings read "PatchError: validator
-rejected the patched tree: metrics: tree has no leaf targeting 'primary'
-..."; it now reads the sentence alone.
+locked spec, a test the queue holds — read as their plain reason: the
+location is already on the screen, beside the row or the plot it came from.
+The validator's refusal of a tree of warnings reads as its sentence alone,
+not "PatchError: validator rejected the patched tree: metrics: tree has no
+leaf targeting 'primary' ...".
 Anything else is a bug and keeps its class name, so it can be reported.
 """
 

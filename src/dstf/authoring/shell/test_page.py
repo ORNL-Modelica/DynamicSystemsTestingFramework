@@ -1,14 +1,13 @@
-"""The Test page (brief §3.2; roadmap §3): one test — its own header as a
-second row of the shared one, its statistics and its criteria tree each
-closed to a line, and its
-plots stacked, each drawn when it scrolls into view with that variable's
-criteria rows under it and, under the row that was clicked, that
-criterion's editor — one at a time, page-wide, with the plot above it as
-its editing surface. A node's forms open as a row under the row they were
-asked from, and that row is the same one thing: it replaces the editor and
-the editor replaces it. One object per browser tab, like the Suite page. The
-page knows no capability by name: what edits a criterion, a tree node or a
-variable is whatever attaches at that placement."""
+"""The Test page: one test — its own header as a second row of the shared one,
+its statistics and its criteria tree each closed to a line, and its plots
+stacked, each drawn when it scrolls into view with that variable's criteria
+rows under it and, under the row that was clicked, that criterion's editor —
+one at a time, page-wide, with the plot above it as its editing surface. A
+node's forms open as a row under the row they were asked from, and that row is
+the same one thing: it replaces the editor and the editor replaces it. One
+object per browser tab, like the Suite page. The page knows no capability by
+name: what edits a criterion, a tree node or a variable is whatever attaches at
+that placement."""
 
 from __future__ import annotations
 
@@ -57,9 +56,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Render on scroll (the 3b spike): ONE observer per browser tab, kept on
-#: `window` so a re-run after a rebuild reuses it; a slot near the viewport
-#: names itself once, and is stamped so a re-run does not observe it twice.
+#: Render on scroll: ONE observer per browser tab, kept on `window` so a re-run
+#: after a rebuild reuses it; a slot near the viewport names itself once, and
+#: is stamped so a re-run does not observe it twice.
 OBSERVE = """
 (() => {
   window.__dstfPlotObserver ??= new IntersectionObserver((entries) => {
@@ -82,13 +81,13 @@ OBSERVE = """
 #: first `sync`.
 NOT_A_TEST = "{} is not a test of this project"
 
-#: `TestPage.open`'s index for a criterion edited in the Statistics card
-#: (U3): the page's one editor is `(plot index, leaf path)`, or `(STATS,
+#: `TestPage.open`'s index for a criterion edited in the Statistics card:
+#: the page's one editor is `(plot index, leaf path)`, or `(STATS,
 #: leaf path)` — no plot is ever at index -1.
 STATS = -1
 
 #: `TestPage.open`'s index for a criterion edited under its row in the
-#: criteria tree (U5, Y4): no plot is at -2 either, and it is not STATS —
+#: criteria tree: no plot is at -2 either, and it is not STATS —
 #: the Statistics card's editor closes with that card, this one with the
 #: tree's rows.
 TREE = -2
@@ -124,7 +123,7 @@ class TestPage:
         self.gone = False
         #: The one open editor: (plot index, leaf path), (STATS, leaf path)
         #: for a statistics criterion's, in the Statistics card, or (TREE,
-        #: leaf path) for one opened under its tree row (U5).
+        #: leaf path) for one opened under its tree row.
         self.open: tuple[int, str] | None = None
         #: The one open form row: its target, its title, its build, its
         #: column, and the node's raw JSON it was last built from.
@@ -152,9 +151,8 @@ class TestPage:
         self.focus_all: ui.button | None = None
         self.focus_switch: ui.select | None = None
         #: The plot the Variables drawer's checkboxes act on (the owner's
-        #: ruling, Q5 A): the first until a click on a card, or the
-        #: drawer's "+ new plot", selects another. Its card wears
-        #: `dstf-plot-selected`.
+        #: ruling): the first until a click on a card, or the drawer's "+ new
+        #: plot", selects another. Its card wears `dstf-plot-selected`.
         self.selected = 0
         #: The selected plot's subject, which a rebuild re-selects wherever
         #: it moved; None when a gesture placed the selection by index.
@@ -181,15 +179,15 @@ class TestPage:
         # page opened (or reloaded) while the project is still scanning, or
         # with another library open, was built in the gone state with no
         # frame to fill — `sync` returned early for ever and the test never
-        # came back however many events arrived (the final review). `sync`
-        # below fills it, or `_gone` writes the sentence into it.
+        # came back however many events arrived. `sync` below fills it, or
+        # `_gone` writes the sentence into it.
         self.header = Header(
             self.shell, self.theme, below=self._subheader, strip=self._strip
         )
         self.rail = Rail(self)
         with ui.column().classes("dstf-test w-full q-pa-md gap-3") as self.body:
-            # Above the tree (the plot-model board): what the run recorded,
-            # and the `+` that makes a statistic a criterion.
+            # Above the tree: what the run recorded, and the `+` that makes a
+            # statistic a criterion.
             self.stats = StatsCard(self)
             self.tree = TreeCard(self)
             self.count = (
@@ -200,8 +198,8 @@ class TestPage:
             ).mark("focus-bar")
             with self.focus_bar:
                 self.focus_text = ui.label().mark("focus-bar:text")
-                # Every plot by its subject (Q11 c), plain text (C4):
-                # choosing one focuses it.
+                # Every plot by its subject, plain text: choosing one focuses
+                # it.
                 self.focus_switch = (
                     ui.select({}, on_change=lambda e: self.focus_to(e.value))
                     .props("dense options-dense")
@@ -249,13 +247,13 @@ class TestPage:
         )
         # `color=None`: a Quasar badge otherwise carries `bg-primary`, whose
         # `!important` beats the inline status fill and paints every verdict
-        # blue (the Task 4 review, in Chromium).
+        # blue (in Chromium).
         self.badge = ui.badge("", color=None).classes("dstf-badge").mark("status")
         self.meta = ui.label().classes("text-secondary text-xs").mark("meta")
 
     def _strip(self) -> None:
         """The header's third row: the test's situation and its next
-        action (Q2 A)."""
+        action."""
         self.strip = StatusStrip(self)
         self.actions = self.strip.actions
 
@@ -278,9 +276,9 @@ class TestPage:
         return "ok" if result.success else "failed"
 
     def plots_withheld(self) -> bool:
-        """O2's gate: a result that is not a success has no plots whatever
-        its tree and extras say, and a watch plot made on it would draw
-        nothing — a run that failed (`run_state`'s "failed"). A run that
+        """The gate on plots: a result that is not a success has no plots
+        whatever its tree and extras say, and a watch plot made on it would
+        draw nothing — a run that failed (`run_state`'s "failed"). A run that
         never finished the test hands in no result (D145), and withholds
         nothing: there is nothing to draw."""
         result = self.result()
@@ -322,7 +320,7 @@ class TestPage:
         """Why there is no PLOT, which is not why there is no tree: a test
         with no tree still draws one plot per tracked variable, so a page
         with none has a failed run or no result (`run_state`, first: a
-        failed run has no plots whatever its tree says, O2), a result with
+        failed run has no plots whatever its tree says), a result with
         nothing in it, a result the test tracks nothing of (its patterns
         match none of it, or it is simulate-only: the Variables drawer
         lists what it holds, and "the result has no variables" beside
@@ -361,7 +359,7 @@ class TestPage:
         return node_or_none(self.shell.session.tree(self.model_id), path)
 
     def open_row(self, target: RowTarget, title: str, build: RowBuild) -> None:
-        """A form row under ``target``'s row (the 2026-09-21 board, 1A-1D).
+        """A form row under ``target``'s row.
         ONE thing open at a time: the editor goes, and any other row — and
         the card whose rings went with the editor is re-sent, once."""
         view = self._view()
@@ -372,7 +370,7 @@ class TestPage:
         # stays with that row (`RowTarget.hush`).
         target.hush()
         self._redraw_moved(view)
-        self.unfold_to(target)  # R2: a form under a tree row is shown
+        self.unfold_to(target)  # a form under a tree row is shown
         assert target.slot is not None  # set by the row's owner at build
         with target.slot:
             column = (
@@ -420,7 +418,7 @@ class TestPage:
         """Take the open form row away, if there is one; nothing is redrawn
         — a row draws on no plot. The error its row's host shows goes with
         it, and no other row's: a page-wide hide took an error off the row
-        it was about for a Cancel on another plot's row (the review)."""
+        it was about for a Cancel on another plot's row."""
         if self.form is None:
             return
         target, _, _, column, _ = self.form
@@ -433,7 +431,7 @@ class TestPage:
         self._paint_tree_clicks()
 
     def _paint_tree_clicks(self) -> None:
-        """What each clickable tree row says it has open under it (F5)."""
+        """What each clickable tree row says it has open under it."""
         if self.tree is not None:
             self.tree.paint_clicks()
 
@@ -452,7 +450,7 @@ class TestPage:
         back. Anything else leaves it alone, so a field being typed in
         survives every unrelated sync. A node that is gone closes the row:
         its ``build`` over a path that names nothing drew a form for no
-        node (the Task 5 review's probe built twice for one)."""
+        node."""
         if self.form is None:
             return
         target, title, build, column, built = self.form
@@ -469,7 +467,7 @@ class TestPage:
             self._build_row()
 
     def row_click(self, index: int, path: str) -> None:
-        """A criteria row's own click (board 1A): it closes a form open
+        """A criteria row's own click: it closes a form open
         under it and opens nothing; else it toggles the row's editor."""
         if self.form is not None and self.form[0].key == f"crit:{index}:{path}":
             self._close_row()
@@ -492,7 +490,7 @@ class TestPage:
     def _reveal(self, path: str, index: int | None) -> None:
         """The recorded reveal, once the cards are drawn: plot 3's `+`
         opened its editor on plot 0, the first card holding the variable,
-        ~855 px above the click and never scrolled to (the Part 2 review).
+        ~855 px above the click and never scrolled to.
         Brought into view just enough, like a form row: the row, then the
         editor under it — the row alone brought to the viewport's foot left
         the editor just below it.
@@ -507,11 +505,11 @@ class TestPage:
         # A statistics criterion has no plot: the card is its home, and
         # `open_criterion` opens it there.
         self.open_criterion(path, index)
-        # BY THEIR IDS (H6, F3's hazard): a `.dstf-crit-open` query found the
-        # tree row an open had just closed, and a `.dstf-editor` one that
-        # row's editor — both going with the next update, which this
-        # script can overtake (`_scroll_to_open`). The Statistics card's
-        # too: a `.dstf-stats .dstf-editor` query was the same hazard.
+        # BY THEIR IDS: a `.dstf-crit-open` query found the tree row an open
+        # had just closed, and a `.dstf-editor` one that row's editor — both
+        # going with the next update, which this script can overtake
+        # (`_scroll_to_open`). The Statistics card's too: a
+        # `.dstf-stats .dstf-editor` query was the same hazard.
         row = self._drawn_row(path)
         if row is None or self.open is None:
             return
@@ -534,12 +532,12 @@ class TestPage:
             self.open_criterion(path, index)
 
     def open_criterion(self, path: str, index: int | None = None) -> None:
-        """One editor at a time, page-wide (board 2A). The plot above it is
+        """One editor at a time, page-wide. The plot above it is
         its editing surface, so it is drawn if it was not. ONE `tree_view`
         read, handed to every card this touches: reading it per shown card
-        cost fourteen reads for one row click on a twelve-plot page (the 3b
-        review). A statistics criterion's editor is the Statistics card's
-        (U3): it has no plot."""
+        cost fourteen reads for one row click on a twelve-plot page. A
+        statistics criterion's editor is the Statistics card's: it has no
+        plot."""
         self._unsay()
         if index is None and self.stats is not None:
             view = self._view()
@@ -561,7 +559,7 @@ class TestPage:
         self._close_row()
         if self.focused is not None and self.focused != index:
             # The editor has to be on screen: the row it opens under is on a
-            # card Focus is hiding (board 5A shows ONE plot).
+            # card Focus is hiding (Focus shows ONE plot).
             self.focused = None
             self._paint_focus(view)
         self.drop_editor()
@@ -571,10 +569,10 @@ class TestPage:
         self._redraw_moved(view)
 
     def tree_row_click(self, path: str, *_: Any) -> None:
-        """A tree row's own click, or Enter / Space on it (U5): it closes a
+        """A tree row's own click, or Enter / Space on it: it closes a
         form open under it and opens nothing (a criteria row's rule); else a
-        criterion's row toggles its editor under the row (Q5), and a
-        group's does what a panel registered for it (Q6: a k-of-n's or a
+        criterion's row toggles its editor under the row, and a
+        group's does what a panel registered for it (a k-of-n's or a
         weighted's fields) — or nothing."""
         if self.tree is None:
             return
@@ -598,8 +596,8 @@ class TestPage:
             self.open_tree_criterion(path)
 
     def open_tree_criterion(self, path: str) -> None:
-        """The criterion's editor under its tree row (Q5, Y4) — the page's
-        one editor (Q11): whatever else is open closes first, and the card
+        """The criterion's editor under its tree row — the page's
+        one editor: whatever else is open closes first, and the card
         whose rings went with it is re-sent."""
         if self.tree is None:
             return
@@ -612,12 +610,12 @@ class TestPage:
         self._redraw_moved(view)
 
     def edit_on_plot(self, path: str) -> None:
-        """Q12: the tree editor's "Edit on its plot" — the criterion opens
+        """The tree editor's "Edit on its plot" — the criterion opens
         on the first plot holding it NOW, as a jump opens it (the tree's
         editor closes: one editor page-wide), and its row is brought to the
         middle of the viewport. Found at the click, never when the link was
         drawn: the tree is refreshed before the cards rebuild, so an index
-        read then could name the plot it was on (J3). Nothing where no plot
+        read then could name the plot it was on. Nothing where no plot
         holds it."""
         index = next((c.index for c in self.cards if path in c.rows), None)
         if index is None:
@@ -644,7 +642,7 @@ class TestPage:
         same card twice for a swap between two of its rows — and, in
         `rebuild`, asked the Session for a plot the staged layout had just
         taken away, which ended the rebuild half-done with the new shape
-        already recorded (the Task 6 review). The tree card and the
+        already recorded. The tree card and the
         Statistics card close the page's one editor through it too, as
         `drop_row` closes its form row."""
         if self.open is None:
@@ -661,7 +659,7 @@ class TestPage:
         self.cards[index].close_editor()
 
     def moved(self, path: str, text: str, paths: dict[str, str]) -> None:
-        """A move went through (U4, V4; `Panel.moved`): the editor and the
+        """A move went through (`Panel.moved`): the editor and the
         form row close NOW, before the sync the move's events bring — two
         criteria on one variable trading places move no shape, and an
         editor left open showed the other one — and the moved row and its
@@ -701,10 +699,10 @@ class TestPage:
             state.seen_revision = max(state.seen_revision, session.spec_revision)
 
     def edited(self, paths: dict[str, str]) -> None:
-        """An edit of the tree went through (`Panel.edited`, U5 R1):
+        """An edit of the tree went through (`Panel.edited`):
         ``paths`` says where each node it kept went, and the tree card's
         folded groups follow it — before the sync that rebuilds the rows,
-        which drops a folded path naming no group (Y6). What the panels
+        which drops a folded path naming no group. What the panels
         kept (`kept`) follows its node the same way, and goes with a node
         the edit did not keep."""
         if self.tree is not None:
@@ -729,7 +727,7 @@ class TestPage:
         )
 
     def unfold_to(self, target: RowTarget) -> None:
-        """R2: something shown under ``target``'s row — a form, a refused
+        """Something shown under ``target``'s row — a form, a refused
         act's sentence — unfolds the folded groups it is inside, when that
         row is a TREE row. Under a plot's or the Statistics card's row it
         is done outside the tree, and leaves the folds alone."""
@@ -757,9 +755,9 @@ class TestPage:
             card.redraw_if_moved(view)
 
     def jump_to(self, path: str) -> None:
-        """The closed tree line's jump (board 1A): open that criterion and
+        """The closed tree line's jump: open that criterion and
         bring the row it opened under into view — a plot's criteria row, or
-        a Statistics row (U3: every leaf of a tree view is on one or the
+        a Statistics row (every leaf of a tree view is on one or the
         other). A criterion with no row drawn opens nothing and scrolls to
         nothing: with another editor open, the jump scrolled to THAT row."""
         self.open_criterion(path)
@@ -768,7 +766,7 @@ class TestPage:
     def _scroll_to_open(self, path: str) -> None:
         """The row ``path``'s editor is open under, brought to the middle of
         the viewport — found BY ITS ID: a `.dstf-crit-open` query found the
-        tree row an open had just closed (U5), whose class goes with the
+        tree row an open had just closed, whose class goes with the
         next update, which this script can overtake. Nothing where the
         open did not land on ``path``."""
         row = self._drawn_row(path)
@@ -805,11 +803,11 @@ class TestPage:
         return None
 
     def show_criterion(self, path: str, *_: Any) -> None:
-        """A tree row's ⤓ (U5, Q7): the criterion's row where it is drawn —
+        """A tree row's ⤓: the criterion's row where it is drawn —
         on its first plot, drawn if it was not and a Focus hiding it ended;
         or its Statistics row, the card opened — scrolled to the middle of
         the viewport and flashed. No editor opens or moves, and no fold
-        opens: it shows a plot, not a tree row (R2)."""
+        opens: it shows a plot, not a tree row."""
         view = self._view()
         index = next((c.index for c in self.cards if path in c.rows), None)
         if index is not None:
@@ -841,8 +839,7 @@ class TestPage:
         per scored variable or family in tree order, then the watch plots;
         one per tracked variable with no tree). ``view`` and the label
         scope are read ONCE here and handed to every card — a card that
-        read them for itself cost one read per plot (the Task 5-6
-        review)."""
+        read them for itself cost one read per plot."""
         assert self.column is not None and self.count is not None
         session = self.shell.session
         self.gone = False
@@ -850,7 +847,7 @@ class TestPage:
         # it was open on may not even exist after this. Closed WITHOUT a
         # redraw — these cards are about to be dropped, and one of them may
         # be a plot the staged layout no longer has. The Statistics card's
-        # editor and the tree's (U5) hang under none of them.
+        # editor and the tree's hang under none of them.
         if self.open is not None and self.open[0] >= 0:
             self.drop_editor()
         # Focus names an INDEX, and after this the indices may name other
@@ -975,7 +972,7 @@ class TestPage:
         or none on an entry with no key (`layout_op`'s ``None``). ``select``
         is set BEFORE the stage — the rebuild its `spec` event causes reads
         it — and put back if the Session refuses: a refused edit is said,
-        and nothing else changes (3c, planner's choice 10)."""
+        and nothing else changes."""
         session = self.shell.session
         if tuple(extras) == session.layout(self.model_id):
             return False
@@ -1028,7 +1025,7 @@ class TestPage:
     # -- Focus -----------------------------------------------------------------
 
     def focus(self, index: int) -> None:
-        """Board 5A: Focus is a button on each plot, and the focused plot's
+        """Focus is a button on each plot, and the focused plot's
         button reads "Focused" and is the way out of it, like the bar's."""
         self.focused = None if self.focused == index else index
         if (
@@ -1043,7 +1040,7 @@ class TestPage:
             self.close_editor()
         if self.focused is not None:
             # A form under a criteria row of a card Focus hides goes the
-            # same way (the Task 5 review).
+            # same way.
             for card in self.cards:
                 if card.index != self.focused:
                     for row in card.rows.values():
@@ -1243,7 +1240,7 @@ class TestPage:
                 self.rebuild(view)
             # Recorded AFTER the rebuild ran: a raise inside it left the
             # page with the NEW shape already recorded and half the cards
-            # built, and no later sync ever rebuilt it (the 3b review).
+            # built, and no later sync ever rebuilt it.
             self._shape = shape
         else:
             for card in self.cards:
@@ -1279,8 +1276,8 @@ class TestPage:
 
         The sub-header and the strip go with the cards: they stayed live
         and stale — the last project's verdict, its baseline's name, and
-        buttons that queued a run of a model this project does not have
-        (the final review). `_paint` brings them back."""
+        buttons that queued a run of a model this project does not have.
+        `_paint` brings them back."""
         if self.gone or self.column is None:
             return
         self.gone = True

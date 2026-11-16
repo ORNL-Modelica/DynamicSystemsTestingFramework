@@ -51,8 +51,8 @@
   // -- filtering --------------------------------------------------------------
   function value(r, key) {
     // A number filter reads the value (the __sort), never its text; a text
-    // filter reads the cell's text only when the row HAS a value (S1's
-    // Column.filter_text: an empty cell reads "—", which `.` would match).
+    // filter reads the cell's text only when the row HAS a value
+    // (Column.filter_text: an empty cell reads "—", which `.` would match).
     const sort = r[key + '__sort'];
     if (D.kinds[key] === 'number') return sort;
     return sort === null || sort === undefined ? '' : r[key];

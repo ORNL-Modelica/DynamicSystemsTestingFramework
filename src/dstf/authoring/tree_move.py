@@ -1,4 +1,4 @@
-"""Moving a subtree of a raw metrics tree (U4): the whole new tree, or the
+"""Moving a subtree of a raw metrics tree: the whole new tree, or the
 one sentence saying why not. UI-free and pure: the Edit tree capability
 stages the tree `plan_move` returns as ONE ``add /metrics`` op, and lists
 every place a node can go from `move_destinations`.
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 ROOT = "/metrics"
 
-# V5's sentences, in the order they are checked (a move that changes
+# The refusals' sentences, in the order they are checked (a move that changes
 # nothing is None between INTO_ITSELF and INTO_WARN), the validator's last.
 ROOT_REFUSAL = "The root holds the whole tree: move what is in it instead."
 INTO_ITSELF = "A criterion group can't move into itself."
@@ -75,12 +75,12 @@ class Moved:
     notes: tuple[str, ...]  # what else changed: "k 3 → 2", ...
     #: Every node the move kept: its path before -> its path in ``tree``.
     #: A move shifts its old and new siblings too; what is keyed by a
-    #: node's path (the tree card's folded groups, U5 R1) follows this.
+    #: node's path (the tree card's folded groups) follows this.
     paths: dict[str, str]
 
 
 class MoveRefused(ValueError):
-    """``str()`` is the one sentence the row shows (V5)."""
+    """``str()`` is the one sentence the row shows."""
 
 
 def validator_for(role_of: BaselineRoleLookup) -> Callable[[dict], None]:
@@ -324,8 +324,8 @@ _NODE_PATH = re.compile(rf"{ROOT}(/children/(\d+|-))*")
 
 
 def path_map(tree: dict, ops: Sequence[PatchOp]) -> dict[str, str]:
-    """Every node of ``tree`` that ``ops`` keep: its path before -> after
-    (U5 R1) — what is keyed by a node's path follows it. Not by comparing
+    """Every node of ``tree`` that ``ops`` keep: its path before -> after,
+    so what is keyed by a node's path follows it. Not by comparing
     the trees on both sides of a stage: the Session stages a copy, so no
     node is the same object on both. By the ops' own semantics, over
     ``tree`` as the edit read it: an add at an index shifts the siblings

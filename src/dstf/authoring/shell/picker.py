@@ -1,11 +1,11 @@
-"""The add form's variable picker (the plan's Task 3, Q8, K2): the drawers'
-filter box over a scrolling list of rows in sections, filtered on the
-SERVER (`picker_rows`, `needle.matcher`) — never a `ui.select` over every
-name: TRANSFORM has a test of 76,992. One row is chosen (``value``, the
-result-file name); ArrowUp / ArrowDown move the cursor from the filter
-box, Enter chooses the cursor's row, a click chooses a row. Under the list
-a `Chosen:` line names the choice (K7), so a filter that hides its row
-still shows what Add will stage.
+"""The add form's variable picker: the drawers'
+filter box over a scrolling list of rows in sections, filtered on the SERVER
+(`picker_rows`, `needle.matcher`) — never a `ui.select` over every name: a
+large real library has a test of 76,992. One row is chosen (``value``, the
+result-file name); ArrowUp / ArrowDown move the cursor from the filter box,
+Enter chooses the cursor's row, a click chooses a row. Under the list a
+`Chosen:` line names the choice, so a filter that hides its row still shows
+what Add will stage.
 
 A `ui.column` with a ``value``, so a form reads it as it read the select
 it replaced."""

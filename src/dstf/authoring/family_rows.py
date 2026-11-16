@@ -5,7 +5,7 @@ per-leaf ops an edit of the fold is — the shell draws the rows
 the rules, as the Variables drawer draws `variable_rows`.
 
 Nothing here is stored: `test_spec.json` holds one literal leaf per element
-(the brief's ruling §3.10), and the fold is derived from the tree every
+(D152), and the fold is derived from the tree every
 time it is drawn. The rows come from the report's walk
 (`reporting.tree_rows.criteria_rows`), which the report goes on rendering
 one per leaf — the fold is the tool's alone."""

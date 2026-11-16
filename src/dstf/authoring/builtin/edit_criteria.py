@@ -1,11 +1,11 @@
-"""Edit criteria (§4.6 table, §4.7): the CRITERION placement; a mode switch,
+"""Edit criteria: the CRITERION placement; a mode switch,
 the mode's form, the window, the ``against`` selector — and the
-STATISTIC_CRITERION one, a statistics criterion's editor under its
-Statistics row, where the mode, the window and the quantity are no fields —
-and the TREE_CRITERION one, any criterion's editor under its tree row (U5). Each change stages one
-``replace`` of the whole leaf and the test rescores. The Session collapses
-consecutive replaces of one leaf into one pending op, so the pending count
-and the exported envelope carry one edit, never a keystroke log (the
+STATISTIC_CRITERION one, a statistics criterion's editor under its Statistics
+row, where the mode, the window and the quantity are no fields — and the
+TREE_CRITERION one, any criterion's editor under its tree row. Each change
+stages one ``replace`` of the whole leaf and the test rescores. The Session
+collapses consecutive replaces of one leaf into one pending op, so the pending
+count and the exported envelope carry one edit, never a keystroke log (the
 preview drawer shows the entry's diff either way).
 
 At FAMILY_CRITERION (D152) the same fields are a folded row's: the
@@ -172,7 +172,7 @@ class EditCriteria:
             "against": leaf.get("against") or "primary",
             "window": dict(leaf.get("window") or {}),
         }
-        # A card criterion (U3; `on_the_card_view`: a statistic, or a
+        # A card criterion (`on_the_card_view`: a statistic, or a
         # listed name's number): only `scalar` scores a stored number (no
         # mode select, and `set_metric`'s reseed never runs on one), a
         # stored number has no window, and the Statistics row the editor
@@ -180,11 +180,10 @@ class EditCriteria:
         statistic = on_the_card_view(state, s.diagnostic_names(model_id))
         # No heading: the criterion's own row sits directly above this panel
         # and names it, and a second name there made the editor read as two
-        # panels rather than one (brief §3.2).
-        # Nor an error line: a leaf the scorer could not score says why in
-        # the criteria ROW directly above this panel, which reads out the
-        # criterion ("scalar leaf not scored — …"). Drawing it on the form
-        # itself (§4.7 "inline on its form") is sub-project 4's.
+        # panels rather than one. Nor an error line: a leaf the scorer could
+        # not score says why in the criteria ROW directly above this panel,
+        # which reads out the criterion ("scalar leaf not scored — …"), so the
+        # form does not draw it again.
 
         # What the leaf holds — the state its last accepted submit was made
         # from — and what that was when the field being edited was ENTERED
@@ -353,7 +352,7 @@ class EditCriteria:
             # A leaf naming a baseline the store no longer has is exactly the
             # leaf one opens this panel to repair: keep its value selectable.
             names.append(state["against"])
-        # ONE wrapping row (the board: the plot and its editor fit a screen
+        # ONE wrapping row (the plot and its editor fit a screen
         # together), the mode FIRST — it decides what the fields after it
         # are, and drawn below them it read as a footnote to the form it
         # controls. `dstf-form` hands the mode's own fields straight to this
@@ -463,7 +462,7 @@ class EditCriteria:
         # Each path has to hold the member it was read as: an edit staged
         # elsewhere moves the tree under an open row's paths, and "every
         # member" then overwrote whatever criterion stood there instead —
-        # another variable's (the executing review's M4).
+        # another variable's.
         variables = tuple(inputs.get("variables") or ())
         if len(variables) != len(paths):
             raise ValueError(NOT_A_FOLD)
