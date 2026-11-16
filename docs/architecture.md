@@ -48,172 +48,29 @@ Forward work: cross-backend verification beyond the Dymola→FMPy chain (each ne
 
 ---
 
-## Project Layout
+## Where the code is
 
-```
-DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
-├── examples/                            # Demo libraries — one per backend, used by README first-5-min walkthrough
-│   ├── modelica/ModelicaTestingLib/       # Components/UnitTests.mo + Examples/ + Resources/ReferenceResults/
-│   ├── fmu/                                # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
-│   ├── julia/JuliaMtkTestingLib/           # ModelingToolkit demo, mirrors the Modelica layout
-│   └── python/PythonTestingLib/            # SimpleRamp (scipy) + ConstantCsv (pure data loader)
-├── tests/                               # pytest suite (Playwright subset gated by importorskip)
-│   ├── fixtures/results/Dymola/         # Real Dymola artifacts (.mat, dslog.txt, etc.)
-│   └── test_*.py                        # Unit tests for all modules
-```
+The file map is CLAUDE.md's "Project Structure": a line per package or
+group of modules, with the "the ONE place X" notes beside the modules that
+own a rule. It names what a reader needs to find a rule, not every file
+(`git ls-files src/dstf` is the full list); this document says how the
+parts fit.
 
-## Package Layout
+New code goes where its layer keeps its kind: a backend's tool-specific code
+under `backends/<name>/`; a built-in metric's mode and typed config in
+`comparison/modes.py` and its `MetricDescriptor` in `comparison/builtins.py`,
+registered at import; a combinator in `comparison/metric_tree.py`; a
+discovery strategy in its own `discovery/<name>.py`; a capability the tool
+ships in its own `authoring/builtin/<name>.py`. Each directory under
+`examples/` demonstrates one Source type end-to-end — a working reference a
+user can copy. Pytest fixtures (captured artefacts for unit-testing internals
+like the MAT reader) stay under `tests/fixtures/`, separate from
+`examples/`. Third-party plug-ins live in separate packages and register via
+the `dstf.plugins` entry-point group (`docs/guides/plugin.md`;
+`examples/plugins/DecayBackend` is one, whole). The same layout applies
+there.
 
-```
-src/dstf/
-├── cli/                      # argparse CLI package: discover, run, compare, author, check, and the groups
-│   │                         #   spec (add / update / schema), baseline (export), soft-check (add / list / remove),
-│   │                         #   companion (add / list / freeze / remove), manifest (show / dump / cleanup)
-│   ├── parser.py             # build_arg_parser — the command tree: every command, the flags each reads, its help
-│   ├── main.py               # the dispatch table (command path → handler) and the entry points
-│   └── run_cmds.py           # cmd_run / cmd_compare — the CLI wrapper around pipeline.run_pipeline
-├── config.py                 # Config dataclass, path resolution, testing.json loading, which backend a project runs with
-├── config_shape.py           # testing.json's keys: type, default, description — the ONE table Config reads the file by
-├── pipeline.py               # run_pipeline + RunOutcome — the run as a library callable (no printing, no exits)
-├── discovery/
-│   ├── recognizer.py         # Recognizer registry (bundled + user-declared, merged by model_id)
-│   ├── mo_parser.py          # Scans .mo files for UnitTests components
-│   ├── json_recognizer.py    # Declarative recognizers from testing.json
-│   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
-│   ├── plots.py              # A test's plots, derived from its criteria (D140): plots_of_test — the ONE
-│   │                         #   function both tiers call — runs derive_plots over plot_leaves (the
-│   │                         #   tree's leaves, in order) and the `plots` extras (context series,
-│   │                         #   watch plots); tracked_names, the plots of a test with no tree
-│   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec update`)
-│   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
-│   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree
-│   │                         #   materialization, tree validation, apply_validated_patches
-│   ├── unit_tests.py         # unit_test_variables — the ONE place a UnitTests variable is named
-│   │                         #   (<instance>.x[i]) and paired with the expression the model wrote (D132)
-│   ├── scan_cache.py         # The source scan cached under $XDG_CACHE_HOME/dstf/scan/ (the authoring tool);
-│   │                         #   keyed by a DIGEST of the discovery modules' source, not a hand-bumped constant
-│   └── test_registry.py      # TestModel dataclass, discover_tests() merges all sources
-├── backends/
-│   ├── __init__.py           # Backend registry: @register decorator, get_backend() factory
-│   ├── base.py               # Backend ABC + RunSetup/_prepare_run (types/persistent/batch_manifest split out, D116)
-│   ├── progress.py           # Backend-agnostic ProgressReporter (status.json + auto-refresh dashboard.html)
-│   ├── persistent.py         # Worker ABC, WorkerRunner and PersistentBackendBase — the persistent-worker template
-│   ├── pool.py               # SimulationPool: run_tests' dispatch kept open, a FIFO queue of tests (the tool's
-│   │                         #   queue, D150)
-│   ├── common/               # Shared: mat_reader (rows counted from the file's size), process tree-kill,
-│   │                         #   result variables, JSON-driver base, statistics (the zero-count rule),
-│   │                         #   result_files (any variable of a result file, by name: .mat / result.json / .npz),
-│   │                         #   live_mat (LiveMatReader: a .mat polled while its run writes it)
-│   ├── cross_backend.py      # EXPERIMENTAL Dymola → FMU → FMPy baseline chain
-│   ├── dymola/               # DymolaBackend (.mos batch) + PersistentDymolaBackend (Python interface)
-│   ├── fmpy/                 # FmpyBackend (in-process; per-test thread)
-│   ├── openmodelica/         # OpenModelicaBackend (omc -s) + PersistentOpenModelicaBackend (OMPython ZMQ)
-│   ├── julia/                # JuliaBackend (subprocess) + PersistentJuliaBackend (stdin-JSON pipe)
-│   └── python/               # PythonBackend — subprocess-per-test, any `simulate(stop_time, tol) -> dict`
-├── comparison/
-│   ├── comparator.py         # compare_test / compare_all orchestration
-│   ├── algorithms.py         # per-mode scoring functions, called by the modes
-│   ├── modes.py              # ComparisonMode ABC + 7 modes (nrmse, tube, points, range, event-timing,
-│   │                         #   dominant-frequency, scalar); typed configs; resolve_mode()
-│   ├── mode_schema.py        # derive_schema — per-mode schema from typed comparison configs
-│   ├── handles.py            # edit_handle editors: a dragged handle back to a raw leaf (HandleEdit,
-│   │                         #   HandleEditError); wired on MetricDescriptor beside summarize
-│   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + synthesize_implicit_tree() builder
-│   ├── tree_eval.py          # Tree evaluator threading primary + named baselines
-│   ├── metric_tree.py        # The combinators + MetricResult; implicit_and_tree() for a test with no tree
-│   ├── registry.py           # MetricDescriptor / CombinatorDescriptor + register_metric / register_combinator
-│   ├── sides.py              # Sides — the ONE place a tolerance's number-or-pair is read or written (D147)
-│   ├── snap.py               # snapped — the one snap rule for a value the pointer placed (D149)
-│   └── validator.py          # Baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped)
-├── storage/
-│   ├── baseline.py           # The stored-baseline types: ReferenceFile, Baseline, StoredVariable, DiagnosticSummary, Sampling
-│   ├── baseline_codec.py     # THE reader and writer of a baseline file (primary, soft check, JSON companion); number precision
-│   ├── ref_index.py          # RefIndex + atomic text writes
-│   ├── roles.py              # soft_check/companion CRUD mixin
-│   ├── accept.py             # accept_run_results — the one accept path, with the aborted-run refusal
-│   └── reference_store.py    # ReferenceStore: primary CRUD + accept path
-├── authoring/
-│   ├── session.py            # Session: open / rescore / view / stage / save / discard / export / apply
-│   ├── capabilities.py       # The capability contract: Capability, Placement, Panel, the five outcomes
-│   ├── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
-│   ├── tree_pointer.py       # node_at / node_or_none — a raw tree node by its /metrics pointer (UI-free)
-│   ├── tree_text.py          # What a tree node reads as (leaf_name, node_text): the rows and Edit tree's
-│   │                         #   form titles say the same thing (UI-free)
-│   ├── family_rows.py        # A criterion over an array family as data (D152): which criteria rows fold,
-│   │                         #   the elements an Indices text names, an edit of a fold as one whole-tree op;
-│   │                         #   shell/family_fold.py draws the folded rows (UI-free)
-│   ├── layout.py             # The plot extras' edits as pure functions: context series and watch plots,
-│   │                         #   one op on /plots (D140)
-│   ├── variable_rows.py      # The Variables drawer's rows as data; picker_rows.py, the add form's variable
-│   │                         #   picker; suite_rows.py, a Suite row from the Session
-│   ├── queue_rows.py         # The simulation queue as data: a row per item, the header's indicator (D150)
-│   ├── live_rows.py          # A running test's page as data: reader snapshots to the series a plot draws, the
-│   │                         #   words of each state; live_runs.py, the Session's readers of the running tests'
-│   │                         #   result files and of unfinished runs' partial results (D151)
-│   ├── situation.py          # A test's situation and the status strip's sentence
-│   ├── shell/                # The NiceGUI tier: shell.py (the process: Session, open thread, event fan-out),
-│   │                         #   suite.py + test_page.py (one object per browser tab; the one open editor
-│   │                         #   or form row), tree_card.py (the criteria tree), plot_card.py (one plot,
-│   │                         #   its criteria rows with their swatches, its error select and its editor),
-│   │                         #   header.py, actions.py (ActionBar — a button per capability at a placement,
-│   │                         #   its panel in a dialog; InlineHost — the same panels drawn inline, with
-│   │                         #   a RowTarget to open a form row under their row),
-│   │                         #   queue_panel.py (the simulation queue's panel and the header's indicator,
-│   │                         #   D150), tabstate.py, figure_hook.py (one hook per plot),
-│   │                         #   tab_theme.py (the tab's theme and its live switch, D148),
-│   │                         #   suite_grid.py + suite_grid.js (the Suite table), strip.py (the Test page's
-│   │                         #   status strip), stats_card.py, rail.py + test_list.py + variables_drawer.py
-│   │                         #   (the two drawers), picker.py, family_fold.py, live_view.py (what a running
-│   │                         #   test's drawn plots ask for, D151), placing.py (a field's ⌖ and the one armed
-│   │                         #   field, D149), grips.js (a plot's tolerance arrows, D147)
-│   ├── forms.py              # NiceGUI controls from a mode's derived schema
-│   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_family.py, edit_tree.py,
-│                             #   accept.py (the shared accept function), enqueue.py (Queue: the selected
-│                             #   tests handed to the Session's simulation queue),
-│                             #   edit_on_plot.py (drag a handle or edit a list's table)
-└── reporting/
-    ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
-    ├── junit_report.py       # JUnit XML for CI
-    ├── status.py             # Shared per-test status classifier (NOT RUN > SIM_FAIL > FAIL > NO_REF > PASS)
-    │                         #   and every status word and class
-    ├── rows.py               # The row model both HTML surfaces render: TestRow, COLUMNS
-    ├── stats_rows.py         # The Statistics rows both tiers render: the report's table and the tool's card
-    ├── dashboard_render.py   # The one suite-wide HTML page (live + final + --report-format html)
-    ├── context_builder.py    # Per-test results → template context (the pure half)
-    ├── report_suite.py       # Per-test interactive.html render + comparison_data.json sidecar
-    ├── tree_rows.py          # A plot's criteria rows off a tree view (leaves, crumbs): the one walk
-                              #   the report's sections and the tool's plot cards list criteria by
-    ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
-    ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf spec schema`)
-    ├── theme.py              # The token tables, one per bundled theme (`default`, `dark`; D148) —
-                              #   rendered to :root { --dstf-...: ... } for both pages and the tool,
-                              #   and to the tool's Quasar palette; a dark theme's dimmed status parts
-    └── templates/            # interactive.html (server-rendered tree, summary, banner) + axes.js
-                              #   (the report's: a secondary axis visible while a trace on it is) + report.js
-                              #   (both copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
-                              #   + dashboard.html / dashboard.js + filters.js (the typed column filters)
-                              #   + vendor/plotly.min.js
-```
-
-The figure layer sits beside them, and both tiers draw from it:
-
-```
-src/dstf/figures/
-├── view.py                   # VariableView — the library-neutral picture of one variable
-├── plotly.py                 # VariableView → a plotly figure dict (traces + shapes); editable=True
-│                             #   (the tool's, never the report's) adds a draggable ring per handle;
-│                             #   visibility=Visibility(hidden, error) (the tool's) keeps only signals in
-│                             #   the legend, hides the leaves the page hid and shows one error series
-│                             #   with its axis; the legend sits above the plot area on both tiers
-│                             #   plot_figure: several views on one plot (families in a hue ramp);
-│                             #   one view is variable_figure, unchanged
-├── palette.py                # What a figure takes from a theme, by name (D148): its chrome, the
-│                             #   eight series colours a dark plot lightens, the layout template
-│                             #   (none for `default`: that figure is the one it always was)
-├── families.py               # Array families: the last integer index, slice text, the hue ramp
-├── assemble.py               # Trajectories + evaluated leaves → a VariableView
-└── decimate.py               # LTTB decimation on the view, before any trace exists
-```
+### The authoring tier and the figure layer
 
 `authoring/` is the authoring tier — the tool's state machine and the shell
 `dstf author` serves. Only `shell/`, `forms.py` and the built-in panels import a
@@ -1415,35 +1272,3 @@ Every plug-in, regardless of layer, must honor:
 3. **Clear error messages on misuse** — "Backend `Foo` does not produce `Events`; metric `event-timing` requires it" is a framework-level check, not a runtime crash.
 4. **No framework-core edits** — if adding a plug-in requires editing the `cli/` package, `config.py`, or anything outside its own package and the registry it registers with (`backends/`, `comparison/registry.py`, `discovery/recognizer.py`, `authoring/capabilities.py`), the abstraction is wrong. File an issue before working around it.
 5. **Test fixture included** — every plug-in ships with at least one test against a known-good input.
-
----
-
-### Where to put new code
-
-```
-src/dstf/
-  backends/
-    <name>/           # all tool-specific code for backend <name>
-  comparison/
-    modes.py          # the built-in metrics' modes and typed configs
-    builtins.py       # their MetricDescriptors, registered at import
-    metric_tree.py    # the built-in combinators
-  discovery/
-    <name>.py         # one file per strategy
-  authoring/builtin/
-    <name>.py         # one file per shipped capability
-
-examples/
-  modelica/
-    ModelicaTestingLib/    # Modelica demo library (also used as pytest fixture)
-  fmu/
-    reference-fmus-binaries/   # FMI org's Reference-FMUs (fetched by scripts/fetch_reference_fmus.py)
-  julia/
-    JuliaMtkTestingLib/    # ModelingToolkit demo library
-  python/
-    PythonTestingLib/      # Python demo library (scipy ODEs, a CSV data loader)
-```
-
-Each directory under `examples/` demonstrates one Source type end-to-end — a working reference a user can copy. Pytest fixtures (captured artefacts for unit-testing internals like the MAT reader) remain under `tests/fixtures/` and are separate from `examples/`.
-
-Third-party plug-ins live in separate packages and register via the `dstf.plugins` entry-point group (`docs/guides/plugin.md`). The same layout applies there.

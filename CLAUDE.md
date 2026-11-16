@@ -4,11 +4,11 @@
 
 **Dynamic Systems Testing Framework (DSTF)** — formerly **ModelicaTesting** — is a Python framework for regression and unit testing of time-dependent system behavior across simulated and pre-recorded trajectories.
 
-**Current state**: a multi-backend regression harness. Discovers tests by scanning `.mo` files and/or reading `test_spec.json`; simulates via **Dymola** (Python interface default, batch `.mos` fallback), **FMPy** (prebuilt FMUs), **OpenModelica** (OMPython persistent-worker default, `omc` batch fallback), **Julia/ModelingToolkit** (persistent `julia` worker), or **Python** (subprocess-per-test; any `simulate(stop_time, tolerance) -> dict` — scipy, pandas, CSV, HTTP, etc.); scores via a composable **MetricTree** (leaves: `nrmse` / `tube` / `points` / `range` / `event-timing` / `dominant-frequency` / `scalar`; combinators: `and` / `or` / `k-of-n` / `warn` / `weighted`; multi-baseline via `"against"`; time-windowed leaves via `"window"`). Reports via ONE suite-wide HTML surface — the dashboard (also what `--report-format html --output` writes) — plus per-test **read-only Plotly HTML** (figures built in `dstf.figures` from the geometry each metric emits; server-rendered metric tree with the CLI's verdict, criterion and detail pairs; overlay picker and error overlays toggle traces already in the figure, the error overlays on two labelled error axes — the page computes nothing) + JUnit XML. Criteria are authored in `dstf author`, the Python-side tool over the same figure layer (D125): a Suite page and a Test page whose criteria are edited inline beside the plot they score (D131), where a tree node's forms open as a row under that node and a plot's legend holds its signals while each criterion's drawing is shown or hidden from its own row (D133), and a 40 px rail opens a Tests drawer (switch test) and a Variables drawer (D134) that adds context series to the plot you selected or makes a watch plot of one variable — the plots themselves are derived from the criteria tree, and `plots` holds only those extras (D140). References partitioned under `<reference_root>/<Backend>/<os>/` with three baseline roles: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
+**Current state**: DSTF finds tests by scanning `.mo` files and reading `test_spec.json`, and simulates them on one of five backends: Dymola, FMPy (prebuilt FMUs), OpenModelica, Julia/ModelingToolkit, or Python (any `simulate(stop_time, tolerance) -> dict`). Each test is scored by a MetricTree — leaves (`nrmse`, `tube`, `points`, `range`, `event-timing`, `dominant-frequency`, `scalar`) joined by combinators (`and`, `or`, `k-of-n`, `warn`, `weighted`) — against the primary baseline stored under `<reference_root>/<Backend>/<os>/`; a soft check (another baseline) can only warn, and a companion is only drawn, never scored. A run reports to the console, JUnit XML, one suite-wide HTML dashboard and a read-only Plotly page per test; criteria are written in `test_spec.json` or in `dstf author`, a browser tool that edits a test's criteria beside the plots they score.
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and its "Contracts inside the framework"; a plug-in author's side is `docs/guides/plugin.md` and the API reference.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers, D139 the Test page, D140 plots from the tree, D147 two-sided tolerance, D148 themes, D149 on-plot editing, D150 the simulation queue, D151 live results, D152 a criterion over an array family, D153 the baseline's points, D154 strict keys and the unscorable-criterion delta rule, D155 one act is one pending edit, D160 the command line as a tree, flags only where they apply, D162 diagnostic variables, one name one meaning, D165 a baseline named from its model id, D166 which tests use a class, asked of the simulator, D167 what changed since a git revision, D168 a selected run says it is not a full run). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log; grep it or `git log` when context is needed.
 
 ## Project Structure
 
@@ -16,7 +16,7 @@
 DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli/                      # CLI package. parser.py: the command tree (build_arg_parser) — every command, the flags each reads
-│   │                             #      and its help; main.py: the dispatch table; uses_cmd.py: `dstf uses` (D166, `--since` D167) and select_since, the one selection `run --changed-since` shares (D168). Commands: discover, uses, run, compare, summary, plot, diff, author,
+│   │                             #      and its help; main.py: the dispatch table; run_cmds.py: cmd_run (the CLI's wrapper around run_pipeline) and cmd_compare (scores the last results without simulating); uses_cmd.py: `dstf uses` (D166, `--since` D167) and select_since, the one selection `run --changed-since` shares (D168). Commands: discover, uses, run, compare, summary, plot, diff, author,
 │   │                             #      check (where each backend is on this machine, and whether the project's is ready), and the
 │   │                             #      groups spec (add / update / schema), baseline (export / diff / plot), soft-check (add / list / remove),
 │   │                             #      companion (add / list / freeze / remove), manifest (show / dump / cleanup)
@@ -40,9 +40,12 @@ DynamicSystemsTestingFramework/
 │   │                             #      the ONE place an install is looked for; each backend declares its `settings` table)
 │   │                             #      (openmodelica/init_xml.py: the system size omc writes to <model>_init.xml, read into the
 │   │                             #      statistics key Dymola's translation log fills — translation.continuous_time_states)
-│   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), tree-kill, result variables, JSON-driver base, result_files (any variable of a result file), total_model.py (the loop `Backend.uses` runs: one question per test, the file the tool wrote read or that test's reason),
+│   │   ├── common/               # Shared: mat_reader, live_mat.py (a result file read while its run writes it), proc_kill.py (a process tree's kill), result variables, JSON-driver base, result_files (any variable of a result file), total_model.py (the loop `Backend.uses` runs: one question per test, the file the tool wrote read or that test's reason),
 │   │   │                         #      statistics.py (the zero-count rule: a system-size list's summaries, written and read in one place;
-│   │   │                         #      and diagnostic_final: a listed name's final as the event-count warning, the dashboard's CPU time and the Statistics rows read it)
+│   │   │                         #      and diagnostic_final: a listed name's final as the event-count warning, the dashboard's CPU time and the Statistics rows read it),
+│   │   │                         #      failure_message.py (a failed run's message as every surface shows it: the simulator's last line kept),
+│   │   │                         #      proc_output.py (a subprocess's output as text, bytes or none — what every timeout handler reads it through)
+│   │   ├── progress.py           # ProgressReporter: each test's live state, written to status.json and the live dashboard
 │   │   ├── pool.py               # SimulationPool: a FIFO queue of tests over a backend's runners that stays open (the tool's queue)
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree (metric_tree.py: the combinators) spec/eval, validator, tree_spec helpers,
@@ -50,13 +53,21 @@ DynamicSystemsTestingFramework/
 │   │                             #      handles.py (edit_handle — a dragged handle back to a raw leaf),
 │   │                             #      sides.py (Sides — the ONE place a tolerance's number-or-pair is read or written),
 │   │                             #      snap.py (the one snap rule: a value the pointer placed is written at a readable step, D149),
-│   │                             #      strict_keys.py (a key nothing reads is an error that names it — the ONE check, from each metric's config)
+│   │                             #      strict_keys.py (a key nothing reads is an error that names it — the ONE check, from each metric's config),
+│   │                             #      registry.py (MetricDescriptor / CombinatorDescriptor: the Metric layer's plug-in seam), builtins.py (the built-in
+│   │                             #      metrics and combinators, registered at import), algorithms.py (each mode's scoring math, pure compute),
+│   │                             #      summaries.py (each mode's pill text and criterion sentence), geometry.py (what a mode scored against, as data:
+│   │                             #      the one source every figure draws from), seeds.py (a new criterion's first values, from the data it will score),
+│   │                             #      types.py (the comparison-result dataclasses and shared constants)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path),
 │   │                             #      names.py (a baseline's name: ref_<code> from its model id — the ONE rule every baseline name is built from, D165),
 │   │                             #      baseline_codec (THE reader/writer of a baseline file; the rest sees storage.baseline types),
 │   │                             #      git_revisions.py (the ONE place DSTF reads git: a folder's files and blobs at a revision, and the blob id git gives each file on disk; never writes the repository),
 │   │                             #      baseline_diff.py (`baseline diff`'s facts: baselines paired by model id across two revisions, a variable by name then label, each variable's largest change — the max of its difference_series),
-│   │                             #      baseline_history.py (`baseline plot`'s facts: a test's baseline at several revisions, each later line minus the first; its per-variable model `plot` shares, a line's source a revision or a run)
+│   │                             #      baseline_history.py (`baseline plot`'s facts: a test's baseline at several revisions, each later line minus the first; its per-variable model `plot` shares, a line's source a revision or a run),
+│   │                             #      baseline.py (the stored-baseline types: what a baseline file holds, as the rest of the code reads it),
+│   │                             #      batch_manifest.py (the work dir's batch_manifest.json: test_key ↔ model id, and each test's last result),
+│   │                             #      run_stats.py (a test's run statistics kept beside its result, run_stats.json, for a later compare or reload)
 │   ├── authoring/                # Session, capability contract, spec document (its pending ops, counted by act: edit_counts, D155) — the tool's core;
 │   │                             #      layout.py (the plot extras' edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
@@ -71,7 +82,11 @@ DynamicSystemsTestingFramework/
 │   │                             #      typed_number.py + typed_number.js (the tool's number field: it keeps what is typed until it is left),
 │   │                             #      unscorable.py (what an editor refuses to stage: a negative tolerance, bounds out of order),
 │   │                             #      errors.py (which failed acts read as their plain sentence: USER_ERRORS), tree_move.py (a move within a test's tree, D144),
-│   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages,
+│   │                             #      tree_pointer.py (a raw tree node by its /metrics pointer), tree_text.py (what a tree node reads as: its row and its form's title),
+│   │                             #      shell/ (the NiceGUI tier: shell.py (the process: one Session, the thread that opens the project, the event queue to the pages),
+│   │                             #      app.py (`dstf author`: the project checked, the shell mounted, served on 127.0.0.1), suite.py + test_page.py (the Suite and Test pages),
+│   │                             #      tabstate.py (a browser tab's Suite selection), figure_hook.py (a plot's event hook, one per plot card),
+│   │                             #      widgets.py (Action: a button whose disabled state says why), style.py (the shell's stylesheet over the theme's tokens),
 │   │                             #      suite_grid.py + suite_grid.js (the Suite table: AG Grid, driven only by transactions),
 │   │                             #      test_list (the Tests drawer's list), tree_card + plot_card, stats_card.py (the Statistics card),
 │   │                             #      queue_panel.py (the Suite page's queue panel and the header's queue indicator),
@@ -86,6 +101,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit family + edit tree + accept + enqueue + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + palette.py (what a figure takes from a theme, by name) + LTTB decimate; both tiers draw from it
+│   │                             #      + assemble.py (a comparison and a trajectory to a VariableView: the assembly the report and the tool's Session share)
 │   │                             #      + history.py (`baseline plot`'s and `plot`'s figure: a variable's revisions or runs overlaid, the change from the first under them)
 │   └── reporting/                # status.py (the classifier + every status word and class, a refusal's reason, and failed_criteria — the one reading of a failing criterion the console's blocks and JUnit's lines are written from: the criteria that failed the test, none under a group that passed, the rule `summary` reads verdicts.json by, and the advisory ones under `warn`) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
@@ -96,6 +112,7 @@ DynamicSystemsTestingFramework/
 │       │                         #      + run_diff.py (`diff`'s facts: every variable of each test's whole result file in two runs, by alias group: identical / rounding / near zero / derivative / changed, parameters apart, the solver's statistics never scored) + run_diff_text.py (its Markdown and JSON)
 │       │                         #      + images.py (PNGs of figure dicts: the vendored plotly.js in one headless Chromium; the ONE import of Playwright outside tests)
 │       │                         #      + results_summary.py (`summary`'s facts: several runs' verdicts.json by backend/os and label, against a base) + results_summary_text.py (its Markdown and JSON)
+│       │                         #      + verdicts.py (verdicts.json: what a scoring run or compare decided — each test's status word, its criteria tree with each node's verdict, the totals)
 │       │                         #      + console/junit + context_builder + report_suite + dashboard_render + overlay_loader (companion / soft-check overlays) + schema_export (`spec schema`) + theme.py (the token tables both tiers render, one per bundled theme: default and dark)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)
 │                                 #      + vendor/plotly.min.js (offline-capable reports)
@@ -105,14 +122,16 @@ DynamicSystemsTestingFramework/
 │   │                                  #      and ThermostatBuildingTest: four rooms scored by one 19-leaf tree that uses every metric and combinator)
 │   ├── fmu/                           # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
 │   ├── julia/JuliaMtkTestingLib/      # Julia/MTK demo library (mirrors ModelicaTestingLib layout)
-│   └── python/PythonTestingLib/       # Python demo library (SimpleRamp via scipy, ConstantCsv data loader)
-├── tests/                        # pytest suite (~9450 tests, ~380 of them the Playwright subset, gated by importorskip)
+│   ├── python/PythonTestingLib/       # Python demo library (SimpleRamp via scipy, ConstantCsv data loader)
+│   └── plugins/DecayBackend/          # A backend plug-in, whole: exponential decay in-process, registered through the dstf.plugins entry point
+├── tests/                        # pytest suite (its size: Running Tests below; the Playwright subset gated by importorskip)
 ├── docs/                         # the site: index.md, concepts.md, guides/, reference/ (generated by _ext/), img/; and contributor notes,
-│                                 #      not on the site: decisions.md, vision.md, architecture.md, qa/, releasing.md
+│                                 #      not on the site: decisions.md, vision.md, architecture.md, patterns.md, releasing.md
 ├── CHANGELOG.md                  # what changed per version, for the PyPI user (also a page of the site)
+├── DESIGN.md                     # the visual system both tiers share: themes, colours, typography, components
 ├── scripts/                      # fetch_reference_fmus.py, smoke_test_dymola_export.py,
 │                                 #      convert_baseline_names.py (renames a library's numbered ref_NNNN.json to ref_<code>.json; runs without DSTF)
-├── pyproject.toml                # uv/hatchling config; optional extras: [dev], [author], [browser], [fmpy], [om]
+├── pyproject.toml                # uv/hatchling config; optional extras: [dev], [author], [browser], [fmpy], [om], [docs]
 └── CLAUDE.md
 ```
 
@@ -147,9 +166,10 @@ skips itself where the simulator is missing: the skip covers a machine without
 it, and only the marker keeps the selection above from starting it on a
 machine that has it.
 
-The suite is about 9,450 tests; CI's selection is about 9,000 of them. Add
-`-n 4` to run it in four parallel workers (`pytest-xdist`, in the `dev`
-extra), as CI does.
+With the `dev`, `author` and `browser` extras the suite is 9,712 tests: CI's
+selection is 9,256 of them and the Playwright subset 386 (counted by
+`--collect-only`, 2026-11-16). Add `-n 4` to run it in four parallel workers
+(`pytest-xdist`, in the `dev` extra), as CI does.
 
 `uv sync` installs the project editable, exactly like `uv pip install -e`, but
 pins every dependency to the same `uv.lock` CI uses. (Not the same
