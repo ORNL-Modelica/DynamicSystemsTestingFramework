@@ -43,7 +43,6 @@ myst_heading_anchors = 3
 exclude_patterns = [
     "_build",
     "decisions.md",
-    "ideas.md",
     "vision.md",
     "architecture.md",
     "patterns.md",

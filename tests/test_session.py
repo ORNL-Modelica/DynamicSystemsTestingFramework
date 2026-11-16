@@ -672,7 +672,7 @@ class TestOpen:
         """A per-event row filler reads `comparisons[model]` for the announced
         model; a model whose scoring raised has none there, and its event
         must say so: `error=True` on that announcement, `False` on every
-        other (docs/ideas.md 2026-09-16, second entry)."""
+        other."""
         import dstf.authoring.session as session_mod
 
         real = session_mod.compare_one
@@ -721,7 +721,7 @@ class TestOpen:
     def test_a_model_under_two_manifest_keys_is_one_failure(self, session, monkeypatch):
         """`failures` counts models, not `_score` calls: a manifest listing one
         model under two keys (hand-edited; the tool never writes one) read
-        "2 of 5 models" for one failing model (docs/ideas.md 2026-09-16)."""
+        "2 of 5 models" for one failing model."""
         import dstf.authoring.session as session_mod
 
         manifest = session.project.config.work_dir / "batch_manifest.json"

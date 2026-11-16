@@ -89,5 +89,5 @@ htmlcov/
 !tests/fixtures/**/dslog.txt
 
 # Local working-session notes and agent state — never published.
-# The project's durable record is docs/decisions.md and docs/ideas.md.
+# The project's durable record is docs/decisions.md.
 .soul/

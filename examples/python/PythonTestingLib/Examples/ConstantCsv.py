@@ -14,7 +14,7 @@ This is the minimal version: already-aligned CSV with well-defined
 ``t`` and ``x`` columns. More sophisticated use cases (server fetches,
 clock-drift alignment, windowing) are user-space concerns — any of
 them can be implemented in a Python test file today. Framework-level
-alignment/fitting is tracked as a follow-up in ``docs/ideas.md``.
+alignment/fitting is not built.
 """
 
 from __future__ import annotations

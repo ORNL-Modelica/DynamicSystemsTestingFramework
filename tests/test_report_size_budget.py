@@ -24,9 +24,7 @@ BUDGET_BYTES = 25 * 1024 * 1024  # regression ceiling, see the module docstring
 N_VARS = 50
 N_SAMPLES = 5000
 # Default Config.max_embedded_samples. The cap is 1000 (not 2000) because
-# each variable today embeds both act_time AND ref_time — once the time-array
-# dedup follow-up (idea #47) lands, the cap can safely rise to 2000 at the
-# same budget.
+# each variable embeds both act_time AND ref_time.
 MAX_EMBEDDED = 1000
 
 
