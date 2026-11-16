@@ -52,6 +52,10 @@ this file says when they do.
   test — RUNNING, QUEUED or CANCELLED while the queue holds it or stopped
   it, where it read NOT RUN or the old verdict — and its pills are the
   Suite's.
+- `dstf baseline plot`, with more changed revisions than it draws, ranks
+  them as `baseline diff` ranks a change: a re-save that only rounds the
+  stored numbers counts as no move, and no longer keeps its place over a
+  revision that really moved.
 
 ## [1.6.0] - 2026-11-12
 

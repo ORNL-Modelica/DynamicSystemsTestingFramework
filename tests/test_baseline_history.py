@@ -447,6 +447,35 @@ def test_a_folder_restricts_what_is_drawn(lib):
     assert [f.folder for f in test.folders] == ["Dymola/windows"]
 
 
+def test_over_twelve_kept_a_re_save_that_only_rounds_is_the_smallest_move(lib):
+    """The thinning ranks a revision as ``baseline diff`` ranks a change:
+    the files' rounding is no move. Revision 1 re-saves the first's values
+    at single precision (rounding only, 3.7e-6 % of x); revision 2 moves z,
+    zero in every file before it, by 0.5 absolute. Ten larger moves after
+    them leave room for one of the two: revision 2 is kept, 1 left out."""
+
+    def with_z(doc, z):
+        out = json.loads(json.dumps(doc))
+        out["variables"].append(
+            {"index": 4, "name": "z", "expression": "", "values": z}
+        )
+        return out
+
+    old, single = resaved_single()
+    zeros, moved = [0.0] * 4, [0.0, 0.5, 0.0, 0.0]
+    later = [
+        with_z(_with(single, 231.300491 + 10 * k, "single"), moved)
+        for k in range(1, MAX_KEPT - 1)
+    ]
+    revs = _docs(
+        lib, with_z(old, zeros), with_z(single, zeros), with_z(single, moved), *later
+    )
+    assert len(revs) == MAX_KEPT + 1
+    _, folder = _one(baseline_history(lib.top / "refs", revs))
+    assert [r.commit.sha for r in folder.thinned] == [revs[1]]
+    assert [r.commit.sha for r in folder.kept] == [revs[0], *revs[2:]]
+
+
 def test_over_twelve_kept_the_first_the_last_and_the_largest_movers_are(lib):
     """A step of k at revision k: the ten largest middle steps are the ten
     last middles, and the two smallest are left out and said."""
