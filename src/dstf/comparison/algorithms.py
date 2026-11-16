@@ -2055,12 +2055,12 @@ def _compare_dominant_frequency(
     paired: list[dict] = []
     all_passed = True
     max_rel_err = 0.0
-    # Each declared peak must claim a DISTINCT actual peak (review
-    # 2026-07-06: without claiming, a two-resonance system regressing to
-    # one resonance passed both declared peaks against the single
-    # surviving peak). The amplitude floor keeps the claiming from
-    # falling through to machine-noise sidelobes: a "peak" below
-    # _PEAK_MIN_REL_AMPLITUDE of the spectrum maximum is not a mode.
+    # Each declared peak must claim a DISTINCT actual peak (without
+    # claiming, a two-resonance system regressing to one resonance passed both
+    # declared peaks against the single surviving peak). The amplitude floor
+    # keeps the claiming from falling through to machine-noise sidelobes: a
+    # "peak" below _PEAK_MIN_REL_AMPLITUDE of the spectrum maximum is not a
+    # mode.
     claimed_hz: set[float] = set()
     amp_floor = (
         _PEAK_MIN_REL_AMPLITUDE * float(np.max(act_spectrum))

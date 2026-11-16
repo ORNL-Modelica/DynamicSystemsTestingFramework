@@ -1015,8 +1015,8 @@ def _config_error_comparison(
     A ``ValueError`` is that error wherever it is raised: building the mode
     (a tolerance that is neither a number nor a lower/upper pair; an
     unrecognized mode string, which must fail loudly — silently falling
-    back to NRMSE changed the scoring algorithm on a typo, review
-    2026-07-06) or scoring with it, for what a mode can only detect then (a
+    back to NRMSE would change the scoring algorithm on a typo) or scoring
+    with it, for what a mode can only detect then (a
     tube's unknown width mode, `abs` without control points).
 
     ``mode`` is ``metric_name`` — the metric the override is scored by

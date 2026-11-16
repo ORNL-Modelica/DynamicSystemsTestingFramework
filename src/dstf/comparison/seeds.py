@@ -209,7 +209,7 @@ def seeded_leaf(metric: str, variable: str, data: SeedData) -> dict:
     return {**leaf, **desc.seed(data)}
 
 
-#: Listed names whose kind is known by name (K1): a count is scored exact, a
+#: Listed names whose kind is known by name: a count is scored exact, a
 #: time within 10%. A tiny model's CPUtime can end on a whole 0.0 or 1.0:
 #: read by its values alone it is a count, and a next run's 0.01 s fails.
 COUNTS = frozenset({"EventCounter"})
@@ -217,7 +217,7 @@ TIMES = frozenset({"CPUtime"})
 
 
 def quantity_kind(path: str) -> Literal["count", "time"]:
-    """What kind of number the statistic ``path`` names (S5): a ``count``
+    """What kind of number the statistic ``path`` names: a ``count``
     is scored exact, a ``time`` within 10%. A time by its path — the
     ``timing`` section and the ``*_time`` / ``*_wall`` /
     ``cpu_time*`` keys; every other number a backend records is a count,
