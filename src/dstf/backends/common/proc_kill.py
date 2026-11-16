@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -142,8 +144,9 @@ def orphans_in(
     * it runs in *directory* or below — the scratch directory of the one
       test the dead tool was running, which the tool was told to work in
       and no other worker uses;
-    * it was created no earlier than *born_after*, the tool's own creation
-      time on the same clock (a child cannot predate its parent);
+    * it was created no earlier than *born_after*, on the clock of
+      :func:`clock_now` — the moment the dead tool began that test (what it
+      left cannot predate it; a shell opened in the folder before it can);
     * it has no parent of its own left: it hangs under init, or under a
       reaper among this process's ancestors — where the kernel puts the
       orphans of our descendants. A child of this process is not one, and
@@ -206,6 +209,29 @@ def created_at(pids: set[int]) -> float | None:
         import psutil
 
         return min(psutil.Process(pid).create_time() for pid in pids)
+    except Exception:
+        return None
+
+
+def clock_now() -> float | None:
+    """Now, on the clock of :func:`created_at` and :func:`orphans_in` — a
+    process born from this moment on is created no earlier than it — or
+    ``None`` where that clock cannot be read.
+
+    Not :func:`time.time`: a process's creation time is the boot time in
+    whole seconds plus the clock ticks from boot to its birth, so it runs up
+    to a second behind the wall clock, and a child born just after a
+    ``time.time()`` reading would read as born before it. Ticks since boot
+    plus that same boot time is the clock itself, cut to the tick as a
+    creation time is."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        import psutil
+
+        ticks = os.sysconf("SC_CLK_TCK")
+        since_boot = time.clock_gettime(time.CLOCK_BOOTTIME)
+        return math.floor(since_boot * ticks) / ticks + psutil.boot_time()
     except Exception:
         return None
 

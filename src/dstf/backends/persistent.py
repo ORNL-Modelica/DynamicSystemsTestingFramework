@@ -43,6 +43,7 @@ from .base import (
     no_worker_message,
 )
 from .common.proc_kill import (
+    clock_now,
     created_at,
     kill_process_tree,
     orphans_in,
@@ -712,7 +713,7 @@ class Worker(ABC):
             found |= snapshot_children(pid, name_hint=self.kill_name_hint)
         return found
 
-    def _record_orphans(self, test_key: str, tool_born: float | None) -> None:
+    def _record_orphans(self, test_key: str, born_after: float | None) -> None:
         """The tool died by itself while it ran *test_key*: add what it left
         behind to the record :meth:`_kill_tracked_pids` kills.
 
@@ -720,17 +721,19 @@ class Worker(ABC):
         appears and the tool is killed within the same half second. On
         Linux such a child is still found, by the mark of
         :func:`~.common.proc_kill.orphans_in`: parentless, born after this
-        worker's tool (*tool_born*), running in this test's own directory.
-        A process that fails any part is never touched.
+        test began (*born_after*), running in this test's own directory.
+        A process that fails any part is never touched — a shell somebody
+        had open in the directory before the test began among them, however
+        long after the tool it was started.
 
         What remains out of reach: on Linux, a child born after the last
         tick that has left the test's directory; elsewhere, any child born
         after the last tick (:attr:`_CHILD_WATCH_SECONDS`).
         """
         work_dir = getattr(self.config, "work_dir", None)
-        if tool_born is None or work_dir is None:
+        if born_after is None or work_dir is None:
             return
-        self._orphan_children |= orphans_in(str(Path(work_dir) / test_key), tool_born)
+        self._orphan_children |= orphans_in(str(Path(work_dir) / test_key), born_after)
 
     def _kill_tracked_pids(self) -> None:
         """Force-kill the process trees attributed to this worker.
@@ -884,8 +887,16 @@ class Worker(ABC):
             name=f"{self.exec_thread_prefix}-exec-{self.worker_id}",
         )
         # Read while the tool is certain to be there: what it leaves behind
-        # if it dies is told by having been born after it.
+        # if it dies is told by having been born after this test began —
+        # not after the tool, which may have started hours and many tests
+        # ago, with a user's shell opened in this directory since.
         tool_born = created_at(self.pids)
+        test_began = clock_now()
+        born_after = (
+            None
+            if tool_born is None
+            else max(tool_born, test_began if test_began is not None else tool_born)
+        )
         t.start()
         try:
             return self._watch_test(
@@ -899,7 +910,7 @@ class Worker(ABC):
                 left,
                 result_box,
                 exc_box,
-                tool_born,
+                born_after,
             )
         finally:
             left.set()
@@ -939,7 +950,7 @@ class Worker(ABC):
         left: threading.Event,
         result_box: list,
         exc_box: list,
-        tool_born: float | None,
+        born_after: float | None,
     ) -> "TestRunResult":
         """The watchdog's wait, and what each way out of it returns."""
 
@@ -997,7 +1008,7 @@ class Worker(ABC):
             # backend's, and close() drops the handle they hang off.
             detail = self._safe_detail()
             elapsed = time.monotonic() - start_ts
-            self._record_orphans(test_key, tool_born)
+            self._record_orphans(test_key, born_after)
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             with self._quiet():
                 self.close(grace=1.0)
@@ -1044,7 +1055,7 @@ class Worker(ABC):
             # so disk gets its chance here too.
             elapsed = time.monotonic() - start_ts
             if process_gone(self.pids):
-                self._record_orphans(test_key, tool_born)
+                self._record_orphans(test_key, born_after)
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             with self._quiet():
                 self.close(grace=1.0)
@@ -1067,7 +1078,7 @@ class Worker(ABC):
             # turns a lost connection into a failed result): close here,
             # while the test is known, so the children it left are found
             # (its directory is their mark) and go with it.
-            self._record_orphans(test_key, tool_born)
+            self._record_orphans(test_key, born_after)
             self._close_quietly()
         if self._cancel is not None and not result.success:
             # What a stopped simulation reports ("stopped early", a failed

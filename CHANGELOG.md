@@ -60,6 +60,9 @@ this file says when they do.
 
 ### Fixed
 
+- When a persistent worker's simulator crashes during a test, the leftover
+  sweep of that test's folder now only touches processes started during that
+  test; a shell you had open in the folder is left alone.
 - Ctrl-C stops any command with one line (`Interrupted.`) and exit code 130,
   not a traceback.
 - A test's time limit now stops every process the test started that is
