@@ -642,6 +642,58 @@ class TestWorkerRunTest:
         assert result.success is False
         assert "partial result refused" in (result.error_message or "")
 
+    def test_a_partial_result_is_reported_as_the_batch_path_reports_it(self, tmp_path):
+        """A success record whose .mat stops short is refused with what the
+        run said, as the batch path refuses it: the translation and
+        simulation times, the timing statistics and omc's notices — the
+        refusal one of them. It said the refusal alone."""
+        test = _make_test(stop_time=2.0)  # fixture mat reaches only 1.0
+        test_dir = tmp_path / "work" / "test_0001"
+
+        def fake_simulate(expr: str):
+            test_dir.mkdir(parents=True, exist_ok=True)
+            _write_stub_mat(test_dir / "result_res.mat", stop_time=1.0)
+            return {
+                "resultFile": str(test_dir / "result_res.mat"),
+                "messages": "The simulation finished successfully.",
+                "timeFrontend": 0.1,
+                "timeBackend": 0.05,
+                "timeSimCode": 0.01,
+                "timeTemplates": 0.02,
+                "timeCompile": 0.9,
+                "timeSimulation": 0.03,
+                "timeTotal": 1.11,
+            }
+
+        worker, _, _ = self._bootstrap_worker(
+            tmp_path,
+            responses={
+                "simulate(": fake_simulate,
+                "getErrorString": "Warning: The step size became small.\n",
+            },
+        )
+        result = worker.run_test(test, "test_0001")
+        assert result.success is False
+        assert result.translation_wall == pytest.approx(1.08)
+        assert result.sim_wall == pytest.approx(0.03)
+        assert result.statistics == {
+            "timing": {
+                "frontend": 0.1,
+                "backend": 0.05,
+                "simcode": 0.01,
+                "templates": 0.02,
+                "compile": 0.9,
+                "simulation": 0.03,
+                "total": 1.11,
+            }
+        }
+        message = result.error_message or ""
+        assert message.startswith("Warning: The step size became small.; ")
+        assert "result_res.mat reaches t=1.0 of stop_time=2.0" in message
+        assert message.endswith(
+            "partial result refused | The simulation finished successfully."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Timeout + close

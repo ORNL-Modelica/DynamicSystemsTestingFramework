@@ -63,6 +63,10 @@ this file says when they do.
   them as `baseline diff` ranks a change: a re-save that only rounds the
   stored numbers counts as no move, and no longer keeps its place over a
   revision that really moved.
+- OpenModelica: a persistent worker's run whose result stops before the
+  stop time is reported with the translation and simulation times, the
+  statistics and omc's messages the batch path reports, not the refusal
+  alone.
 
 ## [1.6.0] - 2026-11-12
 
