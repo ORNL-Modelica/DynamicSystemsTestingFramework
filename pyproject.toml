@@ -129,8 +129,9 @@ src = ["src", "tests"]
 [tool.ruff.format]
 # Ruff 0.16 began formatting code blocks inside Markdown. This repo's docs are
 # prose with illustrative snippets — reformatting them splits aligned trailing
-# comments across lines and would churn ~1,900 changed lines, 97% of them in
-# docs/superpowers/ plan documents nobody edits. Lint is unaffected because
+# comments across lines. Measured then at ~1,900 changed lines, 97% of them in
+# plan documents that have since left the repository; what it would churn now
+# is not measured. Lint is unaffected because
 # `ruff check` does not read Markdown at all; this exclude is format-only by
 # construction. Caveat: an exclude is honored in discovery mode and under
 # `--force-exclude` (which the pre-commit hook passes), but NOT when a `.md`

@@ -257,7 +257,6 @@ class PointsConfig:
     ``tolerance`` as absolute delta. When ``points`` is a non-empty
     list, each entry is a declared checkpoint with optional explicit
     target value, per-point tolerance, and per-point time-tolerance.
-    See docs/superpowers/specs/2026-04-24-points-mode-design.md.
     """
 
     points: list[dict] | None = field(

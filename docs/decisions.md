@@ -1,7 +1,8 @@
 # Decisions Log
 
-`docs/ideas.md`, cited below, was the project's idea backlog. It left the
-repository on 2026-11-16; git history holds it as it was until then.
+`docs/ideas.md`, cited below, was the project's idea backlog, and
+`docs/superpowers/` held its old plans and design specs. Both left the
+repository on 2026-11-16; git history holds them as they were until then.
 
 ## D1: Standalone repo, not embedded in TRANSFORM-Library
 

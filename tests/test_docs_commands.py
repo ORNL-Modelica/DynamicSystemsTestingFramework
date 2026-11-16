@@ -315,7 +315,6 @@ def test_the_site_s_pages_are_the_built_ones():
     assert {"docs/index.md", "docs/concepts.md", "docs/guides/first-run.md"} <= pages
     assert "docs/reference/cli.md" in pages
     assert not {"docs/decisions.md", "docs/architecture.md"} & pages
-    assert not any(page.startswith("docs/superpowers/") for page in pages)
 
 
 # --- the reader itself -------------------------------------------------------
