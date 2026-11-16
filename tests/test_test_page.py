@@ -7230,6 +7230,25 @@ class TestTestsDrawerControls:
             await _pick(user, "tests-drawer:sort", "status")
             await _settled(lambda: _shown(shell, user) == [A, G, B, C, D])
 
+    async def test_a_scoring_failure_s_badge_says_the_suite_s_message(self, shell):
+        """The drawer's SIM_FAIL of a scoring failure says why, as the
+        Suite's Status cell does: its message is the badge's tooltip, and a
+        rescore that scores the test takes it away."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            drawer = page.rail.tests
+            assert "title" not in drawer.list.rows[A].badge.props
+            shell.load.failed_models.append(G)
+            del shell.session.comparisons[G]
+            await _pick(user, "tests-drawer:sort", "status")
+            await _settled(lambda: drawer.list.rows[G].status == "SIM_FAIL")
+            badge = drawer.list.rows[G].badge
+            assert badge.props["title"] == "scoring failed (see the log)"
+            shell.session.stage([PatchOp(G, "add", "/comparison", {"tolerance": 1e-5})])
+            await _settled(lambda: drawer.list.rows[G].status != "SIM_FAIL")
+            assert drawer.list.rows[G].badge is badge
+            assert "title" not in badge.props
+
     async def test_the_status_sort_follows_a_rescore(self, shell):
         async with user_simulation(root=shell.index) as user:
             page = await _tests_drawer(shell, user)

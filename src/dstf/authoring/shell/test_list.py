@@ -154,6 +154,15 @@ class TestList:
         row.edits.set_visibility(row.pending > 0)
         row.badge.set_text(row.status)
         row.badge.style(f"background-color: var(--dstf-{row.css}-fill)")
+        # The Suite's message as the badge's tooltip: a scoring failure's
+        # SIM_FAIL said no more than a simulation's. An attribute on the
+        # props dict, which the server renders and a repaint keeps (a
+        # message can hold a `"`); a test scored since loses it.
+        if test_row.message:
+            row.badge.props["title"] = test_row.message
+        else:
+            row.badge.props.pop("title", None)
+        row.badge.update()
         # Add and remove, never replace: NiceGUI hides an element by appending
         # a `hidden` class, and a replaced list dropped it — every filtered-out
         # row came back on a rescore (the review's probe of Task 6 of the
