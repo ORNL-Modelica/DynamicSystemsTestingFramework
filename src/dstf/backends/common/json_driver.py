@@ -35,7 +35,7 @@ from ..types import (
     timeout_message,
 )
 from . import result_files
-from .proc_kill import run_killable
+from .proc_kill import kill_tree, run_killable
 from .proc_output import decode_output
 from .result_variables import criterion_variables
 
@@ -65,11 +65,11 @@ class JsonDriverBackend(Backend):
 
     def __init__(self, config):
         super().__init__(config)
-        #: The driver subprocess of each test in flight, by test key, and the
-        #: tests told to stop — what :meth:`cancel_test` works on, from
-        #: another thread.
+        #: The driver subprocess of each test in flight with its creation
+        #: time, by test key, and the tests told to stop — what
+        #: :meth:`cancel_test` works on, from another thread.
         self._procs_lock = threading.Lock()
-        self._procs: dict[str, subprocess.Popen] = {}
+        self._procs: dict[str, tuple[subprocess.Popen, float | None]] = {}
         self._cancelled: set[str] = set()
 
     @property
@@ -140,9 +140,9 @@ class JsonDriverBackend(Backend):
 
         wall_start = time.monotonic()
 
-        def _register(spawned: subprocess.Popen) -> None:
+        def _register(spawned: subprocess.Popen, born: float | None) -> None:
             with self._procs_lock:
-                self._procs[test_key] = spawned
+                self._procs[test_key] = (spawned, born)
 
         try:
             try:
@@ -257,17 +257,17 @@ class JsonDriverBackend(Backend):
         return f"{self.tool_label} {self.action_label} failed: {reason}"
 
     def cancel_test(self, test_key: str) -> bool:
-        """Kill the driver subprocess running *test_key*; its
-        ``run_single_test`` then returns a ``cancelled`` result."""
+        """Kill the driver subprocess running *test_key* and every process
+        under it, without waiting (the author session calls this); its
+        ``run_single_test`` then returns a ``cancelled`` result, and the
+        launch sweeps the test's folder before it does
+        (:func:`~.proc_kill.run_killable`)."""
         with self._procs_lock:
-            proc = self._procs.get(test_key)
-            if proc is None:
+            spawned = self._procs.get(test_key)
+            if spawned is None:
                 return False
             self._cancelled.add(test_key)
-        try:
-            proc.kill()
-        except OSError:
-            pass  # it ended on its own in the meantime
+        kill_tree(*spawned)
         return True
 
     # ------------------------------------------------------------------

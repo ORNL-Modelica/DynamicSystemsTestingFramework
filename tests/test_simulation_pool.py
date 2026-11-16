@@ -1474,7 +1474,8 @@ def test_the_python_backend_through_the_pool_equals_run_pipeline(tmp_path):
         removed = pool.submit(tests["Fast4"])
         assert pool.remove(removed) is True
         _wait_until(lambda: slow.test_key in getattr(backend, "_procs", {}))
-        child = psutil.Process(backend._procs[slow.test_key].pid)
+        proc, _born = backend._procs[slow.test_key]
+        child = psutil.Process(proc.pid)
 
         t0 = time.monotonic()
         assert pool.cancel(slow) is True

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -78,6 +78,7 @@ def kill_process_tree(
 def snapshot_children(
     pid: int,
     name_hint: str | None = None,
+    create_time: float | None = None,
 ) -> set[tuple[int, float]]:
     """Descendants of *pid* as ``(pid, create_time)`` pairs, recorded while
     the parent is still alive.
@@ -96,7 +97,8 @@ def snapshot_children(
     reissued to an unrelated process — or to another worker's fresh
     dymosim. ``name_hint`` guards the parent the same way
     :func:`kill_process_tree` does, so a recycled *parent* PID never hands
-    us a stranger's children in the first place.
+    us a stranger's children in the first place; ``create_time`` guards it
+    as it does there.
 
     Best-effort: an empty set on any failure.
     """
@@ -108,6 +110,8 @@ def snapshot_children(
     try:
         parent = psutil.Process(pid)
         if name_hint and name_hint not in (parent.name() or "").lower():
+            return set()
+        if create_time is not None and parent.create_time() != create_time:
             return set()
         children = parent.children(recursive=True)
     except Exception:
@@ -125,7 +129,9 @@ def snapshot_children(
     return snapshot
 
 
-def orphans_in(directory: str, born_after: float) -> set[tuple[int, float]]:
+def orphans_in(
+    directory: str, born_after: float, token: str | None = None
+) -> set[tuple[int, float]]:
     """Linux only: the processes a dead tool left behind in *directory*, as
     ``(pid, create_time)`` pairs for :func:`kill_process_tree`.
 
@@ -144,9 +150,20 @@ def orphans_in(directory: str, born_after: float) -> set[tuple[int, float]]:
       orphans of our descendants. A child of this process is not one, and
       neither is a child of anybody else's live process.
 
-    Unreadable means unmarked: a process whose directory or parent cannot
-    be read is left alone. Other platforms report no working directory for
-    a foreign process without privileges, or do not reparent: ``set()``.
+    The third part is wider than it reads: the reapers include every
+    ancestor of this process (WSL's init adopts orphans one level below
+    PID 1), so a child of the shell dstf was started from, born after the
+    tool and sitting in the folder, carries the mark too. With *token* —
+    the value of :data:`TREE_TOKEN` in the environment the tool was started
+    with, which every process it starts inherits — the mark is exact
+    instead: a process in the folder, born after the tool, whose
+    environment holds the token. Whether it was reparented yet does not
+    matter then.
+
+    Unreadable means unmarked: a process whose directory, parent or
+    environment cannot be read is left alone. Other platforms report no
+    working directory for a foreign process without privileges, or do not
+    reparent: ``set()``.
     """
     if not sys.platform.startswith("linux"):
         return set()
@@ -160,14 +177,19 @@ def orphans_in(directory: str, born_after: float) -> set[tuple[int, float]]:
     found: set[tuple[int, float]] = set()
     for proc in psutil.process_iter():
         try:
-            if proc.ppid() not in reapers or proc.pid in reapers | {os.getpid()}:
+            if proc.pid in reapers | {os.getpid()}:
+                continue
+            if token is None and proc.ppid() not in reapers:
                 continue
             created = proc.create_time()
             if created < born_after or proc.status() == psutil.STATUS_ZOMBIE:
                 continue
             cwd = proc.cwd()
-            if cwd == root or cwd.startswith(root + os.sep):
-                found.add((proc.pid, created))
+            if not (cwd == root or cwd.startswith(root + os.sep)):
+                continue
+            if token is not None and proc.environ().get(TREE_TOKEN) != token:
+                continue
+            found.add((proc.pid, created))
         except Exception:
             continue
     return found
@@ -242,27 +264,39 @@ def live_children(pids: set[int], name_hint: str | None = None) -> list:
     return children
 
 
+#: The environment variable that marks every process one test's tool
+#: started: ``run_killable`` sets it to a value of its own for each launch,
+#: and the processes inherit it.
+TREE_TOKEN = "DSTF_TREE"
+
+
 def run_killable(
     cmd: list[str],
     *,
     cwd: Path,
     timeout: float,
-    on_spawn: Callable[[subprocess.Popen], None] | None = None,
+    on_spawn: Callable[[subprocess.Popen, float | None], None] | None = None,
 ) -> subprocess.CompletedProcess:
     """``subprocess.run(cmd, capture_output=True, text=True, timeout=...)``
-    as every batch test is launched, utf-8 with ``errors="replace"``, the
-    live ``Popen`` handed to *on_spawn* so another thread can kill it.
+    as every subprocess-per-test launch is made, utf-8 with
+    ``errors="replace"``. *on_spawn* gets the live ``Popen`` and its
+    creation time (:func:`created_at`; ``None`` if unreadable), so another
+    thread can stop it with :func:`kill_tree`.
 
     Same contract otherwise, except what a timeout stops: the whole tree
     the tool started (:func:`_stop_tree`), not the tool alone. omc runs the
     compiled simulation under ``/bin/sh -c``; ``subprocess.run`` killed
     only omc, and on a 340-test run six simulations were still running 30
     minutes after the run ended. ``TimeoutExpired`` carries what the tool
-    had written.
+    had written. A tool that ends by a signal — a cancel's
+    :func:`kill_tree`, or anyone's kill — has its folder swept the same
+    way before the result returns.
 
     *cwd* is the one test's own directory, used by no other test: on Linux
-    what the tree left there is found by it (:func:`orphans_in`).
+    what the tree left there is found by it and by the environment mark
+    (:data:`TREE_TOKEN`) the tool is started with.
     """
+    token = uuid.uuid4().hex
     with subprocess.Popen(
         cmd,
         cwd=cwd,
@@ -273,61 +307,80 @@ def run_killable(
         # non-ASCII traceback can't crash decoding on cp1252 hosts.
         encoding="utf-8",
         errors="replace",
+        env={**os.environ, TREE_TOKEN: token},
     ) as proc:
         born = created_at({proc.pid})
         if on_spawn is not None:
-            on_spawn(proc)
+            on_spawn(proc, born)
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            _stop_tree(proc, cwd, born)
+            _stop_tree(proc, cwd, born, token)
             exc.stdout, exc.stderr = _drain(proc)
             raise
         except BaseException:
-            _stop_tree(proc, cwd, born)
+            _stop_tree(proc, cwd, born, token)
             raise
+        if proc.returncode < 0:
+            _sweep(cwd, born, token)
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
-#: How long :func:`_stop_tree` waits for the killed descendants to exit,
-#: and :func:`_drain` for the pipes to close, before going on without them.
+def kill_tree(proc: subprocess.Popen, born: float | None) -> set[tuple[int, float]]:
+    """Kill *proc* and every process under it, children first, without
+    waiting for any of them; the descendants killed, as ``(pid,
+    create_time)``. Safe from another thread, also once the ``Popen`` was
+    reaped: the walk is guarded by *born*, the tool's creation time, so a
+    PID reissued since names nobody (with *born* ``None`` only the
+    ``Popen`` itself is killed, which is a no-op once it was reaped).
+
+    The descendants are recorded while *proc* still lives: once it is gone
+    nothing links them to it. Each is killed again by its recorded create
+    time, which proves it as exactly as the environment mark would.
+    """
+    snapshot: set[tuple[int, float]] = set()
+    if born is not None:
+        snapshot = snapshot_children(proc.pid, create_time=born)
+        kill_process_tree(proc.pid, create_time=born)
+        for pid, created in snapshot:
+            kill_process_tree(pid, create_time=created)
+    try:
+        # The tree kill is a no-op without psutil; the Popen is ours.
+        proc.kill()
+    except OSError:
+        pass
+    return snapshot
+
+
+#: How long :func:`_stop_tree` waits for the tool to exit, and
+#: :func:`_drain` for the pipes to close, before going on without them.
 _STOP_GRACE = 5.0
 
 
-def _stop_tree(proc: subprocess.Popen, cwd: Path, born: float | None) -> None:
-    """Kill *proc* and every process it started, and what they left in
-    *cwd* (the test's own directory).
-
-    The descendants are recorded while *proc* still lives: once it is gone
-    nothing links them to it. Then the tree is killed children first, the
-    tool last. A child forked between the walk and the kills, whose parent
-    the kills then took, is reparented to init and out of every walk's
-    reach — so, once the killed ones have exited, :func:`orphans_in` looks
-    for what is left in the test's directory, born after the tool. No name
-    guard on *proc*: this is our own unreaped ``Popen``, whose PID cannot
-    have been reissued.
-    """
-    snapshot = snapshot_children(proc.pid)
-    kill_process_tree(proc.pid)
-    for pid, created in snapshot:
-        kill_process_tree(pid, create_time=created)
-    if proc.poll() is None:
-        # The tree kill is a no-op without psutil; the Popen is ours.
-        try:
-            proc.kill()
-        except OSError:
-            pass
+def _stop_tree(
+    proc: subprocess.Popen, cwd: Path, born: float | None, token: str
+) -> None:
+    """Kill *proc* and every process it started (:func:`kill_tree`), wait
+    for the tool, then sweep the test's directory (:func:`_sweep`)."""
+    kill_tree(proc, born)
     try:
         proc.wait(timeout=_STOP_GRACE)
     except subprocess.TimeoutExpired:
         pass
-    pids = {pid for pid, _ in snapshot}
-    deadline = time.monotonic() + _STOP_GRACE
-    while pids and not process_gone(pids) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    if born is not None:
-        for pid, created in orphans_in(str(cwd), born):
-            kill_process_tree(pid, create_time=created)
+    _sweep(cwd, born, token)
+
+
+def _sweep(cwd: Path, born: float | None, token: str) -> None:
+    """Kill what the tool's tree left in *cwd* (the test's own directory):
+    a child forked between the walk and the kills, whose parent the kills
+    then took, is out of every walk's reach. It is told by
+    :func:`orphans_in` with the launch's *token*: in the folder, born after
+    the tool, and carrying the mark — a person's shell in the same folder
+    carries none."""
+    if born is None:
+        return
+    for pid, created in orphans_in(str(cwd), born, token=token):
+        kill_process_tree(pid, create_time=created)
 
 
 def _drain(proc: subprocess.Popen) -> tuple[str | bytes | None, str | bytes | None]:
@@ -335,7 +388,12 @@ def _drain(proc: subprocess.Popen) -> tuple[str | bytes | None, str | bytes | No
     process that escaped the stop (a new session, another directory) and
     still holds the pipes would keep the read waiting for it to end: past
     :data:`_STOP_GRACE` the pipes are closed with what had arrived, as
-    bytes (``decode_output`` reads both)."""
+    bytes (``decode_output`` reads both).
+
+    The bound holds on POSIX. On Windows ``communicate`` reads through
+    threads, and closing a pipe a reader thread is blocked on can wait
+    until the process holding its other end exits.
+    """
     try:
         return proc.communicate(timeout=_STOP_GRACE)
     except subprocess.TimeoutExpired as partial:
