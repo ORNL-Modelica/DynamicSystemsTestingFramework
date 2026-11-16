@@ -4,7 +4,7 @@ Per-test omc subprocess driven by a generated ``simulate.mos``. The
 persistent-worker counterpart lives in :mod:`.persistent_backend` and is the
 default CLI path; this one is reached with the ``--batch`` CLI flag. There is
 no automatic fallback — a missing OMPython aborts the run (see
-``backends.select_backend``). FMU export (``buildModelFMU``) is still a follow-up.
+``backends.select_backend``). This backend exports no FMUs.
 
 One-time per machine (bootstrap MSL):
 
@@ -358,8 +358,8 @@ class OpenModelicaBackend(Backend):
             proc = run_killable([omc, self.MOS_FILENAME], cwd=test_dir, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - wall_start
-            # review 2026-07-06 (finding 23): TimeoutExpired.stdout is bytes
-            # even with text=True — decode_output handles None/bytes/str.
+            # TimeoutExpired.stdout is bytes even with text=True;
+            # decode_output handles None/bytes/str.
             (test_dir / self.STDOUT_FILENAME).write_text(
                 decode_output(exc.stdout) + "\n[TimeoutExpired]\n",
                 encoding="utf-8",
