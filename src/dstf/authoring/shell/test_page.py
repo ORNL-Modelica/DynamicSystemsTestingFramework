@@ -1269,8 +1269,9 @@ class TestPage:
         """This page's test is no longer a test of the open project — a
         reopen no longer holds it, or the Session was closed. Every read
         below `sync` raises for it, so the page went on showing the last
-        project's cards while every event logged a traceback. It says what a page BUILT for an unknown model says, and
-        a later event that finds the test again rebuilds (`_shape`).
+        project's cards while every event logged a traceback. It says what
+        a page BUILT for an unknown model says, and a later event that
+        finds the test again rebuilds (`_shape`).
 
         The sub-header and the strip go with the cards: they stayed live
         and stale — the last project's verdict, its baseline's name, and

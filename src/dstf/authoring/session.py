@@ -1541,8 +1541,9 @@ class Session:
                         gesture=gesture,
                     )
                 )
-            # The ops as given. Each value a copy: the caller's dict stays the caller's, and
-            # editing it after staging changes neither export nor Save.
+            # The ops as given. Each value a copy: the caller's dict stays
+            # the caller's, and editing it after staging changes neither
+            # export nor Save.
             staged += [
                 replace(op, value=copy.deepcopy(op.value), gesture=gesture)
                 for op in ops
@@ -2668,7 +2669,8 @@ class Session:
         ``.mo`` annotation those names are in no spec entry (and the entry
         may not exist yet: the op creates it). ``(None, None)`` when the
         entry already has a tree (`has_metrics`: a null ``metrics`` is
-        none). Otherwise ``(None, why)`` — and `stage` refuses an op that needs it:
+        none). Otherwise ``(None, why)``, and `stage` refuses an op that
+        needs it:
         :data:`SIMULATE_ONLY` or :data:`NOTHING_SCORED` when nothing was
         scored (NO_REF, SIM_FAIL, NOT RUN, simulate-only; and a model not in the
         project, which `stage` refuses with it as a patch — `tree_or_reason`
