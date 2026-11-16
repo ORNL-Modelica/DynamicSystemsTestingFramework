@@ -170,22 +170,10 @@ class ComponentMatch:
 class ExtendsMatch:
     """An extends match."""
 
-    extended_class: str
-
 
 @dataclass
 class ClassNameMatch:
     """A class-name-glob match (PTA-follow.3)."""
-
-    qualified_name: str
-
-
-@dataclass
-class AnnotationMatch:
-    """A generic-annotation match: the matched annotation's param text."""
-
-    annotation_name: str
-    param_text: str
 
 
 @dataclass
@@ -200,7 +188,7 @@ class CompositeMatch:
     matches: list
 
 
-MatchContext = ComponentMatch | ExtendsMatch | CompositeMatch
+MatchContext = ComponentMatch | ExtendsMatch | ClassNameMatch | CompositeMatch
 
 
 def _find_match(match: MatchContext, type_):
@@ -314,7 +302,7 @@ def _match_extends(content: str, spec: dict) -> ExtendsMatch | None:
     for m in re.finditer(r"\bextends\s+([\w.]+)", stripped):
         extended = m.group(1)
         if fnmatch.fnmatchcase(extended, pattern_glob):
-            return ExtendsMatch(extended_class=extended)
+            return ExtendsMatch()
     return None
 
 
@@ -334,7 +322,7 @@ def _match_class_name_glob(content: str, spec: dict) -> ClassNameMatch | None:
         return None
     qualified = f"{within}.{class_name}" if within else class_name
     if fnmatch.fnmatchcase(qualified, pattern_glob):
-        return ClassNameMatch(qualified_name=qualified)
+        return ClassNameMatch()
     return None
 
 

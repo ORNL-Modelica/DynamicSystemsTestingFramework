@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
 from .sides import Sides, as_written, parse_number, parse_sides
 from .types import _EPS, VariableComparison
+
+if TYPE_CHECKING:
+    from .modes import TubeConfig
 
 #: How close to a recorded event a sample is that event's instant: within
 #: ``SAME_INSTANT * max(span, |Te|)`` of the event's time ``Te``, on either side
@@ -889,7 +893,7 @@ def _interpolate_tube_widths(
 def _tube_bounds(
     eval_time: np.ndarray,
     ref_at_eval: np.ndarray,
-    tube_config: dict,
+    config: TubeConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Upper and lower band edges at ``eval_time``.
 
@@ -898,25 +902,23 @@ def _tube_bounds(
     scores both and takes the stricter verdict, and that argument only holds if
     the two bands are constructed identically.
     """
-    tube_width_mode = tube_config.get("tube_width_mode")
+    tube_width_mode = config.tube_width_mode
     if tube_width_mode not in ("band", "rel", "abs"):
         raise ValueError(
             f"tube_width_mode must be 'band', 'rel', or 'abs'; got {tube_width_mode!r}"
         )
-    tube_points = tube_config.get("tube_points")
+    tube_points = config.tube_points
     if tube_points:
         raw_upper, raw_lower = _interpolate_tube_widths(
-            eval_time,
-            tube_points,
-            tube_config.get("tube_interpolation", "linear"),
+            eval_time, tube_points, config.tube_interpolation
         )
     else:
         # Constant-tube shorthand — only 'band' and 'rel' supported. 'abs'
         # (literal y-bounds) needs both bounds explicitly, so it must use
         # tube_points. A number is both sides; a pair is the width above
         # (``upper``) and below (``lower``) the reference.
-        const_abs = parse_sides(tube_config.get("tube_abs", 0.0), "tube_abs")
-        const_rel = parse_sides(tube_config.get("tube_rel", 0.0), "tube_rel")
+        const_abs = parse_sides(config.tube_abs, "tube_abs")
+        const_rel = parse_sides(config.tube_rel, "tube_rel")
         if tube_width_mode == "band":
             raw_upper = np.full_like(eval_time, const_abs.upper)
             raw_lower = np.full_like(eval_time, const_abs.lower)
@@ -940,7 +942,7 @@ def _tube_bounds(
         lower_width = raw_lower
 
     # One number, whoever built the config: a negative one is no floor.
-    min_width = parse_number(tube_config.get("tube_min_width", 0.0), "tube_min_width")
+    min_width = parse_number(config.tube_min_width, "tube_min_width")
     if min_width > 0:
         upper_width = np.maximum(upper_width, min_width)
         lower_width = np.maximum(lower_width, min_width)
@@ -1075,7 +1077,7 @@ def _compare_tube(
     ref_values: np.ndarray,
     act_time: np.ndarray,
     act_values: np.ndarray,
-    tube_config: dict,
+    config: TubeConfig,
 ) -> VariableComparison:
     """Compare using a tolerance tube around the reference trajectory.
 
@@ -1102,7 +1104,7 @@ def _compare_tube(
         )
     # Width-mode validation and the min-width floor live in _tube_bounds, which
     # is the single place the envelope is constructed.
-    tube_points = tube_config.get("tube_points")
+    tube_points = config.tube_points
     ctrl_times = (
         np.array([p["time"] for p in tube_points], dtype=float) if tube_points else None
     )
@@ -1111,7 +1113,7 @@ def _compare_tube(
     grid = _tube_eval_grid(ref_time, act_time, ctrl_times)
     ref_on_grid = np.interp(grid, ref_time, ref_values)
     act_on_grid = np.interp(grid, act_time, act_values)
-    tube_upper, tube_lower = _tube_bounds(grid, ref_on_grid, tube_config)
+    tube_upper, tube_lower = _tube_bounds(grid, ref_on_grid, config)
 
     # Check: tube_lower <= actual <= tube_upper
     violations = np.maximum(act_on_grid - tube_upper, tube_lower - act_on_grid)

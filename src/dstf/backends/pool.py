@@ -89,7 +89,6 @@ class QueueItem:
     #: cancelled one.
     message: str | None = None
     #: Wall-clock (``time.time()``) stamps.
-    submitted_at: float = field(default_factory=time.time)
     started_at: float | None = None
     ended_at: float | None = None
     # A stop was asked of it while RUNNING (cancel or close): a run that then

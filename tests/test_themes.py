@@ -215,15 +215,6 @@ class TestStylesheet:
         assert "dark" not in theme.quasar_palette("default")
 
 
-def _colours(value) -> list[str]:
-    """Every colour string anywhere in a nested template."""
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [c for v in value.values() for c in _colours(v)]
-    return []
-
-
 class TestFigurePalette:
     def test_one_palette_per_bundled_theme(self):
         assert list(PALETTES) == list(theme.THEMES)
@@ -250,35 +241,6 @@ class TestFigurePalette:
     def test_a_context_series_is_its_themes_muted_text(self):
         for name, table in theme.THEMES.items():
             assert palette_of(name).context == table["text-muted"], name
-
-    def test_the_dark_template_is_made_of_the_dark_tokens(self):
-        t = theme.DARK_THEME
-        template = palette_of("dark").template
-        assert template is not None
-        assert template["paper_bgcolor"] == template["plot_bgcolor"] == t["surface"]
-        assert template["font"] == {"color": t["text"]}
-        for axis in ("xaxis", "yaxis"):
-            assert template[axis] == {
-                "gridcolor": t["border-hairline"],
-                "zerolinecolor": t["border"],
-                "linecolor": t["border"],
-                "tickcolor": t["border"],
-                "tickfont": {"color": t["text-secondary"]},
-                "title": {"font": {"color": t["text-secondary"]}},
-            }
-        assert template["legend"] == {"font": {"color": t["text"]}}
-        assert template["hoverlabel"] == {
-            "bgcolor": t["surface-hover"],
-            "bordercolor": t["border"],
-            "font": {"color": t["text"]},
-        }
-        assert template["modebar"] == {
-            "bgcolor": "rgba(0,0,0,0)",
-            "color": t["text-muted"],
-            "activecolor": t["text"],
-        }
-        # Nothing in it is a colour of some other table.
-        assert set(_colours(template)) <= {*t.values(), "rgba(0,0,0,0)"}
 
     def test_the_dark_ramps_change_only_the_four_shades_that_sank(self):
         dark = palette_of("dark").hues

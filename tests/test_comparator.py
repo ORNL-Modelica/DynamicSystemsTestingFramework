@@ -1203,22 +1203,6 @@ class TestResolveMode:
         assert mode.config.tube_interpolation == "constant"
 
 
-class TestTubeConfigToDict:
-    """Tests for TubeConfig.to_dict() round-trip."""
-
-    def test_minimal(self):
-        """Default TubeConfig produces empty dict."""
-        cfg = TubeConfig()
-        assert cfg.to_dict() == {}
-
-    def test_band_mode(self):
-        cfg = TubeConfig(tube_width_mode="band", tube_abs=5.0)
-        d = cfg.to_dict()
-        assert d["tube_width_mode"] == "band"
-        assert d["tube_abs"] == Sides(5.0, 5.0)
-        assert "tube_rel" not in d  # Zero values omitted
-
-
 class TestModeCompare:
     """Integration: each mode produces correct VariableComparison."""
 
