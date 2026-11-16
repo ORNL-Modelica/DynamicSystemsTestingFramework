@@ -24,8 +24,7 @@ def kill_process_tree(
     The tracked PID is never the process doing the simulating: dymola.exe
     spawns dymosim, omc spawns the compiled model binary. Killing only the
     parent leaves that child burning CPU and holding the result files open
-    (on Windows the next run's rmtree then fails with PermissionError)
-    (review 2026-07-06, finding 22).
+    (on Windows the next run's rmtree then fails with PermissionError).
 
     Two independent guards against PID reuse, because a PID we recorded
     seconds ago may belong to something else by now — on Windows freed
@@ -308,8 +307,8 @@ def run_killable(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        # review 2026-07-06 (finding 75): pin utf-8 + replace so a
-        # non-ASCII traceback can't crash decoding on cp1252 hosts.
+        # Pin utf-8 + replace so a non-ASCII traceback can't crash decoding
+        # on cp1252 hosts.
         encoding="utf-8",
         errors="replace",
         env={**os.environ, TREE_TOKEN: token},

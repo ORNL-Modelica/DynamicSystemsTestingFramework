@@ -159,8 +159,8 @@ class JsonDriverBackend(Backend):
                     self._cancelled.discard(test_key)
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - wall_start
-            # review 2026-07-06 (finding 23): TimeoutExpired.stdout/.stderr are
-            # bytes even with text=True — decode_output handles None/bytes/str.
+            # TimeoutExpired.stdout/.stderr are bytes even with text=True;
+            # decode_output handles None/bytes/str.
             stdout_path.write_text(decode_output(exc.stdout), encoding="utf-8")
             stderr_path.write_text(decode_output(exc.stderr), encoding="utf-8")
             msg = timeout_message(
@@ -209,8 +209,8 @@ class JsonDriverBackend(Backend):
             # The driver writes a structured failure JSON on exceptions; if
             # present, we surface its 'error' message. Otherwise fall back
             # to the raw stderr tail.
-            # review 2026-07-06 (finding 75): whitespace-only stderr made
-            # splitlines()[-1] IndexError inside the failure handler.
+            # Whitespace-only stderr would make splitlines()[-1] raise
+            # IndexError inside the failure handler.
             stderr_lines = (proc.stderr or "").strip().splitlines()
             err = _read_failure_error(result_path)
             if err is None:
@@ -316,11 +316,10 @@ class JsonDriverBackend(Backend):
                 run_reason=True,
             )
 
-        # review 2026-07-06 (finding 29): non-numeric values in a result
-        # payload (a user script returning strings, a tampered file) must
-        # fail THIS test, not raise through read_results and abort the whole
-        # read phase for every test. The drivers validate too; this is the
-        # backend-side belt.
+        # Non-numeric values in a result payload (a user script returning
+        # strings, a tampered file) must fail THIS test, not raise through
+        # read_results and abort the whole read phase for every test. The
+        # drivers validate too; this is the backend-side belt.
         try:
             time_arr = np.asarray(payload.get("time", []), dtype=np.float64)
         except (ValueError, TypeError) as exc:
