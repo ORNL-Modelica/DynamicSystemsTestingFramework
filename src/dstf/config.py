@@ -527,8 +527,7 @@ class Config:
     # comparison_data.json. Only affects the HTML visual; pass/fail scoring,
     # stored baselines, and the data sidecar are unaffected. Default 1000 keeps
     # a 50-var × 5000-sample test under the ~5 MB budget given today's
-    # per-variable time-array duplication; the follow-up dedup (idea #47)
-    # will let this rise to 2000 at the same budget.
+    # per-variable time-array duplication.
     max_embedded_samples: int = field(
         default_factory=lambda: _default("max_embedded_samples")
     )

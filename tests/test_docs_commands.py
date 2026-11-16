@@ -314,7 +314,7 @@ def test_the_site_s_pages_are_the_built_ones():
     pages = {page.relative_to(REPO).as_posix() for page in site_pages()}
     assert {"docs/index.md", "docs/concepts.md", "docs/guides/first-run.md"} <= pages
     assert "docs/reference/cli.md" in pages
-    assert not {"docs/decisions.md", "docs/ideas.md", "docs/architecture.md"} & pages
+    assert not {"docs/decisions.md", "docs/architecture.md"} & pages
     assert not any(page.startswith("docs/superpowers/") for page in pages)
 
 

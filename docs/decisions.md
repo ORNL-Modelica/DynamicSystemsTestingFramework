@@ -1,5 +1,8 @@
 # Decisions Log
 
+`docs/ideas.md`, cited below, was the project's idea backlog. It left the
+repository on 2026-11-16; git history holds it as it was until then.
+
 ## D1: Standalone repo, not embedded in TRANSFORM-Library
 
 - **What**: ModelicaTesting is its own repo with `src/` layout, not a subdirectory of any Modelica library.
