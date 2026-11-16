@@ -46,10 +46,7 @@ exclude_patterns = [
     "vision.md",
     "architecture.md",
     "patterns.md",
-    "constraints.md",
     "releasing.md",
-    "qa",
-    "design",
 ]
 
 html_theme = "furo"

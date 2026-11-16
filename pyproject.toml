@@ -48,11 +48,11 @@ dev = [
 ]
 # The authoring shell (`dstf author`). NiceGUI serves the browser UI; the
 # figure layer hands it plain figure dicts, so plotly.py stays out of the
-# install (tests/test_author_extra.py pins that). regex runs the Variables
-# drawer's typed filter with a timeout (`authoring/variable_rows.matcher`).
+# install (tests/test_author_extra.py pins that). regex runs the drawers'
+# typed filter with a timeout (`authoring/needle.py`'s matcher).
 # Install with: uv sync --extra dev --extra author --locked --inexact
 author = ["nicegui>=3.16", "regex>=2026.9.10"]
-# FMPy backend (Phase 2). Install with: uv sync --extra fmpy --locked --inexact
+# FMPy backend. Install with: uv sync --extra fmpy --locked --inexact
 # Or with the dev tools:  uv sync --extra dev --extra fmpy --locked
 fmpy = ["fmpy>=0.3"]
 # Persistent-worker OpenModelica (D70). Drives omc via ZMQ through OMPython
@@ -110,7 +110,7 @@ markers = [
     "ompython: starts a real OpenModelica (needs omc; the persistent worker needs the OMPython package too)",
     "reference_fmus: requires Reference-FMUs binaries at examples/fmu/reference-fmus-binaries",
     "julia: requires Julia 1.11+ with ModelingToolkit + OrdinaryDiffEq installed in examples/julia/JuliaMtkTestingLib",
-    "playwright: browser-driven reporter tests (requires playwright + chromium); until D97 this marker did not exist and -m 'not playwright' was a no-op filter",
+    "playwright: drives a real browser (requires the playwright package and a Chromium)",
 ]
 filterwarnings = [
     "ignore::pytest.PytestCollectionWarning",
