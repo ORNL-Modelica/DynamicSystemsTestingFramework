@@ -20,9 +20,12 @@ import threading
 import time
 from abc import abstractmethod
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import psutil
 
 from ...discovery.test_registry import TestModel, diagnostic_names
 from ..base import Backend
@@ -65,11 +68,11 @@ class JsonDriverBackend(Backend):
 
     def __init__(self, config):
         super().__init__(config)
-        #: The driver subprocess of each test in flight with its creation
-        #: time, by test key, and the tests told to stop — what
-        #: :meth:`cancel_test` works on, from another thread.
+        #: The driver subprocess of each test in flight with the driver as
+        #: psutil saw it at the launch, by test key, and the tests told to
+        #: stop — what :meth:`cancel_test` works on, from another thread.
         self._procs_lock = threading.Lock()
-        self._procs: dict[str, tuple[subprocess.Popen, float | None]] = {}
+        self._procs: dict[str, tuple[subprocess.Popen, psutil.Process | None]] = {}
         self._cancelled: set[str] = set()
 
     @property
@@ -140,9 +143,9 @@ class JsonDriverBackend(Backend):
 
         wall_start = time.monotonic()
 
-        def _register(spawned: subprocess.Popen, born: float | None) -> None:
+        def _register(spawned: subprocess.Popen, tool: psutil.Process | None) -> None:
             with self._procs_lock:
-                self._procs[test_key] = (spawned, born)
+                self._procs[test_key] = (spawned, tool)
 
         try:
             try:

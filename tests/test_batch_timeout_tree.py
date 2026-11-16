@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -72,8 +73,14 @@ class _Watch:
     a thread started before the call under test: once the call returns the
     process should be gone, and a PID read then would prove nothing."""
 
-    def __init__(self, pid_file: Path, seconds: str = CHILD_SECONDS):
+    def __init__(
+        self,
+        pid_file: Path,
+        seconds: str = CHILD_SECONDS,
+        then: Callable[[], None] | None = None,
+    ):
         self._found: list[int] = []
+        self._then = then
         self._thread = threading.Thread(
             target=self._poll, args=(pid_file, seconds), daemon=True
         )
@@ -83,7 +90,9 @@ class _Watch:
         try:
             self._found.append(_recorded_pid(pid_file, seconds))
         except AssertionError:
-            pass
+            return
+        if self._then is not None:
+            self._then()
 
     def pid(self) -> int:
         self._thread.join(10)
@@ -136,30 +145,35 @@ def _outside(pid_file: Path) -> str:
     return f"sh -c {shlex.quote(inner)}"
 
 
+def _fake_omc_backend(tmp_path: Path, start_child: str):
+    """The OpenModelica backend, its omc a script that writes its PID,
+    prints a line, runs *start_child* in the background and sleeps."""
+    from dstf.backends.openmodelica.backend import OpenModelicaBackend
+
+    fake_omc = tmp_path / "omc"
+    fake_omc.write_text(
+        "#!/bin/sh\necho $$ > omc.pid\necho 'omc started'\n"
+        f"{start_child} &\nexec sleep {CHILD_SECONDS}\n"
+    )
+    fake_omc.chmod(0o755)
+    (tmp_path / "package.mo").write_text("package Lib end Lib;")
+    cfg = Config(
+        source_path=tmp_path,
+        reference_root=tmp_path / "refs",
+        backend_name="OpenModelica",
+        work_dir=tmp_path / "work",
+    )
+    backend = OpenModelicaBackend(cfg)
+    backend.om_config = dataclasses.replace(backend.om_config, omc_path=str(fake_omc))
+    return backend
+
+
 class TestOpenModelicaBatch:
     @pytest.mark.parametrize(
         "start_child", [_GRANDCHILD, _DETACHED], ids=["under-a-shell", "detached"]
     )
     def test_a_timeout_stops_the_simulation_omc_started(self, tmp_path, start_child):
-        from dstf.backends.openmodelica.backend import OpenModelicaBackend
-
-        fake_omc = tmp_path / "omc"
-        fake_omc.write_text(
-            "#!/bin/sh\necho $$ > omc.pid\necho 'omc started'\n"
-            f"{start_child} &\nexec sleep {CHILD_SECONDS}\n"
-        )
-        fake_omc.chmod(0o755)
-        (tmp_path / "package.mo").write_text("package Lib end Lib;")
-        cfg = Config(
-            source_path=tmp_path,
-            reference_root=tmp_path / "refs",
-            backend_name="OpenModelica",
-            work_dir=tmp_path / "work",
-        )
-        backend = OpenModelicaBackend(cfg)
-        backend.om_config = dataclasses.replace(
-            backend.om_config, omc_path=str(fake_omc)
-        )
+        backend = _fake_omc_backend(tmp_path, start_child)
         test = make_test_model("Lib.Slow", timeout=2)
         test_dir = tmp_path / "work" / "test_0001"
         pid_file = test_dir / "child.pid"
@@ -455,3 +469,86 @@ class TestWhatTheStopReaches:
             assert decode_output(raised.value.stdout) == "partial-output\n"
         finally:
             _stop_recorded([pid_file, tool_pid], tmp_path)
+
+
+def _step_the_clock(monkeypatch, seconds: float) -> Callable[[], None]:
+    """What steps the wall clock by *seconds*, as a WSL pause or an NTP
+    correction does: psutil reads the boot time — the wall clock's view of
+    the boot — afresh on every ``create_time()``, so the step is made where
+    psutil reads it. The clock itself is not touched."""
+    import psutil._pslinux as pslinux
+
+    real_boot_time = pslinux.boot_time
+
+    def step() -> None:
+        monkeypatch.setattr(pslinux, "boot_time", lambda: real_boot_time() + seconds)
+
+    return step
+
+
+class TestAClockStepAfterTheLaunch:
+    """The wall clock jumps between a test's launch and its stop: what the
+    stop kills is told by the process's start in clock ticks since boot,
+    which no step moves, never by a wall-clock time read at the launch."""
+
+    @pytest.mark.parametrize(
+        ("seconds", "start_child"),
+        [
+            # omc's own child, in /: nothing of the test's sits in the
+            # folder above it, so only the walk down omc's tree reaches it.
+            (
+                3.0,
+                f"(cd /; exec sleep {CHILD_SECONDS}) & echo $! > child.pid; true",
+            ),
+            # Reparented in the folder: only the sweep reaches it.
+            (-3.0, _DETACHED),
+        ],
+        ids=["forward-child-outside-the-folder", "backward-detached-in-the-folder"],
+    )
+    def test_a_timeout_still_stops_the_tree(
+        self, tmp_path, monkeypatch, seconds, start_child
+    ):
+        test_dir = tmp_path / "work" / "test_0001"
+        backend = _fake_omc_backend(tmp_path, start_child)
+        test = make_test_model("Lib.Slow", timeout=2)
+        pid_file = test_dir / "child.pid"
+        try:
+            watch = _Watch(pid_file, then=_step_the_clock(monkeypatch, seconds))
+            result = backend.run_single_test(test, "test_0001", 1, 1)
+            child = watch.pid()
+
+            assert result.timed_out is True
+            assert not _still_running_after(child, 3.0), (
+                f"pid {child} (sleep {CHILD_SECONDS}) outlived the timeout "
+                f"after a {seconds:+} s clock step"
+            )
+        finally:
+            _stop_recorded([pid_file, test_dir / "omc.pid"], tmp_path)
+
+    def test_a_cancel_still_stops_the_tree(self, tmp_path, monkeypatch):
+        test_dir = tmp_path / "work" / "test_0001"
+        pid_file = tmp_path / "child.pid"
+        backend, test = _python_backend(
+            tmp_path, f"cd /; {_outside(pid_file)}", timeout=30
+        )
+        results: list = []
+        runner = threading.Thread(
+            target=lambda: results.append(
+                backend.run_single_test(test, "test_0001", 1, 1)
+            )
+        )
+        try:
+            runner.start()
+            child = _recorded_pid(pid_file)
+            _step_the_clock(monkeypatch, 3.0)()
+
+            assert backend.cancel_test("test_0001") is True
+            assert not _still_running_after(child, 3.0), (
+                f"pid {child} (sleep {CHILD_SECONDS}) outlived the cancel "
+                "after a +3 s clock step"
+            )
+            runner.join(15)
+            assert [r.cancelled for r in results] == [True]
+        finally:
+            _stop_recorded([pid_file, test_dir / "driver.pid"], tmp_path)
+            runner.join(15)
