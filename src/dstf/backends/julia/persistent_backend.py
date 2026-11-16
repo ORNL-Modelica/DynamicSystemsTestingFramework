@@ -498,7 +498,6 @@ class PersistentJuliaBackend(PersistentBackendBase, JuliaBackend):
     capabilities = frozenset(
         {
             Capability.PERSISTENT_WORKERS,
-            Capability.BATCH_FALLBACK,
             # The worker's: its poll loop honours Worker.request_cancel.
             Capability.CANCEL,
         }

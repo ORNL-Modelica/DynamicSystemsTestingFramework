@@ -26,7 +26,7 @@ The framework is a pipeline of six typed, plug-in layers:
 ```
 
 **Backend capabilities** are declared on the backend contract, not inferred from type:
-- `capabilities: frozenset[Capability]` (`PERSISTENT_WORKERS`, `BATCH_FALLBACK`,
+- `capabilities: frozenset[Capability]` (`PERSISTENT_WORKERS`,
   `FMU_EXPORT`, `LIVE_RESULTS`, `CANCEL`, `USES`) and `produced_datasets: frozenset[DatasetType]`.
 Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` → `FMPy.simulate()`) are composed from capabilities, not hardcoded modes.
 
@@ -340,7 +340,7 @@ Two manifest files are written to the work directory before simulation starts:
 
 ```
 Backend (ABC)
-  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT, LIVE_RESULTS, CANCEL, USES
+  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, FMU_EXPORT, LIVE_RESULTS, CANCEL, USES
   ├── artifact_files: tuple[tuple[str, str], ...]  # (filename, label) pairs for the report
   ├── saves_tracked_signals_only: bool            # the result file holds the tracked variables alone
   ├── result_statistics: tuple[str, ...]          # the solver's statistics among its names (CPUtime, NonlinearSystems.)
@@ -389,7 +389,6 @@ Backend (ABC)
 Each backend declares its capabilities via `frozenset[Capability]`:
 
 - `PERSISTENT_WORKERS` — long-lived worker process; library loads once, amortized across N tests.
-- `BATCH_FALLBACK` — per-test subprocess; robust but slower per-test startup cost.
 - `FMU_EXPORT` — can export an FMU from the source (`PersistentDymolaBackend` only today — the batch `DymolaBackend` has no `.mos` export path and does not declare it; OM deferred per D69).
 - `CANCEL` — can stop a test that is running, from another thread: the simulation queue's Cancel (the three persistent variants and `PythonBackend`; see "The simulation pool" below).
 - `LIVE_RESULTS` — the result file grows while the run is in progress; `live_result_path(test_dir)` names it and `backends/common/live_mat.py`'s `LiveMatReader` follows it (Dymola and OpenModelica; see "Live results" below).
@@ -403,7 +402,7 @@ Each Backend declares capabilities; the framework enables/disables workflows bas
 
 ```
 Backend (ABC)
-  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK,
+  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS,
   │                                                  # FMU_EXPORT, ...
   ├── produced_datasets: frozenset[DatasetType]    # {TimeSeries, Events}, or {TimeSeries} for data-file ingest
   ├── run_tests(tests) → list[BatchManifest]       # orchestration (persistent workers / batch / ingest)

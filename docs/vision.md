@@ -78,10 +78,10 @@ This is the natural completion of the "Modelica is the first consumer, not the r
 Backends are not all equivalent. Rather than assume every backend supports every workflow, backends declare **capabilities** on their contract — a `capabilities: frozenset[Capability]` class attribute. `Capability` has five members:
 
 - `PERSISTENT_WORKERS` — can hold a loaded model in memory and simulate many tests per worker (Dymola, OpenModelica and Julia: yes; FMPy: no — it runs in-process and declares nothing). Declare it on the **registered** class: `backends.select_backend` (the CLI's `_get_backend` is its wrapper) reads the batch class's `capabilities` to decide whether to select the persistent variant, so declaring it only on the persistent class means it is never seen.
-- `BATCH_FALLBACK` — exposes a script-driven non-interactive fallback (Dymola, OpenModelica, Julia and Python: yes; FMPy: no).
 - `FMU_EXPORT` — can export a test artefact as an FMU. Declared by `PersistentDymolaBackend`, since the export needs a live interface; the batch class does not have one. Enables cross-backend verification (see below).
 - `LIVE_RESULTS` — the result file grows while the run is in progress and can be read then (Dymola and OpenModelica). What lets the authoring tool draw a running test's trace.
 - `CANCEL` — can stop a test that is running, from another thread (the persistent Dymola, OpenModelica and Julia backends, and Python; FMPy: no). What the authoring tool's queue cancels through.
+- `USES` — the simulator can say which classes a test's model uses (the persistent Dymola and OpenModelica backends). What `dstf uses` and `dstf run --changed-since` ask.
 
 A separate class attribute, `produced_datasets: frozenset[DatasetType]`, declares the set of dataset kinds a backend can yield (every backend declares `TimeSeries` alone today).
 

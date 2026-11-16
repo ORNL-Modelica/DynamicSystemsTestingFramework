@@ -115,7 +115,6 @@ class FmpyBackend(Backend):
     #   PERSISTENT_WORKERS — review 2026-07-06 (finding 28): the flag was
     #     aspirational (no persistent FMPy backend exists) and tripped the
     #     repaired capability-honesty check. Re-add when one actually ships.
-    #   BATCH_FALLBACK — FMPy *is* the Python path; no script fallback exists
     #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
     capabilities: frozenset[Capability] = frozenset()
     produced_datasets = frozenset({DatasetType.TIME_SERIES})

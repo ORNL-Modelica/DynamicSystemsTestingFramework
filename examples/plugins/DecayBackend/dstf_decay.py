@@ -21,7 +21,6 @@ import numpy as np
 from dstf.backends import Backend, register
 from dstf.backends.locate import EXECUTABLE, SEARCH, Found, Located, Rule
 from dstf.backends.types import (
-    Capability,
     TestResult,
     TestRunResult,
     VariableResult,
@@ -45,7 +44,6 @@ def simulate(stop_time: float, rate: float, intervals: int) -> dict[str, list]:
 class DecayBackend(Backend):
     """Runs a ``source_type: "decay"`` project one test at a time."""
 
-    capabilities = frozenset({Capability.BATCH_FALLBACK})
     source_types = frozenset({"decay"})
     settings = {
         **Backend.settings,

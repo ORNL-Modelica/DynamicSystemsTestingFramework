@@ -32,7 +32,7 @@ class _ProbeBackend(Backend):
     says so.
     """
 
-    capabilities = frozenset({Capability.BATCH_FALLBACK})
+    capabilities: frozenset[Capability] = frozenset()
     persistent_cls_asked = False
 
     def __init__(self, config):  # no super(): Config here is a stand-in
@@ -80,9 +80,7 @@ def _all_registered_backends():
 class TestPersistentWorkersGate:
     def test_declared_backend_still_gets_the_persistent_variant(self, monkeypatch):
         class _Declared(_ProbeBackend):
-            capabilities = frozenset(
-                {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS}
-            )
+            capabilities = frozenset({Capability.PERSISTENT_WORKERS})
 
         _ProbePersistentBackend.preflighted = False
         _use_probe(monkeypatch, _Declared)
@@ -151,9 +149,7 @@ class TestSelectBackend:
 
     def test_preflight_failure_raises_instead_of_exiting(self, monkeypatch):
         class _Declared(_ProbeBackend):
-            capabilities = frozenset(
-                {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS}
-            )
+            capabilities = frozenset({Capability.PERSISTENT_WORKERS})
 
             @classmethod
             def persistent_backend_cls(cls):
