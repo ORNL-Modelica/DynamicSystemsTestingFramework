@@ -1,13 +1,13 @@
 """A key nobody reads is an error that names it.
 
 ``test_spec.json`` is written by hand as well as by the tool, and a key
-the scorer does not read used to be kept and ignored: a ``range`` leaf
-spelled ``"max_val": 0.5`` scored as if it had no upper bound and passed;
-an ``"agianst"`` scored against the primary baseline. This module is the
-ONE check every part of a spec entry goes through — a leaf, a flat
-override, the rows of a metric's tables, the keys inside a ``quantity``
-object and a tolerance pair, and (through :func:`unknown_field`) a window,
-a combinator, the entry's own blocks and the spec's root.
+the scorer does not read, kept and ignored, changes the score silently: a
+``range`` leaf spelled ``"max_val": 0.5`` would score as if it had no upper
+bound and pass; an ``"agianst"`` would score against the primary baseline. This
+module is the ONE check every part of a spec entry goes through — a leaf, a
+flat override, the rows of a metric's tables, the keys inside a ``quantity``
+object and a tolerance pair, and (through :func:`unknown_field`) a window, a
+combinator, the entry's own blocks and the spec's root.
 
 What is known is never listed here. It is read from what already says it:
 a metric's config dataclass (its fields, and the ``columns`` metadata of

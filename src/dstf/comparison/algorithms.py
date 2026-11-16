@@ -22,29 +22,28 @@ if TYPE_CHECKING:
     from .modes import TubeConfig
 
 #: How close to a recorded event a sample is that event's instant: within
-#: ``SAME_INSTANT * max(span, |Te|)`` of the event's time ``Te``, on either side
-#: (`same_instant`; span is the series' last time minus its first, and a
-#: criterion's series are snapped over the whole run before a window is cut,
-#: so it is the run's). Why 1e-7: an OpenModelica run can write an event as a
-#: pair at t and a second pair a hair later, and over TRANSFORM's 956 stored
-#: baselines (measured 2026-11-04) that offset reaches ~2.25e-8 of the run's
-#: span; 3e-8 was the smallest fraction that scored all seven affected tests
-#: alike, 1e-8 was not. The offset grows with t, not with the span: in this
-#: repo's OpenModelica baselines it is 2e-10 * t at every near pair (Modelica
-#: EventTest at t = 2, 5, 8; ThermostatBuildingTest at t = 21600, 32400,
-#: 34200), and the issue's is 5e-8 * t at 0.25 — so a run that starts late
-#: scales by |Te|.
-#: OpenModelica has no constant to read instead: its zero-crossing hysteresis
-#: (`TOL_HYSTERESIS_ZEROCROSSINGS = 1e-4` in `simulation/solver/epsilon.h`) is a
-#: band on the crossing function's VALUE, so the time it costs follows the
-#: signal's slope.
+#: ``SAME_INSTANT * max(span, |Te|)`` of the event's time ``Te``, on either
+#: side (`same_instant`; span is the series' last time minus its first, and a
+#: criterion's series are snapped over the whole run before a window is cut, so
+#: it is the run's). Why 1e-7: an OpenModelica run can write an event as a pair
+#: at t and a second pair a hair later, and over a large real library's 956
+#: stored baselines (measured 2026-11-04) that offset reaches ~2.25e-8 of the
+#: run's span; 3e-8 was the smallest fraction that scored all seven affected
+#: tests alike, 1e-8 was not. The offset grows with t, not with the span: in
+#: this repo's OpenModelica baselines it is 2e-10 * t at every near pair
+#: (Modelica EventTest at t = 2, 5, 8; ThermostatBuildingTest at t = 21600,
+#: 32400, 34200), and one reported run's is 5e-8 * t at 0.25 — so a run that
+#: starts late scales by |Te|. OpenModelica has no constant to read instead:
+#: its zero-crossing hysteresis (`TOL_HYSTERESIS_ZEROCROSSINGS = 1e-4` in
+#: `simulation/solver/epsilon.h`) is a band on the crossing function's VALUE,
+#: so the time it costs follows the signal's slope.
 #:
 #: Only a recorded event — a time written twice — gathers samples, and the
 #: distance is measured from its time, never chained sample to sample: a run
 #: that saves every solver step (dense, no time written twice) was collapsed
 #: onto its first time by a chained rule, and a lone stray sample made an
 #: event. It gathers on BOTH sides because OpenModelica also writes the grid
-#: sample first and the event's pair a hair later (TRANSFORM's PlotMap_Test:
+#: sample first and the event's pair a hair later (a real library's test:
 #: 10 (0.5), then 10.0000002000001 twice (0.5, 1), where Dymola writes 10
 #: twice): gathered only forward, the grid sample stayed a sample after
 #: Dymola's event and scored 0.5 off. An earlier event gathers first, so a
@@ -195,13 +194,13 @@ def _no_data_failure(mode: str, reason: str) -> VariableComparison:
 
 #: A reference whose range is under this fraction of its magnitude is a
 #: constant, and nrmse divides its error by the magnitude, not by the range.
-#: Measured over TRANSFORM's 2,558 stored signals (2026-11-04): rounding
-#: noise on a constant reaches 3.2e-12 of its value (OpenModelica, ~14,000
-#: eps; 100 eps failed OilWater_PCHX on noise of 1,240), and the smallest real
-#: motion is 3e-6 (a Dymola pressure moving 0.4 Pa near 1.3e5). 1e-10 is
+#: Measured over a large real library's 2,558 stored signals (2026-11-04):
+#: rounding noise on a constant reaches 3.2e-12 of its value (OpenModelica,
+#: ~14,000 eps; 100 eps failed one test on noise of 1,240), and the smallest
+#: real motion is 3e-6 (a Dymola pressure moving 0.4 Pa near 1.3e5). 1e-10 is
 #: 1.5 decades above that noise and 4.5 below that motion. A run's relative
-#: tolerance (1e-4 there) would call that 3e-6 motion a constant and loosen
-#: it ~300,000-fold.
+#: tolerance (1e-4 there) would call that 3e-6 motion a constant and loosen it
+#: ~300,000-fold.
 CONSTANT_RANGE = 1e-10
 
 
@@ -322,7 +321,7 @@ def _compare_trajectories(
     if len(error_times) == 0:
         # All segments empty — can happen with pathological duplicate-only
         # time vectors. Same rule as the guards above: nothing compared
-        # means FAIL, not a vacuous pass (review 2026-07-06, finding 1).
+        # means FAIL, not a vacuous pass.
         return _no_data_failure(
             "nrmse", "no comparable samples after event segmentation"
         )
@@ -579,16 +578,16 @@ def _compare_points(
 ) -> VariableComparison:
     """Compare actual vs reference at declared time points.
 
-    When ``points`` is None or empty, falls back to the legacy final-
-    value check (act[-1] vs ref[-1] with ``tolerance``). When ``points``
+    When ``points`` is None or empty, falls back to the final-value
+    check (act[-1] vs ref[-1] with ``tolerance``). When ``points``
     is a non-empty list, each entry is a checkpoint:
 
       ``time`` — absolute time, or None for "trace's final time".
       ``value`` — absolute target. If absent, target = ref(time).
       ``tolerance`` — per-point y-tolerance (defaults to ``tolerance``).
       ``tolerance_mode`` — "abs" (default) | "rel" (scale by |target|).
-      ``time_tolerance`` — x-tolerance for the box check (Task 4 of
-        the points-mode plan; defaults to 0 = strict-time).
+      ``time_tolerance`` — x-tolerance for the box check (defaults to
+        0 = strict-time).
 
     Every tolerance is a number (both sides equal) or a lower/upper pair.
     With ``d = actual − target``, a declared point passes iff the actual
@@ -605,7 +604,7 @@ def _compare_points(
             "points", "no actual samples to check (empty trajectory or window)"
         )
     if not points:
-        # Implicit final-only — legacy behavior.
+        # Implicit final-only check.
         if len(ref_values) == 0:
             return _no_data_failure(
                 "points", "no reference samples to compare (empty baseline or window)"
@@ -674,11 +673,10 @@ def _compare_points(
     worst_outside = 0.0
     outside: tuple[float, Sides, bool, float] | None = None
     largest: tuple[float, Sides, bool, float] | None = None
-    # Review 2026-07-06 (finding 2): a checkpoint the simulation never
-    # reached — or whose ref-relative target lies beyond the stored
-    # baseline — FAILS instead of being skipped. Skipping let truncated
-    # simulations pass their tail checkpoints. Reasons are collected for
-    # the report.
+    # A checkpoint the simulation never reached — or whose ref-relative target
+    # lies beyond the stored baseline — FAILS instead of being skipped.
+    # Skipping let truncated simulations pass their tail checkpoints. Reasons
+    # are collected for the report.
     geometry: list[Primitive] = []
     point_failures: list[dict] = []
     # The `point_failures` of checkpoints that were never SCORED (each
@@ -1539,7 +1537,7 @@ def _compare_event_timing(
     count_must_match: bool = True,
     declared_events: list[dict] | None = None,
 ) -> VariableComparison:
-    """Compare event instants between reference and actual signals (4.C.1).
+    """Compare event instants between reference and actual signals.
 
     Two paths:
 
@@ -1651,12 +1649,11 @@ def _compare_event_timing(
     # The pair the sentence reports: the largest |Δt|'s, of equals the
     # first claimed — kept as `_reported_event` takes it.
     largest: tuple[float, Sides, float] | None = None
-    # Optimal 1-D interval matching (review 2026-07-06, greedy-stealing
-    # finding): each declared event defines a window [time-lower, time+upper].
-    # Sorting windows by right endpoint and assigning each the SMALLEST
-    # unclaimed actual event inside it is a maximum matching for interval
-    # graphs — a feasible assignment is never missed because an earlier
-    # declared event claimed the wrong actual event.
+    # Optimal 1-D interval matching: each declared event defines a window
+    # [time-lower, time+upper]. Sorting windows by right endpoint and assigning
+    # each the SMALLEST unclaimed actual event inside it is a maximum matching
+    # for interval graphs — a feasible assignment is never missed because an
+    # earlier declared event claimed the wrong actual event.
     claimed = [False] * actual_count
     matched_flags = [False] * declared_count
     windows = []
@@ -1814,8 +1811,8 @@ def _find_strongest_peak_in_window(
     that peak.
 
     ``exclude`` holds bin frequencies already claimed by other declared
-    peaks; ``min_amplitude`` filters spectral noise (review 2026-07-06:
-    without both, two declared peaks could match the same actual peak,
+    peaks; ``min_amplitude`` filters spectral noise (without
+    both, two declared peaks could match the same actual peak,
     or a claimed-peak fix would just re-match machine-noise sidelobes).
     """
     if len(freqs) < 3:
@@ -1971,7 +1968,7 @@ def _compare_dominant_frequency(
     act_values: np.ndarray,
     peaks: list[dict] | None = None,
 ) -> VariableComparison:
-    """Compare declared frequency peaks between reference and actual (4.C.2).
+    """Compare declared frequency peaks between reference and actual.
 
     Takes a list of user-declared peaks of the form::
 
@@ -2000,7 +1997,7 @@ def _compare_dominant_frequency(
     # any peaks. The reference-side FFT is only required when no peaks
     # are declared (the failure then marks the ref spectrum's top-N on
     # its plot). With declared peaks, an empty reference is OK
-    # (baseline-free path, idea #59 / D83).
+    # (baseline-free path, D83).
     if len(act_values) < 4:
         # Nothing to take a spectrum of: not scored, with the reason where
         # every surface reads one (``diagnostics["error"]``, the mode

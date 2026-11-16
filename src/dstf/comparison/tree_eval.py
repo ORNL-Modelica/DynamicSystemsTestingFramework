@@ -140,12 +140,12 @@ def evaluate_spec(
     naming one says so, since a companion is only drawn.
     """
     sources = scalars if scalars is not None else ScalarSources()
-    # The migrate hint is a fact about a VARIABLE's baseline entry, not
-    # about a leaf: a TRANSFORM test with five criteria on one un-migrated
-    # variable printed the same sentence five times. The set is created by
-    # the outermost call and threaded down, so it spans one test. Keyed by
-    # the baseline too — the same variable missing from the primary AND
-    # from a soft_check is two things to fix, not one repeat.
+    # The migrate hint is a fact about a VARIABLE's baseline entry, not about a
+    # leaf: a real library's test with five criteria on one un-migrated
+    # variable printed the same sentence five times. The set is created by the
+    # outermost call and threaded down, so it spans one test. Keyed by the
+    # baseline too — the same variable missing from the primary AND from a
+    # soft_check is two things to fix, not one repeat.
     seen = _warned if _warned is not None else set()
     if isinstance(spec, LeafSpec):
         result = _evaluate_leaf(
@@ -369,9 +369,9 @@ def _evaluate_leaf(
     # Every other leaf names one, and carries its expression onto whatever
     # comparison it returns — a leaf that fails before it ever scores (a
     # lost baseline, a misconfigured metric) is exactly the one a person
-    # reads, so it must not fall back to the bare name (the Task 3 review).
-    # ONE definition of "resolves no variable", shared with the spec walk
-    # the expression soft-check reads.
+    # reads, so it must not fall back to the bare name. ONE definition of
+    # "resolves no variable", shared with the spec walk the expression
+    # soft-check reads.
     scores_stored_scalar = not resolves_a_variable(leaf)
     var_result = (
         None if scores_stored_scalar else var_results_by_name.get(leaf.variable)
@@ -411,7 +411,7 @@ def _evaluate_leaf(
     # is all any backend produces) — it guards registered metrics. After the
     # expression is resolved, like every other early return: this sentinel
     # is one a person reads, and it named the variable twice as differently
-    # as the bare name and the label (the Task 4 review).
+    # as the bare name and the label.
     if desc is not None and dataset_kind not in desc.accepted_datasets:
         return _leaf(_incompatible_dataset_comparison(leaf, desc, dataset_kind))
 
@@ -427,7 +427,7 @@ def _evaluate_leaf(
     # leaf.against picks the named baseline. Missing name →
     # hard fail with a clear label (loud on user-facing reports). Unless
     # the leaf is baseline-free (range / declared-events / declared-peaks)
-    # — then we don't need any baseline at all (idea #59 / D83).
+    # — then we don't need any baseline at all (D83).
     baseline = baselines.get(leaf.against)
     reads = None if mode.is_baseline_free() else leaf.against
     if baseline is None and not mode.is_baseline_free():
@@ -532,7 +532,7 @@ def _evaluate_leaf(
         ref_time = same_instant(ref_time)
         act_time = same_instant(act_time)
 
-        # Apply the leaf window (idea #46) — slice both sides uniformly before
+        # Apply the leaf window — slice both sides uniformly before
         # handing to mode.compare. Mode configs stay untouched; slicing is a
         # cross-cutting leaf property. Skip the ref slice when there's no
         # reference at all (baseline-free path).

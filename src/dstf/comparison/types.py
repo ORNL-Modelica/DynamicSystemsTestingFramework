@@ -167,22 +167,21 @@ class TestComparison:
     error_message: str | None = None
     sim_success: bool = True
     has_reference: bool = True
-    # PTA.5 — this test's pass criterion is "the simulation ran"; no
-    # baseline is consulted and ``variables`` is empty by construction.
-    # Carried on the comparison (not just on the TestModel) so every
-    # report surface can classify it from the comparison alone —
-    # reporting.status is the one classifier, and this is the input it
-    # used to be missing (D117).
+    # This test's pass criterion is "the simulation ran"; no baseline is
+    # consulted and ``variables`` is empty by construction. Carried on the
+    # comparison (not just on the TestModel) so every report surface can
+    # classify it from the comparison alone — reporting.status is the one
+    # classifier, and this is one of its inputs (D117).
     simulate_only: bool = False
     #: False when there is no result to compare (D145): the last run never
     #: ran this test, or never finished it. ``reporting.status`` reads it
     #: first — NOT RUN, which is not a failure. ``sim_success`` is False
     #: beside it: nothing succeeded.
     ran: bool = True
-    # Phase 3.1: MetricTree root for this test. Today populated as the
-    # implicit flat-AND over per-variable comparisons (matches `passed`
-    # exactly). Phase 3.2+ replaces with user-authored trees from
-    # test_spec.json. None when no comparison ran (sim failure, no baseline).
+    # MetricTree root for this test: the evaluated ``metrics`` tree when the
+    # spec has one, else the implicit flat-AND over per-variable
+    # comparisons; when set, ``passed`` is its root's verdict. None when no
+    # comparison ran (sim failure, no baseline).
     metric_tree: MetricResult | None = None
     #: Where the tolerance a leaf without its own was scored with came from:
     #: ``"test"`` (the spec's ``comparison.tolerance``), ``"reference"`` (the
@@ -207,7 +206,7 @@ class TestComparison:
         metric tree / variables and a real verdict despite
         ``has_reference=False``) from the NO_REF short-circuit where
         nothing was scored. Report surfaces must classify ``not passed``
-        as FAILED whenever ``evaluated`` is true — review 2026-07-06,
-        finding 5 (failing baseline-free tests exited 0 as "NO_REF").
+        as FAILED whenever ``evaluated`` is true — otherwise failing
+        baseline-free tests would exit 0 as "NO_REF".
         """
         return self.metric_tree is not None or bool(self.variables)

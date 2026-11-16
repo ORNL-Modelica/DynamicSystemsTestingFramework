@@ -172,11 +172,11 @@ def seed_scalar(data: SeedData) -> dict:
 
 def seed_dominant_frequency(data: SeedData) -> dict:
     """The strongest peak of the data's spectrum, 5% wide or two bins,
-    whichever is wider. None when two bins are wider than
-    `MAX_PEAK_TOLERANCE` — a peak in the lowest three bins is a trend's
-    leakage at ~1/span, not a frequency: over TRANSFORM, 279 of 322 varying
-    variables have their strongest peak there. The leaf stays bare, and
-    scoring says to declare a peak."""
+    whichever is wider. None when two bins are wider than `MAX_PEAK_TOLERANCE`
+    — a peak in the lowest three bins is a trend's leakage at ~1/span, not a
+    frequency: over a large real library, 279 of 322 varying variables have
+    their strongest peak there. The leaf stays bare, and scoring says to
+    declare a peak."""
     s = data.series()
     if s is None:
         return {}

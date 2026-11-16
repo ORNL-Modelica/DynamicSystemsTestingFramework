@@ -1,13 +1,10 @@
 """Registries for comparison metrics and MetricTree combinators.
 
 The extension seam a plug-in uses for the Metric layer (docs/guides/plugin.md).
-Before this module the metric and combinator name spaces were closed
-if/elif chains duplicated across four files (``modes.resolve_mode``,
-``tree_spec.VALID_METRICS`` / ``_MODE_TO_METRIC``,
-``tree_eval._build_combinator`` / ``_METRIC_TO_MODE_KEY``,
-``reporting/schema_export._MODES``) — adding a metric meant editing all
-of them. Now each of those derives from the descriptors registered here,
-so a third-party metric only has to call :func:`register_metric`.
+Every reader of the metric and combinator names — mode resolution, spec
+parsing and validation, tree evaluation, the schema export — derives them
+from the descriptors registered here, so a third-party metric only has to
+call :func:`register_metric`.
 
 Builtins register in :mod:`dstf.comparison.builtins`, imported by the
 package ``__init__`` — mirroring how ``backends`` self-registers its

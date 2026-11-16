@@ -334,7 +334,7 @@ class RangeConfig:
 
 @dataclass(frozen=True)
 class EventTimingConfig:
-    """Configuration for event-timing comparison (4.C.1).
+    """Configuration for event-timing comparison.
 
     When ``events`` is None (default), both reference and actual event
     instants are auto-detected from samples at one instant (Modelica
@@ -595,7 +595,7 @@ class TubeMode(ComparisonMode):
 class PointsMode(ComparisonMode):
     """Compare actual vs reference at user-declared time points.
 
-    When ``config.points`` is None or empty, falls back to the legacy
+    When ``config.points`` is None or empty, falls back to the
     final-value-only check (act[-1] vs ref[-1] with config.tolerance).
     """
 
@@ -855,7 +855,7 @@ def resolve_mode(
     1. Explicit ``mode`` key in override → use that mode.
     2. If no explicit mode and ``default_points`` is True → PointsMode
        with points=None (implicit final-value check).
-    3. Otherwise → NrmseMode (legacy default).
+    3. Otherwise → NrmseMode (the default).
 
     The mode names and their construction come from
     :mod:`dstf.comparison.registry`, so a third-party metric registered via
@@ -866,7 +866,7 @@ def resolve_mode(
     if desc is None:
         # An unrecognized mode must be loud. Silently defaulting to NRMSE
         # changed the scoring algorithm on a typo ("Tube" vs "tube") with
-        # no diagnostic (review 2026-07-06).
+        # no diagnostic.
         valid = ", ".join(d.name for d in registered_metrics())
         raise ValueError(f"unknown comparison mode {mode_name!r}; valid: {valid}")
 
