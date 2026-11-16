@@ -56,13 +56,12 @@ class TestModel:
     x_expressions: list[str] = field(default_factory=list)
     # Simulation fields default to None = "not set by any source" so the
     # spec-over-annotation merge can use `is not None` as the explicitly-set
-    # sentinel, exactly like number_of_intervals / output_interval — review
-    # 2026-07-06 finding 13: equality-with-default sentinels silently dropped
-    # a spec value that happened to equal the framework default. During
-    # discovery they may be None; ``finalize_defaults()`` (called at the end
-    # of discover_tests) resolves them to the framework defaults so
-    # downstream consumers (backends, reporters, storage) only ever see
-    # concrete values.
+    # sentinel, exactly like number_of_intervals / output_interval —
+    # equality-with-default sentinels would silently drop a spec value that
+    # happened to equal the framework default. During discovery they may be
+    # None; ``finalize_defaults()`` (called at the end of discover_tests)
+    # resolves them to the framework defaults so downstream consumers
+    # (backends, reporters, storage) only ever see concrete values.
     stop_time: float | None = None
     tolerance: float | None = None
     method: str | None = None
@@ -81,9 +80,9 @@ class TestModel:
     variable_overrides: dict[str, dict] = field(default_factory=dict)
     # variable_overrides format: {"var_name": {"tolerance": 0.1}, ...}
 
-    # Phase 3.2: optional user-authored MetricTree spec from test_spec.json
-    # under the "metrics" key. When set, Phase 3.3+ will use this in place
-    # of the implicit flat-AND. Parse-only today — no behavior gated on it.
+    # Optional user-authored MetricTree spec from test_spec.json under the
+    # "metrics" key. When set, the comparator scores this tree in place of
+    # the implicit flat-AND (and ignores ``variable_overrides``).
     metric_tree_spec: Optional["SpecNode"] = None
 
     # The entry's optional ``plots`` extras (`discovery.plots`): context
@@ -101,8 +100,8 @@ class TestModel:
     # test's runs record beside the project's (`diagnostic_names`).
     diagnostic_variables: list[str] = field(default_factory=list)
 
-    # PTA.4 — richer-contract fields settable via recognizers. Additive;
-    # defaults preserve pre-PTA behavior.
+    # Fields a recognizer can set. Their defaults leave a test as it would
+    # be without them.
     #
     # simulate_only: a recognizer's MARK — the test passes iff the simulation
     # completes without error, whatever it declares, and no criterion staged
@@ -110,7 +109,8 @@ class TestModel:
     # is also true of a test that declares nothing to score.
     simulate_only: bool = False
     # requested_baselines: names of additional baselines to produce for this
-    # test (e.g., ["dymola-via-fmpy"]). Placeholder for 4.B.
+    # test (e.g., ["dymola-via-fmpy"]); the cross-backend chain in
+    # ``pipeline`` reads it.
     requested_baselines: list[str] = field(default_factory=list)
 
     # Per-field provenance: where the value came from.
@@ -156,12 +156,11 @@ class TestModel:
     def finalize_defaults(self) -> "TestModel":
         """Resolve unset (None) simulation fields to framework defaults.
 
-        Called once, at the END of discover_tests — review 2026-07-06
-        finding 13: only the merge logic distinguishes "unset" (None) from
-        "explicitly the default value"; everything downstream sees concrete
-        values. Also stamps provenance "default" for the five sim fields no
-        source set (finding 57: spec-only tests used to claim "test_spec"
-        provenance for pure framework defaults).
+        Called once, at the END of discover_tests: only the merge logic
+        distinguishes "unset" (None) from "explicitly the default value";
+        everything downstream sees concrete values. Also stamps provenance
+        "default" for the five sim fields no source set (stamping "test_spec"
+        would claim spec provenance for pure framework defaults).
         """
         # The defaults are the `simulation` block's (`spec_shape.SIMULATION`).
         if self.stop_time is None:
@@ -206,7 +205,7 @@ def _build_test_model_from_recognizer_results(
     """Merge per-recognizer results for one model into a TestModel.
 
     Later results override earlier ones per-field. The bundled recognizer
-    registers first; user-provided recognizers (PTA.3) append, so user values
+    registers first; user-provided recognizers come after, so user values
     win on conflicts. Fields no recognizer set fall back to TestModel's
     dataclass defaults.
 
@@ -310,10 +309,9 @@ def spec_tests_by_model(models: list[TestModel]) -> dict[str, TestModel]:
     duplicate (matching patch_apply / the spec edit helpers), with a warning."""
     spec_tests: dict[str, TestModel] = {}
     for test in models:
-        # review 2026-07-06 finding 51: duplicate model entries — FIRST
-        # wins (matching patch_apply / the spec edit helpers), with a
-        # warning. Last-wins here made applied patches silently
-        # ineffective (they edit the first entry).
+        # Duplicate model entries — FIRST wins (matching patch_apply / the spec
+        # edit helpers), with a warning. Last-wins here would make applied
+        # patches silently ineffective (they edit the first entry).
         if test.model_id in spec_tests:
             logger.warning(
                 "test_spec has duplicate entries for model '%s'; "
@@ -414,11 +412,11 @@ def merge_tests(
 
     # Merge spec tests. Two-layer contract (spec_shape.SIMULATION): the model's
     # experiment(...) annotation provides defaults; any field set in
-    # simulation.* overrides it. DECISION (review 2026-07-06 finding 13):
-    # "explicitly set in the spec" is `is not None` for ALL five sim fields —
-    # never equality with a framework default, which silently dropped a spec
-    # value like stop_time=1.0 against experiment(StopTime=100). Framework
-    # defaults are applied only afterwards, by finalize_defaults() below.
+    # simulation.* overrides it. DECISION: "explicitly set in the spec" is
+    # `is not None` for ALL five sim fields — never equality with a framework
+    # default, which would silently drop a spec value like stop_time=1.0
+    # against experiment(StopTime=100). Framework defaults are applied only
+    # afterwards, by finalize_defaults() below.
     for model_id, spec_test in spec_tests.items():
         spec_test = copy.deepcopy(spec_test)
         if model_id in merged:
@@ -455,8 +453,8 @@ def merge_tests(
             existing.diagnostic_variables = spec_test.diagnostic_variables
         else:
             # Provenance for spec-set fields was stamped by parse_test_spec;
-            # unset fields get "default" in finalize_defaults — review
-            # 2026-07-06 finding 57 (the old blanket "test_spec" stamp lied).
+            # unset fields get "default" in finalize_defaults (a blanket
+            # "test_spec" stamp would claim the spec set them).
             located = locate(model_id) if locate is not None else None
             if located is not None:
                 _fill_from_model(spec_test, located)
@@ -464,7 +462,7 @@ def merge_tests(
 
     # Sort by model_id for consistent ordering; resolve remaining None sim
     # fields to framework defaults so downstream code never sees None
-    # (finding 13 decision: apply-defaults-at-end-of-merge).
+    # (the decision above: apply defaults at the end of the merge).
     tests = sorted(merged.values(), key=lambda t: t.model_id)
     for test in tests:
         test.finalize_defaults()

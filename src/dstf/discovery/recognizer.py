@@ -6,10 +6,11 @@ Discovery runs every registered recognizer that applies to the configured
 ``source_type`` and merges results by ``model_id``. This lets users layer
 their own test-tagging conventions on top of (or in place of) the bundled
 defaults — a library that can't adopt the bundled ``UnitTests`` component
-provides its own recognizer (PTA.2 onward: via a JSON map) instead.
+provides its own recognizer (a JSON map in ``testing.json``) instead.
 
-PTA.1 wires the registry; only the bundled recognizer registers today, so
-behavior is identical to the pre-PTA hardcoded path.
+The bundled recognizer registers here on import, as a plug-in's does
+(:func:`register`); a project's JSON recognizers live on ``Config`` and
+discovery applies them after the registered ones, so their values win.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ class RecognizerResult:
 
     model_id: str
     source_file: Path | None = None
-    # Variables-to-track contribution (was UnitTestInfo)
+    # Variables-to-track contribution
     n_vars: int | None = None
     # Instance name of the component whose ``x[i]`` the variables are: the
     # result file names them ``<instance>.x[i]``. Contributed by a recognizer
@@ -62,9 +63,9 @@ class RecognizerResult:
     method: str | None = None
     number_of_intervals: int | None = None
     output_interval: float | None = None
-    # PTA.4 — richer-contract runtime-behavior fields. Recognizers can set
-    # these; TestModel carries them through. Consumed by PTA.5 (simulate_only)
-    # and 4.B's cross-backend chain (requested_baselines).
+    # Runtime-behavior fields. Recognizers can set these; TestModel carries
+    # them through. Read by the simulate-only rule (simulate_only) and the
+    # cross-backend chain (requested_baselines).
     simulate_only: bool | None = None
     requested_baselines: list[str] | None = None
 
@@ -118,7 +119,7 @@ class Recognizer(ABC):
 
 
 # Registration-ordered list. The bundled recognizer registers first on import;
-# user-provided recognizers (PTA.3) append, and discovery's per-model merge
+# user-provided recognizers come after, and discovery's per-model merge
 # applies later writers as overrides — bundled defaults, user values win.
 _REGISTRY: list[Recognizer] = []
 

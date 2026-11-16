@@ -75,9 +75,8 @@ class BatchManifest:
 
     def save(self) -> Path:
         path = self.work_dir / "batch_manifest.json"
-        # review 2026-07-06 finding 66: atomic replace — a torn write made
-        # every subsequent run/compare crash at startup until the file was
-        # hand-deleted.
+        # Atomic replace — a torn write made every subsequent run/compare crash
+        # at startup until the file was hand-deleted.
         _atomic_write_text(path, json.dumps(self.manifest, indent=2))
         return path
 
@@ -154,11 +153,11 @@ class BatchManifest:
             if not isinstance(data, dict):
                 raise ValueError(f"expected a JSON object, got {type(data).__name__}")
         except (ValueError, OSError) as exc:
-            # review 2026-07-06 finding 66: a corrupt manifest must not crash
-            # startup. Quarantine it (keeping the bytes for forensics) and
-            # start from an empty manifest — every caller already treats a
-            # missing manifest as empty, so test keys are simply re-assigned
-            # on the next run. (JSONDecodeError is a ValueError subclass.)
+            # A corrupt manifest must not crash startup. Quarantine it (keeping
+            # the bytes for forensics) and start from an empty manifest — every
+            # caller already treats a missing manifest as empty, so test keys
+            # are simply re-assigned on the next run. (JSONDecodeError is a
+            # ValueError subclass.)
             corrupt = path.with_name(f"{path.name}.corrupt")
             where = ""
             try:
@@ -173,7 +172,7 @@ class BatchManifest:
                 where,
             )
             return cls(work_dir=path.parent, manifest={})
-        # Handle legacy format: test_key -> model_id string
+        # Read the older format too: test_key -> model_id string
         normalized = {}
         for key, val in data.items():
             if isinstance(val, str):

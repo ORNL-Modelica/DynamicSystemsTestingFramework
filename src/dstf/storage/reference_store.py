@@ -123,12 +123,12 @@ class ReferenceStore(_RolesMixin):
         if not result.success or not result.variables:
             return False
 
-        # review 2026-07-06 leftover B: refuse to store a poisoned baseline.
-        # A trajectory containing NaN/Inf can never pass a later comparison
-        # (the metric math propagates NaN → guaranteed FAIL forever) and
-        # would serialize as non-strict JSON (`NaN`/`Infinity` literals)
-        # that strict parsers reject. Name the model + variable so accept
-        # flows can skip it and tell the user which signal is bad.
+        # Refuse to store a poisoned baseline. A trajectory containing NaN/Inf
+        # can never pass a later comparison (the metric math propagates NaN →
+        # guaranteed FAIL forever) and would serialize as non-strict JSON
+        # (`NaN`/`Infinity` literals) that strict parsers reject. Name the
+        # model + variable so accept flows can skip it and tell the user which
+        # signal is bad.
         time_arr = np.asarray(result.variables[0].time, dtype=float)
         if time_arr.size == 0:
             # A baseline of no points is one nothing can be scored against:
@@ -308,8 +308,8 @@ class ReferenceStore(_RolesMixin):
             ),
         )
 
-        # review 2026-07-06 (finding 31): atomic — a Ctrl-C mid-accept must
-        # not corrupt the baseline (a corrupt file is skipped by every read).
+        # Atomic — a Ctrl-C mid-accept must not corrupt the baseline (a corrupt
+        # file is skipped by every read).
         write_reference(ref_file, ref)
         self._index.written(test.model_id)
 
@@ -327,13 +327,12 @@ class ReferenceStore(_RolesMixin):
 
         Returns ``(stored, skipped, simulate_only)``: the model ids whose
         baseline was written, in the order given; ``(model_id, reason)`` for
-        tests that should have produced a baseline but didn't — review
-        2026-07-06 finding 30: the CLI exits nonzero (and says why) when an
-        --accept run stores fewer baselines than it attempted; and the model
-        ids of the simulate-only tests passed over, in the order given.
-        Simulate-only tests never store a baseline by design, so a
-        successful simulate-only run is neither stored nor skipped — and is
-        named, so that an accept can say why it stored nothing for it.
+        tests that should have produced a baseline but didn't — the CLI exits
+        nonzero (and says why) when an --accept run stores fewer baselines than
+        it attempted; and the model ids of the simulate-only tests passed over,
+        in the order given. Simulate-only tests never store a baseline by
+        design, so a successful simulate-only run is neither stored nor skipped
+        — and is named, so that an accept can say why it stored nothing for it.
         """
         stored: list[str] = []
         skipped: list[tuple[str, str]] = []
@@ -354,8 +353,8 @@ class ReferenceStore(_RolesMixin):
                     test, result, provenance=provenance[test.model_id]
                 )
             except ValueError as exc:
-                # review 2026-07-06 leftover B: one poisoned trajectory must
-                # not abort accepting the rest — skip it, warn, keep going.
+                # One poisoned trajectory must not abort accepting the rest —
+                # skip it, warn, keep going.
                 logger.warning("Not accepting %s: %s", test.model_id, exc)
                 skipped.append((test.model_id, str(exc)))
                 continue
@@ -379,7 +378,7 @@ class ReferenceStore(_RolesMixin):
                 all_refs[model_id] = reference_to_json(ref)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # review 2026-07-06 (finding 31): atomic like every other JSON write.
+        # Atomic like every other JSON write.
         _atomic_write_text(output_path, json.dumps(all_refs, indent=2) + "\n")
 
     def export_csv(self, output_path: Path):
@@ -420,8 +419,8 @@ class ReferenceStore(_RolesMixin):
                         ref.last_updated or "",
                     ]
                 )
-        # review 2026-07-06 (finding 31): atomic like every other export —
-        # an interrupted write must not leave a truncated summary behind.
+        # Atomic like every other export — an interrupted write must not leave
+        # a truncated summary behind.
         _atomic_write_text(output_path, buf.getvalue(), newline="")
 
 
@@ -433,9 +432,8 @@ def _downsample(
 
     Always preserves the first and last samples. Event boundaries (duplicate
     time points) are preserved whenever they fit within the budget; if event
-    indices alone exceed max_points they are evenly thinned (review
-    2026-07-06, finding 3). Evenly samples remaining points to fill up to
-    max_points.
+    indices alone exceed max_points they are evenly thinned. Evenly samples
+    remaining points to fill up to max_points.
     """
     n = len(time)
     if n <= max_points:
@@ -451,11 +449,10 @@ def _downsample(
             event_indices.add(i)  # post-event
 
     if len(event_indices) > max_points:
-        # review 2026-07-06 (finding 3): event indices alone exceed the
-        # budget. Keep first/last and evenly thin the *interior* event
-        # indices to fit — the old tail-trim (`all_indices[:max_points]`)
-        # silently dropped the final samples, making tail regressions
-        # invisible to every future comparison.
+        # Event indices alone exceed the budget. Keep first/last and evenly
+        # thin the *interior* event indices to fit — a tail-trim
+        # (`all_indices[:max_points]`) would silently drop the final samples,
+        # making tail regressions invisible to every future comparison.
         interior = sorted(event_indices - {0, n - 1})
         budget = max(max_points - 2, 0)
         if budget and interior:
@@ -469,10 +466,9 @@ def _downsample(
         remaining = max_points - len(event_indices)
         candidates = np.linspace(0, n - 1, remaining + len(event_indices), dtype=int)
         extras = sorted(set(candidates.tolist()) - event_indices)
-        # review 2026-07-06 (finding 3): when the union overshoots
-        # max_points, drop interior linspace candidates — never the
-        # endpoints or event boundaries — so the stored baseline always
-        # reaches the final time sample.
+        # When the union overshoots max_points, drop interior linspace
+        # candidates — never the endpoints or event boundaries — so the stored
+        # baseline always reaches the final time sample.
         overshoot = len(event_indices) + len(extras) - max_points
         if overshoot > 0:
             keep_n = len(extras) - overshoot

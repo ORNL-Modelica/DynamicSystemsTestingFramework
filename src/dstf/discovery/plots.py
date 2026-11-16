@@ -305,14 +305,14 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
     Every name here is the result file's (a UnitTests variable's is
     ``<instance>.x[i]``) and nothing relabels it, so a variable the tree
     scores and the result carries is one name and is listed once — listing
-    the same trajectory under two spellings drew it twice (the 3b review). A
+    the same trajectory under two spellings would draw it twice. A
     result variable with no name has nothing to plot by and is skipped; a
     tree leaf's variable, on the other hand, is listed whether or not the
     result carries it, because ``scored`` is what the test's author wrote.
 
     A result of a simulation that FAILED contributes nothing: what a backend
     wrote before it stopped is a partial file, not the test's plots, and the
-    page drew a card per half-written variable (the final review).
+    page would draw a card per half-written variable.
 
     ``scored`` comes first even when the tree's order differs from the
     result file's. The result's own come in its order — the spec's

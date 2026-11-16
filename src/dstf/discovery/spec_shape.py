@@ -3,8 +3,8 @@
 is for.
 
 Each table is read twice or more. The spec parser and the tree parser
-refuse a key that is not in it — ``"simulaton"`` used to be skipped in
-silence, and the test ran on defaults — ``spec schema`` publishes it with
+refuse a key that is not in it — ``"simulaton"`` skipped in silence
+would run the test on defaults — ``spec schema`` publishes it with
 ``additionalProperties: false`` and every key's description, and the
 reference page is rendered from it. So the grammar an editor checks, the
 one the CLI enforces and the one a person reads cannot name different
@@ -392,7 +392,8 @@ ENTRY: dict[str, Setting] = {
 
 #: The spec file's own keys: the tests, and the ``$schema`` an editor reads
 #: to check the file as it is typed (``spec schema`` writes the schema to
-#: point it at). ``{"Tests": [...]}`` used to be a spec of no tests.
+#: point it at). ``{"Tests": [...]}`` is refused, not read as a spec of
+#: no tests.
 ROOT: dict[str, Setting] = {
     "$schema": Setting(
         {"type": "string"},

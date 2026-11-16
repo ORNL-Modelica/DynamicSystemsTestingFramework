@@ -46,8 +46,8 @@ _CLASS_DECL_RE = re.compile(r"\b(?:model|block|class|package)\s+(\w+)")
 def _extract_within(text: str) -> str:
     """Extract the 'within' clause to get the parent package path.
 
-    Operates on comment/string-stripped text — review 2026-07-06 finding 48:
-    a ``within`` mentioned in a comment must not shadow the real clause.
+    Operates on comment/string-stripped text: a ``within`` mentioned in a
+    comment must not shadow the real clause.
     """
     stripped = _strip_modelica_literals(text)
     m = re.search(r"\bwithin\s+([\w.]+)\s*;", stripped)
@@ -57,11 +57,11 @@ def _extract_within(text: str) -> str:
 def _extract_model_name(text: str, source: object = "") -> str:
     """Extract the first class-like declaration's name.
 
-    Operates on comment/string-stripped text with a word-boundary anchor —
-    review 2026-07-06 finding 48: the word "model" in a comment above the
-    class must not shadow the real declaration.
+    Operates on comment/string-stripped text with a word-boundary anchor:
+    the word "model" in a comment above the class must not shadow the real
+    declaration.
 
-    TODO(finding 55): single-file multi-class storage is NOT supported —
+    Single-file multi-class storage is NOT supported —
     only the FIRST top-level class is parsed. When a second top-level class
     is detected (a class declaration after the first class's ``end Name;``),
     a warning names what was skipped. ``source`` is optional context (file
@@ -72,8 +72,8 @@ def _extract_model_name(text: str, source: object = "") -> str:
     if not m:
         return ""
     name = m.group(1)
-    # review 2026-07-06 finding 55: warn about sibling top-level classes the
-    # parser skips instead of silently dropping their tests.
+    # Warn about sibling top-level classes the parser skips instead of silently
+    # dropping their tests.
     end_m = re.search(rf"\bend\s+{re.escape(name)}\s*;", stripped[m.end() :])
     if end_m:
         extra = _CLASS_DECL_RE.search(stripped, m.end() + end_m.end())
@@ -204,15 +204,15 @@ def _take_argument(text: str, start: int) -> str:
 
 def _strip_modelica_literals(text: str) -> str:
     """Blank comments + string literals from Modelica source (1:1, newlines
-    kept, so offsets into the result index the original — findings 48/50 slice
-    the original for string-valued params the blanking removed).
+    kept, so offsets into the result index the original — callers slice the
+    original for string-valued params the blanking removed).
 
     Single-pass lexer, NOT a sequence of independent regexes. The old 3-pass
     approach (block-comment, then line-comment, then string) was unsound
     because the three languages interleave: a ``//`` inside a string literal
     (``"modelica://..."`` — ubiquitous in Modelica annotation URIs) was eaten
     by the line-comment pass, blanking the string's closing quote and
-    desyncing every following string. On TRANSFORM's InverseParameterization
+    desyncing every following string. On one real library's model
     that swallowed the real ``experiment(StopTime=10)`` — StopTime silently
     defaulted to 1.0 and the sim ran a tenth of its length (regression found
     2026-07-07). A stateful scan is the only correct model: at each position we
@@ -304,7 +304,7 @@ def _parse_unit_tests(text: str) -> UnitTestInfo | None:
     # any class whose name merely ends in it (``MyUnitTests bar(`` was read
     # as an instance named ``bar``). A dotted prefix still matches: the
     # optional ``Utilities.ErrorAnalysis.`` group, and any longer prefix
-    # (``TRANSFORM.Utilities.ErrorAnalysis.``) because the ``.`` before
+    # (``MyLib.Utilities.ErrorAnalysis.``) because the ``.`` before
     # ``UnitTests`` is itself a word boundary.
     pattern = re.compile(
         r"\b(?:Utilities\.ErrorAnalysis\.)?UnitTests\s+(\w+)\s*\(", re.DOTALL
@@ -379,8 +379,8 @@ def _find_experiment_span(stripped: str) -> tuple[int, int] | None:
 
     Returns (start, end) offsets of the text BETWEEN the balanced outer
     parentheses, or None when no experiment annotation exists. Balanced-paren
-    scan instead of ``[^)]*`` — review 2026-07-06 finding 48: a nested group
-    like ``__Dymola_Tuning(...)`` must not truncate the parameter list.
+    scan instead of ``[^)]*``: a nested group like ``__Dymola_Tuning(...)``
+    must not truncate the parameter list.
     Offsets are valid in the original text too (1:1 stripping).
     """
     m = re.search(r"\bexperiment\s*\(", stripped)
@@ -406,11 +406,10 @@ def _parse_number(
 ) -> float | None:
     """Extract ``<key> = <number>`` from an annotation parameter list.
 
-    review 2026-07-06 finding 56: accept plain numbers incl. scientific
-    notation only; an expression (``0.5*3600``) or garbage capture logs a
-    warning naming the file + field and is skipped — it must neither
-    silently truncate (old ``[0-9eE.+-]+`` regex kept just ``0.5``) nor
-    crash discovery with an uncaught ValueError.
+    Accept plain numbers incl. scientific notation only; an expression
+    (``0.5*3600``) or garbage capture logs a warning naming the file + field
+    and is skipped — it must neither silently truncate (old ``[0-9eE.+-]+``
+    regex kept just ``0.5``) nor crash discovery with an uncaught ValueError.
     """
     m = re.search(rf"{key_pattern}\s*=\s*([^,]+)", param_text)
     if not m:
@@ -431,9 +430,8 @@ def _parse_number(
 def _parse_experiment(text: str, source: object = "") -> ExperimentInfo | None:
     """Extract experiment() annotation parameters.
 
-    Scans comment/string-stripped text (review 2026-07-06 finding 48: a
-    ``// experiment(StopTime=5)`` comment must not shadow the real
-    annotation) but recovers string values (``__Dymola_Algorithm="..."``)
+    Scans comment/string-stripped text (a ``// experiment(StopTime=5)``
+    comment must not shadow the real annotation) but recovers string values (``__Dymola_Algorithm="..."``)
     from the ORIGINAL text via the offset-preserving stripper.
     """
     stripped = _strip_modelica_literals(text)
@@ -846,7 +844,7 @@ def _named(spans: list[_ClassSpan], name: str, depth: int = 0) -> _ClassSpan | N
 
 
 # ---------------------------------------------------------------------------
-# Bundled recognizer (PTA.1)
+# Bundled recognizer
 # ---------------------------------------------------------------------------
 
 from .recognizer import (  # noqa: E402  (late import: registers the bundled recognizer after its deps are defined)

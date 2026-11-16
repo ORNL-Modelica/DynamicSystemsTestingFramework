@@ -29,11 +29,11 @@ from .ref_index import _atomic_write_text
 logger = logging.getLogger(__name__)
 
 
-# review 2026-07-06 (finding 35): soft_check/companion names are interpolated
-# into file paths (``soft_checks/ref_<code>/<name>.json``) — an unvalidated name
-# containing a separator or ".." writes outside the role dir and becomes
-# invisible to list/remove/``against``. Windows-illegal characters are also
-# rejected because reference partitions are shared across OSes.
+# soft_check/companion names are interpolated into file paths
+# (``soft_checks/ref_<code>/<name>.json``) — an unvalidated name containing a
+# separator or ".." writes outside the role dir and becomes invisible to
+# list/remove/``against``. Windows-illegal characters are also rejected because
+# reference partitions are shared across OSes.
 _ROLE_NAME_FORBIDDEN = ("/", "\\", "..", ":", "*", "?", '"', "<", ">", "|", "\0")
 
 
@@ -242,7 +242,7 @@ class _RolesMixin:
                 "'primary' is reserved for the stored simulation result; "
                 "soft_checks live alongside, not in place of, primary."
             )
-        # review 2026-07-06 (finding 35): names become filenames — validate.
+        # Names become filenames — validate.
         _validate_role_name(name, "soft_check")
 
         ref_file = self._ref_file_for_model(model_id)
@@ -265,13 +265,13 @@ class _RolesMixin:
             return False
 
         sc_dir.mkdir(parents=True, exist_ok=True)
-        # review 2026-07-06 (finding 31): atomic — no partial soft_check files.
+        # Atomic — no partial soft_check files.
         write_soft_check(sc_file, baseline)
         return True
 
     def remove_soft_check(self, model_id: str, name: str) -> bool:
         """Delete a soft_check. Returns True if removed, False if not found."""
-        # review 2026-07-06 (finding 35): reject path-escaping names here too.
+        # Reject path-escaping names here too.
         _validate_role_name(name, "soft_check")
         sc_dir = self._soft_check_dir_for(model_id)
         if sc_dir is None:
@@ -373,7 +373,7 @@ class _RolesMixin:
         """
         if name == PRIMARY_BASELINE:
             raise ValueError("'primary' is reserved for the stored simulation result")
-        # review 2026-07-06 (finding 35): names become filenames — validate.
+        # Names become filenames — validate.
         _validate_role_name(name, "companion")
         # A `<x>.data` companion's metadata file would be `<x>.data.json`,
         # which is where a frozen `<x>` keeps its data (see freeze_companion).
@@ -397,12 +397,12 @@ class _RolesMixin:
                 f"{model_id!r}; companions and soft_checks share a namespace."
             )
 
-        # review 2026-07-06 (finding 34): resolve against the CWD (what the
-        # user typed) and store the absolute path — the overlay loader used
-        # to resolve relative paths against ref_dir, so relative
-        # registrations always loaded as "missing". Companions are
-        # user-registered files, so a missing file is a registration error:
-        # fail fast here instead of surfacing a silent missing overlay later.
+        # Resolve against the CWD (what the user typed) and store the absolute
+        # path — resolved against ref_dir by the overlay loader instead,
+        # every relative registration would load as "missing".
+        # Companions are user-registered files, so a missing file is a
+        # registration error: fail fast here instead of surfacing a silent
+        # missing overlay later.
         resolved = Path(path).resolve()
         if not resolved.exists():
             raise FileNotFoundError(
@@ -427,7 +427,7 @@ class _RolesMixin:
         co_dir = _companion_dir(self.ref_dir, ref_file)
         co_dir.mkdir(parents=True, exist_ok=True)
         meta_file = co_dir / f"{name}.json"
-        # review 2026-07-06 (finding 31): atomic — no partial metadata files.
+        # Atomic — no partial metadata files.
         _atomic_write_text(meta_file, json.dumps(meta, indent=2) + "\n")
         return True
 
@@ -444,7 +444,7 @@ class _RolesMixin:
         Returns True on freeze, False if the companion is missing or
         already frozen.
         """
-        # review 2026-07-06 (finding 35): reject path-escaping names here too.
+        # Reject path-escaping names here too.
         _validate_role_name(name, "companion")
         companions = self.get_companions(model_id)
         co = companions.get(name)
@@ -465,8 +465,8 @@ class _RolesMixin:
         assert co_dir is not None
         data_basename = _frozen_data_basename(name, co.format)
         dst = co_dir / data_basename
-        # review 2026-07-06 (finding 31): copy via tmp + replace so an
-        # interrupted freeze can't leave a truncated data file behind.
+        # Copy via tmp + replace so an interrupted freeze can't leave a
+        # truncated data file behind.
         tmp_dst = dst.with_name(f"{dst.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         try:
             shutil.copyfile(src, tmp_dst)
@@ -489,14 +489,14 @@ class _RolesMixin:
         }
         if co.provenance:
             meta["provenance"] = dict(co.provenance)
-        # review 2026-07-06 (finding 31): atomic — no partial metadata files.
+        # Atomic — no partial metadata files.
         _atomic_write_text(meta_file, json.dumps(meta, indent=2) + "\n")
         return True
 
     def remove_companion(self, model_id: str, name: str) -> bool:
         """Delete a companion registration. For frozen companions the
         associated data file is also removed. Returns True if removed."""
-        # review 2026-07-06 (finding 35): reject path-escaping names here too.
+        # Reject path-escaping names here too.
         _validate_role_name(name, "companion")
         co_dir = self._companion_dir_for(model_id)
         if co_dir is None:

@@ -15,7 +15,8 @@ identify every number of its precision — 9 for a float32, 17 for a float64
 file whose ``sampling.precision`` is ``"single"`` is read back THROUGH
 float32, so each stored number is the run's own; writing re-rounds it to 9
 digits, which gives the same spelling back. Measured 2026-10-15 over 955 real
-baselines (TRANSFORM + examples): decode -> encode is byte-identical.
+baselines (a large real library + examples): decode -> encode is
+byte-identical.
 """
 
 from __future__ import annotations
@@ -173,7 +174,7 @@ _NUMBER_TYPES = frozenset((int, float))
 def _numbers(raw: Any) -> bool:
     """Whether ``raw`` is a JSON array of numbers only. One C-level pass over
     the element types: measured 2026-11-11 over a copy of 335 real baselines
-    (1.1 M stored points, TRANSFORM's Dymola/linux), the check took a full
+    (1.1 M stored points, a real library's Dymola/linux), the check took a full
     scan of the folder from 0.110 s to 0.116-0.128 s (best of 10, warm,
     four runs), where a full decode in the scan added 60 %."""
     return isinstance(raw, list) and set(map(type, raw)) <= _NUMBER_TYPES
@@ -466,7 +467,7 @@ def read_series(path: Path, name: str) -> Baseline:
 
 def read_reference_header(path: Path) -> tuple[str | None, str]:
     """``(model_id, status)`` of a reference file — what the index needs.
-    A whole-file parse (JSON has no partial read; idea #64), and the body
+    A whole-file parse (JSON has no partial read), and the body
     checked by the one rule a decode applies (:func:`check_body`): a file
     whose body cannot be decoded raises :class:`UndecodableBaseline` here,
     so the index refuses it before any reader decodes it. ``status``
