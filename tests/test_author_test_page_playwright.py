@@ -49,7 +49,6 @@ from test_author_suite_playwright import (  # noqa: E402
     EXPECT_TIMEOUT,
     READY_TIMEOUT,
     _start,
-    _wait_until_serving,
 )
 from test_interactive_figures import UNDER_TOOLBAR  # noqa: E402
 from test_session import (  # noqa: E402
@@ -111,7 +110,6 @@ def _served(
     proc, url = _start(cfg, work, log, hooks=hooks)
     context = None
     try:
-        _wait_until_serving(url, proc, log)
         context = playwright_browser.new_context(
             viewport=VIEWPORT,
             **({"has_touch": True, "is_mobile": True} if touch else {}),
