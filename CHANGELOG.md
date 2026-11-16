@@ -40,6 +40,10 @@ this file says when they do.
   tests only in fix, not drawn: …`); before, a test the branch added was
   never mentioned. Its lines name a test by its full model id where two
   tests share a short name.
+- The console and the JUnit file list only the criteria that made a test
+  fail: a failing criterion inside a group that passed (under an `or`
+  another child of which passed) is no longer listed, as `dstf summary`
+  already read it. Criteria under `warn` are still listed as advisory.
 
 ### Fixed
 
