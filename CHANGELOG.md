@@ -62,6 +62,13 @@ this file says when they do.
 
 - Ctrl-C stops any command with one line (`Interrupted.`) and exit code 130,
   not a traceback.
+- A test's time limit now stops every process the test started that is
+  still under it or in its folder — for every Python test, and for
+  OpenModelica and Julia with `--batch` — and so does cancelling a Python
+  test in `dstf author`'s queue. OpenModelica's simulation kept running
+  after omc was stopped, and a process a Python or Julia test had started
+  kept running after the test. A process that merely sits in the test's
+  folder, such as your shell, is left alone.
 - OpenModelica: an omc that a worker killed (a timeout, a cancel) is no
   longer left in the process table as a dead entry (`<defunct>`) until the
   run ends; a long suite collected one per restarted worker.

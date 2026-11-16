@@ -19,11 +19,13 @@ import subprocess
 import threading
 import time
 from abc import abstractmethod
-from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import psutil
 
 from ...discovery.test_registry import TestModel, diagnostic_names
 from ..base import Backend
@@ -36,45 +38,9 @@ from ..types import (
     timeout_message,
 )
 from . import result_files
+from .proc_kill import kill_tree, run_killable
 from .proc_output import decode_output
 from .result_variables import criterion_variables
-
-
-def run_killable(
-    cmd: list[str],
-    *,
-    cwd: Path,
-    timeout: float,
-    on_spawn: Callable[[subprocess.Popen], None],
-) -> subprocess.CompletedProcess:
-    """``subprocess.run(cmd, capture_output=True, text=True, timeout=...)``
-    with the live ``Popen`` handed to *on_spawn*, so another thread can kill
-    it. Same contract otherwise: the child is killed and reaped on timeout
-    and ``TimeoutExpired`` carries what it had written.
-    """
-    with subprocess.Popen(
-        cmd,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        # review 2026-07-06 (finding 75): pin utf-8 + replace so a
-        # non-ASCII traceback can't crash decoding on cp1252 hosts.
-        encoding="utf-8",
-        errors="replace",
-    ) as proc:
-        on_spawn(proc)
-        try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            proc.kill()
-            exc.stdout, exc.stderr = proc.communicate()
-            raise
-        except BaseException:
-            proc.kill()
-            raise
-    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
-
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +68,11 @@ class JsonDriverBackend(Backend):
 
     def __init__(self, config):
         super().__init__(config)
-        #: The driver subprocess of each test in flight, by test key, and the
-        #: tests told to stop — what :meth:`cancel_test` works on, from
-        #: another thread.
+        #: The driver subprocess of each test in flight with the driver as
+        #: psutil saw it at the launch, by test key, and the tests told to
+        #: stop — what :meth:`cancel_test` works on, from another thread.
         self._procs_lock = threading.Lock()
-        self._procs: dict[str, subprocess.Popen] = {}
+        self._procs: dict[str, tuple[subprocess.Popen, psutil.Process | None]] = {}
         self._cancelled: set[str] = set()
 
     @property
@@ -177,9 +143,9 @@ class JsonDriverBackend(Backend):
 
         wall_start = time.monotonic()
 
-        def _register(spawned: subprocess.Popen) -> None:
+        def _register(spawned: subprocess.Popen, tool: psutil.Process | None) -> None:
             with self._procs_lock:
-                self._procs[test_key] = spawned
+                self._procs[test_key] = (spawned, tool)
 
         try:
             try:
@@ -294,17 +260,17 @@ class JsonDriverBackend(Backend):
         return f"{self.tool_label} {self.action_label} failed: {reason}"
 
     def cancel_test(self, test_key: str) -> bool:
-        """Kill the driver subprocess running *test_key*; its
-        ``run_single_test`` then returns a ``cancelled`` result."""
+        """Kill the driver subprocess running *test_key* and every process
+        under it, without waiting (the author session calls this); its
+        ``run_single_test`` then returns a ``cancelled`` result, and the
+        launch sweeps the test's folder before it does
+        (:func:`~.proc_kill.run_killable`)."""
         with self._procs_lock:
-            proc = self._procs.get(test_key)
-            if proc is None:
+            spawned = self._procs.get(test_key)
+            if spawned is None:
                 return False
             self._cancelled.add(test_key)
-        try:
-            proc.kill()
-        except OSError:
-            pass  # it ended on its own in the meantime
+        kill_tree(*spawned)
         return True
 
     # ------------------------------------------------------------------

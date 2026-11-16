@@ -1875,7 +1875,8 @@ def test_the_python_backend_kills_the_test_s_subprocess(tmp_path):
     )
     th.start()
     _wait_until(lambda: "test_0001" in backend._procs)
-    child = psutil.Process(backend._procs["test_0001"].pid)
+    proc, _tool = backend._procs["test_0001"]
+    child = psutil.Process(proc.pid)
 
     t0 = time.monotonic()
     assert backend.cancel_test("test_0001") is True

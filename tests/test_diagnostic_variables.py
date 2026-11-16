@@ -171,7 +171,7 @@ def test_openmodelica_asks_for_a_tests_own_name_in_its_variable_filter(
     def fake_run(cmd, cwd, **kwargs):
         return CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr("dstf.backends.openmodelica.backend.subprocess.run", fake_run)
+    monkeypatch.setattr("dstf.backends.openmodelica.backend.run_killable", fake_run)
     test = make_test_model("Lib.A", variable_patterns=["x"], diagnostic_variables=["h"])
     OpenModelicaBackend(cfg).run_single_test(
         test, test_key="test_0001", index=1, total=1
