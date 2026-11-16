@@ -173,12 +173,12 @@ class ExtendsMatch:
 
 @dataclass
 class ClassNameMatch:
-    """A class-name-glob match (PTA-follow.3)."""
+    """A class-name-glob match."""
 
 
 @dataclass
 class CompositeMatch:
-    """A composite of one or more sub-matches (PTA-follow.2: all-of / any-of).
+    """A composite of one or more sub-matches (all-of / any-of).
 
     Field-source interpreters that need a specific leaf-match shape (e.g.,
     `parameter` needs a ComponentMatch) traverse the composite via
@@ -502,7 +502,7 @@ class JsonRecognizer(Recognizer):
         self.applies_to = frozenset(said["applies_to"])
         self._match_spec: dict = spec["match"]
         self._field_specs: dict = said["fields"]
-        # PTA-follow.1: optional path filters. Globs match against the path
+        # Optional path filters. Globs match against the path
         # relative to the discovery base (config.library_dir for modelica).
         self._paths_include: list[str] = list(said["paths_include"])
         self._paths_exclude: list[str] = list(said["paths_exclude"])

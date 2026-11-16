@@ -43,7 +43,7 @@ from .widgets import MiddleCut
 if TYPE_CHECKING:
     from .test_page import TestPage
 
-#: At most this many top-level rows (planner's choice 4): a result of
+#: At most this many top-level rows: a result of
 #: thousands of names drew thousands of rows. An opened family shows at most
 #: ``MEMBERS`` of its own.
 ROWS, MEMBERS = 200, 50

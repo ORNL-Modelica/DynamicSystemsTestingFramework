@@ -929,9 +929,9 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         """Spin up a one-shot worker to export a single FMU.
 
         Heavier than reusing a worker from the pool, but keeps the export
-        path independent of the pool's lifecycle (so 4.B's cross-backend
-        chain can call this from arbitrary places). Optimization: have the
-        chain orchestration reuse an idle worker via a future helper.
+        path independent of the pool's lifecycle (so the cross-backend
+        chain can call this from arbitrary places). An idle pool worker
+        could serve it more cheaply; the chain does not reuse one.
 
         VALIDATION CAVEAT: requires Windows + Dymola + the FMI export
         license option. Cannot be exercised in CI on Linux WSL; tests use

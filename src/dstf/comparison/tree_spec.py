@@ -105,7 +105,7 @@ class CombinatorSpec:
     """A combinator node: and/or/k-of-n/warn/weighted over child specs.
 
     ``k`` is required iff ``combinator == "k-of-n"``. ``warn`` requires
-    exactly one child; the others require at least one. ``weighted`` (4.E)
+    exactly one child; the others require at least one. ``weighted``
     requires ``weights`` (list parallel to children), ``threshold``, and an
     optional ``direction`` (``"less"`` default, or ``"greater"``).
     """
