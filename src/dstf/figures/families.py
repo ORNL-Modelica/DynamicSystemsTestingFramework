@@ -1,4 +1,4 @@
-"""Array families (DESIGN.md "Array families on a plot"; brief §3.9).
+"""Array families (DESIGN.md "Array families on a plot").
 
 Indexed names fold by their LAST integer index: ``pipe.T[3]`` and
 ``pipe.medium[3].T`` each belong to a family; ``x[2,3]`` does not.
@@ -127,7 +127,7 @@ def family_of(text: str, *, expression: bool = False) -> tuple[str, int] | None:
     # Multi-dimensional AFTER the last single index (`a[1].b[2,3]`): the
     # element's own position is two-dimensional, so it is no member of an
     # `a` array. BEFORE it (`massPorts[4, 1].C[3]`) it is where the array
-    # sits, and the element is C's 3rd (3c ruling).
+    # sits, and the element is C's 3rd.
     if _MULTI_INDEX.search(masked, m.end()):
         return None
     return text[: m.start()] + "[]" + text[m.end() :], int(m.group(1))

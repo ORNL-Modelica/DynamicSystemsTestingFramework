@@ -5,10 +5,10 @@
 <title>{{ model_id }} — Interactive</title>
 {# Plotly ships with the report (report_suite.write_report_assets), not
    from a CDN: an air-gapped lab rendered a plot-less report with no error
-   at all. Pinned to the version the CDN tag used to name — plotly.js
-   v2.35.0. ONE copy per suite, at the reports root — hence ``../``; a
-   copy per test dir cost 1.25 MB × N. Moving a single test's report dir
-   elsewhere means bringing ``plotly.min.js`` along beside it. #}
+   at all. Pinned to plotly.js v2.35.0. ONE copy per suite, at the
+   reports root — hence ``../``; a copy per test dir cost 1.25 MB × N.
+   Moving a single test's report dir elsewhere means bringing
+   ``plotly.min.js`` along beside it. #}
 <script src="../plotly.min.js" charset="utf-8"></script>
 <style>
 {{ dstf_css|safe }}
@@ -76,7 +76,7 @@ details summary:hover { color: var(--dstf-text); }
    warn wrapper cannot fail the root, so it must not paint the summary or
    the variable pill red; it gets this amber chip instead. */
 .advisory-chip { display: inline-block; margin-left: 0.5em; padding: 0.05em 0.45em; border-radius: 3px; background: var(--dstf-warn-tint); border: 1px solid var(--dstf-warn-border); color: var(--dstf-warn-dark); font-size: 0.75em; font-weight: 600; vertical-align: middle; }
-/* A2 / idea #50 — per-plot overlay picker (companions + soft_checks) */
+/* Per-plot overlay picker (companions + soft_checks) */
 .overlay-picker { display: flex; flex-wrap: wrap; gap: 0.5em 1em; align-items: center; font-size: 0.8em; margin: 0.2em 0 0.5em 0; padding: 0.3em 0.6em; background: var(--dstf-surface-hover); border: 1px dashed var(--dstf-border-hairline); border-radius: 4px; }
 .overlay-picker .ov-label { color: var(--dstf-text-secondary); font-weight: 500; }
 .overlay-picker .ov-item { display: inline-flex; align-items: center; gap: 0.25em; cursor: pointer; }
@@ -86,7 +86,7 @@ details summary:hover { color: var(--dstf-text); }
 /* A spelling that could stand for two of an overlay's variables: nothing
    is drawn for it, and this row says which mapping would settle it. */
 .ov-warning { margin-top: 0.2em; }
-/* Stage 2 — recursive SpecNodeView */
+/* Recursive SpecNodeView */
 .variable-section { margin-bottom: 2em; padding: 1em; background: var(--dstf-surface); border: 1px solid var(--dstf-border); border-radius: 4px; }
 .variable-section h2 { margin-top: 0; border-bottom: 1px solid var(--dstf-border-hairline); padding-bottom: 0.3em; }
 .variable-section .var-status { display: inline-block; padding: 0.1em 0.5em; border-radius: 3px; font-size: 0.7em; font-weight: 600; letter-spacing: 0.05em; margin-right: 0.5em; vertical-align: middle; }
@@ -284,7 +284,7 @@ details summary:hover { color: var(--dstf-text); }
 </details>
 {% endif %}
 
-{# === OVERLAYS SUMMARY — A2 / idea #50 === #}
+{# === OVERLAYS SUMMARY === #}
 {% if overlay_rows %}
 <details class="artifacts">
   <summary>Overlays ({{ overlay_rows | length }}) — companion + soft_check</summary>
@@ -336,7 +336,7 @@ details summary:hover { color: var(--dstf-text); }
 </details>
 {% endif %}
 
-{# === METRIC TREE (Stage 3 — full unfiltered SpecNodeView mount) === #}
+{# === METRIC TREE (full unfiltered SpecNodeView mount) === #}
 {% if tree_view %}
 <details class="metric-tree-section" open>
   <summary>Metric Tree <span class="node-tree-hint">— every criterion and group, as the CLI scored it</span></summary>
@@ -405,9 +405,9 @@ details summary:hover { color: var(--dstf-text); }
 // Data marshalling only — the figure dicts and the order the plot elements
 // were numbered in. Everything else on this page is server-rendered markup.
 window.MT_REPORT = {
-  {# review 2026-07-06 finding 76h: a LIST, one entry per plot section, in
-     the template's own order — JS Object.keys() reorders integer-like keys
-     numerically, which desynced plot element IDs from that order. #}
+  {# A LIST, one entry per plot section, in the template's own order — JS
+     Object.keys() reorders integer-like keys numerically, which desynced
+     plot element IDs from that order. #}
   PLOT_SERIES: {{ plot_series | tojson }},
   {# Figure dicts from dstf.figures — one per plot section, verbatim. #}
   PLOT_FIGURES: {{ (plot_figures or []) | tojson }},

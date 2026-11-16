@@ -116,8 +116,8 @@ def cmd_baseline_export(args: argparse.Namespace) -> int:
 
     store = ReferenceStore(config)
     assert config.work_dir is not None  # resolved in Config.__post_init__
-    # review 2026-07-06 finding 60: --output arrives as a string — coerce to
-    # Path (the ReferenceStore export APIs call .parent on it).
+    # --output arrives as a string — coerce to Path (the ReferenceStore export
+    # APIs call .parent on it).
     out = (
         Path(args.output)
         if args.output is not None

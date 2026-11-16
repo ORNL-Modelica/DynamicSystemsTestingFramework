@@ -74,7 +74,7 @@ DARK_THEME: Mapping[str, str] = MappingProxyType(
 )
 
 #: The bundled themes, by the name `testing.json`'s ``"theme"`` says. A
-#: name only (brief §3.10): no theme file, no inline colours.
+#: name only: no theme file, no inline colours.
 THEMES: Mapping[str, Mapping[str, str]] = MappingProxyType(
     {"default": DEFAULT_THEME, "dark": DARK_THEME}
 )
@@ -206,7 +206,7 @@ ROLES: Mapping[str, Mapping[str, str]] = MappingProxyType(
     }
 )
 
-#: The tree card's level bars (U5, Q1): level i's bar takes ``level-<(i-1)
+#: The tree card's level bars: level i's bar takes ``level-<(i-1)
 #: % 4 + 1>``, and the deeper ``-on`` shade while its group is hovered.
 #: Blue, violet, cyan, slate — never a status's green, red or amber: a bar
 #: says where a row sits, never how it scored.

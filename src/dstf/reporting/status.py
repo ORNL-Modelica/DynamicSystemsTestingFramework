@@ -1,10 +1,9 @@
 """The per-test status classification every report surface agrees on.
 
-One classifier, one ordering. The same ordering bug had to be fixed twice
-in separate copies of it (review 2026-07-06: finding 5 — a failing
-baseline-free test read NO_REF and exited 0; finding 69 — NO_REF was
-counted as passed and SIM_FAIL as failed), which is what this module
-exists to make impossible.
+One classifier, one ordering. Separate copies of it each needed the same
+ordering fixed (a failing baseline-free test read NO_REF and exited 0;
+NO_REF was counted as passed and SIM_FAIL as failed), which is what this
+module exists to make impossible.
 
 Ordering, and why:
 

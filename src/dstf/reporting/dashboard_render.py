@@ -500,7 +500,7 @@ def build_dashboard_context(
     # before this run's start are ignored by `rows.enrich_row` so a prior
     # run's verdict can't override the current run's sim result.
     # Falls back to None when status.json predates the field — guard
-    # silently passes through (legacy sidecars never get filtered).
+    # silently passes through (older sidecars never get filtered).
     snapshot_start_wall = snapshot.get("start_wall")
 
     # `dstf run` / `compare` without --report write no sidecars; the

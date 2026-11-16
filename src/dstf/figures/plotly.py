@@ -68,7 +68,7 @@ WINDOW_FILL = "rgba(33,150,243,0.08)"
 WINDOW_LINE = "rgba(33,150,243,0.4)"
 ERROR = "#f44336"
 #: Which right-hand axis an error series rides on — one axis per unit family
-#: (brief §3.4): signal units for the signed and absolute error, dimensionless
+#: signal units for the signed and absolute error, dimensionless
 #: for the per-point NRMSE. A lookup, not a default: an error series whose
 #: family is not here raises rather than being drawn against the wrong unit.
 ERROR_AXES = {"error/signed": "y3", "error/abs": "y3", "error/nrmse": "y4"}
@@ -86,8 +86,7 @@ TIME_TITLE_STANDOFF = 2
 #: Where the legend sits, on both tiers: above the plot area, one row that
 #: wraps to more when its entries don't fit (a report legend of 8 entries is
 #: 2 rows at 900 px). Plotly grows the top margin to fit it (measured: 25 ->
-#: 41 px for one row), so it never sits on the trace start or on a ring (the
-#: 2026-09-21 board, option b).
+#: 41 px for one row), so it never sits on the trace start or on a ring.
 LEGEND = {
     "orientation": "h",
     "x": 0,
@@ -788,7 +787,7 @@ def _spectrum_range(view: VariableView) -> list[float] | None:
     40.8 Hz. None — autorange — with no peak above zero.
 
     Autoranged, the axis ran 0..Nyquist, and Nyquist follows the sample
-    count, not the physics: TRANSFORM's peaks near 1.2e-5 Hz sat in the
+    count, not the physics: a real library's peaks near 1.2e-5 Hz sat in the
     leftmost ~10 px of an axis to ~1.7e-3 Hz (2026-09-26)."""
     declared: list[float] = []
     detected: list[tuple[float, float]] = []  # (frequency, magnitude)
@@ -1064,7 +1063,7 @@ def _leaf_traces(
             if leaf.path in visibility.hidden:
                 # `visible: false`, never removed: a shape's INDEX is what a
                 # drag's relayout names, and the hook resolves it against
-                # the full list (the 2026-09-24 spike, fact 2-3).
+                # the full list (measured in plotly.js, 2026-09-24).
                 for item in (*leaf_data, *leaf_shapes, *leaf_rings):
                     item["visible"] = False
         data.extend(leaf_data)
@@ -1156,7 +1155,7 @@ def variable_figure(
             # A box zoom made while the axis hides scales it too (it
             # overlays `y`), and the figure's `uirevision: "keep"` kept
             # that range: Abs error then drew as a flat line on the stale
-            # [-0.49, 3.51] (the TRANSFORM gate, 2026-09-25). Keyed by the
+            # [-0.49, 3.51] (over a real library, 2026-09-25). Keyed by the
             # chosen series, a new choice autoranges the axis, and a zoom
             # made while it shows is kept through a redraw.
             layout[key]["uirevision"] = visibility.error or "none"

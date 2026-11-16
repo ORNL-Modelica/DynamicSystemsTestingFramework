@@ -70,9 +70,8 @@ def generate_junit_report(
         suite_comps = suites[suite_name]
         n_tests = len(suite_comps)
         # Buckets are the shared ones from reporting.status, so the JUnit
-        # counters can't drift from the console's — review 2026-07-06,
-        # finding 5: failing baseline-free tests were emitted as <skipped>
-        # with failures="0".
+        # counters can't drift from the console's — a separate count would
+        # emit failing baseline-free tests as <skipped> with failures="0".
         counts = count_by_status(suite_comps)
         n_failures = counts[FAIL]
         n_errors = counts[SIM_FAIL]

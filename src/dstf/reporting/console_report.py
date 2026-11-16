@@ -157,10 +157,10 @@ def failure_blocks(comp: TestComparison) -> list[list[str]]:
     criterion in its metric's own words — or why it was not scored — and
     that metric's detail pairs.
 
-    The blocks used to be the same five generic numbers under the
-    variable's name alone: a start-up window's nrmse and an advisory
-    comparison against a soft check read as one variable failing twice,
-    with nothing to tell them apart."""
+    Not the same five generic numbers under the variable's name alone:
+    then a start-up window's nrmse and an advisory comparison against a
+    soft check would read as one variable failing twice, with nothing to
+    tell them apart."""
     return _blocks(failed_criteria(comp))
 
 

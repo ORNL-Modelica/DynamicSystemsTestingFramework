@@ -154,7 +154,7 @@ def wipe_stale_state_for_scope(
 
 def run_cross_backend_chains(tests, backend, config, store) -> list[str]:
     """For each test with ``requested_baselines`` listing a known chain target,
-    invoke the chain and store the resulting named baseline (4.B.4).
+    invoke the chain and store the resulting named baseline.
 
     Today only ``dymola-via-fmpy`` is recognized. Failures are logged + skipped
     (don't abort the run); chains are best-effort enrichment of baselines.
@@ -284,10 +284,10 @@ def run_pipeline(
     for m in manifests:
         m.enrich_ref_ids(store.index)
 
-    # 4.B.4 — cross-backend chains. Tests whose recognizer set
-    # requested_baselines to include a known chain target (today only
-    # "dymola-via-fmpy") get a second baseline produced by chaining backends.
-    # MetricTree leaves can then score against it via "against": "<chain-name>".
+    # Cross-backend chains. Tests whose recognizer set requested_baselines to
+    # include a known chain target (today only "dymola-via-fmpy") get a second
+    # baseline produced by chaining backends. MetricTree leaves can then score
+    # against it via "against": "<chain-name>".
     notices = run_cross_backend_chains(tests, backend, config, store)
 
     if merge:

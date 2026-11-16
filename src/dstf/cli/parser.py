@@ -182,9 +182,9 @@ class _Root(argparse.ArgumentParser):
 
     def _given_twice(self, argv: list[str], parsed) -> str | None:
         """A project flag written before the command and after it, with two
-        values: the later used to win, said only in the usage guide. Each
-        is written once, on either side (the same flag twice on one side is
-        argparse's: the last wins)."""
+        values, is refused: a silent "the later wins" would be said only in the
+        usage guide. Each is written once, on either side (the same flag twice
+        on one side is argparse's: the last wins)."""
         end = _find_word(self._values_taken(), argv, 0, _subcommands(self).choices)
         before: dict[str, str] = {}
         i = 0
@@ -571,7 +571,7 @@ def _whole(
 ) -> Callable[[str], int]:
     """An argparse ``type=`` for a whole number in a range: a value outside
     it is a parser error that says what is allowed. (A truthiness test
-    downstream used to DROP ``--timeout 0`` and ``--parallel 0`` and run on
+    downstream would DROP ``--timeout 0`` and ``--parallel 0`` and run on
     the default.)"""
     allowed = (
         f"a whole number of {minimum} or more"
@@ -687,9 +687,9 @@ def _output_file(text: str) -> str:
 def _review_filter_arg(value: str) -> str:
     """argparse ``type=`` callback for ``-i`` / ``--rerun`` category lists.
 
-    review 2026-07-06 finding 58: validate at parse time so a typo like
-    ``-i sim_failed`` aborts in under a second with the valid-categories
-    message (argparse exit code 2) — not after the full simulation run.
+    Validate at parse time so a typo like ``-i sim_failed`` aborts in under a
+    second with the valid-categories message (argparse exit code 2) — not after
+    the full simulation run.
     """
     _parse_review_filter(value)  # raises argparse.ArgumentTypeError on typos
     return value
@@ -1407,9 +1407,9 @@ def _add_run(tree: _Tree, top) -> None:
     _offer_selection(node)
     _offer_scoring(node)
     _offer_reports(node)
-    # review 2026-07-06 finding 61: review-then-accept (-i) and
-    # accept-everything (--accept) are mutually exclusive intents — make
-    # combining them a hard argparse error instead of silently letting
+    # Review-then-accept (-i) and accept-everything (--accept) are mutually
+    # exclusive intents — make combining them a hard argparse error instead of
+    # silently letting
     # --accept win and skipping the review the user asked for.
     accept_or_review = node.add_mutually_exclusive_group()
     accept_or_review.add_argument(
@@ -1419,7 +1419,7 @@ def _add_run(tree: _Tree, top) -> None:
         const="all",
         default=None,
         metavar="CATEGORIES",
-        type=_review_filter_arg,  # review 2026-07-06 finding 58: parse-time check
+        type=_review_filter_arg,  # a parse-time check
         help="After the run, review the tests one by one in the terminal: "
         "accept a result as the baseline, skip it, or plot it. CATEGORIES is "
         f"ONE comma-separated argument of: {_CATEGORIES}. Default, with no "
@@ -1486,7 +1486,7 @@ def _add_run(tree: _Tree, top) -> None:
         const="failed",
         default=None,
         metavar="CATEGORIES",
-        type=_review_filter_arg,  # review 2026-07-06 finding 58: parse-time check
+        type=_review_filter_arg,  # a parse-time check
         help="Simulate again only the tests the last run left in these "
         f"categories — ONE comma-separated argument of: {_CATEGORIES} — and "
         "report the whole suite (it implies --merge). Default, with no "

@@ -77,11 +77,10 @@ def labelled(arg: str) -> tuple[str, Path]:
 def _split_filter_list(spec: str) -> list[str]:
     """Split a comma-separated filter list on commas NOT inside ``[]``.
 
-    review 2026-07-06 finding 64: naive comma-splitting broke fnmatch
-    character classes like ``Test[A,B]*``. Small scanner: a comma inside an
-    open ``[`` class belongs to the class. No escape mechanism — an
-    unclosed ``[`` makes the rest of the string one pattern (fnmatch treats
-    an unmatched ``[`` as a literal anyway).
+    Naive comma-splitting broke fnmatch character classes like ``Test[A,B]*``.
+    Small scanner: a comma inside an open ``[`` class belongs to the class. No
+    escape mechanism — an unclosed ``[`` makes the rest of the string one
+    pattern (fnmatch treats an unmatched ``[`` as a literal anyway).
     """
     parts: list[str] = []
     buf: list[str] = []
@@ -137,9 +136,9 @@ def _filter_tests(
     """Filter tests by glob/list/file on model_id, plus optional package prefix."""
     filtered = tests
     if package is not None:
-        # review 2026-07-06 finding 65: match the package itself or children
-        # across a dot boundary — "MyLib.Fluid" must not also select
-        # "MyLib.FluidExperimental.*" (raw startswith did).
+        # Match the package itself or children across a dot boundary —
+        # "MyLib.Fluid" must not also select "MyLib.FluidExperimental.*" (raw
+        # startswith did).
         filtered = [
             t
             for t in filtered
@@ -147,9 +146,9 @@ def _filter_tests(
         ]
     if pattern is not None:
         patterns = _resolve_filter_patterns(pattern)
-        # review 2026-07-06 finding 63: fnmatchcase — fnmatch.fnmatch is
-        # case-insensitive on Windows, so the same filter selected different
-        # tests across the two OS partitions this project maintains.
+        # fnmatchcase — fnmatch.fnmatch is case-insensitive on Windows, so the
+        # same filter selected different tests across the two OS partitions
+        # this project maintains.
         filtered = [
             t
             for t in filtered
@@ -237,9 +236,9 @@ def _should_review(comp, filters: set[str]) -> bool:
     # A test the comparison FAILED is "failed" and nothing else, baseline or
     # not, so "no-baseline" does not select it: one the comparison refused,
     # or one with no reference that fails a baseline-free criterion (range /
-    # declared events / declared peaks — review 2026-07-06, finding 5).
-    # "failed" selects both. The review loop then offers the second
-    # [a]ccept — accepting it writes a reference — and the first none.
+    # declared events / declared peaks). "failed" selects both. The review loop
+    # then offers the second [a]ccept — accepting it writes a reference — and
+    # the first none.
     if "no-baseline" in filters and not comp.has_reference and status != FAIL:
         return True
     if "failed" in filters and status == FAIL:

@@ -84,10 +84,9 @@ def main(argv: list[str] | None = None) -> int:
         load_plugins()
         return _COMMANDS[command_path(args)](args)
     except ConfigError as exc:
-        # review 2026-07-06 leftover A: a testing.json problem (malformed,
-        # unreadable, missing explicit --config) is a user error — print one
-        # clean line and exit 2 (argparse's usage-error code), never a
-        # traceback.
+        # A testing.json problem (malformed, unreadable, missing explicit
+        # --config) is a user error — print one clean line and exit 2
+        # (argparse's usage-error code), never a traceback.
         print(f"Config error: {exc}", file=sys.stderr)
         return 2
 

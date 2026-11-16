@@ -101,8 +101,8 @@ def _report_accept(
     warnings: list[str],
     notes: list[str],
 ) -> int:
-    """Print the accept outcome; nonzero when anything was skipped (review
-    2026-07-06 finding 30: a partial accept is a failure CI must see). A
+    """Print the accept outcome; nonzero when anything was skipped (a
+    partial accept is a failure CI must see). A
     warning — a large baseline file, which IS stored — changes no exit code,
     and neither does a note: the simulate-only tests, which have no baseline
     to store, are named, where `Accepted 0 test baselines` said nothing of
@@ -359,11 +359,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
 
         if not tests:
-            # review 2026-07-06 finding 59: an empty rerun set means the
-            # prior run already satisfies the requested categories — that
-            # is SUCCESS (a green prior run must not fail CI), unlike an
-            # empty user --filter below. Still refresh the merged report so
-            # the dashboard reflects the (unchanged) full-suite state.
+            # An empty rerun set means the prior run already satisfies the
+            # requested categories — that is SUCCESS (a green prior run must
+            # not fail CI), unlike an empty user --filter below. Still refresh
+            # the merged report so the dashboard reflects the (unchanged)
+            # full-suite state.
             print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
             config.write_default_file()
             config.work_dir.mkdir(parents=True, exist_ok=True)
@@ -455,11 +455,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             _say_removed_pages(outcome.report_pages_removed)
 
         if args.accept:
-            # review 2026-07-06 finding 30 (part 2): accept ONLY the tests
-            # simulated in THIS run (`tests`), never the merged --rerun/--merge
-            # scope (`scope_tests`) — the merged scope's results for
-            # out-of-scope tests are stale on-disk artifacts from older runs,
-            # and stale results must never become baselines.
+            # Accept ONLY the tests simulated in THIS run (`tests`), never the
+            # merged --rerun/--merge scope (`scope_tests`) — the merged scope's
+            # results for out-of-scope tests are stale on-disk artifacts from
+            # older runs, and stale results must never become baselines.
             from ..storage.accept import accept_run_results
 
             return _report_accept(
@@ -552,12 +551,12 @@ def cmd_compare(args: argparse.Namespace) -> int:
     """Compare last run results against stored references."""
     config = _build_config(args)
 
-    # Without --backend, `compare` used to auto-detect a backend from the
-    # environment — which on a machine with Dymola installed meant comparing
-    # an OpenModelica work dir against the Dymola reference partition and
-    # reporting SIM_FAIL for every test. The work dir knows what produced it:
-    # prefer the run's own recorded backend. An explicit --backend still
-    # wins, and a work dir with no metadata keeps the auto-detect behaviour.
+    # Without --backend, auto-detecting a backend from the environment would,
+    # on a machine with Dymola installed, compare an OpenModelica work dir
+    # against the Dymola reference partition and report SIM_FAIL for every
+    # test. The work dir knows what produced it: prefer the run's own recorded
+    # backend. An explicit --backend still wins, and a work dir with no
+    # metadata keeps the auto-detect behaviour.
     if getattr(args, "backend", None) is None:
         work_dir = config.work_dir
         recorded, warning = recorded_backend(work_dir)
@@ -625,8 +624,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
         # written before that field existed), so accept_results skips them —
         # a partial/stale .mat can't become a baseline. The pending-entry
         # refusal `accept_run_results` adds on top is documented there.
-        # Terminal, mirroring `run --accept` (finding 30: partial accept
-        # exits nonzero).
+        # Terminal, mirroring `run --accept` (a partial accept exits
+        # nonzero).
         from ..storage.accept import accept_run_results
 
         return _report_accept(
@@ -695,9 +694,9 @@ def _show_reports(
     * ``--report-format junit|html``: that file, at ``--output``.
 
     In that order: the verdict first, and the HTML file after the pages its
-    rows link. (``--report`` used to return before the other two, and a
-    ``--report-format`` printed no table — `compare --report
-    --report-format junit` wrote no file and said nothing.) The exit code
+    rows link. (Were ``--report`` to return before the other two, a
+    ``--report-format`` would print no table — `compare --report
+    --report-format junit` would write no file and say nothing.) The exit code
     is the caller's: ``_exit_code``.
     """
     from ..reporting.console_report import print_report

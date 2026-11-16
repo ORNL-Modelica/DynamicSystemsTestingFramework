@@ -331,11 +331,10 @@ def _resolve_companion_path(store, model_id: str, companion) -> Path | None:
         if co_dir is None or not companion.data_file:
             return None
         return co_dir / companion.data_file
-    # External: review 2026-07-06 (finding 34) — add_companion now resolves
-    # paths against the CWD at registration time and stores them absolute,
-    # so absolute paths are the normal case. A relative path here is a
-    # legacy entry (registered before the fix): keep the historical
-    # ref_dir-relative resolution for those, and say so.
+    # External: add_companion resolves paths against the CWD at
+    # registration time and stores them absolute, so absolute paths are the
+    # normal case. A relative path here is an older entry: resolve it
+    # against ref_dir, as it was registered, and say so.
     if not companion.path:
         return None
     p = Path(companion.path)

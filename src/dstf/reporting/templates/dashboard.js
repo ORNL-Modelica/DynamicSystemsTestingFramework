@@ -533,8 +533,8 @@
 
     // Selection is restored ONLY when it was made in THIS report. The
     // storage key is location.pathname, which every run into the same
-    // work_dir shares, so a prior run's selection used to be re-applied
-    // to whichever of its models still existed — and then rode silently
+    // work_dir shares, so a prior run's selection would be re-applied
+    // to whichever of its models still existed — and then ride silently
     // into the rerun command the user built from a fresh selection here.
     // A selection stamped with any other report (or with none, from a
     // page written before this stamp existed) is dropped on load.
