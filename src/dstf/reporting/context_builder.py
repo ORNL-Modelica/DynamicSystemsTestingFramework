@@ -118,7 +118,7 @@ def _text_of(texts: dict[str, VariableText] | None, name: str, expression: str) 
 
 def _in_effect(view: dict, base: tuple[float, str] | None) -> dict:
     """``{field: {"value", "source"}}`` for what a leaf is scored with while
-    its field is EMPTY (K3): today the test's base tolerance and its source
+    its field is EMPTY: today the test's base tolerance and its source
     (``base``, `TestComparison.base_tolerance` / ``tolerance_source``), on
     every leaf whose metric's form has the field and does not ignore it — a
     scalar with bounds does. A leaf with a tolerance of its own carries it
@@ -744,7 +744,7 @@ def build_tree_view(
     variables are only part of it, and a caller that passes none gets each
     leaf's plain label. Both tiers pass one: a criteria row read ``a.Q``
     under a card titled ``a.Q (x)`` when the scope was the scored list
-    alone (the b147918 review)."""
+    alone."""
     if not comparisons:
         return None
 
@@ -987,9 +987,9 @@ def _build_template_context(
             name: {"label": entry.label, "text": entry.text}
             for name, entry in texts.items()
         },
-        # A2 / idea #50 — companion + soft_check overlays (default off).
+        # Companion + soft_check overlays (default off).
         "overlay_rows": overlay_rows,
-        # Stage 2 — recursive tree view + per-variable plot grouping.
+        # Recursive tree view + per-variable plot grouping.
         "tree_view": tree_view,
         "variables_by_name": variables_by_name,
         # Pieces of the server-rendered summary line — the template builds

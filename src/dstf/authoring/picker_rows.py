@@ -1,4 +1,4 @@
-"""The add form's variable picker as data (the plan's K2): every name a
+"""The add form's variable picker as data: every name a
 criterion may score, in two sections — the plot's own series, then every
 other name of the result file, a listed one (CPUtime) among them: every
 name is a variable — filtered on what a row reads as OR its result-file

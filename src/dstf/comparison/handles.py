@@ -207,12 +207,12 @@ def _time_move(edit: HandleEdit, t: float) -> float | None:
     before any clamp, ``against`` or shared-time check.
 
     The tolerance is pixel-scale, not float noise: a vertical drag in a real
-    browser on a TRANSFORM baseline (time 0..10, 2000 samples, ~800 px plot)
-    sent ``4.99998293759`` for a point at 5 — about 1.7e-6 of the span, far
-    above ``1e-9``. ``1e-5`` of the reference's time span is well under one
+    browser on a real library's baseline (time 0..10, 2000 samples, ~800 px
+    plot) sent ``4.99998293759`` for a point at 5 — about 1.7e-6 of the span,
+    far above ``1e-9``. ``1e-5`` of the reference's time span is well under one
     pixel at default zoom and still under one at 100x zoom, so no real drag
-    falls inside it; the float-noise term remains the floor, and is all
-    there is with no reference."""
+    falls inside it; the float-noise term remains the floor, and is all there
+    is with no reference."""
     if edit.x is None:
         return None
     tol = 1e-9 * max(1.0, abs(t))

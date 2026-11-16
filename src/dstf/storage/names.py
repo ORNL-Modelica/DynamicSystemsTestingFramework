@@ -14,10 +14,9 @@ The code is the first 12 hex digits of sha256 over the model id as UTF-8:
 model id), never silently overwritten.
 
 The ``ref_`` prefix is kept from the old numbered names (``ref_0001.json``)
-because TRANSFORM-UnitTests' table script globs ``ref_*.json``. A code can be
-all digits (``TRANSFORM.Media.IdealGases.Examples.HeXeAlternate`` →
-``ref_121677875640.json``), so an old name and a new one are never told
-apart by a digit pattern.
+because a real library's own table script globs ``ref_*.json``. A code can be
+all digits (``MyLib.Examples.Test366`` → ``ref_269028837251.json``), so an old
+name and a new one are never told apart by a digit pattern.
 """
 
 import hashlib

@@ -1,13 +1,13 @@
-"""The source scan, cached across tool restarts (brief §3.8).
+"""The source scan, cached across tool restarts.
 
-Under ``$XDG_CACHE_HOME/dstf/scan/`` (default ``~/.cache/dstf/scan/``),
-one JSON file per (library path, recognizer set) — a file another DSTF
-version, or other discovery code, wrote is ignored and replaced — never in
-the work dir, which is a run's artifact directory that other tools read,
-and never validated per file: on a 9P mount (``/mnt/d``) a ``stat`` sweep
-over TRANSFORM's 3 269 ``.mo`` files measured 27 s, longer than parsing
-them. The Session opens from the cache and rescans in the background.
-Only ``source_type == "modelica"`` scans anything, so only those cache.
+Under ``$XDG_CACHE_HOME/dstf/scan/`` (default ``~/.cache/dstf/scan/``), one
+JSON file per (library path, recognizer set) — a file another DSTF version, or
+other discovery code, wrote is ignored and replaced — never in the work dir,
+which is a run's artifact directory that other tools read, and never validated
+per file: on a 9P mount (``/mnt/d``) a ``stat`` sweep over a large real
+library's 3 269 ``.mo`` files measured 27 s, longer than parsing them. The
+Session opens from the cache and rescans in the background. Only
+``source_type == "modelica"`` scans anything, so only those cache.
 """
 
 from __future__ import annotations

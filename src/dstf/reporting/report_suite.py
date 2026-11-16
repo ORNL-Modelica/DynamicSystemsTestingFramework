@@ -30,14 +30,14 @@ from .tree_rows import card_paths, criteria_rows
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 #: Vendored browser dependencies, shipped in the wheel under
-#: ``reporting/templates/vendor/``. The report page used to pull Plotly
-#: from a CDN, which renders a blank page in an air-gapped lab (and in
-#: Playwright's offline mode).
+#: ``reporting/templates/vendor/``. Not a CDN: a page that pulls Plotly
+#: from one renders blank in an air-gapped lab (and in Playwright's offline
+#: mode).
 #:
 #: ONE copy per report suite, at the reports root — the directory holding
 #: the per-test report dirs — reached from each page as
 #: ``../plotly.min.js``. A copy per test dir cost 1.25 MB × N: 15 MB for
-#: the 12-test demo, ~414 MB for the owner's 331-test TRANSFORM suite.
+#: the 12-test demo, ~414 MB for a 331-test real library.
 _VENDOR_DIR = _TEMPLATE_DIR / "vendor"
 VENDOR_ASSETS: tuple[str, ...] = ("plotly.min.js",)
 
@@ -109,12 +109,11 @@ def write_report_assets(page_dir: Path) -> Path:
 def _json_sanitize(obj):
     """Recursively replace non-finite floats (inf / -inf / nan) with None.
 
-    review 2026-07-06 finding 68: ``comparison_data.json`` is the documented
-    downstream artifact and the same context is embedded into
-    interactive.html — dumping with ``allow_nan=True`` injected literal
-    ``Infinity`` / ``NaN`` tokens (e.g. from missing-baseline sentinel
-    comparisons), which is invalid JSON for every strict consumer. Returns
-    new containers; the input is not mutated.
+    ``comparison_data.json`` is the documented downstream artifact and the same
+    context is embedded into interactive.html — dumping with ``allow_nan=True``
+    injected literal ``Infinity`` / ``NaN`` tokens (e.g. from missing-baseline
+    sentinel comparisons), which is invalid JSON for every strict consumer.
+    Returns new containers; the input is not mutated.
     """
     if isinstance(obj, float):
         return obj if math.isfinite(obj) else None
@@ -156,12 +155,12 @@ def plot_inputs(test, comp_variables, result, backend_cls, test_dir, diagnostics
     same plots: derived from the criteria tree, decorated by the entry's
     ``plots`` extras, none for a failed run.
 
-    A test with no extras — or no backend class or test dir to read a
-    result file through — opens no result FILE: every derived subject is a
-    scored or tracked variable the render context already carries, so 331
-    TRANSFORM reports pay nothing, and what the result carries is what the
-    plots can draw. An extra's series is taken from the result in memory
-    when it is there, and read from the file only when it is not.
+    A test with no extras — or no backend class or test dir to read a result
+    file through — opens no result FILE: every derived subject is a scored or
+    tracked variable the render context already carries, so a large library's
+    331 reports pay nothing, and what the result carries is what the plots can
+    draw. An extra's series is taken from the result in memory when it is
+    there, and read from the file only when it is not.
 
     ``diagnostics`` are the names the test lists (`diagnostic_names`): a
     number one stored summary of one answers is on no plot.
@@ -603,8 +602,8 @@ def generate_comparison_plots(
         "written_at": _time.time(),
         **fields,
     }
-    # review 2026-07-06 finding 68: strict JSON — sanitize non-finite
-    # floats to null and forbid NaN/Infinity tokens at dump time.
+    # Strict JSON — sanitize non-finite floats to null and forbid NaN/Infinity
+    # tokens at dump time.
     data_path.write_text(
         json.dumps(_json_sanitize(context), indent=2, default=str, allow_nan=False),
         encoding="utf-8",
@@ -627,9 +626,8 @@ def generate_comparison_plots(
     page_context = _page_context(context)
     page_context["decimated"] = _decimated_traces(context)
 
-    # review 2026-07-06 finding 68: the embedded page context must be
-    # strict JSON too — Jinja's |tojson would otherwise emit Infinity/NaN
-    # literals into window.MT_REPORT.
+    # The embedded page context must be strict JSON too — Jinja's |tojson would
+    # otherwise emit Infinity/NaN literals into window.MT_REPORT.
     page_context = _json_sanitize(page_context)
 
     # Render interactive HTML (Plotly, inline figure dicts).
@@ -808,7 +806,7 @@ def _build_per_test_args(
     meta = manifest_meta_by_model.get(model_id, {})
     test_key = meta.get("test_key")
     last_run_at = meta.get("last_run_at")
-    # A2 — load every registered overlay for this model (soft_checks +
+    # Load every registered overlay for this model (soft_checks +
     # companions). Failures are absorbed into Overlay.status so the
     # report never breaks on a moved/renamed companion file.
     # Passing ``config`` also auto-discovers peer-backend refs as

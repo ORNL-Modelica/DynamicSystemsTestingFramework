@@ -1,10 +1,9 @@
 """Registration of the built-in metrics and combinators.
 
 Imported for its side effect by the package ``__init__`` — the same shape
-``backends`` uses for its backends. Each ``build`` here reproduces the
-per-mode construction that used to live in ``modes.resolve_mode``'s
-if/elif chain, so it is the single place that knows how an override dict
-turns into a configured mode.
+``backends`` uses for its backends. Each ``build`` here is the per-mode
+construction ``modes.resolve_mode`` dispatches to, so it is the single
+place that knows how an override dict turns into a configured mode.
 """
 
 from __future__ import annotations
@@ -174,7 +173,7 @@ def register_builtins() -> None:
 
     Idempotent: ``importlib.reload(dstf.comparison)`` re-executes the
     package init, and a second registration pass must not trip the
-    duplicate-name guard (B1 review finding 3).
+    duplicate-name guard.
     """
     if metric(DEFAULT_METRIC) is not None:
         return

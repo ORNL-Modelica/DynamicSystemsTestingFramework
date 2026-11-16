@@ -1,4 +1,4 @@
-"""JSON-driven Recognizer (PTA.2).
+"""JSON-driven Recognizer.
 
 Lets users declare a custom test-recognition convention in `testing.json`
 without writing Python. Schema:
@@ -91,7 +91,7 @@ _VALID_FIELDS = frozenset(
         "method",
         "number_of_intervals",
         "output_interval",
-        # PTA.4 — richer-contract fields
+        # Runtime-behavior fields
         "simulate_only",
         "requested_baselines",
     }
@@ -131,7 +131,7 @@ def _numeric_or_none(model_id: str, field_name: str, value: Any) -> Any:
         )
 
     # bool is an int subclass AND float(True) == 1.0 — a bare float()
-    # fallback would silently turn `true` into 1.0 (A5 review finding 2).
+    # fallback would silently turn `true` into 1.0.
     if isinstance(value, bool):
         _reject()
         return None
@@ -173,12 +173,12 @@ class ExtendsMatch:
 
 @dataclass
 class ClassNameMatch:
-    """A class-name-glob match (PTA-follow.3)."""
+    """A class-name-glob match."""
 
 
 @dataclass
 class CompositeMatch:
-    """A composite of one or more sub-matches (PTA-follow.2: all-of / any-of).
+    """A composite of one or more sub-matches (all-of / any-of).
 
     Field-source interpreters that need a specific leaf-match shape (e.g.,
     `parameter` needs a ComponentMatch) traverse the composite via
@@ -264,9 +264,8 @@ def _match_component_instantiation(content: str, spec: dict) -> ComponentMatch |
     # Strip comments + string literals so prose mentioning the component
     # class doesn't false-trigger. The stripper is 1:1 (offset-preserving),
     # so the balanced-paren scan runs on stripped text but the param text is
-    # sliced from the ORIGINAL content — review 2026-07-06 finding 50:
-    # string-valued parameters (algorithm="Dassl") were unextractable from
-    # the stripped text.
+    # sliced from the ORIGINAL content — otherwise string-valued parameters
+    # (algorithm="Dassl") would be unextractable from the stripped text.
     stripped = _strip_modelica_literals(content)
     m = pattern.search(stripped)
     if not m:
@@ -307,9 +306,9 @@ def _match_extends(content: str, spec: dict) -> ExtendsMatch | None:
 
 
 # NOTE: the comment/string stripper is shared with mo_parser
-# (``_strip_modelica_literals``) — review 2026-07-06 findings 48/50: the
-# module used to carry its own copy whose replacements shifted offsets,
-# breaking original-text extraction of string-valued parameters.
+# (``_strip_modelica_literals``): a copy of its own whose replacements
+# shifted offsets would break original-text extraction of string-valued
+# parameters.
 
 
 @_register_match("class-name-glob")
@@ -434,8 +433,7 @@ def _field_annotation(content: str, match: MatchContext, spec: dict) -> Any:
     ann_name = spec["annotation"]
     # Scan stripped text (a commented-out annotation must not match; paren
     # chars inside strings must not break the balance scan) but slice the
-    # ORIGINAL content so string values survive — review 2026-07-06
-    # findings 48/50.
+    # ORIGINAL content so string values survive.
     stripped = _strip_modelica_literals(content)
     m = re.search(
         rf"\b{re.escape(ann_name)}\s*\(",
@@ -461,10 +459,9 @@ def _field_annotation(content: str, match: MatchContext, spec: dict) -> Any:
 
 @_register_field("experiment-annotation")
 def _field_experiment_annotation(content: str, match: MatchContext, spec: dict) -> Any:
-    # review 2026-07-06 finding 48: locate experiment(...) on stripped text
-    # (comments must not shadow the real annotation) with a balanced-paren
-    # scan (no [^)]* truncation); extract values from the ORIGINAL span so
-    # quoted strings survive.
+    # Locate experiment(...) on stripped text (comments must not shadow the
+    # real annotation) with a balanced-paren scan (no [^)]* truncation);
+    # extract values from the ORIGINAL span so quoted strings survive.
     span = _find_experiment_span(_strip_modelica_literals(content))
     if span is None:
         return None
@@ -505,7 +502,7 @@ class JsonRecognizer(Recognizer):
         self.applies_to = frozenset(said["applies_to"])
         self._match_spec: dict = spec["match"]
         self._field_specs: dict = said["fields"]
-        # PTA-follow.1: optional path filters. Globs match against the path
+        # Optional path filters. Globs match against the path
         # relative to the discovery base (config.library_dir for modelica).
         self._paths_include: list[str] = list(said["paths_include"])
         self._paths_exclude: list[str] = list(said["paths_exclude"])

@@ -1,8 +1,8 @@
-"""A plot's event hook (two-tier design §4.6 "Panel", amended in sub-project 6
-and in 3b; D131): ``panel.figure.on(kind, handler)``. One hook per plot card,
-created with the card and attached to its ``ui.plotly`` when the plot is
-drawn; a panel hosted under that card subscribes through ``owned(owner)``, so
-closing or rebuilding it takes back exactly its handlers."""
+"""A plot's event hook (D131): ``panel.figure.on(kind, handler)``. One hook per
+plot card, created with the card and attached to its ``ui.plotly`` when the
+plot is drawn; a panel hosted under that card subscribes through
+``owned(owner)``, so closing or rebuilding it takes back exactly its
+handlers."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class FigureHook:
     """``panel.figure.on(kind, handler)``: handlers get a primitive id and a
     payload. Wired to one plot's Plotly events — the card's, so a drag on one
     plot of a stacked page reaches that card's subscribers and no other. The
-    payload contract (the spike's, over the payloads plotly.js actually
+    payload contract (measured over the payloads plotly.js actually
     sends):
 
     - ``plotly_click`` / ``plotly_selected``: the id of the first point whose

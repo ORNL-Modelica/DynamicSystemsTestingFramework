@@ -134,9 +134,8 @@ def _entry_index(data: dict, model_id: str) -> int | None:
         if isinstance(entry, dict) and entry.get("model") == model_id
     ]
     if len(matches) > 1:
-        # review 2026-07-06 finding 51: duplicates — first entry wins
-        # everywhere (discovery + edit helpers use the same rule); warn so
-        # the user notices the dead entries.
+        # Duplicates — first entry wins everywhere (discovery + edit helpers
+        # use the same rule); warn so the user notices the dead entries.
         logger.warning(
             "test_spec has %d duplicate entries for model '%s'; "
             "patching the first — remove the duplicates",
@@ -213,10 +212,9 @@ def _set_at(
         if must_exist:
             cur[idx] = value
         else:
-            # review 2026-07-06 finding 49: RFC 6902 `add` on an existing
-            # array index INSERTS before it (it used to replace, silently
-            # destroying a sibling leaf); idx == len(cur) appends, matching
-            # the '-' token.
+            # RFC 6902 `add` on an existing array index INSERTS before it
+            # (replacing would silently destroy a sibling leaf); idx ==
+            # len(cur) appends, matching the '-' token.
             cur.insert(idx, value)
     elif isinstance(cur, dict):
         if must_exist and last not in cur:
@@ -274,11 +272,10 @@ def _descend(
                     f"key {tok!r} not present (use 'add' for new keys)",
                     path=path,
                 )
-            # review 2026-07-06 finding 49: never auto-create a dict where
-            # the path expects an ARRAY — a per-leaf op like
-            # /metrics/children/0/... against a spec without a metrics tree
-            # used to silently create {"children": {"0": ...}}, which the
-            # tree validator then rejects. Fail loudly instead.
+            # Never auto-create a dict where the path expects an ARRAY — a
+            # per-leaf op like /metrics/children/0/... against a spec without a
+            # metrics tree would silently create {"children": {"0": ...}},
+            # which the tree validator then rejects. Fail loudly instead.
             if next_token is not None and (next_token == "-" or next_token.isdigit()):
                 raise PatchError(
                     f"key {tok!r} not present and the next token "

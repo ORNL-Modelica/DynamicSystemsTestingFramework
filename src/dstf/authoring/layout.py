@@ -1,7 +1,7 @@
 """A test's plot extras as the tool edits them: the `plots` key's entries —
 context series on a plot, and watch plots — changed one gesture at a time
-and staged as ONE op on `/plots` (`Session.stage` collapses a run of them,
-Convention 8). UI-free: the Variables drawer, a plot card and the tree
+and staged as ONE op on `/plots` (`Session.stage` collapses a run of them).
+UI-free: the Variables drawer, a plot card and the tree
 card's Reset layout all call in, so the rules below hold on every surface
 at once.
 
@@ -50,7 +50,7 @@ def remove_context(
 ) -> Extras:
     """``plot`` without context ``name``, off EVERY entry on its subject: a
     family's plot draws the context of each member's entry — a watch plot
-    with context that later got a criterion (Q14) keeps its entry beside
+    with context that later got a criterion keeps its entry beside
     the family's own — and a `×` that took it off one of them left it
     drawn. A derived plot's entry left with no context goes — it records
     nothing; a watch plot's stays (it IS the plot)."""

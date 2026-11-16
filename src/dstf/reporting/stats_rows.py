@@ -55,7 +55,7 @@ from ..storage.baseline_codec import DOUBLE_SHOWN, recorded_digits
 
 Kind = Literal["count", "time", "value"]
 
-#: The section a leaf's quantity lands in when no row holds it (S4).
+#: The section a leaf's quantity lands in when no row holds it.
 OTHER = "other scored"
 SECTION_TITLES = {
     "translation": "Translation",
@@ -82,7 +82,7 @@ class StatRow:
     run: Any  # a number, or a list / string for a `text` row; None: not recorded
     baseline: Any
     changed: bool
-    delta: str  # "0→3" | "+38%" | "+0.12 s" | "" (S6)
+    delta: str  # "0→3" | "+38%" | "+0.12 s" | ""
     #: the significant digits each side was recorded with, (run, baseline):
     #: what `report_text` and `card_text` show it at
     digits: tuple[int, int] = (DOUBLE_SHOWN, DOUBLE_SHOWN)
@@ -95,7 +95,7 @@ def changed(
     baseline: float | None,
 ) -> bool:
     """For finite numbers on both sides: would the criterion a ``+`` on
-    this row adds fail? Never when a side has no value (S3): there is
+    this row adds fail? Never when a side has no value: there is
     nothing to compare, and an accept records it. A non-finite side is no
     number to score against, and has its own rule: the row changed when one
     side is non-finite, or both are and differ (nan and inf, +inf and -inf)
@@ -184,7 +184,7 @@ def card_text(kind: str, value: Any, digits: int = DOUBLE_SHOWN) -> str:
 
 
 def _delta(kind: str, run: float | None, baseline: float | None) -> str:
-    """S6: a count reads ``0→3``, a time or a `value` ``+38%`` (a time
+    """A count reads ``0→3``, a time or a `value` ``+38%`` (a time
     ``+0.12 s`` over a zero baseline, a value ``+0.12``) — whenever both
     sides are present and differ, changed or not. The percentage is of the
     baseline's magnitude: over a negative baseline a value that went down
@@ -322,7 +322,7 @@ def _row(
             digits,
         )
     # A list or a string: the report's rule — formatted text differs, both
-    # sides non-empty. Nothing scores it, so the card never shows it (S1).
+    # sides non-empty. Nothing scores it, so the card never shows it.
     rt, bt = _text(run), _text(baseline)
     return StatRow(
         section,
@@ -379,7 +379,7 @@ def statistics_rows(
     `diagnostic_names`: one either side holds — the run's diagnostics, the
     baseline's summaries — or an ``extra_paths`` row is of), in the
     report's order (the module docstring), then a row
-    per ``extra_paths`` entry no row holds (S4: a leaf's quantity always
+    per ``extra_paths`` entry no row holds (a leaf's quantity always
     has a home). A system-size list on either side gives its three summary
     rows on both; a summary key a side lacks reads through
     :func:`read_summary` (a baseline's empty ``nonlinear`` gives
@@ -460,7 +460,7 @@ def statistics_rows(
     if "simulation" not in names:
         rows += [top_row(key) for key in top]
 
-    # A text row holds no leaf: the card never shows one (S1). A listed
+    # A text row holds no leaf: the card never shows one. A listed
     # name's min or max (`card_row`: `X.min`, `X.max`) is read from the two
     # sides' summaries, as its final's row is; any other path is a
     # statistic's.

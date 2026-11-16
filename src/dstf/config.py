@@ -177,13 +177,12 @@ def load_config_file(path: Path) -> dict:
 
     A missing file returns ``{}`` (no config there). An EXISTING file that
     cannot be read or decoded (:func:`json_from_bytes`) raises
-    :class:`ConfigError` naming the file — review 2026-07-06 finding 11:
-    silently returning ``{}`` let the auto-create branch overwrite the
-    user's testing.json.
+    :class:`ConfigError` naming the file: silently returning ``{}`` would
+    let the auto-create branch overwrite the user's testing.json.
 
     So does one that holds a key nothing reads, or a value of another type
     than its key takes (``config_shape.TESTING_JSON``): ``"tolerence":
-    0.01`` used to be skipped, and the project ran on the default. The
+    0.01`` skipped would run the project on the default. The
     ``backends`` blocks are checked where the backends are known
     (:func:`_backend_blocks`).
     """
@@ -204,8 +203,8 @@ def load_config_file(path: Path) -> dict:
     if problem is not None:
         raise ConfigError(f"{path}: {problem}")
     if "source_type" in data:
-        # One a backend runs — a plug-in's included. Any other used to be
-        # read as "not Modelica": the .mo scan went off without a word.
+        # One a backend runs — a plug-in's included. Any other read as "not
+        # Modelica" would turn the .mo scan off without a word.
         from .backends import source_types
         from .comparison.sides import _as_json
 
@@ -231,8 +230,8 @@ def _create_default_config(config_dir: Path, project: dict) -> dict:
     ``config_dir`` and return its contents."""
     config = _default_file(project)
     config_path = config_dir / CONFIG_FILENAME
-    # review 2026-07-06 finding 19: the target dir may not exist yet (e.g.
-    # first run with a fresh --reference-root) — create it before writing.
+    # The target dir may not exist yet (e.g. first run with a fresh
+    # --reference-root) — create it before writing.
     config_dir.mkdir(parents=True, exist_ok=True)
     # LF on every platform: testing.json is a surface
     # users version-control, so it must not depend on the writing OS.
@@ -384,10 +383,9 @@ def dependency_is_path(entry: str) -> bool:
 def _dependency_looks_like_path(entry: str, base_dir: Path) -> bool:
     """True if a ``dependencies`` entry denotes a filesystem path.
 
-    review 2026-07-06 finding 17: bare library names ("Modelica") must NOT
-    be absolutized — backends load them by name. Path signals: how it is
-    spelled (:func:`dependency_is_path`), or an existing file/dir relative
-    to the config file's directory.
+    Bare library names ("Modelica") must NOT be absolutized — backends load
+    them by name. Path signals: how it is spelled (:func:`dependency_is_path`),
+    or an existing file/dir relative to the config file's directory.
     """
     if dependency_is_path(entry):
         return True
@@ -452,8 +450,9 @@ class Config:
     """
 
     # Source type: "modelica" (default, `source_path` points at a package.mo dir),
-    # "fmu" (Phase 2), "julia" / "simulink" / "data-file" (future). See docs/vision.md.
-    # Discovery + backend selection gate on this.
+    # or another a registered backend runs (`backends.source_types`): "fmu",
+    # "julia", "python", or a plug-in's. See docs/vision.md. Discovery +
+    # backend selection gate on this.
     source_type: str = field(default_factory=lambda: _default("source_type"))
 
     # Path to the source location for the library being tested.
@@ -492,8 +491,7 @@ class Config:
     # Global comparison tolerance. None means "not explicitly set" — resolved
     # in __post_init__ as CLI/constructor arg > testing.json `tolerance` key >
     # DEFAULT_COMPARISON_TOLERANCE, with is-not-None semantics so an explicit
-    # 0.0 is honored (review 2026-07-06 finding 12). Always a float after
-    # construction.
+    # 0.0 is honored. Always a float after construction.
     tolerance: float | None = None
     default_points: bool = False
     timeout: int = 60
@@ -522,7 +520,7 @@ class Config:
         default_factory=lambda: _default("diagnostic_variables")
     )
 
-    # Phase 6.0 — interactive.html payload budget. LTTB-decimates trajectories
+    # interactive.html payload budget. LTTB-decimates trajectories
     # embedded for Plotly rendering; full-resolution arrays remain on disk in
     # comparison_data.json. Only affects the HTML visual; pass/fail scoring,
     # stored baselines, and the data sidecar are unaffected. Default 1000 keeps
@@ -548,13 +546,13 @@ class Config:
     # reporting.theme.THEMES — no path, no inline colours, no CLI flag.
     theme: str = field(default_factory=lambda: _default("theme"))
 
-    # User-provided recognizers (PTA.3) — parsed from testing.json's
-    # "recognizers" list via discovery.json_recognizer.parse_recognizer_spec.
-    # Stored on Config so they're scoped to this run (no module-registry leak
-    # across multiple Config instances or between tests).
+    # User-provided recognizers — parsed from testing.json's "recognizers" list
+    # via discovery.json_recognizer.parse_recognizer_spec. Stored on Config so
+    # they're scoped to this run (no module-registry leak across multiple
+    # Config instances or between tests).
     recognizers: list = field(default_factory=list)
 
-    # Names of bundled recognizers to disable (PTA.3). E.g.,
+    # Names of bundled recognizers to disable. E.g.,
     # ["modelica:bundled-unit-tests"] when the user has only custom-convention
     # tests and wants the bundled UnitTests recognizer off.
     disabled_bundled: list[str] = field(default_factory=list)
@@ -627,9 +625,9 @@ class Config:
         if self.config_file:
             config_path = config_file_named(Path(self.config_file))
             if not config_path.is_file():
-                # review 2026-07-06 finding 14: an explicit --config that
-                # doesn't exist must fail loudly, not silently fall through
-                # to auto-detection (and a freshly written default config).
+                # An explicit --config that doesn't exist must fail loudly, not
+                # silently fall through to auto-detection (and a freshly
+                # written default config).
                 raise ConfigError(f"Config file not found: {config_path}")
             config_found_dir = config_path.parent
             config_found = config_path
@@ -644,10 +642,9 @@ class Config:
                 search_dirs.insert(0, pkg)  # package dir
                 search_dirs.insert(0, pkg.parent)  # repo root
             for search_dir in search_dirs:
-                # review 2026-07-06 findings 11/19: "found" means the FILE
-                # exists, not that it parsed to a non-empty dict — an existing
-                # (even empty) testing.json must stop the search and suppress
-                # the auto-create-defaults branch.
+                # "found" means the FILE exists, not that it parsed to a
+                # non-empty dict — an existing (even empty) testing.json must
+                # stop the search and suppress the auto-create-defaults branch.
                 if (search_dir / CONFIG_FILENAME).is_file():
                     file_config = load_config_file(search_dir)
                     config_found_dir = _resolved(search_dir)
@@ -726,11 +723,11 @@ class Config:
             config_found = config_found_dir / CONFIG_FILENAME
 
         # Auto-create testing.json ONLY if no config file was found anywhere
-        # (review 2026-07-06 findings 11/19: a found config — even one that
-        # parses to {} — must never be overwritten with defaults).
-        # It is written by `write_default_file`, which the command calls once
-        # it is past its own checks: a command that fails at them leaves no
-        # file behind. Until then the Config reads it as written.
+        # (a found config — even one that parses to {} — must never be
+        # overwritten with defaults). It is written by `write_default_file`,
+        # which the command calls once it is past its own checks: a command
+        # that fails at them leaves no file behind. Until then the Config reads
+        # it as written.
         if config_found_dir is None and self.write_default:
             config_dir = _resolved(
                 self.reference_root if self.reference_root else repo_root
@@ -744,7 +741,7 @@ class Config:
             config_found = config_dir / CONFIG_FILENAME
 
         # Source type (optional; default "modelica" from dataclass).
-        # testing.json may set: "source_type": "fmu" | "julia" | ... (future)
+        # testing.json may set: "source_type": "fmu" | "julia" | "python" | ...
         if "source_type" in file_config:
             self.source_type = file_config["source_type"]
 
@@ -821,14 +818,13 @@ class Config:
             for n in self.diagnostic_variables
         ]
 
-        # Global comparison tolerance (review 2026-07-06 finding 12: the
-        # documented testing.json `tolerance` key was never read). Precedence:
-        # explicit constructor/CLI value > file > default, is-not-None
-        # semantics so an explicit 0.0 anywhere is honored.
-        # The project's base tolerance, as a test's: ONE finite number
+        # Global comparison tolerance (testing.json's `tolerance` key).
+        # Precedence: explicit constructor/CLI value > file > default,
+        # is-not-None semantics so an explicit 0.0 anywhere is honored. The
+        # project's base tolerance, as a test's: ONE finite number
         # (`is_base_tolerance`). Anything else is this config error, not a
-        # TypeError/OverflowError traceback — nor `"0.5"` or `true` read as
-        # a number by `float()`. `null` is unset.
+        # TypeError/OverflowError traceback — nor `"0.5"` or `true` read as a
+        # number by `float()`. `null` is unset.
         from .comparison.sides import base_tolerance_refused, is_base_tolerance
 
         if self.tolerance is None:
@@ -884,7 +880,7 @@ class Config:
                 f"{', '.join(THEMES)}"
             )
 
-        # User-provided recognizers (PTA.3) — declarative JSON specs become
+        # User-provided recognizers — declarative JSON specs become
         # Recognizer instances stored on Config. CLI-provided recognizers
         # take precedence; testing.json fills in if Config wasn't given any.
         if not self.recognizers and "recognizers" in file_config:
@@ -926,18 +922,16 @@ class Config:
                     self.reference_root = repo_root / "Resources" / "ReferenceResults"
 
         # Dependencies — resolve relative paths from config file location.
-        # review 2026-07-06 finding 17: only absolutize entries that LOOK
-        # like paths. Bare library names (the documented
-        # ``"dependencies": ["Modelica"]`` form) must pass through untouched
-        # so the OpenModelica backend's classify_dependency routes them to
-        # ``loadModel(Modelica)`` instead of ``loadFile(<bogus path>)`` —
-        # absolutizing them also suppressed the MSL auto-injection.
-        # Dymola note: its backends load dependencies via
+        # Only absolutize entries that LOOK like paths. Bare library names (the
+        # documented ``"dependencies": ["Modelica"]`` form) must pass through
+        # untouched so the OpenModelica backend's classify_dependency routes
+        # them to ``loadModel(Modelica)`` instead of ``loadFile(<bogus path>)``
+        # — absolutizing them also suppressed the MSL auto-injection. Dymola
+        # note: its backends load dependencies via
         # ``openModel(<dir>/package.mo)`` and cannot load by bare name, but
         # Dymola auto-loads MSL natively, so "Modelica" should simply be
         # omitted there; a bare name reaching the Dymola backend fails at
-        # startup with a clear message, exactly as the absolutized bogus
-        # path did before this fix (no regression).
+        # startup with a clear message, as an absolutized bogus path would.
         if not self.dependencies and "dependencies" in file_config:
             base_dir = config_found_dir or repo_root
             resolved_deps = []
@@ -974,10 +968,10 @@ class Config:
             if work:
                 work_path = Path(work)
                 if not work_path.is_absolute():
-                    # review 2026-07-06 finding 15: a relative work_dir
-                    # resolves against the config file's directory (like
-                    # test_spec / dependencies), not the CWD — `compare`
-                    # from another directory must find the same results.
+                    # A relative work_dir resolves against the config file's
+                    # directory (like test_spec / dependencies), not the CWD —
+                    # `compare` from another directory must find the same
+                    # results.
                     work_path = (config_found_dir or repo_root) / work_path
                 self.work_dir = _resolved(work_path)
             else:
@@ -1077,8 +1071,8 @@ class Config:
     def spec_path(self) -> Path:
         """Where ``test_spec.json`` lives: the configured file, else
         ``<reference_root>/test_spec.json``. The one spelling of a fallback
-        that ``spec add``, ``spec update`` and the review loop each used to
-        carry; the authoring Session reads the same property."""
+        that ``spec add``, ``spec update`` and the review loop share; the
+        authoring Session reads the same property."""
         if self.test_spec_file is not None:
             return self.test_spec_file
         assert self.reference_root is not None  # resolved in __post_init__

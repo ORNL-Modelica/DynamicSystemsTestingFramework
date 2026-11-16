@@ -1,11 +1,11 @@
-"""The Statistics card (U3): every statistic the run and its baseline
+"""The Statistics card: every statistic the run and its baseline
 recorded, and the listed names' numbers, side by side, above the criteria
 tree. Closed it is one line naming the counts that changed, then briefly
 the times and values; open, a row per count, time or value (a listed name
 that is neither a time nor a count) under its section, each ending in
 whatever attaches at STATISTIC (a `+` that adds a requirement on it) — or,
 for a row a criterion reads, that criterion's pill and its requirement in a
-word or two. The card is a VIEW of the one tree (Q1 b): which rows are
+word or two. The card is a VIEW of the one tree: which rows are
 scored is the SCORED tree — the authored one, staged edits included, else
 a flat entry's implicit one (`Session.statistic_leaves`); the tree view
 only says each criterion's verdict. A card criterion is edited under its
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from ...comparison.tree_spec import LeafSpec
     from .test_page import TestPage
 
-NAMED = 3  #: changed counts the closed line names (S6); the rest are counted
+NAMED = 3  #: changed counts the closed line names; the rest are counted
 TIMES = 2  #: changed times it names after them (the owner, 2026-09-30)
 #: The node a STATISTIC panel's add acts on: the root, whose END it lands at.
 ROOT = "/metrics"
@@ -53,7 +53,7 @@ ROOT = "/metrics"
 
 def _entry(row: StatRow) -> tuple[tuple[str, str], int]:
     """What the closed line names ``row`` under, and its rank there: a
-    list's `_count` / `_total` / `_max` are ONE entry, the list's (B6),
+    list's `_count` / `_total` / `_max` are ONE entry, the list's,
     ranked in that order; any other row is its own."""
     base, _, field = row.key.rpartition("_")
     if base and field in SUMMARIES:
@@ -80,14 +80,14 @@ def _more(named: Sequence[StatRow], cap: int) -> str:
 
 def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
     """The closed line after "run vs baseline ·": the changed COUNTS — in
-    section order, at most `NAMED` named, then `+N more` — or `no count
-    changed`; then, after a `·`, the changed times and the changed
-    `value` rows (a listed name that is neither a time nor a count, also
-    read as a percentage), the farthest moved first, at most `TIMES`.
-    `all match` where nothing changed; or why it names none — "no run result" where ``has_run`` is
-    false: no run, or one that failed. The owner's ruling
-    (2026-09-30): over TRANSFORM CPUtime ran ~2.2x its baseline on 324 of
-    331 tests, so a line naming times among the counts named CPUtime on
+    section order, at most `NAMED` named, then `+N more` — or
+    `no count changed`; then, after a `·`, the changed times and the changed
+    `value` rows (a listed name that is neither a time nor a count, also read
+    as a percentage), the farthest moved first, at most `TIMES`. `all match`
+    where nothing changed; or why it names none — "no run result" where
+    ``has_run`` is false: no run, or one that failed. The owner's ruling
+    (2026-09-30): over a large real library, CPUtime ran ~2.2x its baseline on
+    324 of 331 tests, so a line naming times among the counts named CPUtime on
     every test; the open table still tints a changed time."""
     shown = [r for r in rows if r.kind != "text"]
     if not shown:
@@ -124,7 +124,7 @@ def line_text(rows: Sequence[StatRow], has_run: bool) -> str:
 
 
 def summary(leaf: dict) -> str:
-    """A scored row's requirement in a word or two (B11): `exact`, `±0.5`,
+    """A scored row's requirement in a word or two: `exact`, `±0.5`,
     `±10%`, `in [a, b]`, `≥ a`, `≤ b`; a tolerance whose two sides differ
     reads `−0.5 / +1`, `−5% / +10%`. A value the leaf leaves out is the
     scalar mode's default."""
@@ -333,7 +333,7 @@ class StatsCard:
         section = None
         with self.rows:
             if shown:
-                # The board's columns: the statistic, the run, its baseline.
+                # The columns: the statistic, the run, its baseline.
                 with (
                     ui.row()
                     .classes("dstf-stat-row dstf-stat-head items-center no-wrap gap-3")
@@ -433,7 +433,7 @@ class StatsCard:
             self.is_open = True
             self.refresh(view)
         # Every row a statistics leaf is shown on is built — `row_for` and
-        # `statistics_rows` agree on it (S4: a leaf's quantity always has
+        # `statistics_rows` agree on it (a leaf's quantity always has
         # a row) — so its slot exists.
         slot = self.slots[key]
         self.close_editor()

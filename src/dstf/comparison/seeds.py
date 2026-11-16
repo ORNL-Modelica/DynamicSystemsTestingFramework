@@ -104,8 +104,9 @@ def _margin(v: np.ndarray) -> float:
     """5% of the finite data's span, and at least `SEED_MARGIN_FLOOR` of its
     magnitude."""
     lo, hi, span = _span(v)
-    # OilWater_PTHX's `STHX.tube.mediums[2].h`: seeded from a 7-digit
-    # reference as [130450.58, 130451.02], its float32 result reached 130451.03125.
+    # A large library's heat-exchanger test, the `h` of a medium array
+    # element: seeded from a 7-digit reference as [130450.58, 130451.02],
+    # its float32 result reached 130451.03125.
     return max(SEED_MARGIN * span, SEED_MARGIN_FLOOR * max(abs(lo), abs(hi)))
 
 
@@ -172,11 +173,11 @@ def seed_scalar(data: SeedData) -> dict:
 
 def seed_dominant_frequency(data: SeedData) -> dict:
     """The strongest peak of the data's spectrum, 5% wide or two bins,
-    whichever is wider. None when two bins are wider than
-    `MAX_PEAK_TOLERANCE` — a peak in the lowest three bins is a trend's
-    leakage at ~1/span, not a frequency: over TRANSFORM, 279 of 322 varying
-    variables have their strongest peak there. The leaf stays bare, and
-    scoring says to declare a peak."""
+    whichever is wider. None when two bins are wider than `MAX_PEAK_TOLERANCE`
+    — a peak in the lowest three bins is a trend's leakage at ~1/span, not a
+    frequency: over a large real library, 279 of 322 varying variables have
+    their strongest peak there. The leaf stays bare, and scoring says to
+    declare a peak."""
     s = data.series()
     if s is None:
         return {}
@@ -209,7 +210,7 @@ def seeded_leaf(metric: str, variable: str, data: SeedData) -> dict:
     return {**leaf, **desc.seed(data)}
 
 
-#: Listed names whose kind is known by name (K1): a count is scored exact, a
+#: Listed names whose kind is known by name: a count is scored exact, a
 #: time within 10%. A tiny model's CPUtime can end on a whole 0.0 or 1.0:
 #: read by its values alone it is a count, and a next run's 0.01 s fails.
 COUNTS = frozenset({"EventCounter"})
@@ -217,7 +218,7 @@ TIMES = frozenset({"CPUtime"})
 
 
 def quantity_kind(path: str) -> Literal["count", "time"]:
-    """What kind of number the statistic ``path`` names (S5): a ``count``
+    """What kind of number the statistic ``path`` names: a ``count``
     is scored exact, a ``time`` within 10%. A time by its path — the
     ``timing`` section and the ``*_time`` / ``*_wall`` /
     ``cpu_time*`` keys; every other number a backend records is a count,

@@ -1,4 +1,4 @@
-"""`dstf author`: the authoring tool (§4.7 "Launch")."""
+"""`dstf author`: the authoring tool."""
 
 import argparse
 import importlib

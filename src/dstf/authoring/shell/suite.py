@@ -1,4 +1,4 @@
-"""The Suite page (brief §3.2 "two pages", §3.8; DESIGN.md "Tables"): what a
+"""The Suite page (DESIGN.md "Tables"): what a
 batch acts on. The header, the progress line, one toolbar — the count pills
 and the view toggles (drawn by the table's script), the selection's label,
 the batch actions as icons — the Suite table (`suite_grid.py`) and, beside
@@ -162,7 +162,7 @@ class SuitePage:
         self.header.handle(event)
         kind = event["event"]
         if kind == "spec":
-            # The tab's folds: every page of it hears the rule (K1).
+            # The tab's folds: every page of it hears the rule.
             heard_spec(self.state, event)
         self.queue.handle(event)
         if kind in ("results", "queue", "notice", "spec", "opened") or (

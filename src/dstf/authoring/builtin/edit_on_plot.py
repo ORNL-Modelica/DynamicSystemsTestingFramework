@@ -1,4 +1,4 @@
-"""Edit on plot (§4.6 table, §4.7): the CRITERION placement — the open
+"""Edit on plot: the CRITERION placement — the open
 criterion's handles, and the grips on each side of its tolerances, drag on
 the plot its row sits under, and the op targets that leaf; a handle of any
 other leaf is refused by name. In the editor, a
@@ -132,7 +132,7 @@ def _leaf_paths(
 
 def _list_fields(name: str) -> list[tuple[str, Columns]]:
     """The Config list fields of metric ``name`` that declare their row
-    ``columns`` (Task 6's metadata), read from the dataclass fields — not
+    ``columns`` metadata, read from the dataclass fields — not
     through ``derive_schema``, whose ``FieldSpec`` does not carry them."""
     desc = metric(name)
     if desc is None or not dataclasses.is_dataclass(desc.config_cls):
@@ -145,9 +145,9 @@ def _list_fields(name: str) -> list[tuple[str, Columns]]:
 
 
 def _field_label(name: str, field: str) -> str:
-    """One table's heading: the Config field's own label, else its name. It
-    said `{path} · {metric} · {field}` — every word of which the criterion's
-    row says directly above the editor (the Task 6 screenshot)."""
+    """One table's heading: the Config field's own label, else its name.
+    Not `{path} · {metric} · {field}`: the criterion's row directly above
+    the editor already says each of those words."""
     desc = metric(name)
     if desc is None or not dataclasses.is_dataclass(desc.config_cls):
         return field

@@ -1,5 +1,5 @@
-"""Capabilities at a placement (brief §3.2; DESIGN.md "Buttons", "Disabled
-states explain themselves"). `ActionBar` hosts SUITE and TEST: one button
+"""Capabilities at a placement (DESIGN.md "Buttons", "Disabled states
+explain themselves"). `ActionBar` hosts SUITE and TEST: one button
 per registered capability whose `placements` names this one, labelled by
 the capability's `caption`, disabled with the sentence `available` gave
 beside it; a click opens the bar's dialog hosting the capability's
@@ -11,7 +11,7 @@ changes nothing, and one that returned nothing leaves it open — it changed
 nothing to close over. There is no plot at either placement: a dialog's
 `panel.figure` raises on a subscription.
 
-`InlineHost` hosts the same contract the other way (brief §3.2): no button
+`InlineHost` hosts the same contract the other way: no button
 and no dialog — every capability placed here has its panel built straight
 into a slot the page owns, which is how the criterion editor, a tree
 node's controls and a plot's criteria header (VARIABLE) are drawn without
@@ -67,7 +67,7 @@ class _NoFigure:
 
 
 class ShellPanel:
-    """The container a capability owns (§4.6 "Panel"): the dialog's slot,
+    """The container a capability owns: the dialog's slot,
     the figure hook, and `submit` — the one way an outcome reaches the
     Session."""
 
@@ -120,7 +120,7 @@ class ShellPanel:
         return True
 
     def on_click(self, handler: Callable[[], None]) -> bool:
-        # The tree card's group rows are clicked (U5, Q6); a criterion's
+        # The tree card's group rows are clicked; a criterion's
         # row, on a plot or in the tree, has a click of its own — its
         # editor — and takes no handler.
         target = self._target
@@ -233,7 +233,7 @@ class RowTarget:
         #: what the node's kind is read from (`Panel.lead`); None in a row
         #: that has none (a criteria row). Emptied with the host.
         self.lead: ui.element | None = None
-        #: Whether a node drawn in this row may be moved from it (U4, V2):
+        #: Whether a node drawn in this row may be moved from it:
         #: set by the tree card, and by no other row's owner.
         self.drag = False
         #: The row's drag handle (the tree card's, hidden until a panel
@@ -249,7 +249,7 @@ class RowTarget:
         #: to say a refusal (`InlineHost`) — and read only where `on_drop`
         #: is set: no default, which nothing could reach.
         self.refuse: Callable[[BaseException], None]
-        #: Whether a click on this row is the panels' to say (U5, Q6): set
+        #: Whether a click on this row is the panels' to say: set
         #: by the tree card on a group's row, and by no other row's owner. What a panel
         #: registered for it (`Panel.on_click`), or None.
         self.clickable = False
@@ -404,8 +404,7 @@ class ActionBar:
             slot = ui.column().classes("w-full").mark(f"panel:{cap.name}")
             # The form row's column, below the panel, exists BEFORE the
             # panel runs: a panel may open its row while it is built, and
-            # a column made after it raised NameError from `row` (the Task
-            # 5 review).
+            # a column made after it raised NameError from `row`.
             form = ui.column().classes("w-full gap-2")
 
             def submit(**inputs: Any) -> bool:
@@ -458,9 +457,9 @@ class ActionBar:
 
 class InlineHost:
     """Every capability placed at `placement`, its panel built inline in
-    this host's column — no button, no heading (brief §3.2: Edit criteria
-    and Edit on plot read as one editor; a node's controls are a panel).
-    An unavailable capability keeps its place and says why (brief §3.3) —
+    this host's column — no button, no heading (Edit criteria and Edit on
+    plot read as one editor; a node's controls are a panel). An
+    unavailable capability keeps its place and says why —
     once per sentence: a second capability refused for the same reason
     draws no line of its own.
     `build()` rebuilds from the selection as it is now; `clear()` empties
@@ -522,7 +521,7 @@ class InlineHost:
         self.column = ui.column().classes("w-full gap-2").mark(marker)
         # A click inside the editor is the editor's: without this, a click on
         # a node's wrap icon also reached the row that hosts it and opened its
-        # editor (the review, in Chromium).
+        # editor (in Chromium).
         self.column.on("click", js_handler="(e) => e.stopPropagation()")
 
     def _owner(self, name: str) -> str:
@@ -531,8 +530,7 @@ class InlineHost:
     def hush(self) -> None:
         """Hide every error this host shows, as a form row opens or closes
         under this host's row: a row's error goes with the row. A refused
-        act's error stayed up after its form was reopened (the Task 6
-        review)."""
+        act's error stayed up after its form was reopened."""
         for label in self.errors.values():
             if not label.is_deleted:
                 label.set_visibility(False)
@@ -547,7 +545,7 @@ class InlineHost:
             # before D150), the host said "rerun is running" while its
             # row stayed open with live buttons, and an
             # act from it staged nothing and showed nothing — the error
-            # label had gone with the rebuild (the Task 5 review).
+            # label had gone with the rebuild.
             self.row.page.drop_row(self.row)
             # Its error labels live in the row's slot, not in the column.
             for label in self.errors.values():
@@ -581,7 +579,7 @@ class InlineHost:
             skip = None
         # The why-lines drawn so far. Edit criteria and Edit on plot are both
         # refused on a test the Session has no tree for, and the editor
-        # read the same sentence twice (the review).
+        # read the same sentence twice.
         said: set[str] = set()
         for cap, avail in placed:
             if cap.name == skip:
@@ -604,7 +602,7 @@ class InlineHost:
 
     def follow(self) -> None:
         """Rebuild when an `available` answer has moved since this host was
-        built, and only then (the Task 4 review): a row that is repainted
+        built, and only then: a row that is repainted
         rather than rebuilt otherwise keeps the answer of the moment it was
         drawn — under the single job's lock (before D150) a tree opened
         during a rerun kept "rerun is running on …" after the job ended,
@@ -635,7 +633,7 @@ class InlineHost:
             # A host drawn in a row puts its error on a line of its own in
             # the row's slot, under the icons: in the host, a long refusal
             # widened the host and pushed its icons left of every other
-            # row's (the Task 6 review, in Chromium).
+            # row's (in Chromium).
             with slot:
                 error = ui.label("").classes("text-negative text-xs self-end")
         else:
@@ -658,7 +656,7 @@ class InlineHost:
                 self.on_said(error.text)
             if self.row is not None:
                 # Said under its row: a tree row inside a folded group is
-                # shown (U5, R2).
+                # shown.
                 self.row.page.unfold_to(self.row)
 
         def submit(**inputs: Any) -> bool:

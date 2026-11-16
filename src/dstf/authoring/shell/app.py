@@ -1,4 +1,4 @@
-"""`dstf author` (§4.7 "Launch"; brief §3.8): the project checked for a
+"""`dstf author`: the project checked for a
 config or spec error, the shell mounted, the project opened on a thread
 once the server runs, served on 127.0.0.1 until Stop server. The page
 appears before a result is read."""

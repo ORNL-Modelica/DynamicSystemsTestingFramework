@@ -1,4 +1,4 @@
-"""What both drawers of the Test page draw (the owner's ruling Q7: one
+"""What both drawers of the Test page draw (the owner's ruling: one
 control set on every list): the filter box with its `.*` and `Aa` toggles
 beside it and the sentence under it, and an icon button opening a menu of
 choices (`role=menuitemradio`, the current one checked). The drawers own

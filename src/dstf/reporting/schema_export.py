@@ -1,9 +1,8 @@
-"""JSON-Schema export for ``test_spec.json`` (PHASE_6_PLAN 6.4.5) and for
-``testing.json`` (:func:`build_config_schema`, from the one table ``Config``
-reads the file by).
+"""JSON-Schema export for ``test_spec.json`` and for ``testing.json``
+(:func:`build_config_schema`, from the one table ``Config`` reads the file by).
 
 Derives a JSON-Schema document from:
-  * every registered metric's Config dataclass (reusing the 6.1.1
+  * every registered metric's Config dataclass (reusing ``mode_schema``'s
     introspection — one definition per mode);
   * the :class:`LeafSpec` / :class:`CombinatorSpec` grammar (the
     MetricTree shape);
@@ -47,7 +46,7 @@ _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 
 
 def _field_to_schema(field) -> dict:
-    """Translate a 6.1.1 FieldSpec into a JSON-Schema property dict."""
+    """Translate a ``mode_schema`` FieldSpec into a JSON-Schema property dict."""
     node: dict[str, Any] = {}
     if field.type == "float":
         node["type"] = ["number", "null"] if field.optional else "number"
@@ -82,7 +81,7 @@ def _modes() -> list[tuple[str, type]]:
     """Registered metrics in registration order, as ``(name, config_cls)``.
 
     Single source for both the ``$defs`` emission and the leaf's if/then
-    wiring (finding 72) — and the reason a registered metric shows up in
+    wiring — and the reason a registered metric shows up in
     the exported schema without editing this module.
     """
     return [(desc.name, desc.config_cls) for desc in metrics()]
@@ -309,11 +308,11 @@ def build_schema() -> dict:
         # historical override shape — e.g., a leaf with metric=tube may set
         # tube_rel, tube_width_mode, etc. (typed via the allOf below).
         "properties": _leaf_common_properties(),
-        # review 2026-07-06 finding 72: make the mode $defs real — the
-        # ``metric`` discriminator selects the matching mode definition, so
-        # validators type-check mode knobs and editors get autocomplete.
-        # Each of those defs is closed (``additionalProperties: false``):
-        # that is where a leaf's unknown key is refused.
+        # Make the mode $defs real — the ``metric`` discriminator selects the
+        # matching mode definition, so validators type-check mode knobs and
+        # editors get autocomplete. Each of those defs is closed
+        # (``additionalProperties: false``): that is where a leaf's unknown key
+        # is refused.
         "allOf": [
             _leaf_identity_rule(),
             *(

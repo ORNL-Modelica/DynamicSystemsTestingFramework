@@ -20,9 +20,9 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-#: A test's ``phase`` once its run has ended. It used to keep the last
-#: phase it was seen in: a finished run's status.json said every test was
-#: still "finalizing".
+#: A test's ``phase`` once its run has ended. Keeping the last phase it was
+#: seen in instead would leave a finished run's status.json saying every
+#: test was still "finalizing".
 DONE_PHASE = "done"
 
 
@@ -261,9 +261,9 @@ class ProgressReporter:
         # Serialize all file writes — without this, two threads can race on
         # the same tmp filename and `replace` fails on Windows when the file
         # is still open by another thread.
-        # review 2026-07-06 (finding 25): snapshot INSIDE the write lock —
-        # a snapshot taken outside could be written after a newer one,
-        # regressing status.json / the live dashboard.
+        # Snapshot INSIDE the write lock — a snapshot taken outside could be
+        # written after a newer one, regressing status.json / the live
+        # dashboard.
         with self._write_lock:
             # After finalize, the command that ended the run owns the page:
             # an event from an exec thread the backend abandoned (a timed-out

@@ -1,5 +1,5 @@
-"""One plot of the Test page (brief §3.2; DESIGN.md "Plots are modular",
-"Criteria rows"): its title and status pills, its context series, the slot
+"""One plot of the Test page (DESIGN.md "Plots are modular", "Criteria
+rows"): its title and status pills, its context series, the slot
 the plot is drawn into when it scrolls into view, a criteria header holding
 what attaches at the VARIABLE placement (the plot's `+`), the criteria rows
 of its SUBJECT in tree order with each row's node controls, and the one
@@ -76,8 +76,8 @@ _SIGNED = (
 #: changes no field — and nothing else in the document is either: comparing
 #: the whole document's pending ops meant an edit to ANOTHER model, followed
 #: by any event that synced the page, rebuilt this editor and threw away a
-#: half-typed table row; and a combinator edit that moved no leaf rebuilt it for nothing (the
-#: 3b review). ``advisory`` is the one key no test pins: nothing the editor
+#: half-typed table row; and a combinator edit that moved no leaf rebuilt it
+#: for nothing. ``advisory`` is the one key no test pins: nothing the editor
 #: offers writes it, so a change to it can only arrive from a hand-written
 #: patch — it is here because the field IS the leaf's, not because a path
 #: was found that moves it.
@@ -145,7 +145,7 @@ import('nicegui-plotly').then(({ Plotly }) => {
 
 #: "Not read yet" — `None` cannot mean it: a test with nothing scored has a
 #: `tree_view` of None, and a card that read it for itself cost one read per
-#: shown card on every row click (the 3b review).
+#: shown card on every row click.
 UNREAD: Any = object()
 
 
@@ -244,7 +244,7 @@ class CriterionRow:
         self.row = ui.row().classes("dstf-crit items-center gap-3 w-full")
         # The row IS the way in: its editor opens below it, and a second
         # click closes it — or closes a form row open under it and opens
-        # nothing (board 1A). A click on the node's controls inside the row
+        # nothing. A click on the node's controls inside the row
         # is not a click on the row — `InlineHost`'s column stops it.
         self.row.on("click", partial(card.page.row_click, index, path))
         with self.row.mark(f"criterion:{index}:{path}"):
@@ -313,10 +313,10 @@ class CriterionRow:
             )
             # A host drawn inside a row keeps to its own width, or the
             # cluster takes the rest of the row and sits left of the end
-            # (the 3b review, in Chromium). The stylesheet's margin puts it
-            # at the row's right end, on the name's line or, the row
-            # wrapped, on the next — a spacer before it did that only when
-            # it wrapped together with the readout.
+            # (in Chromium). The stylesheet's margin puts it at the row's right
+            # end, on the name's line or, the row wrapped, on the next — a
+            # spacer before it did that only when it wrapped together with the
+            # readout.
             self.host.column.classes(remove="w-full", add="dstf-node-host")
         # The row's slot: its editor, or a form row — one at a time. The
         # host is built once its panels have somewhere to open a row.
@@ -377,7 +377,7 @@ class PlotCard:
     ) -> None:
         """``view`` and ``scope`` are the page's ONE read of
         each, handed to every card: a card that read them for itself cost
-        one read per plot on every rebuild (the Task 5-6 review)."""
+        one read per plot on every rebuild."""
         self.page, self.index, self.resolved = page, index, resolved
         self.plot: ui.plotly | None = None
         # Created here, attached in `show()`: a panel hosted under this card
@@ -388,7 +388,7 @@ class PlotCard:
         self.rows: dict[str, CriterionRow] = {}
         self.pills: dict[str, Pill] = {}
         #: The criteria header's host: what attaches at VARIABLE, inline
-        #: (Q3 A: the plot's `+`), and the root's kind it was built under.
+        #: (the plot's `+`), and the root's kind it was built under.
         #: The card's shape does not hold the root's kind, so `paint`
         #: rebuilds the host when it moves.
         self.variable_host: InlineHost | None = None
@@ -411,7 +411,7 @@ class PlotCard:
         #: free; the traceback is not — a card that cannot draw is tried
         #: again by every sync, a rescan's progress ticks included, and 50
         #: of those over two failing cards logged 100 tracebacks for one
-        #: broken result (the final review). A new text is a new line.
+        #: broken result. A new text is a new line.
         self._error: str | None = None
         #: Stamped on every figure this card sends; see `_figure`.
         self._revision = 0
@@ -432,7 +432,7 @@ class PlotCard:
         self.subject = list(resolved.subject)
         #: A card of ONE variable has it in its title, so its pill is the
         #: bare status; several pills side by side read "FAIL FAIL" and look
-        #: like the plot's verdict said twice (the board).
+        #: like the plot's verdict said twice.
         self.named_pills = len(resolved.subject) > 1
         with (
             ui.card()
@@ -442,9 +442,9 @@ class PlotCard:
             self.card = card
             # A click anywhere on the card selects its plot — the toolbar,
             # the title, a criteria row — except on the plot itself, which
-            # takes zooms and handle drags (3c, planner's choice 8). The guard is
-            # the browser's: the user simulation calls every click listener
-            # and ignores `js_handler`.
+            # takes zooms and handle drags. The guard is the browser's: the
+            # user simulation calls every click listener and ignores
+            # `js_handler`.
             card.on(
                 "click",
                 partial(page.select, index),
@@ -563,9 +563,9 @@ class PlotCard:
     ) -> None:
         """A muted "Criteria" and, at its right, whatever attaches at
         VARIABLE — inline, for the FIRST member of the plot's subject, its forms
-        opening as a row under the header (Q3 A; the dialog and the footer
-        per variable are gone: one per line pushed the next plot off the
-        screen, and a form's select offers the test's other variables)."""
+        opening as a row under the header (not a dialog, nor a footer per
+        variable: one per line pushed the next plot off the screen, and a
+        form's select offers the test's other variables)."""
         head = (
             ui.row()
             .classes("dstf-criteria-head items-center gap-3 w-full")
@@ -601,7 +601,7 @@ class PlotCard:
 
     def _remove_button(self, index: int) -> None:
         """Remove plot, on a WATCH card only: a derived plot exists because
-        of its criteria and goes when the last of them goes (Q16) — in its
+        of its criteria and goes when the last of them goes — in its
         place an icon says so."""
         if not self.resolved.watch:
             with (
@@ -694,7 +694,7 @@ class PlotCard:
         for variable, pill in self.pills.items():
             status = worst([leaf_status(leaf) for leaf in self._leaves(view, variable)])
             # The pill READS the label, like the title above it: `x[1] FAIL`
-            # on a TRANSFORM card named nothing a person recognises.
+            # on a real library's card named nothing a person recognises.
             text = (
                 f"{self.texts.get(variable, variable)} {status.upper()}"
                 if self.named_pills
@@ -708,8 +708,8 @@ class PlotCard:
             if takers.get(path) != row.taker:
                 # The row stands, but its parent changed kind — `+` grey
                 # under a warn or a weighted — and the controls read it
-                # when they are built (the Task 6 review): an edit from
-                # weighted to and left `+` grey with the weighted reason.
+                # when they are built: an edit from weighted to and left `+`
+                # grey with the weighted reason.
                 row.taker = takers.get(path)
                 row.host.build()
             else:
@@ -724,7 +724,7 @@ class PlotCard:
                 # The leaf under the open editor moved by an edit staged
                 # ELSEWHERE — a Discard, a Save, another node's controls.
                 # The fields kept showing the value that edit undid, and the
-                # next keystroke staged it straight back (the Task 6 review).
+                # next keystroke staged it straight back.
                 self.editor.build()
                 self._said(None)  # the rebuild took the editor's own line
                 self._say_hint()
@@ -904,7 +904,7 @@ class PlotCard:
         """A card with no plot: retry the draw if somebody asked for one.
         Nothing else asked again — a result file being rewritten under a
         `show()` left the card showing its error until a row opened or
-        Focus landed on it (the 3b review)."""
+        Focus landed on it."""
         if self.plot is not None:
             return False
         if self.wanted:
@@ -952,8 +952,8 @@ class PlotCard:
 
     def redraw_if_moved(self, view: Any = UNREAD) -> None:
         """Re-send the figure when what it draws has moved, and only then: a
-        plot nobody's edit touched must not be re-sent (the cost the 3b
-        review measured is elements on the wire, not a figure assembled)."""
+        plot nobody's edit touched must not be re-sent (the measured cost is
+        elements on the wire, not a figure assembled)."""
         if self._retried(view):
             return
         if self.signature(view) != self._drawn:
@@ -962,10 +962,10 @@ class PlotCard:
     # -- the one open criterion's editor -------------------------------------------
 
     def open_editor(self, path: str, view: Any = UNREAD) -> None:
-        """The editor, below its row and at the plot's width (board 2A):
+        """The editor, below its row and at the plot's width:
         one hint line and Done, then every capability placed at CRITERION,
         stacked without headings — the row above already names the
-        criterion, so the editor reads as one thing (brief §3.2). A folded
+        criterion, so the editor reads as one thing. A folded
         row's editor is its own (`family_fold.FoldRow.open_editor`)."""
         view = self._view(view)
         if self.folding.opens(path, view):
@@ -1156,8 +1156,8 @@ class PlotCard:
         can see must not go on staging edits from drags. Only the editor's
         own column: the row's slot also holds its host's error labels, and
         a close that cleared the slot deleted them — a refused Wrap on that
-        row then staged nothing and showed nothing (the review, in
-        Chromium). A refused drag's line under the plot goes with it."""
+        row then staged nothing and showed nothing (in Chromium). A refused
+        drag's line under the plot goes with it."""
         self._said(None)
         self.placing.forget()
         if self.editor is not None:

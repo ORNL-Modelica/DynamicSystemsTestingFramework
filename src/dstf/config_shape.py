@@ -2,8 +2,8 @@
 default and what it is for.
 
 ONE table, read three times. ``Config`` refuses a key that is not in it —
-``"tolerence": 0.01`` used to be skipped in silence, and the project ran on
-the default — and takes its defaults from it; ``spec schema`` publishes
+``"tolerence": 0.01`` skipped in silence would run the project on the
+default — and takes its defaults from it; ``spec schema`` publishes
 it, descriptions included. So the keys a person reads about, the ones an
 editor checks and the ones the tool reads cannot differ.
 

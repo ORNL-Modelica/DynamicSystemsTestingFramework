@@ -31,7 +31,7 @@ def is_unit_test_variable(test: TestModel, name: str) -> bool:
     """Whether ``name`` is an element of the test's UnitTests component,
     ``<instance>.x[i]`` — declared through the component or tracked by that
     name. Each is its own test quantity, whatever its expression reads as,
-    so no plot folds it into a family with another (the owner's ruling O3,
+    so no plot folds it into a family with another (the owner's ruling,
     2026-09-28)."""
     head = f"{test.unit_tests_instance}.{_ARRAY}["
     # ASCII digits: `str.isdigit` takes `²` and `١` for one too

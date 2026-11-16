@@ -144,7 +144,7 @@ def cmd_spec_add(args: argparse.Namespace) -> int:
 
 
 def cmd_spec_update(args: argparse.Namespace) -> int:
-    """Update test_spec.json from an RFC 6902 patch envelope (6.4.3).
+    """Update test_spec.json from an RFC 6902 patch envelope.
 
     The envelope is the only accepted input shape: the multi-model form the
     authoring tool exports, or the single-model form older files carry.
@@ -223,7 +223,7 @@ def _print_applied(applied, requested, spec_path, not_stored) -> None:
 
 
 def cmd_spec_schema(args: argparse.Namespace) -> int:
-    """Emit a JSON-Schema document describing ``test_spec.json`` (6.4.5),
+    """Emit a JSON-Schema document describing ``test_spec.json``,
     or — ``spec schema testing`` — the project's ``testing.json``."""
     import json as json_mod
 

@@ -109,7 +109,7 @@ def materialize_implicit_metrics(
     under ``/metrics/`` and neither the entry nor the patch itself supplies
     the tree.
 
-    review 2026-07-06 finding 41: per-leaf ops target
+    Per-leaf ops target
     ``/metrics/children/N/...``, but a flat-override entry has no ``metrics``
     block and ``patch_apply`` refuses to auto-create an array parent. A
     missing entry is left to ``apply_patch_to_document``, which refuses such

@@ -34,10 +34,10 @@ _NAME = re.compile(r"^ref_[0-9a-f]{12}\.json$")
 #: name.
 _OLD_NAME = re.compile(r"^ref_[0-9]{1,11}\.json$")
 
-#: The statuses a baseline may have. ``obsolete`` is not one (owner, Q5 of
-#: the plan of 2026-11-10): a baseline is removed by deleting its file, and a
+#: The statuses a baseline may have. ``obsolete`` is not one (the owner's
+#: ruling, 2026-11-10): a baseline is removed by deleting its file, and a
 #: file still marked so is refused by name rather than silently skipped.
-#: Nor is ``skip`` (plan of 2026-11-11): nothing but ``manifest show``'s
+#: Nor is ``skip`` (2026-11-11): nothing but ``manifest show``'s
 #: count read it, so a "skipped" baseline was compared all the same.
 STATUSES = ("active",)
 
@@ -60,7 +60,7 @@ class OldBaselineNames(ConfigError):
 def _atomic_write_text(path: Path, text: str, *, newline: str = "\n") -> None:
     """Atomically replace ``path`` with ``text``.
 
-    review 2026-07-06 (finding 31): all reference writes were plain
+    All reference writes were plain
     ``write_text`` — a Ctrl-C mid-accept corrupted the baseline, the next
     scan silently dropped it, and (while baselines were numbered) its
     number went to a different model. Same tmp-file + replace pattern as
@@ -170,7 +170,7 @@ class RefIndex:
         if not path.is_file():
             return None
         try:
-            # Whole-file read + parse (a header-only read is idea #64).
+            # Whole-file read + parse (JSON has no header-only read).
             model_id, status = read_reference_header(path)
         except json.JSONDecodeError as e:
             why = f"not JSON at line {e.lineno}, column {e.colno}"

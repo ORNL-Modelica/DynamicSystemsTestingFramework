@@ -1,10 +1,9 @@
 """The shell's stylesheet on top of `reporting.theme.css_variables()`
 (DESIGN.md "Typography", "Header", "Spacing, shape, elevation", "Status
-badges"): the font token on the body and on Quasar's controls — the
-roadmap left the tool on Quasar's stack until this shell applied it — the
-off-white header with its hairline, the 32 px rows with their status tint,
-the filled badge, the sentence beside a greyed button. Every colour is a
-token; nothing here names a hex."""
+badges"): the font token on the body and on Quasar's controls (in place of
+Quasar's own font stack), the off-white header with its hairline, the 32 px
+rows with their status tint, the filled badge, the sentence beside a greyed
+button. Every colour is a token; nothing here names a hex."""
 
 from __future__ import annotations
 
@@ -97,7 +96,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 /* The Test page's subheader WRAPS: kept to one line beside a real
    library's model id, it put Accept and Rerun past a 900 px window (wholly
-   off it on a TRANSFORM-length id) and squeezed Rerun to seven lines. The
+   off it on an id as long as that library's) and squeezed Rerun to seven lines. The
    id breaks at any character when a line cannot hold it. The TEST actions
    are the status strip's now, below it. */
 .dstf-subheader .dstf-model { overflow-wrap: anywhere; }
@@ -130,13 +129,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
-/* A row whose click opens something (U5): a criterion's editor, a k-of-n's
+/* A row whose click opens something: a criterion's editor, a k-of-n's
    or a weighted's fields — a button to the mouse and the keyboard. */
 .dstf-tree-row[role="button"] { cursor: pointer; }
 .dstf-tree-row[role="button"]:focus-visible {
   outline: 2px solid var(--dstf-accent); outline-offset: -2px;
 }
-/* Where a row sits (U5, Q1): a 6 px bar per level, 2 px apart, the row's
+/* Where a row sits: a 6 px bar per level, 2 px apart, the row's
    full height, in place of an indent; the hovered group's branch takes its
    level's deeper shade on that level's bar (`.dstf-lvl-on`, set by the
    page's script on the BAR, never the row). Then the chevron's place,
@@ -156,7 +155,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-lvl-3.dstf-lvl-on { background: var(--dstf-level-3-on); }
 .dstf-lvl-4.dstf-lvl-on { background: var(--dstf-level-4-on); }
 .dstf-chev-slot { width: 28px; flex: none; display: inline-flex; justify-content: center; }
-/* A group's chevron (U5, Q3): a 28 px target, an 18 px glyph, turned
+/* A group's chevron: a 28 px target, an 18 px glyph, turned
    right while its row is folded; the row then says what it hides. */
 .dstf-chev {
   width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%;
@@ -169,12 +168,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-tree-row[data-folded="1"] .dstf-chev .q-icon { transform: rotate(-90deg); }
 .dstf-fold-summary { color: var(--dstf-text-secondary); font-size: 12px; }
 /* A long row never widens the page: its text wraps — anywhere, as a
-   TRANSFORM name has no space to break at — and its readout keeps one
+   long Modelica name has no space to break at — and its readout keeps one
    line, cut with an ellipsis, the whole of it in its title (`_Row.paint`).
    At 900 px a deep criterion's name and readout pushed the page 48 px
    sideways. The readout shrinks with the name down to 80 px and no
-   further: shrinking from 0, a 200-character name left it 71 px at 900
-   (J2); kept whole up to 40% of the row, it left the J2 tests' names
+   further: shrinking from 0, a 200-character name left it 71 px at 900;
+   kept whole up to 40% of the row, it left long test names
    119-143 px at 900, five lines and more, where now they have 290-350. */
 .dstf-tree-row > .dstf-tree-text { min-width: 0; overflow-wrap: anywhere; }
 .dstf-tree-row > .dstf-tree-readout {
@@ -182,10 +181,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dstf-tree-row:not([data-folded="1"]) .dstf-fold-summary { display: none; }
-/* The root's tag (Q2): "and · 5 criteria · root". */
+/* The root's tag: "and · 5 criteria · root". */
 .dstf-root-tag { color: var(--dstf-text-muted); font-size: 12px; }
 .dstf-root-tag::before { content: "· "; }
-/* The drag (U4): a handle before the pill, its place kept while hidden so
+/* The drag: a handle before the pill, its place kept while hidden so
    the pills stay in line (`.dstf-grip-off`: never Quasar's `.hidden`, whose
    cascade layer beats an unlayered `!important`). Over a row: a line at the row's indent where the
    node would go before it, an outline onto it, a red outline where the
@@ -212,7 +211,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-tree-line.dstf-line-why::before {
   content: attr(data-why); color: var(--dstf-fail-dark);
 }
-/* After a move (V4): its row flashed once as it comes into view, and one
+/* After a move: its row flashed once as it comes into view, and one
    line under it saying what the move changed. */
 @keyframes dstf-flash { from { background: var(--dstf-selection); } }
 .dstf-flash { animation: dstf-flash 1.2s ease-out; }
@@ -224,7 +223,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
-/* Move to… (U4): a place per line, its node's text cut in the middle,
+/* Move to…: a place per line, its node's text cut in the middle,
    then where in it — "— before" whole and the row it names cut in the
    middle too; the menu no wider than the page allows. Kept whole, a
    100-character name ran past the menu's edge and squeezed the node's
@@ -248,9 +247,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-kind .q-field__control, .dstf-kind .q-field__native,
 .dstf-kind .q-field__marginal { min-height: 28px; height: 28px; }
 /* A plot card: its title row, its plot, its criteria header and rows at
-   the card's own spacing (the brief's "col gap 10px"). */
+   the card's own spacing (a 10 px column gap). */
 .dstf-plot { gap: 10px; }
-/* A card's header row wraps (3c's gate over a real library: at 900 px
+/* A card's header row wraps (measured over a real library: at 900 px
    beside a drawer, a long title, its pills and the toolbar in one row
    that neither wrapped nor shrank scrolled the page sideways). The title
    and its pills take what is left and wrap inside it, a long name cut in
@@ -383,7 +382,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    card is ~540 px at 900 px, and it broke inside itself ("tube" over
    "· x"). The readout beside it may wrap. */
 .dstf-crit-name { white-space: nowrap; }
-/* A variable label cut in the MIDDLE (D140, Q20; `widgets.MiddleCut`): the
+/* A variable label cut in the MIDDLE (D140; `widgets.MiddleCut`): the
    head ellipsized, the tail (`[3]`, the element) whole. Two inline-blocks
    in an inline-block — never a flex pair — so innerText and a copy read the
    whole label; the head is capped at the element's width less the tail's
@@ -422,7 +421,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* A long criterion name keeps its one line, so at narrow widths the row
    wraps (it carries no `no-wrap`): the readout and the node's controls move
    to a second line, the controls at its right end, instead of pushing the
-   page sideways (3c's gate over a real library, 900 px beside a drawer). */
+   page sideways (measured over a real library, 900 px beside a drawer). */
 .dstf-crit > .dstf-node-host { margin-left: auto; }
 /* A plot's criteria header: a muted "Criteria" and, at its right end, what
    attaches at VARIABLE (the plot's +), level with the criteria rows'
@@ -460,18 +459,18 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-criteria > [hidden] { display: none !important; }
 /* The editor belongs to the row above it: indented under it, with the
    accent rule down its left saying how far it reaches. A node's form row
-   belongs to its row the same way (the 2026-09-21 board, 1A). */
+   belongs to its row the same way. */
 .dstf-editor, .dstf-form-row {
   margin: 0 0 8px 16px; padding: 12px;
   border-left: 3px solid var(--dstf-accent);
   border-top: 1px solid var(--dstf-border-hairline);
   border-bottom: 1px solid var(--dstf-border-hairline);
 }
-/* The criterion editor's fields in ONE wrapping row (the board: the plot
-   and its editor fit a screen together). `.dstf-form` is the mode form's
+/* The criterion editor's fields in ONE wrapping row (the plot and its
+   editor fit a screen together). `.dstf-form` is the mode form's
    slot, which hands its controls straight to that row rather than stacking
    them in a column of its own; `.dstf-field` is one control, wide enough
-   for its label ("Width mode" clipped to "Wid…" in the Task 6 screenshot);
+   for its label ("Width mode" clipped to "Wid…" when narrower);
    `.dstf-field-wide` is a multi-line one (a JSON list), on its own line. */
 .dstf-fields { row-gap: 8px; }
 .dstf-form { display: contents; }
@@ -494,7 +493,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-fields, .dstf-table-scroll { container-type: inline-size; }
 .dstf-sides { flex-wrap: nowrap; gap: 4px; }
 .dstf-sides > .q-btn { flex: none; margin-top: 8px; }
-/* The toggle's two states at a glance, as the board drew them: linked is
+/* The toggle's two states at a glance: linked is
    the accent, unlinked muted. Read off `aria-pressed` — an attribute the
    server renders, not a class. */
 .dstf-sides > .q-btn[aria-pressed="true"] { color: var(--dstf-accent); }
@@ -524,14 +523,14 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   .dstf-sides-hinted { flex: 1 1 100%; }
   .dstf-sides-hinted > .q-field:first-child { min-width: 140px; flex: 1 1 140px; }
 }
-/* Focus (board 5A): "Showing 1 of N plots", the switcher naming it, and
+/* Focus: "Showing 1 of N plots", the switcher naming it, and
    the way back to all of them, on the accent tint so the page says at a
    glance that what is below it is one plot of several. */
 .dstf-focus-bar {
   background: var(--dstf-selection); border: 1px solid var(--dstf-accent);
   border-radius: 4px; padding: 4px 12px;
 }
-/* Eight rows of 42 px, and then the rows scroll (board 2A) — the
+/* Eight rows of 42 px, and then the rows scroll — the
    container this sits on holds the rows alone, never `Add row`. */
 .dstf-table-scroll { max-height: 336px; overflow-y: auto; }
 /* A table's row: its cells on one line where they fit and wrapped INSIDE
@@ -544,7 +543,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 .dstf-table-row > .q-btn { margin-top: 6px; }
 .dstf-wordmark { font-size: 20px; font-weight: 700; }
-/* The pending drawer's preview (Q6 A): the entry as test_spec.json will
+/* The pending drawer's preview: the entry as test_spec.json will
    hold it, one line per row, never wrapped — a long line scrolls INSIDE
    the diff, not the drawer. A flex item's min-width is its content's:
    without the min-width 0 here and on the section and body columns a long
@@ -581,7 +580,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-pick-list .dstf-group, .dstf-stats .dstf-group {
   white-space: nowrap; word-spacing: .2em;
 }
-/* The Statistics card (U3): a row per statistic, the numbers in fixed
+/* The Statistics card: a row per statistic, the numbers in fixed
    right-aligned columns so Run and Baseline read down, the `+` or the
    criterion's pill at the end; a changed row wears the report's warn
    tint. */
@@ -607,13 +606,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* Open, a changed row wears the selection as every open criteria row does:
    the tint, declared later, hid which row the editor was under. */
 .dstf-stats .dstf-crit-open { background: var(--dstf-selection); }
-/* The editor under a Statistics row, or a tree row (U5), keeps inside the
+/* The editor under a Statistics row, or a tree row, keeps inside the
    card: `w-full` plus the editor's 16 px indent ran 16 px past its right
-   edge (B12). */
+   edge. */
 .dstf-stats .dstf-editor, .dstf-tree .dstf-editor { width: calc(100% - 16px); }
 /* The Tests drawer's rows at a real library's lengths: the name takes what
    the badge and the edits pill leave it and is cut with an ellipsis (the
-   whole id is its title), and they never shrink. A TRANSFORM id in Full,
+   whole id is its title), and they never shrink. Such an id in Full,
    or a 40-character short name, pushed the badge out of the drawer at
    900 px, and a package label ran past it. */
 .dstf-tests .dstf-name { flex: 1 1 auto; min-width: 0; }
@@ -633,10 +632,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   color: #ffffff; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .03em; border-radius: 3px;
 }
-/* The Test page's rail (3c): labelled buttons in 40 px. NiceGUI pads a
+/* The Test page's rail: labelled buttons in 40 px. NiceGUI pads a
    drawer by 1rem, which put the rail's buttons at 16-56 px of a 40 px
-   drawer and clipped "Tests" to "Tes" (the review's screenshot, and again
-   with 10 px labels): the drawer carries no padding. The rail and the
+   drawer and clipped "Tests" to "Tes" (with 10 px labels too): the drawer carries no padding. The rail and the
    panel may give up the 1 px of the drawer's border rather than overflow
    it. The open drawer's button sits on the selection tint. */
 .nicegui-drawer.dstf-rail-drawer { padding: 0; gap: 0; }
@@ -645,7 +643,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-rail-label { font-size: 10px; letter-spacing: 0; line-height: 1.2; }
 .dstf-rail-on { background: var(--dstf-selection); color: var(--dstf-accent); }
 /* The panel's width is the tab's (`TabState.drawer_width`, set inline by
-   `Rail`); its right edge is the resize grip (K5), 6 px of the drawer over
+   `Rail`); its right edge is the resize grip, 6 px of the drawer over
    the panel's border. */
 .dstf-drawer-panel { min-width: 0; flex: none; }
 .dstf-rail-row { position: relative; }
@@ -654,21 +652,21 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   cursor: col-resize; touch-action: none; z-index: 1;
 }
 .dstf-drawer-handle:hover { background: var(--dstf-selection); }
-/* Focused from the keyboard, the grip is the accent: ←/→ move it (K5). */
+/* Focused from the keyboard, the grip is the accent: ←/→ move it. */
 .dstf-drawer-handle:focus-visible { outline: none; background: var(--dstf-accent); }
-/* The Variables drawer's rows (3c): "+ new plot" is there on the hovered
-   row only (the owner's ruling, Q6 A) — `visibility`, so the row does not
+/* The Variables drawer's rows: "+ new plot" is there on the hovered
+   row only (the owner's ruling) — `visibility`, so the row does not
    reflow as the mouse moves down the list — and on a row with focus in
    it: a hidden button takes no focus, and Tab from a check skipped its
    own. A family's members hang under it, indented; a family's swatch marks
    an array, in the accent ramp (a plot picks a family's hue by its order
    on that plot, not this). The target line is a tag on the accent tint
-   with the selected plot's ring inside it, as the owner's board drew it: a
+   with the selected plot's ring inside it, as the owner chose it: a
    bare ring beside the text read as an empty checkbox. */
 .dstf-var-row { min-height: 28px; }
 /* Two lines (2026-09-29): the label with the row's width on the first; the
    muted name, "plot N" and "+ new plot" on the second, under the label
-   (past the check). A row with nothing but "+ new plot" is one line (K6). */
+   (past the check). A row with nothing but "+ new plot" is one line. */
 .dstf-var-line1 { min-height: 26px; }
 .dstf-var-line2 { padding-left: 28px; min-height: 18px; font-size: 11px; }
 .dstf-var-line2 .q-btn { min-height: 18px; }
@@ -692,16 +690,16 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   width: 12px; height: 9px; border-radius: 2px; flex: none;
   border: 2px solid var(--dstf-accent); box-sizing: content-box;
 }
-/* The add form's picker (U2): a list that scrolls inside the form row,
+/* The add form's picker: a list that scrolls inside the form row,
    never a 200-row form; the chosen row on the selection tint, the
-   keyboard's cursor ringed; the Chosen line under it (K7). */
+   keyboard's cursor ringed; the Chosen line under it. */
 .dstf-pick-list { max-height: 240px; overflow-y: auto; }
 .dstf-pick-row { cursor: pointer; min-height: 24px; padding: 0 4px; }
 .dstf-pick-row:hover { background: var(--dstf-surface-hover); }
 .dstf-pick-on { background: var(--dstf-selection); }
 .dstf-pick-cursor { box-shadow: inset 0 0 0 2px var(--dstf-accent); }
 .dstf-pick-chosen { color: var(--dstf-text-muted); padding: 2px 4px 0; }
-/* The drawers' one control set (Q7): a menu's current choice carries its
+/* The drawers' one control set: a menu's current choice carries its
    check; a count pill is a status pill that is a button, ringed while it
    filters. */
 .dstf-menu-check { visibility: hidden; }
@@ -714,7 +712,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 /* The selected plot, the one the Variables drawer's checkboxes act on: two
    classes and after `.dstf-card`, whose `box-shadow: none` otherwise wins
-   and the ring is classed but never painted (3c's LOOK, in Chromium). */
+   and the ring is classed but never painted (seen in Chromium). */
 .dstf-card.dstf-plot-selected { box-shadow: inset 0 0 0 2px var(--dstf-accent); }
 """
     + _TINTS
@@ -724,8 +722,8 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
     + ".dstf-swatch-off { background: transparent; }\n"
     # Two classes: that alone beats the one-class status tints, whatever the
     # order (as one class it tied with them and read the fail tint,
-    # rgb(255,235,238) — the 3c review). The order that matters is after
-    # `.dstf-row:hover`, which has the same specificity: last, the current
-    # row stays lit under the mouse.
+    # rgb(255,235,238)). The order that matters is after `.dstf-row:hover`,
+    # which has the same specificity: last, the current row stays lit under the
+    # mouse.
     + ".dstf-row.dstf-row-current { background: var(--dstf-selection); }\n"
 )

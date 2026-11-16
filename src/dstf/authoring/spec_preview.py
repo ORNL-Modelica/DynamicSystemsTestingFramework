@@ -1,4 +1,4 @@
-"""The pending drawer's preview (the owner's ruling Q6 A): a test's entry
+"""The pending drawer's preview (the owner's ruling): a test's entry
 before and after its staged edits, as ``test_spec.json`` will hold it —
 ``json.dumps(entry, indent=2)``, the indentation Save writes — diffed line
 by line with ``difflib``, and each line's variable names read by their

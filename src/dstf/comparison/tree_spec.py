@@ -10,11 +10,10 @@ Parses the JSON shape into typed dataclasses without evaluating anything:
     ]
   }
 
-A spec tree is the static description of *what to score*. Phase 3.3 will
-walk it together with simulation results to produce evaluated
-``MetricResult`` trees (see ``metric_tree.py``). Phase 3.2 stops at the
-parse step so users can write the schema and we can unit-test the validation
-without changing pipeline behavior.
+A spec tree is the static description of *what to score*. The evaluator
+(``tree_eval.py``) walks it together with simulation results to produce
+evaluated ``MetricResult`` trees (see ``metric_tree.py``); this module
+parses, validates, walks and serializes it — it never scores.
 
 Validation is hand-rolled (jsonschema would be heavier than warranted).
 Errors carry the JSON path where the problem was found so users can
@@ -80,13 +79,13 @@ class LeafSpec:
     ``variable_overrides`` payload in test_spec.json so the same tube/NRMSE
     parameter names work in both contexts.
 
-    ``against`` selects which named baseline the leaf scores against (Phase
-    4.A.2). Defaults to ``"primary"`` — the baseline stored at the flat top
+    ``against`` selects which named baseline the leaf scores against.
+    Defaults to ``"primary"`` — the baseline stored at the flat top
     level of the reference file. Non-primary names (``"experiment"``,
     ``"analytical"``, ...) reference entries under the reference's
     ``baselines`` map. Unknown names are rejected at evaluation time.
 
-    ``window_start`` / ``window_end`` (idea #46, Phase 6.1.1) scope the
+    ``window_start`` / ``window_end`` scope the
     leaf to a sub-interval of the trajectory. Both optional; when set, the
     leaf evaluates only against samples with ``window_start <= t <= window_end``.
     Uniform across every metric — mode configs stay untouched, slicing
@@ -106,7 +105,7 @@ class CombinatorSpec:
     """A combinator node: and/or/k-of-n/warn/weighted over child specs.
 
     ``k`` is required iff ``combinator == "k-of-n"``. ``warn`` requires
-    exactly one child; the others require at least one. ``weighted`` (4.E)
+    exactly one child; the others require at least one. ``weighted``
     requires ``weights`` (list parallel to children), ``threshold``, and an
     optional ``direction`` (``"less"`` default, or ``"greater"``).
     """
@@ -484,7 +483,7 @@ def spec_to_raw(node: SpecNode) -> dict:
     """Serialize a ``SpecNode`` back to the raw ``metrics`` JSON shape.
 
     Inverse of :func:`parse_metric_tree` — the output round-trips through
-    it. Added for review 2026-07-06 finding 41: ``cmd_spec_update`` uses
+    it. ``cmd_spec_update`` uses
     this to MATERIALIZE the implicit tree (from
     :func:`synthesize_implicit_tree`) into a flat-override test entry
     before applying reporter-emitted per-leaf patch ops like
@@ -526,8 +525,8 @@ def synthesize_implicit_tree(
     via the implicit AND of per-variable comparisons. The reporter's
     recursive UI works against ``SpecNode`` trees, so we synthesize one
     here. The synthesized tree is **render-only** — it's not written back
-    to the spec until the user makes a structural edit (Stage 4 / option
-    ii: no silent spec rewrites).
+    to the spec until the user makes a structural edit (no silent spec
+    rewrites).
 
     Each variable gets one leaf in the order given. The leaf metric is
     derived from ``variable_overrides[var].mode`` (defaults to ``"nrmse"``);
@@ -726,7 +725,7 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
             f"{path}.against", f"must be a non-empty string, got {against!r}"
         )
 
-    # ``window`` scopes the leaf to a sub-interval [start, end] (idea #46).
+    # ``window`` scopes the leaf to a sub-interval [start, end].
     # Both endpoints optional; open-ended on either side supported. The
     # comparator slices before calling mode.compare so every metric
     # composes uniformly with the window.
@@ -768,8 +767,9 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
             )
 
     # Everything else is metric-specific params (tolerance, tube_rel, ...) —
-    # and each has to be one the metric reads. A misspelled one used to ride
-    # along unread: `"max_val": 0.5` on a range scored with no upper bound.
+    # and each has to be one the metric reads. A misspelled one riding
+    # along unread would score `"max_val": 0.5` on a range with no upper
+    # bound.
     params = {k: v for k, v in raw.items() if k not in _LEAF_KEYS}
     problem = unread_param(metric_name, params, beside=_LEAF_KEYS)
     if problem is not None:

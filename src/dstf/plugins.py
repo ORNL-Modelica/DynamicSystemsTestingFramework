@@ -65,7 +65,7 @@ def load_plugins() -> list[str]:
     # library user who catches the ConfigError from a broken plug-in and
     # retries must not re-invoke the HEALTHY plug-ins that already ran —
     # their re-registration would raise the registry's duplicate error and
-    # blame the wrong plug-in (B2 review finding 4).
+    # blame the wrong plug-in.
     names: list[str] = []
     for ep in importlib.metadata.entry_points(group=PLUGIN_GROUP):
         if ep.name in _completed:
@@ -77,7 +77,7 @@ def load_plugins() -> list[str]:
                 pass  # import side effects did the registration
             elif isinstance(obj, type):
                 # A class is callable, but instantiating it with no args is
-                # never what a plug-in author meant (B2 review finding 8).
+                # never what a plug-in author meant.
                 raise TypeError(
                     f"resolved to class {obj.__name__}; point the entry "
                     f"point at a module or a no-argument callable"

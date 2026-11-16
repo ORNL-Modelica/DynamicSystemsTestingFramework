@@ -68,7 +68,7 @@ def _base_tolerance(
 ) -> tuple[Any, str]:
     """The test's base tolerance and its source: per-test > reference >
     project. An ``is not None`` chain, NOT ``or`` — an explicit tolerance of
-    0 (strictest possible) must be honored (review 2026-07-06, finding 7)."""
+    0 (strictest possible) must be honored."""
     ref_comparison = reference.comparison if reference is not None else {}
     if test.comparison_tolerance is not None:
         return test.comparison_tolerance, "test"
@@ -341,7 +341,7 @@ def _check_structural_changes(
         for p in parts:
             # .get(p) — a missing key must yield None (skip), not {}. With
             # {} the None-guard below never fired and every baseline-free
-            # run produced phantom "{} → 5" warnings (review 2026-07-06).
+            # run produced phantom "{} → 5" warnings.
             ref_val = ref_val.get(p) if isinstance(ref_val, dict) else None
             cur_val = cur_val.get(p) if isinstance(cur_val, dict) else None
 
@@ -400,7 +400,7 @@ def migration_hint(
     ``name``: the variable's result-file name, which is what that entry
     has to be stored under. A hint on every missing baseline would tell a
     whole suite of brand-new variables to rename an entry no baseline
-    holds (the Task 3 review).
+    holds.
 
     Two things the raw texts do not decide, so this reads the ENTRIES:
 
@@ -665,7 +665,7 @@ def compare_test(
     if refused is not None:
         return refused
 
-    # PTA.5 — simulate_only short-circuit: when the recognizer marked this
+    # simulate_only short-circuit: when the recognizer marked this
     # test as "just check that it simulates", or it declares nothing to
     # score, skip per-variable comparison and the whole baseline machinery.
     # The sim already succeeded above.
@@ -705,9 +705,8 @@ def compare_test(
     )
 
     # Pairing is by name. Pairing by numeric index silently scored variables
-    # against the wrong baseline trajectory after any spec reorder (review
-    # 2026-07-06, finding 8); a first-entry-wins map is also what the
-    # expression check reads.
+    # against the wrong baseline trajectory after any spec reorder; a
+    # first-entry-wins map is also what the expression check reads.
     ref_vars_by_name = _first_by_name(reference.baseline.variables)
     shared_ref_time = np.array(reference.baseline.time)
     comparisons = []
@@ -717,11 +716,11 @@ def compare_test(
         test, reference, default_tolerance
     )
 
-    # Phase 3.3: when the spec provides an explicit MetricTree, it fully
-    # replaces the implicit flat-AND + per-variable overrides. The user's
-    # tree declares *which* variables participate and *how* each is scored,
-    # so the legacy ``comparison.variable_overrides`` is ignored on this
-    # path (documented — same fields move into each leaf's params).
+    # When the spec provides an explicit MetricTree, it fully replaces the
+    # implicit flat-AND + per-variable overrides. The user's tree declares
+    # *which* variables participate and *how* each is scored, so
+    # ``comparison.variable_overrides`` is ignored on this path (documented —
+    # same fields move into each leaf's params).
     if test.metric_tree_spec is not None:
         from .tree_eval import BaselineView, ScalarSources
 
@@ -831,7 +830,7 @@ def compare_test(
         # A stats-path quantity is resolved by the tree evaluator from the
         # run's statistics; this flat path only has the variable's own
         # trajectory, and ScalarMode would silently reduce THAT instead
-        # (review finding, D106).
+        # (D106).
         desc = registry_metric(mode.name)
         if (
             desc is not None
@@ -918,10 +917,10 @@ def compare_test(
         vc.tolerance_used = tolerance
         comparisons.append(vc)
 
-    # Phase 3.1: pass/fail flows from the MetricTree root, not a separate
-    # accumulator. Today the tree is the implicit flat-AND of per-variable
-    # leaves — same semantics as before. Phase 3.3+ swaps in user-authored
-    # trees from test_spec.json.
+    # Pass/fail flows from the MetricTree root, not a separate accumulator.
+    # On this path (no ``metrics`` tree in the spec) the tree is the
+    # implicit flat-AND of per-variable leaves; a spec's own tree is scored
+    # by the branch above.
     #
     # The loop appends exactly one comparison per tracked variable, in
     # order, so the expression — and the baseline the criterion read —
@@ -1016,8 +1015,8 @@ def _config_error_comparison(
     A ``ValueError`` is that error wherever it is raised: building the mode
     (a tolerance that is neither a number nor a lower/upper pair; an
     unrecognized mode string, which must fail loudly — silently falling
-    back to NRMSE changed the scoring algorithm on a typo, review
-    2026-07-06) or scoring with it, for what a mode can only detect then (a
+    back to NRMSE would change the scoring algorithm on a typo) or scoring
+    with it, for what a mode can only detect then (a
     tube's unknown width mode, `abs` without control points).
 
     ``mode`` is ``metric_name`` — the metric the override is scored by
@@ -1050,10 +1049,10 @@ def _test_is_baseline_free(
     only the actual simulation data plus config declared in the leaf
     itself. When every leaf is baseline-free, ``compare_all`` can skip
     the NO_REF short-circuit and still produce meaningful pass/fail on a
-    fresh test with no saved baseline (idea #59 / D83).
+    fresh test with no saved baseline (D83).
 
     Mixed trees — any leaf that consults a reference — fall back to the
-    legacy NO_REF behavior. There's no partial-run support.
+    NO_REF short-circuit. There's no partial-run support.
     """
     from .modes import resolve_mode
     from .tree_eval import _leaf_override_dict
@@ -1098,9 +1097,9 @@ def _test_is_baseline_free(
         return False
     # Mixed tests: any tracked variable WITHOUT an override becomes an
     # implicit NRMSE leaf, which needs a baseline — so the test as a
-    # whole is not baseline-free (review 2026-07-06, finding 10; matches
-    # the docstring's "mixed trees fall back to NO_REF"). Glob patterns
-    # can't be proven covered, so they also disqualify.
+    # whole is not baseline-free (matching the docstring's "mixed trees fall
+    # back to NO_REF"). Glob patterns can't be proven covered, so they also
+    # disqualify.
     #
     # Both sources are tracked, not one or the other: a ``both`` test whose
     # spec patterns are all covered still has the component's variables
@@ -1168,11 +1167,11 @@ def compare_one(
     # exists — this check MUST precede the no-baseline short-circuit below.
     # A backend signals a failed run with a success=False TestResult: the
     # reader builds one from a failed run result, and OpenModelica's
-    # read_result returns one for a missing .mat. Before this check it
-    # fell through to the no-baseline branch and was
-    # mislabeled NO_REF with passed=True. Surfaced 2026-07-07 across 91
-    # OM/TRANSFORM compile/solver failures on models that never got OM
-    # baselines (mirrors compare_test's own `not result.success` guard).
+    # read_result returns one for a missing .mat. Without this check it
+    # would fall through to the no-baseline branch and be mislabeled
+    # NO_REF with passed=True — as 91 OpenModelica compile/solver failures
+    # on a real library's models that had no OpenModelica baselines once
+    # were (mirrors compare_test's own `not result.success` guard).
     if not result.success:
         return TestComparison(
             model_id=test.model_id,
@@ -1274,7 +1273,7 @@ def _compared(
     # declared-peaks) follow the same pattern: skip the NO_REF guard
     # so the scorers can produce real pass/fail from config alone.
     # Mixed trees still short-circuit — partial runs aren't supported
-    # by this fix (idea #59 / D83).
+    # (D83).
     if (
         reference is None
         and not test.is_simulate_only

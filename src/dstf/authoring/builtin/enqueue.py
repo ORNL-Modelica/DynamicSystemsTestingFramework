@@ -1,4 +1,4 @@
-"""Queue (D150; brief §3.6): SUITE and TEST placements. The selected tests
+"""Queue (D150): SUITE and TEST placements. The selected tests
 are appended to the Session's simulation queue — one per tool process,
 first in, first out — as an ``Enqueue``.
 
@@ -96,8 +96,8 @@ class EnqueueTests:
     def caption(self, s: SessionView) -> str:
         """The count, how many of the selection the queue already holds
         ("Queue 3 (2 already queued)") and the selection's unsaved edits
-        (brief §3.6: a run uses the spec with pending edits applied, and
-        the button says so) — as they stand when each test STARTS, which is
+        (a run uses the spec with pending edits applied, and the button
+        says so) — as they stand when each test STARTS, which is
         when the queue takes a test's settings. One test whose last run in
         the queue was cancelled or failed reads "Queue again". No backend:
         the header shows it (owner ruling, 2026-09-26); the panel names

@@ -2,8 +2,8 @@
 file in the work dir — every test's status word and its criteria tree with
 each node's verdict and numbers, and the run's totals.
 
-For a script or an agent. A plain run used to leave no per-criterion
-result on disk at all (the tree was written only by ``--report``, into one
+For a script or an agent. Without it a plain run leaves no per-criterion
+result on disk at all (``--report`` writes the tree, into one
 ``comparison_data.json`` per test), and ``status.json`` says ``"passed"``
 of a test whose comparison FAILED: it records that the simulation ran.
 

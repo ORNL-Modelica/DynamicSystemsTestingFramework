@@ -7,7 +7,7 @@ applies wins (a test the queue holds before pending edits, edits before
 anything the last scoring said).
 
 There is no state for edits to the simulation settings (the owner's ruling
-Q2 A drew one): ``/simulation`` is not stageable — `patch_apply`'s default
+drew one): ``/simulation`` is not stageable — `patch_apply`'s default
 whitelist is ``/comparison``, ``/metrics`` and ``/plots``, and widening it
 changes ``spec update``, a seam another repository relies on. It waits for
 a simulation-settings editor."""
@@ -39,7 +39,7 @@ class Situation(Enum):
     RUNNING = "running"
     EDITS = "edits"
     #: pending edits whose criteria name a variable the last run did not
-    #: record: Queue is the one next action, Save is quiet (the owner's O1)
+    #: record: Queue is the one next action, Save is quiet (the owner's ruling)
     EDITS_NEW = "edits_new"
     SCORING_FAILED = "scoring_failed"
     WAITING = "waiting"
@@ -52,7 +52,7 @@ class Situation(Enum):
     NO_RESULT = "no_result"
     SIM_FAIL = "sim_fail"
     #: saved criteria name a variable the last run did not record: a
-    #: baseline accepted now would not hold it (the owner's O3)
+    #: baseline accepted now would not hold it (the owner's ruling)
     NEW_VARIABLES = "new_variables"
     NO_REF = "no_ref"
     #: the comparison refused the test (`reporting.status.refusal`): it
@@ -135,7 +135,7 @@ def new_variables(
     """How many variables only a rerun records: those of
     :func:`unrecorded_variables`. A variable the result FILE holds is not
     one of them — `Session.stage` re-reads the model when a criterion names
-    it (the owner's O2), so the result holds it by the time this counts.
+    it (the owner's ruling), so the result holds it by the time this counts.
     0 for a simulate-only test: nothing is ever scored there, so no
     variable is one a rerun would score (never NEW_VARIABLES or
     EDITS_NEW)."""

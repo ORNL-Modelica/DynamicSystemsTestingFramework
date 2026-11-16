@@ -97,10 +97,10 @@ def main(argv: list[str]) -> int:
         if not isinstance(payload["variables"], dict):
             raise ValueError("'variables' must be a dict of name -> list[float]")
 
-        # review 2026-07-06 (finding 29): validate value TYPES, not just list
-        # lengths — a simulate() returning strings used to pass the run and
-        # then blow up np.asarray during read_results, aborting every test's
-        # read phase. Fail here, cleanly, naming the offending variable.
+        # Validate value TYPES, not just list lengths — a simulate() returning
+        # strings would pass the run and then blow up np.asarray during
+        # read_results, aborting every test's read phase. Fail here, cleanly,
+        # naming the offending variable.
         raw_time = list(payload["time"])
         try:
             time_list = [float(v) for v in raw_time]

@@ -1,4 +1,4 @@
-"""Accept (§4.6 table, §4.7): SUITE and TEST placements. The selected tests'
+"""Accept: SUITE and TEST placements. The selected tests'
 current results become baselines through
 ``storage.accept.accept_run_results`` — the one function the CLI's two
 ``--accept`` paths call — so the tool cannot accept a result the CLI would
@@ -11,7 +11,7 @@ function declines — with one exception it cannot see from here: a trajectory
 carrying NaN/Inf is refused by ``store_reference`` as it writes, and shows up
 in the write's own line instead. The button's own availability is read off
 those same rows, so an enabled Accept always has at least one baseline to
-write. The write reports one line (§4.6 amendment 1): what it stored, every
+write. The write reports one line: what it stored, every
 refusal with its reason, and the shared function's warning for a baseline
 file that is large (D153).
 """

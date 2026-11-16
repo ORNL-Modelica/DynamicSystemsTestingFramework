@@ -1,8 +1,7 @@
-"""The simulation queue on the page (D150; brief §3.6; the `Main` and
-`QueueIndicator` artboards): the header's indicator, on every page, and the
-queue panel on the Suite page — one row per item in run order, drawn from
-`authoring.queue_rows`. The panel also carries what the runs card it
-replaced did beside the job: the store writes' lines.
+"""The simulation queue on the page (D150): the header's indicator, on
+every page, and the queue panel on the Suite page — one row per item in run
+order, drawn from `authoring.queue_rows`. The panel also carries the store
+writes' lines.
 
 Nothing here reads a file or a clock of its own: the rows are the Session's
 queue as data, repainted on its `queue` events, and the shell's `poll` —
@@ -54,7 +53,7 @@ QUEUE_CSS = """
 .dstf-indicator:hover { text-decoration: underline; }
 .dstf-indicator-running { color: var(--dstf-running-dark); font-weight: 600; }
 .dstf-indicator-failed { color: var(--dstf-fail-dark); font-weight: 600; }
-/* The table and the panel side by side (the Main artboard); under 1200 px,
+/* The table and the panel side by side; under 1200 px,
    and while the queue is empty, the panel is a line above the table. */
 .dstf-suite-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px;
   width: 100%; }

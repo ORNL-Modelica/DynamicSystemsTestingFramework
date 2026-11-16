@@ -1,4 +1,4 @@
-"""The capability contract (two-tier design, §4.6).
+"""The capability contract.
 
 A capability is a plug-in the authoring shell draws at the placements it
 names: it reads a :class:`SessionView`, builds its controls in a
@@ -23,14 +23,13 @@ if TYPE_CHECKING:
 
 
 class Placement(Enum):
-    """Where a capability attaches (brief §3.2; D129): the Suite page's
+    """Where a capability attaches (D129): the Suite page's
     batch bar, the Test page's status strip, a plot card's criteria header,
     the open criterion's editor, a tree node's place in the tree, a row of
     the Statistics card and a statistics criterion's editor there. A capability
     names the frozenset it attaches at; the shell draws it at each and knows
-    no capability by name. The tab strip this replaces listed one tab per
-    ``Scope``; the scopes' selection rules (TESTS needs a selection, LEAF a
-    leaf) are now what ``available`` answers for the page's selection.
+    no capability by name. What a capability needs of the page's selection
+    (some tests checked, a criterion open) is what ``available`` answers.
 
     SUITE and TEST are a button carrying the capability's ``caption``, its
     panel in a dialog; VARIABLE, CRITERION, NODE and STATISTIC are inline —
@@ -42,8 +41,8 @@ class Placement(Enum):
     STATISTIC_CRITERION is the editor of a criterion scored through a
     statistic, under its Statistics row: CRITERION's with no plot, so a
     capability that needs one is not offered there. TREE_CRITERION is the
-    editor of any criterion opened under its row in the criteria tree
-    (U5): CRITERION's with no plot, like STATISTIC_CRITERION — the plot's
+    editor of any criterion opened under its row in the criteria tree:
+    CRITERION's with no plot, like STATISTIC_CRITERION — the plot's
     own editor is a link away. FAMILY_CRITERION is the editor of a folded
     criteria row (D152): one criterion on several elements of an array,
     every one of them named by the selection's ``leaf_paths`` (``leaf_path``
@@ -292,8 +291,8 @@ class Panel(Protocol):
 
     @property
     def can_move(self) -> bool:
-        """Whether the host offers moving the node this panel is drawn for
-        (U4, V2): a tree card's row, and nowhere else — a plot's criteria
+        """Whether the host offers moving the node this panel is drawn for:
+        a tree card's row, and nowhere else — a plot's criteria
         row hosts the same NODE placement and moves nothing."""
         ...
 
@@ -302,7 +301,7 @@ class Panel(Protocol):
         on_drop: Callable[[str, str], None],
         zones: Callable[[], dict[str, dict[str, str | None]]] | None = None,
     ) -> bool:
-        """Take part in the host's drag (U4) where it offers moving
+        """Take part in the host's drag where it offers moving
         (`can_move`); elsewhere register nothing and return False.
         ``on_drop(src_path, zone)`` is called when a node is dropped on
         this panel's row — ``zone`` is ``before`` (the row's top half) or
@@ -315,7 +314,7 @@ class Panel(Protocol):
         ...
 
     def on_click(self, handler: Callable[[], None]) -> bool:
-        """What a click on the row this panel is drawn in does (U5, Q6):
+        """What a click on the row this panel is drawn in does:
         ``handler()``, called when the row itself is clicked — or, from the
         keyboard, Enter or Space on it — never a control inside it. Offered
         by the tree card's GROUP rows (a combinator's) and nowhere else
@@ -326,7 +325,7 @@ class Panel(Protocol):
         ...
 
     def moved(self, node_path: str, text: str, paths: dict[str, str]) -> None:
-        """A move just went through (U4, V4): every open editor and form row
+        """A move just went through: every open editor and form row
         on the page closes NOW — two criteria on one variable trading
         places move no shape, and an editor left open would show the other
         one — and once the tree is redrawn ``node_path``'s row is brought
@@ -342,7 +341,7 @@ class Panel(Protocol):
         node it kept, its path before -> after (`tree_move.path_map`) — an
         add or a remove shifts the siblings after it, a wrap pushes its node
         one level down, an unwrap lifts its children. What the page keys by
-        a node's path follows it (the tree card's folded groups, U5 R1);
+        a node's path follows it (the tree card's folded groups);
         a node not in it is gone. A no-op where no page shows the tree."""
         ...
 
@@ -370,17 +369,19 @@ class Capability(Protocol):
     def available(self, s: SessionView) -> bool | str:
         """``True``, or ``False`` / the sentence saying why it is unavailable
         and what would enable it ("Accept needs a selection", "FakeLib.A is
-        already queued"). The greyed button carries it where the
-        placement draws one; at CRITERION, NODE, STATISTIC and
-        STATISTIC_CRITERION it is shown in the panel's place."""
+        already queued"). The greyed button carries it at SUITE and TEST;
+        at every inline placement — VARIABLE, CRITERION, NODE, STATISTIC,
+        STATISTIC_CRITERION, TREE_CRITERION and FAMILY_CRITERION — it is
+        shown in the panel's place."""
         ...
 
     def caption(self, s: SessionView) -> str:
         """The button's label: its object, its effect and a count
         ("Accept 2 results as baselines"). At zero it still says what it
         would do; ``available`` then carries the sentence. The inline
-        placements (CRITERION, NODE, STATISTIC, STATISTIC_CRITERION) draw
-        no button and never read it."""
+        placements (VARIABLE, CRITERION, NODE, STATISTIC,
+        STATISTIC_CRITERION, TREE_CRITERION, FAMILY_CRITERION) draw no
+        button and never read it."""
         ...
 
     def panel(self, s: SessionView, ui: Panel) -> None: ...

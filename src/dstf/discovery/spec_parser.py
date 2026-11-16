@@ -31,8 +31,8 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
     override — which is one metric's params, as a leaf's are. The
     ``metrics`` tree and ``plots`` have their own parsers, each as strict.
 
-    ``"simulaton": {"stop_time": 100}`` used to be skipped without a word
-    and the test ran for the default second. The known keys are
+    ``"simulaton": {"stop_time": 100}`` skipped without a word would run
+    the test for the default second. The known keys are
     ``spec_shape``'s — the table ``spec schema`` publishes.
 
     And refuse a block that is no object where one is read — ``simulation``,
@@ -134,8 +134,8 @@ def check_root_keys(data: object, label: str) -> list:
     """The spec document's ``tests`` list, or :class:`ConfigError` naming
     ``label`` when the document cannot hold one: a root that is no object,
     a root key nothing reads (``spec_shape.ROOT``), a ``tests`` that is no
-    list. Each used to be a spec of NO tests — an error in the log, or
-    nothing at all for ``{"Tests": [...]}`` — and the command went on
+    list. Read as a spec of NO tests, each would be an error in the log,
+    or nothing at all for ``{"Tests": [...]}``, and the command would go on
     without them, exit 0."""
     from ..comparison.sides import _as_json
     from ..comparison.strict_keys import unknown_field
@@ -297,7 +297,7 @@ def _entries(data: dict) -> list:
 def _find_entry_indices(data: dict, model_id: str) -> list[int]:
     """Indices of dict entries matching ``model_id``, warning on duplicates.
 
-    review 2026-07-06 finding 51: duplicate model entries — the FIRST wins
+    Duplicate model entries — the FIRST wins
     everywhere (discovery, patch_apply, and these edit helpers), each site
     warning so the user notices the dead entries.
     """
@@ -434,9 +434,9 @@ def spec_models_from_document(
         )
 
         # Simulation settings. Fields the spec actually sets are stamped with
-        # provenance "test_spec" here (review 2026-07-06 finding 57) — unset
-        # fields stay None and get provenance "default" when
-        # TestModel.finalize_defaults runs at the end of discover_tests.
+        # provenance "test_spec" here — unset fields stay None and get
+        # provenance "default" when TestModel.finalize_defaults runs at the end
+        # of discover_tests.
         sim = entry.get("simulation", {})  # an object: `check_entry_keys`
         stop_time = _spec_number(sim, "stop_time", float)
         if stop_time is not None:
@@ -479,9 +479,9 @@ def spec_models_from_document(
         if "variable_overrides" in comp:
             test.variable_overrides = comp["variable_overrides"]
 
-        # Phase 3.2: optional MetricTree spec. Parse-only — Phase 3.3 wires
-        # it into compare_test. Errors here are raised so a malformed spec
-        # is loud at discovery, not silently ignored at compare time.
+        # Optional MetricTree spec (``metrics``), which compare_test scores in
+        # place of the implicit flat-AND. Errors here are raised so a malformed
+        # spec is loud at discovery, not silently ignored at compare time.
         if "metrics" in entry:  # null is refused: absent is the only "no tree"
             from ..comparison.tree_spec import MetricSpecError, parse_metric_tree
 
@@ -542,16 +542,15 @@ def add_to_test_spec(
     """
     data = _load_spec_for_edit(spec_path)
 
-    # Check if model already exists (non-dict entries skipped — finding 53;
-    # duplicates: first wins with a warning — finding 51)
+    # Check if model already exists (non-dict entries skipped;
+    # duplicates: first wins with a warning)
     matches = _find_entry_indices(data, model_id)
 
     if matches:
         if not overwrite:
             return False
-        # review 2026-07-06 finding 52: overwrite replaces only
-        # model + variables — hand-authored comparison/simulation/metrics
-        # and notes must survive.
+        # Overwrite replaces only model + variables — hand-authored
+        # comparison/simulation/metrics and notes must survive.
         entry = data["tests"][matches[0]]
         entry["model"] = model_id
         entry["variables"] = variables
@@ -575,8 +574,7 @@ def update_test_variables(
     """Add variable patterns to an existing test entry, or create a new one."""
     data = _load_spec_for_edit(spec_path)
 
-    # Find existing entry (non-dict entries skipped, duplicates warned —
-    # review 2026-07-06 findings 53/51)
+    # Find existing entry (non-dict entries skipped, duplicates warned)
     matches = _find_entry_indices(data, model_id)
     if matches:
         entry = data["tests"][matches[0]]

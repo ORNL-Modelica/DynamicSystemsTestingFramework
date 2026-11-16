@@ -181,11 +181,11 @@ def _column_defs() -> list[dict[str, Any]]:
             d["width"] = 100  # "SIM_FAIL" in its badge and the sort arrow
         elif key == "model":
             d[":cellRenderer"] = "DstfSuite.cell.model"
-            # Twice Message's share: 3 of TRANSFORM's 5 longest short names
-            # were cut at 1280 px with an equal share; at twice it the
-            # longest (47 characters) reads whole in 359 px. The minimum
-            # holds Edits in view at 900 px: every column before it is at
-            # its width there, and 180 put Edits 21 px past the viewport.
+            # Twice Message's share: 3 of a large real library's 5 longest
+            # short names were cut at 1280 px with an equal share; at twice it
+            # the longest (47 characters) reads whole in 359 px. The minimum
+            # holds Edits in view at 900 px: every column before it is at its
+            # width there, and 180 put Edits 21 px past the viewport.
             d.update(flex=2, minWidth=150)
             del d["width"]
             # A name cut at the cell's edge reads in full on hover — the

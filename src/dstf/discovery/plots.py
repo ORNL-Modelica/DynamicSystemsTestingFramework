@@ -154,7 +154,7 @@ def plot_leaves(
     ``metrics`` tree — even with nothing compared yet, a test with no
     baseline: the tree names what will be scored — else the implicit tree of
     what was ``compared``; ``None`` with neither (one plot per tracked
-    variable, the owner's ruling O2). ONE rule, for the tool's
+    variable, the owner's ruling). ONE rule, for the tool's
     `Session.plots` and the report. ``diagnostics``: the names the test
     lists (:func:`tree_leaves`)."""
     from ..comparison.tree_spec import synthesize_implicit_tree
@@ -187,7 +187,7 @@ def derive_plots(
     (the :mod:`~dstf.figures.families` rule over the names: ``pipe.T[1]`` ..
     ``pipe.T[4]`` are one plot), with no scale check — except the
     ``unit_tests`` names, each its own plot whatever its expression (the
-    owner's ruling O3: a UnitTests element is a test quantity of its own,
+    owner's ruling: a UnitTests element is a test quantity of its own,
     and `check_atm`'s local ``x`` holds 1 Pa in atm beside 1 atm in Pa).
     One plot per family or lone variable, where the tree first names it — a
     family where the tree first names any member.
@@ -255,7 +255,7 @@ def plots_of_test(
 
     The leaves are :func:`plot_leaves`', the tracked names
     :func:`tracked_names`', the extras the entry's ``plots`` key. Which
-    names are UnitTests elements — never folded (O3) — is asked of every
+    names are UnitTests elements — never folded — is asked of every
     leaf AND every tracked name: a leaf the result does not carry is an
     element all the same.
 
@@ -270,7 +270,7 @@ def plots_of_test(
     draw, and a leaf it lacks is missing. With no result either, nothing is
     missing.
 
-    A run that FAILED has no plots, extras included (O2, literally): what a
+    A run that FAILED has no plots, extras included: what a
     backend wrote before it stopped is a partial file, not the test's
     plots."""
     from .unit_tests import is_unit_test_variable
@@ -305,14 +305,14 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
     Every name here is the result file's (a UnitTests variable's is
     ``<instance>.x[i]``) and nothing relabels it, so a variable the tree
     scores and the result carries is one name and is listed once — listing
-    the same trajectory under two spellings drew it twice (the 3b review). A
+    the same trajectory under two spellings would draw it twice. A
     result variable with no name has nothing to plot by and is skipped; a
     tree leaf's variable, on the other hand, is listed whether or not the
     result carries it, because ``scored`` is what the test's author wrote.
 
     A result of a simulation that FAILED contributes nothing: what a backend
     wrote before it stopped is a partial file, not the test's plots, and the
-    page drew a card per half-written variable (the final review).
+    page would draw a card per half-written variable.
 
     ``scored`` comes first even when the tree's order differs from the
     result file's. The result's own come in its order — the spec's

@@ -1,15 +1,14 @@
-"""The header both pages share (DESIGN.md "Header"; brief §3.3): "DSTF", the
-library and the backend's name on the left; the queue indicator in the
-centre; the pending count with Save and Discard on the right, and a ⋮ menu
-at the end holding the rarely used actions — Export, Change backend…, Open
-in another backend…, the dashboard, the other theme and Stop server, each with its full
-label. At 900 px the row cut off "dashboard" and "Stop server", and the
-owner chose one layout at every width (3c, Q10 A) over a row that changes
-with it. The backend was a select in the row until a rerun running, an
-edit pending and a caption naming a new entry put Save on four lines at
-900 px: the owner moved it into the menu (Q13 A), and the row names the
-backend as text. A button may take two lines at 900 px and one at 1280.
-Every button's label says its object, effect and count; a disabled one
+"""The header both pages share (DESIGN.md "Header"): "DSTF", the library and
+the backend's name on the left; the queue indicator in the centre; the pending
+count with Save and Discard on the right, and a ⋮ menu at the end holding the
+rarely used actions — Export, Change backend…, Open in another backend…, the
+dashboard, the other theme and Stop server, each with its full label. At 900 px
+the row cut off "dashboard" and "Stop server", and the owner chose one layout
+at every width over a row that changes with it. The backend was a select in the
+row until a rerun running, an edit pending and a caption naming a new entry put
+Save on four lines at 900 px: the owner moved it into the menu, and the row
+names the backend as text. A button may take two lines at 900 px and one at
+1280. Every button's label says its object, effect and count; a disabled one
 carries the sentence that says why (DESIGN.md "Disabled states explain
 themselves"). Off-white with a hairline below, never an accent bar.
 
@@ -51,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 def save_caption(pending: Sequence[PatchOp], loaded: dict, file_name: str) -> str:
-    """The Save button's caption (brief §3.3: object, effect, count). A
+    """The Save button's caption (object, effect, count). A
     pending edit to a model with no entry in the file as LOADED creates
     that entry on Save, and the caption says so (the owner's ruling,
     2026-09-25): a layout staged for a test tracked only by its `.mo`
@@ -192,7 +191,7 @@ class Header:
                         )
                 # Changed rarely, and refused while anything is pending or
                 # running: in the row, its select and why-sentence pushed
-                # Save onto four lines at 900 px (the owner's ruling, Q13 A).
+                # Save onto four lines at 900 px (the owner's ruling).
                 with (
                     ui.menu_item(on_click=self.backend_dialog.open)
                     .props(MENUITEM)
@@ -312,8 +311,8 @@ class Header:
     # -- the backend -------------------------------------------------------------
 
     def _backend_why(self) -> str | None:
-        """Why the backend cannot change now (brief §3.6: refused while edits
-        are pending or the queue holds a test), or None."""
+        """Why the backend cannot change now (refused while edits are
+        pending or the queue holds a test), or None."""
         s = self.shell.session
         if s.project is None:
             return "no project open"
@@ -329,7 +328,7 @@ class Header:
         return None
 
     def _change_backend(self, e: Any) -> None:
-        """Reopen on the chosen backend (brief §3.6), on the shell's open
+        """Reopen on the chosen backend, on the shell's open
         thread; the page follows the loading events as on startup."""
         project = self.shell.session.project
         if project is None or e.value in (None, project.config.backend_name):
@@ -344,7 +343,7 @@ class Header:
         self.refresh()
 
     def _open_other(self) -> None:
-        """A second tool process on another backend (brief §3.6): its own
+        """A second tool process on another backend: its own
         port and browser tab; one project and backend per process."""
         project = self.shell.session.project
         if project is None:
@@ -470,7 +469,7 @@ class Header:
     # -- stop ----------------------------------------------------------------------
 
     def _stop(self) -> None:
-        """Stop server (brief §3.3, §3.6): at once with nothing to lose; else
+        """Stop server: at once with nothing to lose; else
         a confirm naming what would be lost — unsaved edits, and the tests
         the queue still holds, which stopping removes or cancels."""
         reasons = self.shell.stop_reasons()
@@ -517,7 +516,7 @@ window.__dstfPendingEsc ??= (document.addEventListener("keydown", (e) => {{
 }}), true);
 """
 
-#: A diff line's prefix, as `git diff` and the board print it.
+#: A diff line's prefix, as `git diff` prints it.
 _PREFIX = {"same": "  ", "add": "+ ", "del": "- ", "gap": "  "}
 
 
@@ -541,7 +540,7 @@ def _leaves(node: Any) -> int:
 
 
 class PendingDrawer:
-    """The pending-edit drawer is the preview (the owner's ruling Q6 A): per
+    """The pending-edit drawer is the preview (the owner's ruling): per
     test, in staging order, its entry before and after its staged edits as
     `test_spec.json` will hold it — added lines green, removed lines red,
     each variable read by its label with its result-file name muted beside

@@ -1,4 +1,4 @@
-"""Cross-backend orchestration (4.B.3). **EXPERIMENTAL** (D65).
+"""Cross-backend orchestration. **EXPERIMENTAL** (D65).
 
 Helpers that chain backends to produce a **soft_check** baseline (D66).
 Today the only chain is **dymola-via-fmpy**: Dymola exports the model as
@@ -179,10 +179,9 @@ def produce_dymola_via_fmpy_baseline(
     try:
         store.add_soft_check(test.model_id, baseline)
     except (FileNotFoundError, ValueError) as exc:
-        # review 2026-07-06 (finding 76): add_soft_check also raises
-        # ValueError (e.g. name collides with an existing companion) — the
-        # documented contract is "failures are logged + skipped", not an
-        # abort of the whole run after simulation completed.
+        # add_soft_check also raises ValueError (e.g. name collides with an
+        # existing companion) — the documented contract is "failures are logged
+        # + skipped", not an abort of the whole run after simulation completed.
         logger.warning(
             "cross-backend chain: cannot store baseline for %s: %s",
             test.model_id,

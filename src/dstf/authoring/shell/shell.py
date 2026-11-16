@@ -1,4 +1,4 @@
-"""The shell as a process (roadmap §2; D129): one Session, one thread that
+"""The shell as a process (D129): one Session, one thread that
 opens the project, one queue every Session event crosses on its way to the
 pages, one app-level timer that drains it, the pages a browser has open,
 and the child processes "Open in another backend…" starts. It knows no
@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 
 TICK = 0.1  # seconds; a Session event reaches every page within one
 #: How long the shutdown waits for a drained queue's dashboard render still
-#: running (1.6 s over TRANSFORM's work dir with --report sidecars).
+#: running (1.6 s over a large real library's work dir with --report
+#: sidecars).
 SHUTDOWN_WAIT = 5.0
 
 
@@ -79,7 +80,7 @@ class LoadState:
         return self.phase in ("scan", "results")
 
     def text(self) -> str:
-        """The progress line (brief §3.8: "scanning library… N tests found")."""
+        """The progress line ("scanning library… N tests found")."""
         if self.phase == "scan":
             if self.cached:
                 return f"library scan from cache: {plural(self.total, 'test')}"
@@ -144,7 +145,7 @@ class Shell:
     # -- the open ------------------------------------------------------------
 
     def open_async(self, backend: str | None = None) -> None:
-        """Open the project — or reopen it on `backend` (brief §3.6) — on a
+        """Open the project — or reopen it on `backend` — on a
         thread; the pages follow the `loading` events and the `opened`
         event this shell adds at the end. Refused while an open runs.
         `Session.open` itself refuses while edits are pending or the queue
@@ -255,8 +256,7 @@ class Shell:
                 if not load.in_progress:
                     # A reload after the open — a store write's — announces
                     # the same events, and no `done` follows them: read
-                    # here, it left the shell "still loading" for good (the
-                    # Task 5 review's probe).
+                    # here, it left the shell "still loading" for good.
                     return
                 load.phase = "results"
                 load.done, load.total = int(event["done"]), int(event["total"])
@@ -288,7 +288,7 @@ class Shell:
         `available`'s answer for `view`, in registration order. An
         `available` that raises answers with its exception: read on every
         refresh of every page, it must never break the page (a plug-in
-        that raised here blanked the Suite page — the Task 7 review)."""
+        that raised here blanked the Suite page)."""
         placed: list[tuple[Capability, bool | str]] = []
         for cap in registered_capabilities():
             if placement not in cap.placements:
@@ -353,7 +353,7 @@ class Shell:
         return None
 
     def stop_reasons(self) -> list[str]:
-        """What Stop server would lose (brief §3.3, §3.6): pending edits, and
+        """What Stop server would lose: pending edits, and
         the tests the queue still holds."""
         reasons: list[str] = []
         n = edit_count(self.session.spec.pending)
@@ -392,7 +392,7 @@ class Shell:
                 child.terminate()
 
     def spawn(self, backend: str) -> str:
-        """`Open in another backend…` (brief §3.6): a second `dstf author` on
+        """`Open in another backend…`: a second `dstf author` on
         `backend`, on a free port, from the same config — with this
         process's `--work-dir`, `--filter` and `--package` when it got them
         (decision 6: `--work-dir` means "this work dir"). The child opens its
@@ -432,8 +432,8 @@ class Shell:
         """Every page starts here: the Quasar palette and the token
         stylesheet from `reporting.theme`, in the tab's theme (`TabTheme`,
         which ``switched`` is handed to), the shell's own on top — one token
-        table for the dashboard, the report and the tool (roadmap §1
-        predicate 2; the body font is this shell's to apply)."""
+        table for the dashboard, the report and the tool (the body font is
+        this shell's to apply)."""
         theme = TabTheme(self, state, switched)
         ui.add_css(level_variables() + STYLE + QUASAR)
         return theme
@@ -515,7 +515,7 @@ def _folded(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     a step carries the running count, so the last says all the run does.
     One by one, every step synced an open Test page in full and re-read
     `status.json` in its header: one tick over 3,269 queued steps
-    (TRANSFORM's .mo count, a TRANSFORM-sized `status.json`, one Test page)
+    (a large real library's .mo count, its `status.json`, one Test page)
     held the UI loop about 13 s, and 0.02 s folded."""
     out: list[dict[str, Any]] = []
     for event in events:

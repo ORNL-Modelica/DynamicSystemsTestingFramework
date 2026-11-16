@@ -165,7 +165,7 @@ class KOfNCombinator(Combinator):
 
 
 class WeightedCombinator(Combinator):
-    """Weighted sum of child scores against a threshold (4.E).
+    """Weighted sum of child scores against a threshold.
 
     Pass condition is direction-aware:
       - ``direction="less"`` (default — NRMSE-like; lower is better):
