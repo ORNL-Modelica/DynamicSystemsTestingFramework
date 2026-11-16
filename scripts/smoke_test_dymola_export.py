@@ -14,8 +14,8 @@ success, non-zero on any failure.
 
 Usage:
     python scripts/smoke_test_dymola_export.py \\
-        --library D:/Modelica/TRANSFORM-UnitTests \\
-        --model TRANSFORM.Examples.SomeSimpleModel \\
+        [--library D:/path/to/MyLibrary] \\
+        [--model Modelica.Blocks.Examples.PID_Controller] \\
         [--out C:/tmp/fmu_smoke]
 
 If --library and --model are omitted, the script tries Modelica Standard
