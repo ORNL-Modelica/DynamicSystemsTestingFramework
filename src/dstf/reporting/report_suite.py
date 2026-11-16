@@ -24,7 +24,7 @@ from ..storage.baseline import ReferenceFile
 from ..storage.names import baseline_stem
 from .context_builder import _build_template_context
 from .rows import summary_fields
-from .status import classify_with_class, refusal
+from .status import refusal
 from .tree_rows import card_paths, criteria_rows
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -633,9 +633,6 @@ def generate_comparison_plots(
     page_context = _json_sanitize(page_context)
 
     # Render interactive HTML (Plotly, inline figure dicts).
-    # Stage 5: the static ``comparison.html`` path was retired. The index
-    # page linked only to interactive.html; the per-variable PNGs still
-    # render next to it for direct reference.
     interactive_path = plot_dir / "interactive.html"
     _render_template("interactive.html", page_context, interactive_path, theme)
 
@@ -818,12 +815,6 @@ def _build_per_test_args(
     # sibling-backend companions (visual-only pre-accept cross-check).
     overlays = load_overlays(store, model_id, config=config)
 
-    # One classifier for every surface (reporting.status). The private copy
-    # that used to live here existed only because simulate_only was readable
-    # from the TestModel and not from the comparison; TestComparison carries
-    # it now, so the carve-out is gone (D117 closed).
-    status_text, status_class = classify_with_class(comp)
-
     test_dir = config.work_dir / test_key if test_key else None
 
     # The page's plots, through the one helper (it derives them from the
@@ -859,9 +850,6 @@ def _build_per_test_args(
         "ref_file": ref_file,
         "warnings": comp.warnings,
         "report_id": report_id,
-        "test_key": test_key,
-        "status_text": status_text,
-        "status_class": status_class,
         "ref_id": baseline_stem(model_id) if comp.baseline_path else stored,
         "last_run_at": last_run_at,
         "comparison": comp,
@@ -878,13 +866,13 @@ def _build_per_test_args(
     }
 
 
-def _render_one_test(args: dict, report_dir: Path) -> dict:
-    """Render a single test's report. Returns the index entry."""
+def _render_one_test(args: dict, report_dir: Path) -> float:
+    """Render a single test's report. Returns the seconds it took."""
     import time as _time
 
     t0 = _time.monotonic()
     plot_dir = report_dir / args["report_id"]
-    html_path = generate_comparison_plots(
+    generate_comparison_plots(
         model_id=args["model_id"],
         ref_data=args["ref_data"],
         result=args["result"],
@@ -908,17 +896,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         extra_series=args.get("extra_series"),
         diagnostics=args["diagnostics"],
     )
-    render_elapsed = _time.monotonic() - t0
-    return {
-        "model_id": args["model_id"],
-        "status_text": args["status_text"],
-        "status_class": args["status_class"],
-        "ref_id": args["ref_id"],
-        "test_key": args["test_key"],
-        "last_run_at": args["last_run_at"],
-        "report_path": f"{args['report_id']}/interactive.html" if html_path else None,
-        "_render_elapsed": render_elapsed,
-    }
+    return _time.monotonic() - t0
 
 
 def _read_run_metadata(work_dir: Path) -> dict | None:
@@ -940,16 +918,15 @@ def generate_report_suite(
     tests: list,
     store,
     config,
-) -> Path:
+) -> None:
     """Generate per-test comparison reports.
 
     Per-test report rendering runs on a thread pool sized by config.parallel.
     The hot work is Plotly trace JSON serialization + comparison_data.json
     dump + decimation; numpy/json release the GIL well enough that threads
     give a meaningful speedup without the pickling cost of a process pool.
-
-    Returns the path to the unified dashboard HTML file (rendered separately
-    by ``dashboard_render.render_final``).
+    The suite's dashboard is rendered separately, by
+    ``dashboard_render.render_final``.
     """
     import time as _time
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1015,7 +992,7 @@ def generate_report_suite(
         args["run_metadata"] = run_metadata
 
     n_workers = max(1, min(getattr(config, "parallel", 1) or 1, len(work)))
-    index_tests: list[dict] = []
+    elapsed: list[float] = []
     total_reports = len(work)
 
     from ..backends.base import _print_progress
@@ -1024,12 +1001,10 @@ def generate_report_suite(
 
     if n_workers <= 1 or len(work) <= 1:
         for i, args in enumerate(work, 1):
-            index_tests.append(_render_one_test(args, report_dir))
+            elapsed.append(_render_one_test(args, report_dir))
             short = args["model_id"].rsplit(".", 1)[-1]
             _print_progress(i, total_reports, short, "ok")
     else:
-        # Preserve original test order in the index
-        results_by_model: dict[str, dict] = {}
         completed = 0
         with ThreadPoolExecutor(
             max_workers=n_workers, thread_name_prefix="report"
@@ -1039,21 +1014,13 @@ def generate_report_suite(
                 for args in work
             }
             for future in as_completed(futures):
-                entry = future.result()
-                results_by_model[entry["model_id"]] = entry
+                elapsed.append(future.result())
                 completed += 1
-                short = entry["model_id"].rsplit(".", 1)[-1]
+                short = futures[future].rsplit(".", 1)[-1]
                 _print_progress(completed, total_reports, short, "ok")
-        index_tests = [results_by_model[args["model_id"]] for args in work]
-
-    # Per-test interactive.html + comparison_data.json sidecars are
-    # written above. The unified work_dir/dashboard.html is rendered
-    # by cli._generate_report_suite via dashboard_render.render_final;
-    # the standalone index.html that used to live here is retired.
 
     # Phase timing — exposes whether parallelism is helping
     wall = _time.monotonic() - report_wall_start
-    elapsed = [t.get("_render_elapsed", 0.0) for t in index_tests]
     total_work = sum(elapsed)
     if elapsed:
         slowest = max(elapsed)
@@ -1063,7 +1030,6 @@ def generate_report_suite(
             f"Report phase: {wall:.0f}s wall, {total_work:.0f}s total work, "
             f"{speedup:.1f}x parallel speedup (avg {avg:.1f}s/test, slowest {slowest:.1f}s)"
         )
-    return config.work_dir / "dashboard.html"
 
 
 def open_in_browser(path: Path, *, launch: bool = True) -> None:

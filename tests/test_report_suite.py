@@ -2415,11 +2415,11 @@ class TestBothTiersDrawTheSamePlots:
             {model: {"test_key": keys.get(model), "last_run_at": None}},
             backend_cls=type(project.backend),
         )
-        entry = _render_one_test(args, out)
+        _render_one_test(args, out)
         return json.loads(
-            (
-                out / Path(entry["report_path"]).parent / "comparison_data.json"
-            ).read_text(encoding="utf-8")
+            (out / args["report_id"] / "comparison_data.json").read_text(
+                encoding="utf-8"
+            )
         )
 
     def _report(self, session, model, out):

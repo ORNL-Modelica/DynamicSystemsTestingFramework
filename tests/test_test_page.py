@@ -2892,8 +2892,8 @@ async def test_both_tiers_lead_a_plots_rows_with_the_same_crumbs(tmp_path):
         backend_cls=type(project.backend),
     )
     out = tmp_path / "report"
-    entry = _render_one_test(args, out)
-    html = (out / entry["report_path"]).read_text(encoding="utf-8")
+    _render_one_test(args, out)
+    html = (out / args["report_id"] / "interactive.html").read_text(encoding="utf-8")
     doc = _parse(html)
     report = []
     for i in range(len(_re.findall(r'id="variable-section-\d+"', html))):
