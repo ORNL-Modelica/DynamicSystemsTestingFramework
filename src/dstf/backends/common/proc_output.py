@@ -11,7 +11,8 @@ def decode_output(data: bytes | str | None) -> str:
     ``text=True``. Handlers that did ``(exc.stdout or "") + "..."`` or
     ``write_text(exc.stdout)`` raised TypeError inside the timeout path —
     aborting the whole run precisely when a test timed out after printing
-    output. The subprocess backends' timeout handlers decode through it.
+    output. The JSON-driver (Python, Julia) and batch OpenModelica timeout
+    handlers decode through it.
     """
     if data is None:
         return ""

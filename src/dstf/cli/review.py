@@ -193,7 +193,7 @@ def _interactive_review(
 
                 # The one accept path: `accept_run_results` refuses here
                 # exactly what `compare --accept` refuses — a poisoned
-                # trajectory (leftover B: it must not crash the loop) and a
+                # trajectory (it must not crash the loop) and a
                 # test the last run left pending — and stores no baseline for
                 # a simulate-only test, which it names in a note: neither
                 # stored nor refused.

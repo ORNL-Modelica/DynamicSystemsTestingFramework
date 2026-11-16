@@ -1409,8 +1409,7 @@ def _add_run(tree: _Tree, top) -> None:
     _offer_reports(node)
     # Review-then-accept (-i) and accept-everything (--accept) are mutually
     # exclusive intents — make combining them a hard argparse error instead of
-    # silently letting
-    # --accept win and skipping the review the user asked for.
+    # silently letting --accept win and skipping the review the user asked for.
     accept_or_review = node.add_mutually_exclusive_group()
     accept_or_review.add_argument(
         "-i",

@@ -53,7 +53,7 @@ QUEUE_CSS = """
 .dstf-indicator:hover { text-decoration: underline; }
 .dstf-indicator-running { color: var(--dstf-running-dark); font-weight: 600; }
 .dstf-indicator-failed { color: var(--dstf-fail-dark); font-weight: 600; }
-/* The table and the panel side by side (the Main artboard); under 1200 px,
+/* The table and the panel side by side; under 1200 px,
    and while the queue is empty, the panel is a line above the table. */
 .dstf-suite-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px;
   width: 100%; }

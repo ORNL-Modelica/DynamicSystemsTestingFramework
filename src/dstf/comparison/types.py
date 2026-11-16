@@ -180,8 +180,9 @@ class TestComparison:
     ran: bool = True
     # MetricTree root for this test: the evaluated ``metrics`` tree when the
     # spec has one, else the implicit flat-AND over per-variable
-    # comparisons; when set, ``passed`` is its root's verdict. None when no
-    # comparison ran (sim failure, no baseline).
+    # comparisons; a simulate-only test gets one ``simulate-only`` leaf, also
+    # when its spec has a tree. When set, ``passed`` is its root's verdict.
+    # None when no comparison ran (sim failure, no baseline).
     metric_tree: MetricResult | None = None
     #: Where the tolerance a leaf without its own was scored with came from:
     #: ``"test"`` (the spec's ``comparison.tolerance``), ``"reference"`` (the

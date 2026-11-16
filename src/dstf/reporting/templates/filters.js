@@ -1,4 +1,4 @@
-// The typed column filters: one module the dashboard and (S2) the tool's
+// The typed column filters: one module the dashboard and the tool's
 // Suite table both load, so a filter means the same thing on each.
 //
 // DstfFilters.compile(kind, query, {regex, case}) returns null for an empty

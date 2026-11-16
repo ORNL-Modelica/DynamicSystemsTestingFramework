@@ -146,8 +146,8 @@ def _list_fields(name: str) -> list[tuple[str, Columns]]:
 
 def _field_label(name: str, field: str) -> str:
     """One table's heading: the Config field's own label, else its name.
-    Not `{path} · {metric} · {field}` — every word of that the criterion's
-    row says directly above the editor."""
+    Not `{path} · {metric} · {field}`: the criterion's row directly above
+    the editor already says each of those words."""
     desc = metric(name)
     if desc is None or not dataclasses.is_dataclass(desc.config_cls):
         return field

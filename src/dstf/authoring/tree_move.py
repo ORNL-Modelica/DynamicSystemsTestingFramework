@@ -467,7 +467,7 @@ def move_destinations(
     return rows
 
 
-#: A drag's zones on a row (D1 as amended by the owner): its top half is
+#: A drag's zones on a row (the owner's ruling): its top half is
 #: before it, its bottom half onto it — no "after": every pixel line means
 #: one place. To put a node last at an outer level, drop onto that outer
 #: combinator. The root has only "onto": nothing sits beside it.

@@ -431,8 +431,9 @@ def _parse_experiment(text: str, source: object = "") -> ExperimentInfo | None:
     """Extract experiment() annotation parameters.
 
     Scans comment/string-stripped text (a ``// experiment(StopTime=5)``
-    comment must not shadow the real annotation) but recovers string values (``__Dymola_Algorithm="..."``)
-    from the ORIGINAL text via the offset-preserving stripper.
+    comment must not shadow the real annotation) but recovers string values
+    (``__Dymola_Algorithm="..."``) from the ORIGINAL text via the
+    offset-preserving stripper.
     """
     stripped = _strip_modelica_literals(text)
     span = _find_experiment_span(stripped)

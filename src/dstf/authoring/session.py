@@ -1549,7 +1549,7 @@ class Session:
                 for op in ops
                 if op.model_id == model_id
             ]
-        # Convention 8: an edit that lands on the path the last pending op
+        # The collapse rule: an edit that lands on the path the last pending op
         # wrote supersedes it, so the pending count and the envelope carry
         # one op, never a keystroke log (the drawer shows the entry's diff
         # either way): a replace after an add or a replace of the same path

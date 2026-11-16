@@ -60,7 +60,7 @@ _AGAIN = "\u200b"
 
 #: The drag, drawn in the browser — only the drag's start and the drop
 #: reach the server. A row's top half is BEFORE it, its bottom half ONTO
-#: it (the owner's ruling, D1 as amended); the root has only onto. The map
+#: it (the owner's ruling); the root has only onto. The map
 #: of each row's zones (`Panel.movable`'s ``zones``) arrives once per drag
 #: (`TreeCard._drag_start`) and is emptied at every start, so a slow reply
 #: never draws one drag with the last one's map; until it has arrived a
@@ -88,9 +88,9 @@ const say = (rows, why) => {
   if (why) { line.dataset.why = why; line.classList.add('dstf-line-why'); }
   else { delete line.dataset.why; line.classList.remove('dstf-line-why'); }
 };
-//: The drag resting on a folded group (U5, Q10): 700 ms over its row
+//: The drag resting on a folded group: 700 ms over its row
 //: unfolds it, as its chevron's click would; leaving the row, the drop
-//: and the drag's end cancel it (E6).
+//: and the drag's end cancel it.
 const unhover = () => { if (D.hover) { clearTimeout(D.hover.t); D.hover = null; } };
 const hover = (row) => {
   const at = row && row.dataset.folded === '1' ? row : null;

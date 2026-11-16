@@ -13,7 +13,7 @@ Parses the JSON shape into typed dataclasses without evaluating anything:
 A spec tree is the static description of *what to score*. The evaluator
 (``tree_eval.py``) walks it together with simulation results to produce
 evaluated ``MetricResult`` trees (see ``metric_tree.py``); this module
-only parses and validates it.
+parses, validates, walks and serializes it — it never scores.
 
 Validation is hand-rolled (jsonschema would be heavier than warranted).
 Errors carry the JSON path where the problem was found so users can

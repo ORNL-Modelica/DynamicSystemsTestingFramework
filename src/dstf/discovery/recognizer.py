@@ -118,9 +118,11 @@ class Recognizer(ABC):
         return True
 
 
-# Registration-ordered list. The bundled recognizer registers first on import;
-# user-provided recognizers come after, and discovery's per-model merge
-# applies later writers as overrides — bundled defaults, user values win.
+# Registration-ordered list. The bundled recognizer registers first on import,
+# a plug-in's after it. A project's testing.json recognizers live on Config,
+# not here, and discovery applies them after this registry's; its per-model
+# merge applies later writers as overrides — bundled defaults, user values
+# win.
 _REGISTRY: list[Recognizer] = []
 
 

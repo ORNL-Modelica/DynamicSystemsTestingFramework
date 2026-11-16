@@ -104,8 +104,9 @@ def _margin(v: np.ndarray) -> float:
     """5% of the finite data's span, and at least `SEED_MARGIN_FLOOR` of its
     magnitude."""
     lo, hi, span = _span(v)
-    # OilWater_PTHX's `STHX.tube.mediums[2].h`: seeded from a 7-digit
-    # reference as [130450.58, 130451.02], its float32 result reached 130451.03125.
+    # A large library's heat-exchanger test, the `h` of a medium array
+    # element: seeded from a 7-digit reference as [130450.58, 130451.02],
+    # its float32 result reached 130451.03125.
     return max(SEED_MARGIN * span, SEED_MARGIN_FLOOR * max(abs(lo), abs(hi)))
 
 
