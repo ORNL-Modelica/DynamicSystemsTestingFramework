@@ -50,9 +50,11 @@ Forward work: cross-backend verification beyond the Dymola→FMPy chain (each ne
 
 ## Where the code is
 
-The file map is CLAUDE.md's "Project Structure": one line per module, with
-the "the ONE place X" notes beside the modules that own a rule. It is the
-only file listing; this document says how the parts fit.
+The file map is CLAUDE.md's "Project Structure": a line per package or
+group of modules, with the "the ONE place X" notes beside the modules that
+own a rule. It names what a reader needs to find a rule, not every file
+(`git ls-files src/dstf` is the full list); this document says how the
+parts fit.
 
 New code goes where its layer keeps its kind: a backend's tool-specific code
 under `backends/<name>/`; a built-in metric's mode and typed config in
