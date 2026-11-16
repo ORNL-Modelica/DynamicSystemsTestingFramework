@@ -44,6 +44,9 @@ this file says when they do.
   fail: a failing criterion inside a group that passed (under an `or`
   another child of which passed) is no longer listed, as `dstf summary`
   already read it. Criteria under `warn` are still listed as advisory.
+- `testing.json`: a recognizer whose `applies_to` holds anything other than
+  `"modelica"` is refused when the file loads, with a sentence naming the
+  key and the one value it takes; before, it loaded and never ran.
 
 ### Fixed
 

@@ -129,9 +129,10 @@ RECOGNIZER: dict[str, Setting] = {
         "about the recognizer names it.",
     ),
     "applies_to": Setting(
-        _STRINGS,
+        {"type": "array", "items": {"type": "string", "enum": ["modelica"]}},
         ["modelica"],
-        "The source_type values the recognizer is run for.",
+        'The source types the recognizer is run for: "modelica", the only '
+        "one — a recognizer reads Modelica files. Any other value is refused.",
     ),
     "paths_include": Setting(
         _STRINGS,
