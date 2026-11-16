@@ -40,10 +40,13 @@ this file says when they do.
   tests only in fix, not drawn: …`); before, a test the branch added was
   never mentioned. Its lines name a test by its full model id where two
   tests share a short name.
-- The console and the JUnit file list only the criteria that made a test
-  fail: a failing criterion inside a group that passed (under an `or`
-  another child of which passed) is no longer listed, as `dstf summary`
-  already read it. Criteria under `warn` are still listed as advisory.
+- The console, the JUnit file and `dstf run -i` list only the criteria that
+  made a test fail: a failing criterion inside a group that passed (under
+  an `or` another child of which passed) is no longer listed, as `dstf
+  summary` already read it. `dstf run -i` still counts it with the failures
+  and says so, so its `Criteria:` line adds up (`1/3 passed, 2 failed (1
+  inside a group that passed)`). Criteria under `warn` are still listed as
+  advisory.
 - `testing.json`: a recognizer whose `applies_to` holds anything other than
   `"modelica"` is refused when the file loads, with a sentence naming the
   key and the one value it takes; before, it loaded and never ran.
@@ -57,8 +60,10 @@ this file says when they do.
   run ends; a long suite collected one per restarted worker.
 - `dstf author`: the Tests drawer says what the Suite's table says of each
   test — RUNNING, QUEUED or CANCELLED while the queue holds it or stopped
-  it, where it read NOT RUN or the old verdict — and its pills are the
-  Suite's.
+  it, where it read NOT RUN or the old verdict; SCORING where it read `…`;
+  SIM_FAIL for a scoring failure, with the Suite's message as the badge's
+  tooltip — and its pills are the Suite's. The Test page's badge beside
+  the test name says the same word.
 - `dstf baseline plot`, with more changed revisions than it draws, ranks
   them as `baseline diff` ranks a change: a re-save that only rounds the
   stored numbers counts as no move, and no longer keeps its place over a
