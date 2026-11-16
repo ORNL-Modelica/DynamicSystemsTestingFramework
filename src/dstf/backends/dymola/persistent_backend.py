@@ -194,7 +194,7 @@ def _classify_translation_error(log_path: Path) -> str:
     this helper extracts the most actionable summary line for the
     dashboard / per-test-report ``error_message`` field. Falls back to
     the generic "Translation failed" for unrecognized patterns. Pattern
-    list grows organically — when a TRANSFORM run on a new platform
+    list grows organically — when a run on a new platform
     surfaces a recurring failure category, add a clause here so users
     don't have to crack open the log file just to read the headline.
     """
@@ -226,7 +226,7 @@ class DymolaWorker(Worker):
     exec_thread_prefix = "dym"
     # Give Dymola a real chance to flush its open dslog.txt handle before
     # psutil escalates to SIGKILL — diagnostic loss on timeout was a real
-    # reported pain point on TRANSFORM/Linux.
+    # reported pain point on Linux.
     timeout_kill_grace = 5.0
 
     def __init__(
@@ -314,7 +314,7 @@ class DymolaWorker(Worker):
         wrapped on the instance before ``__init__`` runs.
 
         Should that step ever move, the PID is still read once the
-        constructor returns, as it used to be: the kill is then late for a
+        constructor returns as well: the kill is then late for a
         start given up mid-launch, and best-effort without the attribute.
         """
         interface = self._DI.__new__(self._DI)
@@ -409,7 +409,7 @@ class DymolaWorker(Worker):
             dymola.cd(str(test_dir))
             dymola.clearlog()
 
-            # Phase 1: translate (may reuse cached translation — nearly free in that case)
+            # Step 1: translate (may reuse cached translation — nearly free in that case)
             if progress is not None:
                 progress.on_phase(test_key, "translating")
             t_trans_start = time.monotonic()
@@ -478,7 +478,7 @@ class DymolaWorker(Worker):
                     translation_wall=translation_wall,
                 )
 
-            # Phase 2: simulate (uses cached translation)
+            # Step 2: simulate (uses cached translation)
             if progress is not None:
                 progress.on_phase(test_key, "simulating")
             call_kwargs: dict = {
@@ -500,7 +500,7 @@ class DymolaWorker(Worker):
             _ = dymola.simulateModel(test.model_id, **call_kwargs)
             sim_wall = time.monotonic() - t_sim_start
 
-            # Phase 3: finalize (savelog)
+            # Step 3: finalize (savelog)
             if progress is not None:
                 progress.on_phase(test_key, "finalizing")
             dymola.savelog(str(test_dir / "translation_log.txt"))
@@ -513,7 +513,7 @@ class DymolaWorker(Worker):
             # ID mismatched with the prior savelog's response, which
             # poisons the worker for every subsequent test ("Mismatch
             # request/response ID in JSON-RPC call" cascade observed on
-            # TRANSFORM/Linux). Translation-log preservation on this path
+            # Linux). Translation-log preservation on this path
             # would require either a connection-health probe before the
             # savelog attempt or splitting the RPC client to discard
             # in-flight state on exception — both bigger than this branch
@@ -949,10 +949,10 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         try:
             return worker.export_fmu(test, output_dir)
         finally:
-            # review 2026-07-06 (finding 76): use the worker's guarded close()
-            # (graceful close + psutil hard-kill of tracked PIDs), not
-            # dymola.close() — a hung or raising interface would otherwise
-            # leak the one-shot Dymola process and its license seat.
+            # Use the worker's guarded close() (graceful close + psutil
+            # hard-kill of tracked PIDs), not dymola.close() — a hung or
+            # raising interface would otherwise leak the one-shot Dymola
+            # process and its license seat.
             try:
                 worker.close()
             except Exception:

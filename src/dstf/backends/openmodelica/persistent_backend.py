@@ -6,9 +6,9 @@ test driven by a generated ``simulate.mos``), this backend keeps N long-lived
 + the library once and then pulls tests off a shared queue.
 
 Benefits:
-  - MSL + library load paid once per worker (major win for TRANSFORM —
-    per-test compile was ~50–100s in the 2026-04-22 sweep; amortizing
-    library load gives a 5–10× wall-time cut)
+  - MSL + library load paid once per worker (a major win for a large
+    library — per-test compile was ~50–100s in one real library's sweep;
+    amortizing library load gives a 5–10× wall-time cut)
   - Per-test granularity: start/finish events fire as each test transitions
   - Natural work-stealing: whichever worker finishes first grabs the next test
   - Per-test timeout isolation: a hung test kills one worker, not the batch
@@ -296,7 +296,7 @@ def _resolve_session_pid(session) -> int | None:
     This PID is the watchdog's only kill target: without it a timeout
     leaves omc (and the compiled model binary under it) running for the
     rest of the machine's day. Two probes, because the session's API is
-    version-dependent — OMPython used to expose ``getpid()`` and the
+    version-dependent — some OMPython versions expose ``getpid()`` and the
     build in use here does not, keeping its ``subprocess.Popen`` at
     ``omc_process._omc_process`` instead. Both are private-ish, so every
     step is guarded and the caller warns when both come up empty.
@@ -377,13 +377,13 @@ class OpenModelicaWorker(Worker):
         ``setCommandLineOptions`` → dep loads (MSL auto-injected) →
         library load → user setup commands.
         """
-        # review 2026-07-06 (finding 26): OMCSessionZMQ() resolves omc via
-        # OPENMODELICAHOME / PATH and ignores the configured omc path that
-        # batch mode honors — silently running a different omc version
-        # against the same baseline partition. OMPython exposes no omc-path
-        # argument, so when a specific path IS configured we derive
-        # OPENMODELICAHOME from it (<home>/bin/omc → <home>) before the
-        # session spawns. Defensive: only acts on an explicit, existing path.
+        # OMCSessionZMQ() resolves omc via OPENMODELICAHOME / PATH and ignores
+        # the configured omc path that batch mode honors — silently running a
+        # different omc version against the same baseline partition. OMPython
+        # exposes no omc-path argument, so when a specific path IS configured
+        # we derive OPENMODELICAHOME from it (<home>/bin/omc → <home>) before
+        # the session spawns. Defensive: only acts on an explicit, existing
+        # path.
         configured = getattr(self.config, "backend_path", None)
         if configured:
             omc_path = Path(configured).expanduser()

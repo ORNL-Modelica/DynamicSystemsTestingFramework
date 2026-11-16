@@ -112,9 +112,9 @@ class FmpyBackend(Backend):
     """
 
     # Deliberately empty:
-    #   PERSISTENT_WORKERS — review 2026-07-06 (finding 28): the flag was
-    #     aspirational (no persistent FMPy backend exists) and tripped the
-    #     repaired capability-honesty check. Re-add when one actually ships.
+    #   PERSISTENT_WORKERS — no persistent FMPy backend exists, and the
+    #     capability-honesty check in ``register`` refuses the flag without
+    #     one. Add it with that backend.
     #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
     capabilities: frozenset[Capability] = frozenset()
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
@@ -360,17 +360,17 @@ class FmpyBackend(Backend):
                     elapsed=elapsed,
                     error_message=msg,
                     sim_wall=elapsed,
-                    # review 2026-07-06 (finding 73): without this flag the
-                    # summary counted the timeout as a plain failure while
-                    # the dashboard (progress) showed timed_out — disagreeing.
+                    # Without this flag the summary counted the timeout as a
+                    # plain failure while the dashboard (progress) showed
+                    # timed_out — disagreeing.
                     timed_out=True,
                 )
             finally:
                 executor.shutdown(wait=False)
 
-            # review 2026-07-06 (finding 73): save INSIDE the try so an
-            # OSError (disk full, permissions) fails this one test via the
-            # handler below instead of propagating and aborting the run.
+            # Save INSIDE the try so an OSError (disk full, permissions) fails
+            # this one test via the handler below instead of propagating and
+            # aborting the run.
             _save_result(test_dir / self.RESULT_FILENAME, result)
 
         except Exception as exc:  # FMPy raises various exception types

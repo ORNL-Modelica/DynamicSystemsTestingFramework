@@ -89,10 +89,10 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
         )
     if (
         Capability.PERSISTENT_WORKERS in caps
-        # review 2026-07-06 (finding 28): classmethods must be compared via
-        # __func__ — `cls.persistent_backend_cls is Backend.
-        # persistent_backend_cls` compares per-access bound-method wrappers
-        # and is always False, which left this check permanently inert.
+        # Classmethods must be compared via __func__ —
+        # `cls.persistent_backend_cls is Backend.persistent_backend_cls`
+        # compares per-access bound-method wrappers and is always False, which
+        # would leave this check permanently inert.
         and cls.persistent_backend_cls.__func__
         is Backend.persistent_backend_cls.__func__
     ):

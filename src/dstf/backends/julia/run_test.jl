@@ -25,10 +25,10 @@ const STOP_TIME   = parse(Float64, ARGS[2])
 const TOLERANCE   = parse(Float64, ARGS[3])
 const RESULT_PATH = ARGS[4]
 
-# review 2026-07-06 (finding 75): the failure JSON is hand-built (JSON3 may
-# not have loaded when the failure happens). Julia's repr()-style escaping
-# is NOT JSON (`\$` is invalid) — real error detail was lost to parse
-# errors. Minimal manual JSON string escaper instead.
+# The failure JSON is hand-built (JSON3 may not have loaded when the failure
+# happens). Julia's repr()-style escaping is NOT JSON (`\$` is invalid) — real
+# error detail would be lost to parse errors. Minimal manual JSON string escaper
+# instead.
 function json_escape(s::AbstractString)
     buf = IOBuffer()
     for c in s
@@ -78,10 +78,10 @@ try
     prob = ModelingToolkit.ODEProblem(nt.sys, u0, (0.0, STOP_TIME), ps)
     sol = OrdinaryDiffEq.solve(prob, OrdinaryDiffEq.Tsit5(); reltol=TOLERANCE)
 
-    # review 2026-07-06 (finding 4): a diverged / unstable / maxiters-
-    # truncated solve must not be written as success — with --accept the
-    # truncated trajectory would become the regression baseline. Check the
-    # retcode AND that integration actually reached stop_time.
+    # A diverged / unstable / maxiters-truncated solve must not be written as
+    # success — with --accept the truncated trajectory would become the
+    # regression baseline. Check the retcode AND that integration actually
+    # reached stop_time.
     if !OrdinaryDiffEq.SciMLBase.successful_retcode(sol)
         error("solver did not succeed: retcode=" * string(sol.retcode))
     end

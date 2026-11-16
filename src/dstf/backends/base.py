@@ -119,7 +119,7 @@ def _print_run_header(
     batch loop, persistent template, batch Dymola's batched-mos override).
     *suffix_phrase* differentiates modes — empty for the default loop,
     ``"via persistent <Backend> workers"`` for persistent backends, or
-    ``"in M batch(es) of up to K"`` for the legacy Dymola batch path.
+    ``"in M batch(es) of up to K"`` for the Dymola batch path.
 
     *timeout_per_test* toggles the units in the timeout label: the default
     batch loop applies one timeout per test, while batch Dymola and the

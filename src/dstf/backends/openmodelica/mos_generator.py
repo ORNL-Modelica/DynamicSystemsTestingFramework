@@ -36,7 +36,7 @@ def classify_dependency(entry: str) -> tuple[str, str]:
     absolute_path) for path-like entries (resolves to a package.mo).
 
     Bare names reach this function unresolved because Config's dependency
-    absolutization skips them — review 2026-07-06 finding 17: absolutizing
+    absolutization skips them — absolutizing
     "Modelica" produced ``loadFile()`` on a nonexistent path and suppressed
     the MSL auto-injection.
     """

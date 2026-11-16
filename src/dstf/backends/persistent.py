@@ -525,10 +525,10 @@ class Worker(ABC):
         exc = box.get("exc")
         if exc is None:
             return
-        # review 2026-07-06 (finding 24): a worker that failed mid-start may
-        # already have spawned its subprocess; close it so the process (and
-        # its license seat) doesn't leak. close() is contractually
-        # idempotent + safe on never-started workers.
+        # A worker that failed mid-start may already have spawned its
+        # subprocess; close it so the process (and its license seat) doesn't
+        # leak. close() is contractually idempotent + safe on never-started
+        # workers.
         self._close_quietly()
         if not isinstance(exc, Exception):
             raise exc
@@ -1284,12 +1284,11 @@ class WorkerRunner(ItemRunner):
                 before=before,
             )
         except Exception as exc:
-            # review 2026-07-06 (finding 21): the Worker ABC contract permits
-            # raises for worker-level catastrophes. A raise must be recorded —
-            # not kill the dispatch thread and silently drop the in-flight
-            # test (plus, at --parallel 1, the whole remaining queue). The
-            # next test's is_alive()/restart logic handles the possibly-dead
-            # worker.
+            # The Worker ABC contract permits raises for worker-level
+            # catastrophes. A raise must be recorded — not kill the dispatch
+            # thread and silently drop the in-flight test (plus, at --parallel
+            # 1, the whole remaining queue). The next test's is_alive()/restart
+            # logic handles the possibly-dead worker.
             logger.exception(
                 "Worker %s raised while running %s",
                 w.worker_id,
@@ -1506,7 +1505,7 @@ class PersistentBackendBase(Backend):
     #: A restart fails for transient reasons far more often than permanent
     #: ones — a licence server that hasn't yet released the seat of the
     #: process we just killed, a port still in TIME_WAIT — and at
-    #: ``--parallel 1`` a single such blip used to retire the only dispatch
+    #: ``--parallel 1`` a single such blip would retire the only dispatch
     #: thread and fail-mark the entire remaining queue. One retry after a
     #: short pause covers the transient case without turning a genuinely
     #: broken backend into a long stall.
@@ -1671,10 +1670,10 @@ class PersistentBackendBase(Backend):
 
         live_workers, start_failures = self._start_workers_parallel(workers)
         if not live_workers:
-            # review 2026-07-06 (finding 24): close every worker before the
-            # raise — start()-failed workers already close themselves in
-            # start_within, but close() is idempotent and this guarantees
-            # no orphaned simulator process (license seat) survives the abort.
+            # Close every worker before the raise — start()-failed workers
+            # already close themselves in start_within, but close() is
+            # idempotent and this guarantees no orphaned simulator process
+            # (license seat) survives the abort.
             for w in workers:
                 try:
                     w.close()
@@ -1853,15 +1852,15 @@ class PersistentBackendBase(Backend):
                 timed_out=tr.timed_out,
             )
 
-        # review 2026-07-06 (finding 20): dispatch-thread liveness registry.
-        # A worker whose restart failed permanently must NOT stay in the
-        # dispatch loop — it would tight-loop on the shared queue, instantly
-        # fail-marking tests that healthy workers could have run. Its thread
-        # exits instead — unless it is the LAST live thread, in which case it
-        # drains the queue and fail-marks the remainder so every test gets a
-        # recorded result and nothing hangs. (There is no work_queue.join()
-        # anywhere — the thread joins below are the only sync point — so an
-        # early thread exit cannot deadlock; leftover sentinels are inert.)
+        # Dispatch-thread liveness registry. A worker whose restart failed
+        # permanently must NOT stay in the dispatch loop — it would tight-loop
+        # on the shared queue, instantly fail-marking tests that healthy
+        # workers could have run. Its thread exits instead — unless it is the
+        # LAST live thread, in which case it drains the queue and fail-marks
+        # the remainder so every test gets a recorded result and nothing hangs.
+        # (There is no work_queue.join() anywhere — the thread joins below are
+        # the only sync point — so an early thread exit cannot deadlock;
+        # leftover sentinels are inert.)
         live_threads = [len(live_workers)]
         live_threads_lock = threading.Lock()
 
@@ -1902,13 +1901,13 @@ class PersistentBackendBase(Backend):
                     finally:
                         work_queue.task_done()
                     if runner.retired:
-                        # review 2026-07-06 (finding 20): the item this thread
-                        # held is fail-marked (by the runner); exit so the
-                        # remaining tests go to live workers.
+                        # The item this thread held is fail-marked (by the
+                        # runner); exit so the remaining tests go to live
+                        # workers.
                         return
             finally:
-                # review 2026-07-06 (finding 20): last thread out drains the
-                # queue so no test is left unrecorded and no consumer hangs.
+                # Last thread out drains the queue so no test is left
+                # unrecorded and no consumer hangs.
                 with live_threads_lock:
                     live_threads[0] -= 1
                     is_last = live_threads[0] == 0

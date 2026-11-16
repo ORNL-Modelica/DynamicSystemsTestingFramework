@@ -6,10 +6,10 @@ Two modes:
   via OMPython (:mod:`.persistent_backend`). Cuts wall-time for repeated-test
   runs since MSL and library loads are amortized across the whole batch.
 - Batch fallback (``--batch``): one ``omc`` subprocess per test driven by a
-  generated ``simulate.mos`` (:mod:`.backend`). Used automatically when
-  OMPython is unavailable.
+  generated ``simulate.mos`` (:mod:`.backend`). It needs no OMPython;
+  without OMPython the default path refuses and names ``--batch``.
 
-FMU export (``buildModelFMU``) is still a deferred follow-up.
+Neither mode exports FMUs (``buildModelFMU``).
 
 One-time bootstrap (per machine) to install the Modelica Standard Library:
 

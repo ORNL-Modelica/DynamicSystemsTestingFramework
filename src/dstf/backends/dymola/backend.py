@@ -426,17 +426,17 @@ class DymolaBackend(Backend):
 
         except subprocess.TimeoutExpired:
             batch_elapsed = time.monotonic() - start_time
-            # review 2026-07-06 (finding 22): dymola.exe's dymosim child
-            # inherits the pipes, so a bare kill()+communicate() blocks until
-            # dymosim exits — the timeout path itself hung. Kill the whole
-            # process tree first, then drain pipes with a bounded wait.
+            # dymola.exe's dymosim child inherits the pipes, so a bare
+            # kill()+communicate() blocks until dymosim exits — the timeout
+            # path itself hung. Kill the whole process tree first, then drain
+            # pipes with a bounded wait.
             kill_process_tree(proc.pid, name_hint="dymola")
             if proc.poll() is None:
                 # The tree kill is a no-op when psutil is missing, the name
                 # guard misses (a wrapper script's process name is not
                 # "dymola") or the walk hits AccessDenied. We own this
                 # Popen — kill it directly rather than fall into the
-                # blocking communicate() finding 22 documents.
+                # blocking communicate() described above.
                 try:
                     proc.kill()
                 except (ProcessLookupError, OSError):
@@ -451,10 +451,10 @@ class DymolaBackend(Backend):
                             stream.close()
                         except OSError:
                             pass
-            # review 2026-07-06 (finding 76): salvage tests that verifiably
-            # completed on disk before the batch deadline (Dymola runs tests
-            # sequentially — earlier tests in the batch usually finished);
-            # only tests without a readable, complete result are timed out.
+            # Salvage tests that verifiably completed on disk before the batch
+            # deadline (Dymola runs tests sequentially — earlier tests in the
+            # batch usually finished); only tests without a readable, complete
+            # result are timed out.
             results = []
             per_elapsed = batch_elapsed / len(test_items)
             for test, test_key in test_items:
@@ -553,7 +553,7 @@ class DymolaBackend(Backend):
             #   2. mat file's last time reaches the requested stop_time
             # dsres.mat existence alone is insufficient — Dymola writes
             # incrementally, so a killed/aborted sim can leave a partial file.
-            # Shared with the batch-timeout salvage path (finding 76).
+            # Shared with the batch-timeout salvage path.
             dsfinal_path = test_dir / "dsfinal.txt"
             sim_completed = False
             completion_msg: str | None = None
@@ -665,12 +665,12 @@ class DymolaBackend(Backend):
                 statistics=stats,
             )
 
-        # Phase 1: Get variable names (fast — reads only the name matrix)
+        # Step 1: Get variable names (fast — reads only the name matrix)
         # Then resolve patterns to determine which variables we actually need.
         listed = diagnostic_names(test, self.dymola_config.diagnostic_variables)
         needed_vars = compute_needed_variables(mat_path, test, listed)
 
-        # Phase 2: Load only needed variables from the .mat file
+        # Step 2: Load only needed variables from the .mat file
         mat_data = read_result_mat(mat_path, variable_names=needed_vars)
         if mat_data is None:
             return TestResult(
@@ -884,7 +884,7 @@ def _sim_completed_on_disk(
     so a killed sim leaves a partial file). Returns ``(completed, why_not)``;
     ``why_not`` is only set when artifacts exist but are short/unreadable.
     Used by both the normal batch evaluation and the batch-timeout salvage
-    path (review 2026-07-06, finding 76).
+    path.
     """
     from ..common.mat_reader import read_mat_time_extents
 

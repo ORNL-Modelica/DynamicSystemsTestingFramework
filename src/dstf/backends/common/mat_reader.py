@@ -148,7 +148,7 @@ def _read_mat4_block(f, info) -> np.ndarray:
 def _raise_if_binnormal(f, blocks, mat_path: Path) -> None:
     """Refuse binNormal-layout DSresult files.
 
-    review 2026-07-06 (finding 74): DSresult MATs come in two layouts —
+    DSresult MATs come in two layouts —
     binTrans (the Dymola/OM default; matrices stored transposed) declared in
     the Aclass matrix, and binNormal. This reader only decodes binTrans; a
     binNormal file (user-supplied .mat baseline) previously decoded as
@@ -183,9 +183,8 @@ def list_result_mat_variables(mat_path: Path) -> list[str] | None:
                 logger.error("No 'name' matrix in %s", mat_path)
                 return None
 
-            # review 2026-07-06 (finding 74): binNormal names are stored
-            # untransposed — decoding them with the binTrans transpose below
-            # yields garbage names.
+            # binNormal names are stored untransposed — decoding them with the
+            # binTrans transpose below yields garbage names.
             _raise_if_binnormal(f, blocks, mat_path)
 
             # Dymola stores names as (max_name_len, n_vars) — transpose to
@@ -202,8 +201,8 @@ def _read_tables(f, blocks, mat_path: Path):
     name, its ``dataInfo`` entry as one row ``(matrix, column, interpolation,
     protected)``, and ``data_1`` (``None`` when the file has none).
     """
-    # review 2026-07-06 (finding 74): binNormal files would decode
-    # as transposed garbage returned as success. Refuse loudly.
+    # binNormal files would decode as transposed garbage returned as success.
+    # Refuse loudly.
     _raise_if_binnormal(f, blocks, mat_path)
 
     # Dymola stores names as (max_name_len, n_vars) — transpose so
@@ -258,10 +257,9 @@ def _variable_sources(
         data_matrix_idx = int(info[0])
         col_idx = int(info[1])
         if col_idx == 0:
-            # review 2026-07-06 (finding 74): dataInfo column 0 means "not
-            # stored in a data matrix" (abscissa marker); abs(0)-1 == -1
-            # previously wrapped to the LAST row — returning the wrong
-            # variable's data under the requested name.
+            # dataInfo column 0 means "not stored in a data matrix" (abscissa
+            # marker); abs(0)-1 == -1 previously wrapped to the LAST row —
+            # returning the wrong variable's data under the requested name.
             logger.debug(
                 "Variable %s has dataInfo column 0 in %s; skipping",
                 name,
@@ -477,7 +475,7 @@ def read_mat_time_extents(mat_path: Path) -> tuple[float, float] | None:
     try:
         with open(mat_path, "rb") as f:
             scan = _scan_mat4_headers(f)
-            # review 2026-07-06 (finding 74) applies here too: in a binNormal
+            # The binNormal layout matters here too: in a binNormal
             # file data_2 is stored untransposed, so row 0 is not time — the
             # extents would be garbage. The raise lands in the handler below.
             _raise_if_binnormal(f, scan.blocks, mat_path)

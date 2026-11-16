@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Backend capabilities + dataset types (Phase 1 abstraction)
+# Backend capabilities + dataset types
 # ---------------------------------------------------------------------------
 # See docs/vision.md and docs/guides/plugin.md. Each backend declares what it
 # supports; framework features gate on these rather than on backend class.
@@ -252,7 +252,7 @@ def variable_texts(
 
     One scope for the test, not one per plot or one per scored list: five
     different scopes gave the same variable four different texts on one
-    page (the b147918 review).
+    page.
     """
     scope: dict[str, str] = {name: name for name in plot_series if name}
     scope.update({name: label for name, label in labels.items() if name})
