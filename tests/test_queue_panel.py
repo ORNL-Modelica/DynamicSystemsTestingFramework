@@ -18,7 +18,6 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.capabilities import Artifact  # noqa: E402
 from dstf.authoring.session import QueueError  # noqa: E402
 from dstf.authoring.shell.shell import TICK, Shell  # noqa: E402
 from dstf.authoring.shell.suite import SuitePage  # noqa: E402
@@ -443,23 +442,6 @@ async def test_the_panel_s_stop_workers_never_raises_into_the_page(shell):
         shell.tick()
         assert [i.model_id for i in shell.session.queue] == [A]
         assert shell.session.queue_state(A) is ItemState.RUNNING
-
-
-async def test_an_artifact_is_linked_in_the_panel(shell, tmp_path):
-    """An artifact says nothing but its `notice`: no result moved, so a
-    panel that ignored the event would never draw the link."""
-    path = tmp_path / "export.json"
-    path.write_text("{}", encoding="utf-8")
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        panel = _suite(shell, user).queue
-        assert panel.notes.visible is False
-
-        shell.session.apply(Artifact(paths=[path], label="patch"))
-        shell.tick()
-
-        assert panel.notes.visible
-        await user.should_see("patch: export.json")
 
 
 async def test_the_backend_cannot_change_while_the_queue_holds_a_test(shell):

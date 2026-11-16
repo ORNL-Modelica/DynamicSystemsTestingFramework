@@ -51,6 +51,13 @@ this file says when they do.
   `"modelica"` is refused when the file loads, with a sentence naming the
   key and the one value it takes; before, it loaded and never ran.
 
+### Removed
+
+- Plug-in API: the `BATCH_FALLBACK` capability (it changed nothing), the
+  authoring tool's `Artifact` and `OpenProject` outcomes, and the
+  `SessionView` readers no capability used (`spec_path`, `artifacts`,
+  `notices`, `rescore`, `figure`, `plot_figure`, and `project.dataset_kind`).
+
 ### Fixed
 
 - Ctrl-C stops any command with one line (`Interrupted.`) and exit code 130,

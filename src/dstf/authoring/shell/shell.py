@@ -248,11 +248,6 @@ class Shell:
         if kind == "loading":
             phase = event.get("phase")
             if phase == "scan":
-                if load.phase != "scan":
-                    # An open this shell did not start (an `OpenProject`
-                    # outcome runs `Session.open` on the UI loop): a fresh
-                    # state, so the previous project's failures do not carry.
-                    load = self.load = LoadState(phase="scan")
                 load.cached = bool(event.get("cached"))
                 load.done = int(event.get("done", 0))
                 load.total = int(event.get("total", 0))

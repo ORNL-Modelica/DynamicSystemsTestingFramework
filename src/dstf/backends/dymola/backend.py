@@ -92,7 +92,6 @@ class DymolaBackend(Backend):
     capabilities = frozenset(
         {
             Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
-            Capability.BATCH_FALLBACK,  # .mos script backend (--batch flag)
             Capability.LIVE_RESULTS,  # dymosim appends dsres.mat as it goes
         }
     )

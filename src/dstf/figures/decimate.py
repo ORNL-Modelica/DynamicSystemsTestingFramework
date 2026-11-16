@@ -25,8 +25,7 @@ def bucket_boundaries(
     """Every LTTB bucket boundary at once, for ``3 <= n_out < n_in``.
 
     Bucket ``i`` is ``[starts[i], ends[i])`` and the bucket after it — whose
-    centroid the triangle uses — is ``[ends[i], next_ends[i])``. Same floor
-    arithmetic the pre-hoist loop did, one array at a time.
+    centroid the triangle uses — is ``[ends[i], next_ends[i])``.
 
     ``lttb``'s guard leaves ``3 <= n_out < n_in``, so
     ``bucket_size = (n_in - 2) / (n_out - 2)`` is strictly above 1 and
@@ -110,22 +109,6 @@ def lttb(
         a = chosen
 
     return t[out_idx], v[out_idx]
-
-
-def decimate_pair(
-    time: list | NDArray,
-    values: list | NDArray,
-    n_out: int,
-) -> tuple[list, list]:
-    """LTTB that accepts/returns plain Python lists (template-context friendly)."""
-    if time is None or values is None:
-        return time, values
-    if not len(time) or not len(values):
-        return list(time), list(values)
-    t_out, v_out = lttb(
-        np.asarray(time, dtype=np.float64), np.asarray(values, dtype=np.float64), n_out
-    )
-    return t_out.tolist(), v_out.tolist()
 
 
 def decimate_band(

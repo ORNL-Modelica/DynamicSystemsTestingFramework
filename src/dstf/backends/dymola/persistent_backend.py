@@ -857,9 +857,7 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
     #: `_validate_capabilities` doesn't see this class (it isn't
     #: `@register`-ed — it's reached via `DymolaBackend.persistent_backend_cls`),
     #: so `tests/test_capability_gating.py` asserts the flag/override pairing.
-    #: Declared explicitly, not inherited-and-extended: this class does
-    #: persistent orchestration, so the batch class's BATCH_FALLBACK
-    #: would be a false claim here (B2 review finding 5).
+    #: Declared explicitly, not inherited-and-extended.
     #: CANCEL is the worker's: ``DymolaWorker.cancel_running`` (dymosim's
     #: ``stop`` file) with the watchdog's kill behind it.
     capabilities = frozenset(

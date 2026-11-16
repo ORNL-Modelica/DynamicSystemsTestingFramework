@@ -120,6 +120,5 @@ def test_fmpy_backend_registers_under_name():
     # FmpyBackend ships no persistent backend, and the repaired capability-
     # honesty check now rejects the unbacked flag at registration.
     assert Capability.PERSISTENT_WORKERS not in backend.capabilities
-    assert Capability.BATCH_FALLBACK not in backend.capabilities
     assert Capability.FMU_EXPORT not in backend.capabilities
     assert backend.produced_datasets == frozenset({DatasetType.TIME_SERIES})

@@ -156,7 +156,7 @@ class SuitePage:
     def handle(self, event: dict[str, Any]) -> None:
         """Every Session event, from the shell's tick. No early return: the
         panel, the actions and the rows are independent regions, and a
-        `spec` (a close, an `OpenProject`) is exactly the event after which
+        `spec` (a close, a reopen) is exactly the event after which
         the panel must not show the previous project's queue. The rows an
         event touches are collected; `flush` sends them."""
         self.header.handle(event)

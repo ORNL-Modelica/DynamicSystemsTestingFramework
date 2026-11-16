@@ -1083,9 +1083,7 @@ def workers_or_batch(tmp_path):
 
     @register("Twomode")
     class TwomodeBackend(Backend):
-        capabilities = frozenset(
-            {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS}
-        )
+        capabilities = frozenset({Capability.PERSISTENT_WORKERS})
         source_types = frozenset({"twomode"})
         binaries = ("twomodesim",)
 

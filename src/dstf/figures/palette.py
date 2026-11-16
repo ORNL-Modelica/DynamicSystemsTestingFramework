@@ -19,8 +19,7 @@ reference, a pass and a fail region, the error series, a grip
 
 The default theme's template is ``None``: its plot is plotly.js's own
 defaults and its figure carries no ``layout.template`` key at all. A dark
-table's neutrals are its token table's (``reporting.theme``), as literals;
-``tests/test_themes.py`` pins the two equal.
+table's neutrals are read from its token table (``reporting.theme``).
 """
 
 from __future__ import annotations
@@ -29,6 +28,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from ..reporting.theme import DARK_THEME
 from .families import HUES
 
 
@@ -67,30 +67,16 @@ class Palette:
     template: dict | None = None
 
 
-#: The dark theme's neutrals, as its token table names them.
-_DARK = MappingProxyType(
-    {
-        "surface": "#1e1e1e",
-        "surface-hover": "#2a2a2a",
-        "border": "#484848",
-        "border-hairline": "#303030",
-        "text": "#e4e4e4",
-        "text-secondary": "#b8b8b8",
-        "text-muted": "#9e9e9e",
-    }
-)
-
-
 def _dark_axis() -> dict:
     """One dict per axis letter: a copy of the template keeps whatever two
     keys share, and a figure's x axis must not be its y axis."""
     return {
-        "gridcolor": _DARK["border-hairline"],
-        "zerolinecolor": _DARK["border"],
-        "linecolor": _DARK["border"],
-        "tickcolor": _DARK["border"],
-        "tickfont": {"color": _DARK["text-secondary"]},
-        "title": {"font": {"color": _DARK["text-secondary"]}},
+        "gridcolor": DARK_THEME["border-hairline"],
+        "zerolinecolor": DARK_THEME["border"],
+        "linecolor": DARK_THEME["border"],
+        "tickcolor": DARK_THEME["border"],
+        "tickfont": {"color": DARK_THEME["text-secondary"]},
+        "title": {"font": {"color": DARK_THEME["text-secondary"]}},
     }
 
 
@@ -116,7 +102,7 @@ PALETTES: Mapping[str, Palette] = MappingProxyType(
             reference_event="#a8a8a8",
             ring="#66bb6a",
             ring_fill="rgba(102,187,106,0.25)",
-            context=_DARK["text-muted"],
+            context=DARK_THEME["text-muted"],
             soft_check="#ba68c8",
             # Series a person reads against each other, so 4.5:1: the
             # actual's event line and the sibling overlay 3.6 -> 7.5 (the
@@ -125,7 +111,7 @@ PALETTES: Mapping[str, Palette] = MappingProxyType(
             actual_event="#64b5f6",
             sibling="#64b5f6",
             companion="#81c784",
-            marker_outline=_DARK["surface"],
+            marker_outline=DARK_THEME["surface"],
             span_fill="rgba(158,158,158,0.09)",
             # The four stops under 2.2:1 on the dark plot, each raised in
             # lightness at its own hue and saturation until it clears 3:1
@@ -137,21 +123,21 @@ PALETTES: Mapping[str, Palette] = MappingProxyType(
                 (*HUES[2][:2], "#a631d8", "#8a40e4"),
             ),
             template={
-                "paper_bgcolor": _DARK["surface"],
-                "plot_bgcolor": _DARK["surface"],
-                "font": {"color": _DARK["text"]},
+                "paper_bgcolor": DARK_THEME["surface"],
+                "plot_bgcolor": DARK_THEME["surface"],
+                "font": {"color": DARK_THEME["text"]},
                 "xaxis": _dark_axis(),
                 "yaxis": _dark_axis(),
-                "legend": {"font": {"color": _DARK["text"]}},
+                "legend": {"font": {"color": DARK_THEME["text"]}},
                 "hoverlabel": {
-                    "bgcolor": _DARK["surface-hover"],
-                    "bordercolor": _DARK["border"],
-                    "font": {"color": _DARK["text"]},
+                    "bgcolor": DARK_THEME["surface-hover"],
+                    "bordercolor": DARK_THEME["border"],
+                    "font": {"color": DARK_THEME["text"]},
                 },
                 "modebar": {
                     "bgcolor": "rgba(0,0,0,0)",
-                    "color": _DARK["text-muted"],
-                    "activecolor": _DARK["text"],
+                    "color": DARK_THEME["text-muted"],
+                    "activecolor": DARK_THEME["text"],
                 },
             },
         ),

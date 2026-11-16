@@ -210,7 +210,6 @@ class OpenModelicaBackend(Backend):
 
     capabilities = frozenset(
         {
-            Capability.BATCH_FALLBACK,
             Capability.PERSISTENT_WORKERS,
             # The simulation executable appends result_res.mat as it goes:
             # in blocks, or a row at a time under `-mat_sync=1`.

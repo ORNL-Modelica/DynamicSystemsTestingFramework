@@ -122,7 +122,6 @@ class JuliaBackend(JsonDriverBackend):
 
     capabilities = frozenset(
         {
-            Capability.BATCH_FALLBACK,  # subprocess-per-test (this class)
             Capability.PERSISTENT_WORKERS,  # via PersistentJuliaBackend (D78)
             # Deliberately absent:
             #   FMU_EXPORT — MTK.generate_fmu deferred

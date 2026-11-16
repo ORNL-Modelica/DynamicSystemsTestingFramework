@@ -15,7 +15,6 @@ If a future change to `status.classify` moves a verdict, these fail.
 import io
 import xml.etree.ElementTree as ET
 from contextlib import redirect_stdout
-from pathlib import Path
 
 from dstf.comparison.types import (
     StructuralWarning,
@@ -292,9 +291,7 @@ class TestSimulateOnlyClassification:
         surfaces, one verdict. Before, the report suite said PASS while
         this classifier's callers could reach a different answer for the
         same comparison."""
-        from types import SimpleNamespace
-
-        from dstf.reporting.report_suite import _build_per_test_args
+        from dstf.reporting.rows import summary_fields
         from dstf.reporting.status import classify_with_class
 
         comp = _simulate_only_comparison()
@@ -310,25 +307,8 @@ class TestSimulateOnlyClassification:
         generate_junit_report([comp], out)
         case = ET.parse(out).getroot().find(".//testcase")
 
-        # 3. per-test report row
-        args = _build_per_test_args(
-            comp,
-            results={},
-            test_lookup={},
-            store=SimpleNamespace(
-                get_reference=lambda _m: None,
-                index=SimpleNamespace(stem=lambda _m: None),
-                reference_file=lambda _m: None,
-                ref_dir=tmp_path,
-            ),
-            config=SimpleNamespace(
-                work_dir=tmp_path,
-                max_embedded_samples=1000,
-                theme="default",
-                reference_root=tmp_path,
-            ),
-            manifest_meta_by_model={},
-        )
+        # 3. the report's row: the sidecar's summary the dashboard reads
+        summary = summary_fields(comp)
 
         assert "PASS" in console
         assert "NO_REF" not in console
@@ -337,49 +317,5 @@ class TestSimulateOnlyClassification:
             "junit emitted a <skipped>/<failure> child for a passing "
             f"simulate-only test: {ET.tostring(case)!r}"
         )
-        assert (args["status_text"], args["status_class"]) == ("PASS", "pass")
+        assert (summary["status_text"], summary["status_class"]) == ("PASS", "pass")
         assert classify_with_class(comp) == ("PASS", "pass")
-
-    def test_report_row_no_longer_needs_the_test_model(self):
-        """The private copy read ``simulate_only`` off the TestModel, so
-        the row's verdict depended on a lookup that can miss. It now comes
-        from the comparison — an empty test_lookup changes nothing."""
-        from types import SimpleNamespace
-
-        from dstf.reporting.report_suite import _build_per_test_args
-
-        common = dict(
-            results={},
-            store=SimpleNamespace(
-                get_reference=lambda _m: None,
-                index=SimpleNamespace(stem=lambda _m: None),
-                reference_file=lambda _m: None,
-                ref_dir=Path("."),
-            ),
-            config=SimpleNamespace(
-                work_dir=Path("."),
-                max_embedded_samples=1000,
-                theme="default",
-                reference_root=Path("."),
-                diagnostic_variables=[],
-            ),
-            manifest_meta_by_model={},
-        )
-        comp = _simulate_only_comparison()
-        with_model = _build_per_test_args(
-            comp,
-            # No tree and no extras, as a real TestModel carries them: the
-            # row only needs ``simulate_only``, but the args builder derives
-            # the page's plots off the same object.
-            test_lookup={
-                comp.model_id: SimpleNamespace(
-                    simulate_only=True,
-                    plots=None,
-                    metric_tree_spec=None,
-                    diagnostic_variables=[],
-                )
-            },
-            **common,
-        )
-        without_model = _build_per_test_args(comp, test_lookup={}, **common)
-        assert with_model["status_text"] == without_model["status_text"] == "PASS"

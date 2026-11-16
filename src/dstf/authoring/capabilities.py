@@ -14,7 +14,6 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -116,21 +115,7 @@ class Enqueue:
     models: tuple[str, ...]
 
 
-@dataclass(frozen=True, kw_only=True)
-class Artifact:
-    """Something written outside the spec and the store; shown as a link."""
-
-    paths: list[Path]
-    label: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class OpenProject:
-    config_path: Path
-    work_dir: Path | None = None  # the run's work dir, when not the default
-
-
-Outcome = Patch | StoreWrite | Enqueue | Artifact | OpenProject | None
+Outcome = Patch | StoreWrite | Enqueue | None
 
 
 class FigureHook(Protocol):
@@ -402,8 +387,7 @@ class Capability(Protocol):
 
     def act(self, s: SessionView, **inputs: Any) -> Outcome | Sequence[Outcome]:
         """What this capability's inputs DO, as an outcome the Session
-        applies — a Patch, a StoreWrite, an Enqueue, an Artifact, an OpenProject,
-        or a sequence of them.
+        applies — a Patch, a StoreWrite or an Enqueue, or a sequence of them.
 
         Returning ``None`` means nothing happened: the host applies
         nothing, leaves a dialog open (there is nothing to close over) and

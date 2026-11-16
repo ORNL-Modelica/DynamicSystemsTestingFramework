@@ -39,10 +39,6 @@ class Capability(str, Enum):
         PERSISTENT_WORKERS: The simulator stays open between tests, holding the
             library loaded. Needs
             :meth:`~dstf.backends.base.Backend.persistent_backend_cls`.
-        BATCH_FALLBACK: The backend runs tests without a simulator that stays
-            open, as ``--batch`` asks. Needs
-            :meth:`~dstf.backends.base.Backend.run_single_test` or
-            :meth:`~dstf.backends.base.Backend.run_tests`.
         FMU_EXPORT: The backend exports a test's model as an FMU. Needs
             :meth:`~dstf.backends.base.Backend.export_fmu`.
         LIVE_RESULTS: The result file grows while the run writes it and can be
@@ -56,8 +52,6 @@ class Capability(str, Enum):
 
     #: Backend can hold a loaded model in memory across multiple tests.
     PERSISTENT_WORKERS = "persistent-workers"
-    #: Backend exposes a non-interactive script-driven fallback.
-    BATCH_FALLBACK = "batch-fallback"
     #: Backend can export a test artefact as an FMU (enables cross-backend verification).
     FMU_EXPORT = "fmu-export"
     #: The result file grows while the run is in progress and can be read

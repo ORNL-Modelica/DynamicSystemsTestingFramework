@@ -84,9 +84,7 @@ from ..figures.view import VariableView, error_series
 from ..storage.baseline import PRIMARY_BASELINE, DiagnosticSummary, ReferenceFile
 from ..storage.reference_store import ReferenceStore
 from .capabilities import (
-    Artifact,
     Enqueue,
-    OpenProject,
     Outcome,
     Patch,
     StoreWrite,
@@ -543,7 +541,6 @@ class Session:
         #: it (the tool stopping must leave no worker behind).
         self._queue_epoch = 0
         self.comparisons: dict[str, TestComparison] = {}
-        self.artifacts: list[Artifact] = []
         self.notices: list[str] = []
         self._post = post or (lambda fn: fn())
         #: Whether there is a UI loop to keep free: a Queue click's read of
@@ -629,14 +626,13 @@ class Session:
             self.spec = spec
             self.comparisons = {}
             self._reads = {}
-            # A notice is project-scoped text ("stored 2 baselines for LibA.X"), and
-            # so is an artifact's path; a swap calls open, never close, and must not
-            # carry either into LibB's panel. Assigned here, at the commit point,
+            # A notice is project-scoped text ("stored 2 baselines for LibA.X"); a
+            # reopen calls open, never close, and must not carry one into the
+            # next project's panel. Assigned here, at the commit point,
             # and not on entry: an open that fails leaves the live project's panel
             # as it was. The recorded-backend warning is this project's first
             # notice, so the queue panel shows it.
             self.notices = [warning] if warning else []
-            self.artifacts = []
             self._emit_spec({t.model_id for t in tests})
             done_event = threading.Event()
             self.rescan_done = done_event
@@ -750,7 +746,6 @@ class Session:
         self._refuse_if_busy()
         self._reset_queue()
         self.project = None
-        self.artifacts = []
         self.notices = []
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
@@ -791,42 +786,6 @@ class Session:
         self._listeners.setdefault(event, []).append(cb)
 
     # -- scoring and figures ----------------------------------------------
-
-    def rescore(self, model_id: str) -> TestComparison:
-        """Score ``model_id`` against the spec with pending ops applied. A
-        flat-override test first gets the same ``add /metrics`` op
-        ``spec update`` prepends, so the document the tool edits and the one
-        it saves never differ in shape — but only when that tree scores
-        exactly what the flat path scored (Conventions #7); otherwise the
-        test is scored as loaded and nothing is staged. That op does not
-        stay while it is the tree the saved entry scores by, whatever else
-        is pending: an entry's own tree written out is no edit of it
-        (`stage`). It stays where a pending op edited the overrides it is
-        built from."""
-        op, _why = self._materialization(model_id)
-        if op is not None:
-            # Marked as `stage` marks its own: the drawer previews it as
-            # nothing changed, with the note that Save writes it. And no
-            # act of its own: where it stays, a pending op of this test
-            # edited what it is built from, and it is part of THAT edit —
-            # one override staged, then a rescore, read "2 pending edits".
-            mine = [o.gesture for o in self.spec.pending if o.model_id == model_id]
-            self.stage(
-                [
-                    PatchOp(
-                        model_id,
-                        op["op"],
-                        op["path"],
-                        op["value"],
-                        materializes=self._saved_scoring_tree(self.spec, model_id),
-                    )
-                ],
-                part_of=mine[-1] if mine else None,
-            )
-            return self.comparisons[model_id]
-        comp = self._score(model_id)
-        self._emit("results", models={model_id})
-        return comp
 
     def view(self, model_id: str, variable: str) -> VariableView:
         """The variable's view: its trajectories, overlays and every leaf
@@ -1505,7 +1464,7 @@ class Session:
 
     def tree_or_reason(self, model_id: str) -> tuple[dict | None, str | None]:
         """``(tree, None)`` — the raw tree a Patch edits: the entry's
-        ``metrics`` block, else the tree ``rescore`` would materialize (the
+        ``metrics`` block, else the tree `stage` would materialize (the
         report's leaves) — or ``(None, why)``: why there is none, the ONE
         text every surface says it with (`stage`'s refusal, a criterion's
         editor, Edit tree, Edit on plot, a Statistics row's `+`), from
@@ -1524,7 +1483,7 @@ class Session:
 
     # -- the spec ----------------------------------------------------------
 
-    def stage(self, ops: Sequence[PatchOp], *, part_of: int | None = None) -> None:
+    def stage(self, ops: Sequence[PatchOp]) -> None:
         """Stage ``ops`` and rescore their models. Materializes the implicit
         tree where a per-leaf op needs one — or an op that edits the tree
         whole (`PatchOp.edits_tree`); validates each touched entry
@@ -1534,8 +1493,7 @@ class Session:
         scored when its result arrives — and none of its simulation
         settings', which its run has already taken (D150).
 
-        One call is one edit (`PatchOp.gesture`), unless ``part_of`` names
-        the edit these ops belong to: `rescore`'s, which no one did."""
+        One call is one edit (`PatchOp.gesture`)."""
         project = self._require_project()
         models = {op.model_id for op in ops}
         for op in ops:
@@ -1548,7 +1506,7 @@ class Session:
         # One call is one act of the user's, however many ops it takes
         # (`PatchOp.gesture`): what every count of pending edits counts.
         self._gesture += 1
-        gesture = self._gesture if part_of is None else part_of
+        gesture = self._gesture
         for model_id in _in_order(op.model_id for op in ops):
             raw = [op.raw() for op in ops if op.model_id == model_id]
             entry = self.spec.entry(model_id) or {"model": model_id}
@@ -1561,7 +1519,7 @@ class Session:
                 op.edits_tree for op in ops if op.model_id == model_id
             )
             if needs_materialization(entry, raw) or edits_whole:
-                # The same tree rescore stages — from what the flat path
+                # The tree `tree_or_reason` shows — from what the flat path
                 # scored — never one from the entry's list: on both tiers
                 # leaf i is /metrics/children/i of the report's tree.
                 tree_op, why = self._materialization(model_id)
@@ -1583,9 +1541,9 @@ class Session:
                         gesture=gesture,
                     )
                 )
-            # The ops as given: `rescore`'s materialization carries its mark.
-            # Each value a copy: the caller's dict stays the caller's, and
-            # editing it after staging changes neither export nor Save.
+            # The ops as given. Each value a copy: the caller's dict stays
+            # the caller's, and editing it after staging changes neither
+            # export nor Save.
             staged += [
                 replace(op, value=copy.deepcopy(op.value), gesture=gesture)
                 for op in ops
@@ -1813,7 +1771,7 @@ class Session:
             return
         if isinstance(outcome, Patch):
             # A capability's op is never the Session's materialization: only
-            # `stage` and `rescore` know the tree they built scores the same.
+            # `stage` knows the tree it built scores the same.
             self.stage([replace(op, materializes=False) for op in outcome.ops])
         elif isinstance(outcome, StoreWrite):
             # A queued or running test's result is about to be replaced:
@@ -1846,11 +1804,6 @@ class Session:
                 self._enqueue_later(outcome.models)
             else:
                 self.enqueue(outcome.models)
-        elif isinstance(outcome, Artifact):
-            self.artifacts.append(outcome)
-            self._emit("notice", artifact=outcome)
-        elif isinstance(outcome, OpenProject):
-            self.open(outcome.config_path, work_dir=outcome.work_dir)
         else:
             raise TypeError(f"not an Outcome: {outcome!r}")
 
@@ -2716,7 +2669,8 @@ class Session:
         ``.mo`` annotation those names are in no spec entry (and the entry
         may not exist yet: the op creates it). ``(None, None)`` when the
         entry already has a tree (`has_metrics`: a null ``metrics`` is
-        none). Otherwise ``(None, why)`` — and ``rescore`` stages nothing:
+        none). Otherwise ``(None, why)``, and `stage` refuses an op that
+        needs it:
         :data:`SIMULATE_ONLY` or :data:`NOTHING_SCORED` when nothing was
         scored (NO_REF, SIM_FAIL, NOT RUN, simulate-only; and a model not in the
         project, which `stage` refuses with it as a patch — `tree_or_reason`
@@ -2808,7 +2762,6 @@ class ProjectView:
     config: Config
     tests: tuple[TestModel, ...]
     results: Mapping[str, TestResult]
-    dataset_kind: DatasetType
     _store: ReferenceStore = field(repr=False, compare=False)
 
     def baseline_names(self, model_id: str) -> tuple[str, ...]:
@@ -2855,13 +2808,8 @@ class SessionView:
             config=p.config,
             tests=tuple(p.tests),
             results=MappingProxyType(p.results),
-            dataset_kind=p.dataset_kind,
             _store=p.store,
         )
-
-    @property
-    def spec_path(self) -> Path:
-        return self._session.spec.path
 
     @property
     def pending(self) -> tuple[PatchOp, ...]:
@@ -2874,16 +2822,6 @@ class SessionView:
     @property
     def comparisons(self) -> Mapping[str, TestComparison]:
         return MappingProxyType(self._session.comparisons)
-
-    @property
-    def artifacts(self) -> tuple[Artifact, ...]:
-        return tuple(self._session.artifacts)
-
-    @property
-    def notices(self) -> tuple[str, ...]:
-        """The lines the queue panel shows, oldest first: what each store write
-        applied so far reported, plus the open-time warning if there was one."""
-        return tuple(self._session.notices)
 
     def queue_state(self, model_id: str) -> ItemState | None:
         """Where the test stands in the simulation queue
@@ -2902,24 +2840,8 @@ class SessionView:
         (:meth:`Session.partial`), or ``None``."""
         return self._session.partial(model_id)
 
-    def rescore(self, model_id: str) -> TestComparison:
-        return self._session.rescore(model_id)
-
     def view(self, model_id: str, variable: str) -> VariableView:
         return self._session.view(model_id, variable)
-
-    def figure(
-        self,
-        model_id: str,
-        variable: str,
-        *,
-        editing: Collection[str] | None = None,
-        visibility: Visibility | None = None,
-        theme: str = "default",
-    ) -> dict:
-        return self._session.figure(
-            model_id, variable, editing=editing, visibility=visibility, theme=theme
-        )
 
     def variable_names(self, model_id: str) -> list[str]:
         return self._session.variable_names(model_id)
@@ -2948,19 +2870,6 @@ class SessionView:
 
     def card_paths(self, model_id: str) -> set[str]:
         return self._session.card_paths(model_id)
-
-    def plot_figure(
-        self,
-        model_id: str,
-        index: int,
-        *,
-        editing: Collection[str] | None = None,
-        visibility: Visibility | None = None,
-        theme: str = "default",
-    ) -> dict:
-        return self._session.plot_figure(
-            model_id, index, editing=editing, visibility=visibility, theme=theme
-        )
 
     def tree_view(self, model_id: str) -> dict | None:
         return self._session.tree_view(model_id)

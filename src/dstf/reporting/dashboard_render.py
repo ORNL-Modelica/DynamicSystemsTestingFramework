@@ -483,8 +483,8 @@ def build_dashboard_context(
     its CPU time from it: Sim (s) shows that, marked, where no wall time
     was kept (``TestRow.sim_source``).
 
-    The same template renders both; JS reads `DASHBOARD_MODE` to
-    decide whether to start the fetch loop.
+    The same template renders both; a live page carries a meta refresh
+    and a final one does not.
 
     ``selection``: what the run's tests were chosen by (:func:`run_notice`)
     — the snapshot's unless given.
@@ -492,8 +492,6 @@ def build_dashboard_context(
     snapshot = read_status(work_dir) or {
         "total": 0,
         "elapsed": 0.0,
-        "eta_seconds": None,
-        "counts": {},
         "tests": [],
         "updated_at": 0.0,
     }
@@ -597,8 +595,6 @@ def build_dashboard_context(
         # status bar says so rather than "N tests · ran for 0s".
         "run_total": len(snapshot.get("tests", [])),
         "elapsed": snapshot.get("elapsed", 0.0),
-        "eta_seconds": snapshot.get("eta_seconds"),
-        "counts": snapshot.get("counts", {}),
         "tests": rows,
         "columns": COLUMNS,
         # The count pills, in PILL_STATUSES' order: [status class, the
@@ -608,14 +604,11 @@ def build_dashboard_context(
         # The Command menu: each command offered, and the flags after it.
         "rerun_flags": dict(flags),
         "offers_author": "author" in flags,
-        "updated_at": snapshot.get("updated_at", time.time()),
         # Wall-clock anchor for the dashboard's live elapsed clock. JS reads
         # SNAPSHOT_WALL (= updated_at, when the snapshot was written) and
         # SNAPSHOT_ELAPSED (= elapsed at that moment) to compute a live-
         # ticking elapsed = SNAPSHOT_ELAPSED + (Date.now()/1000 - SNAPSHOT_WALL).
-        # This works between meta-refresh ticks (when the snapshot is stale)
-        # and right after a refresh (when it's fresh).
-        "start_wall": snapshot.get("start_wall"),
+        "updated_at": snapshot.get("updated_at", time.time()),
         # Identity of the report this page IS: work dir + the wall clock
         # the run started at. The dashboard's localStorage state is keyed
         # by location.pathname, which two successive runs into the same

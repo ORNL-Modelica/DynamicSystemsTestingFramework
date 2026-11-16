@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dstf.figures.decimate import bucket_boundaries, decimate_pair, lttb
+from dstf.figures.decimate import bucket_boundaries, lttb
 
 
 class TestLttbContract:
@@ -60,33 +60,6 @@ class TestLttbVisualFidelity:
         orig_range = v.max() - v.min()
         out_range = v_out.max() - v_out.min()
         assert out_range > 0.9 * orig_range
-
-
-class TestDecimatePair:
-    def test_list_roundtrip(self):
-        t = list(range(1000))
-        v = [i * 0.5 for i in range(1000)]
-        t_out, v_out = decimate_pair(t, v, 100)
-        assert isinstance(t_out, list)
-        assert isinstance(v_out, list)
-        assert len(t_out) == 100
-
-    def test_none_passthrough(self):
-        t_out, v_out = decimate_pair(None, None, 100)
-        assert t_out is None
-        assert v_out is None
-
-    def test_empty_list_passthrough(self):
-        t_out, v_out = decimate_pair([], [], 100)
-        assert t_out == []
-        assert v_out == []
-
-    def test_below_threshold_returns_original_list(self):
-        t = [0.0, 1.0, 2.0, 3.0]
-        v = [10.0, 11.0, 12.0, 13.0]
-        t_out, v_out = decimate_pair(t, v, 100)
-        assert t_out == t
-        assert v_out == v
 
 
 def _lttb_reference(time, values, n_out):

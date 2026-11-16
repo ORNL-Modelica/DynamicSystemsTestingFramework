@@ -19,6 +19,7 @@ from ..storage.baseline import ReferenceFile, StoredVariable
 from ..storage.baseline_codec import DOUBLE_SHOWN, shown_digits
 from .stats_rows import SECTION_TITLES, report_text, statistics_rows
 from .status import not_scored_reason
+from .tree_rows import leaves_of
 
 logger = logging.getLogger(__name__)
 
@@ -663,26 +664,6 @@ def _build_warning_rows(warnings: list | None) -> list:
     ]
 
 
-def _view_leaf_paths(node: dict) -> list[str]:
-    """Leaf paths of a spec view, in tree order."""
-    if node.get("kind") == "leaf":
-        return [node["path"]]
-    out: list[str] = []
-    for child in node.get("children") or []:
-        out.extend(_view_leaf_paths(child))
-    return out
-
-
-def _view_leaves(node: dict) -> list[dict]:
-    """Every leaf view under ``node``, in tree order."""
-    if node.get("kind") == "leaf":
-        return [node]
-    out: list[dict] = []
-    for child in node.get("children") or []:
-        out.extend(_view_leaves(child))
-    return out
-
-
 def _mark_advisory(node: dict, *, under_warn: bool = False) -> None:
     """Stamp ``advisory: True`` on every leaf sitting under a ``warn``.
 
@@ -711,7 +692,7 @@ def _tree_summary(view: dict | None) -> dict | None:
     """
     if not view:
         return None
-    leaves = _view_leaves(view)
+    leaves = leaves_of(view)
     return {
         "n_pass": sum(1 for leaf in leaves if leaf.get("passed")),
         "n_total": len(leaves),
@@ -790,7 +771,9 @@ def build_tree_view(
     # between the two walks — a leaf that would render with no pill and no
     # criterion, and nothing else would say so.
     missing = [
-        path for path in _view_leaf_paths(tree_view) if path not in comparisons_by_path
+        leaf["path"]
+        for leaf in leaves_of(tree_view)
+        if leaf["path"] not in comparisons_by_path
     ]
     if missing:
         logger.warning(
@@ -842,7 +825,7 @@ def _build_tree_view_and_variables(
     if tree_view is None:
         return None, {}
     spec = scored_spec(comparisons, test_model)
-    all_leaves = _view_leaves(tree_view)
+    all_leaves = leaves_of(tree_view)
 
     # Look the trajectory up by variable name — ``build_trajectories``
     # emits exactly one entry per name, sentinel leaves included.

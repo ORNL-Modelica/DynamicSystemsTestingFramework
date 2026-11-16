@@ -764,8 +764,8 @@ class PendingDrawer:
         for text in session.not_stored_notes(model_id):
             ui.label(text).classes("text-xs text-secondary").mark("drawer-not-stored")
         # Never an empty box: edits that cancel out are not here at all, and
-        # neither is a tree written out and not edited (a `rescore`, a value
-        # typed and cleared on a flat test) — an entry put back as saved has
+        # neither is a tree written out and not edited (a value typed and
+        # cleared on a flat test) — an entry put back as saved has
         # no pending op, and the tree it already scores by is none of the
         # ops it has (`Session.stage`).
         lines = entry_lines(spec.preview_base(model_id), spec.entry(model_id))

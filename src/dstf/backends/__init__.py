@@ -56,9 +56,6 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
     Every capability has a load-bearing method, and each is checked:
 
     - ``FMU_EXPORT`` → ``export_fmu`` must be overridden.
-    - ``BATCH_FALLBACK`` → either ``run_tests`` or ``run_single_test`` must
-      be overridden (a backend can ship its own batched orchestration *or*
-      use the default per-test loop).
     - ``PERSISTENT_WORKERS`` → ``persistent_backend_cls`` must be overridden
       to return a non-None class.
     - ``LIVE_RESULTS`` → ``live_result_path`` must be overridden.
@@ -89,16 +86,6 @@ def _validate_capabilities(cls: type[Backend], name: str) -> None:
             f"@register('{name}'): {cls.__name__} declares "
             f"Capability.CANCEL but does not override cancel_test(). "
             f"Either implement the method or drop the capability flag."
-        )
-    if Capability.BATCH_FALLBACK in caps and (
-        cls.run_tests is Backend.run_tests
-        and cls.run_single_test is Backend.run_single_test
-    ):
-        raise TypeError(
-            f"@register('{name}'): {cls.__name__} declares "
-            f"Capability.BATCH_FALLBACK but overrides neither "
-            f"run_tests() nor run_single_test(). Implement one or "
-            f"drop the capability flag."
         )
     if (
         Capability.PERSISTENT_WORKERS in caps

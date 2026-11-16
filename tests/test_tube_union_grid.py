@@ -362,20 +362,6 @@ class TestAConstantBandsTwoSides:
 
 
 class TestTubeConfigKeepsAOneSidedWidth:
-    def test_to_dict_omits_only_a_width_that_is_zero_on_both_sides(self):
-        from dstf.comparison.modes import TubeConfig
-
-        assert TubeConfig().to_dict() == {}
-        # A dataclass is always truthy and its upper side may be the zero one.
-        assert TubeConfig(tube_abs=Sides(0.5, 0.0)).to_dict() == {
-            "tube_abs": Sides(0.5, 0.0)
-        }
-        assert TubeConfig(tube_rel=Sides(0.0, 0.5)).to_dict() == {
-            "tube_rel": Sides(0.0, 0.5)
-        }
-        assert "tube_rel" not in TubeConfig(tube_abs=Sides(0.0, 0.5)).to_dict()
-        assert TubeConfig(tube_abs=0.0, tube_rel=Sides(0.0, 0.0)).to_dict() == {}
-
     def test_a_band_with_room_below_only_scores_through_the_mode(self):
         from dstf.comparison.modes import resolve_mode
 

@@ -228,25 +228,6 @@ class TubeConfig:
         },
     )
 
-    def to_dict(self) -> dict:
-        """Convert back to the flat dict format consumed by _compare_tube."""
-        d: dict = {}
-        if self.tube_width_mode is not None:
-            d["tube_width_mode"] = self.tube_width_mode
-        for key in ("tube_abs", "tube_rel"):
-            # A config built with a number holds the number: both sides. A
-            # dataclass is always truthy, so "no width" is said: zero on
-            # both sides — one zero side is a width.
-            sides = parse_sides(getattr(self, key), key)
-            if sides != Sides(0.0, 0.0):
-                d[key] = sides
-        if self.tube_min_width:
-            d["tube_min_width"] = self.tube_min_width
-        if self.tube_points is not None:
-            d["tube_points"] = self.tube_points
-            d["tube_interpolation"] = self.tube_interpolation
-        return d
-
 
 @dataclass(frozen=True)
 class PointsConfig:
@@ -607,7 +588,7 @@ class TubeMode(ComparisonMode):
             ref_values,
             act_time,
             act_values,
-            self.config.to_dict(),
+            self.config,
         )
 
 
