@@ -50,7 +50,6 @@ exclude_patterns = [
     "releasing.md",
     "qa",
     "design",
-    "superpowers",
 ]
 
 html_theme = "furo"

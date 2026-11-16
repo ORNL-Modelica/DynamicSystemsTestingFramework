@@ -1401,9 +1401,8 @@ plot a `Patch` from a metric's `edit_handle`, its `place_row` or a table's
 rows — the one builtin client of the figure hook's events (Edit criteria
 arms its own fields and shows previews through the `Panel` alone).
 
-§4.6 and §4.7 of [the two-tier architecture
-design](superpowers/specs/2026-09-08-two-tier-architecture-design.md) have the
-full specification; `docs/guides/criteria.md` shows the tool they build.
+D125 in `docs/decisions.md` records the split; `docs/guides/criteria.md`
+shows the tool it builds.
 
 ---
 
