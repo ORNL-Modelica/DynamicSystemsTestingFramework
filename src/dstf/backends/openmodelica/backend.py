@@ -37,6 +37,7 @@ from ..base import Backend, Diagnosis
 from ..common import result_files
 from ..common.failure_message import failure_message
 from ..common.mat_reader import mat_reaches_time, mat_shortfall, read_result_mat
+from ..common.proc_kill import run_killable
 from ..common.proc_output import decode_output
 from ..common.result_variables import (
     compute_needed_variables,
@@ -353,17 +354,9 @@ class OpenModelicaBackend(Backend):
 
         wall_start = time.monotonic()
         try:
-            proc = subprocess.run(
-                [omc, self.MOS_FILENAME],
-                cwd=test_dir,
-                capture_output=True,
-                text=True,
-                # review 2026-07-06 (finding 75): pin utf-8 + replace so a
-                # non-ASCII omc message can't crash the reader on cp1252 hosts.
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-            )
+            # A timeout stops the whole tree: omc runs the simulation under
+            # /bin/sh -c, which killing omc alone left running.
+            proc = run_killable([omc, self.MOS_FILENAME], cwd=test_dir, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - wall_start
             # review 2026-07-06 (finding 23): TimeoutExpired.stdout is bytes

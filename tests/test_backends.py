@@ -605,9 +605,7 @@ class TestTimeoutExpiredBytesHandling:
                 cmd=["omc"], timeout=1, output=b"omc partial", stderr=None
             )
 
-        monkeypatch.setattr(
-            "dstf.backends.openmodelica.backend.subprocess.run", fake_run
-        )
+        monkeypatch.setattr("dstf.backends.openmodelica.backend.run_killable", fake_run)
         test = _tm("Lib.A", variable_patterns=["x"])
         rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False

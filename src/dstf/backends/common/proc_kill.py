@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
 
 
 def kill_process_tree(
@@ -236,3 +240,110 @@ def live_children(pids: set[int], name_hint: str | None = None) -> list:
         except Exception:
             continue
     return children
+
+
+def run_killable(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    timeout: float,
+    on_spawn: Callable[[subprocess.Popen], None] | None = None,
+) -> subprocess.CompletedProcess:
+    """``subprocess.run(cmd, capture_output=True, text=True, timeout=...)``
+    as every batch test is launched, utf-8 with ``errors="replace"``, the
+    live ``Popen`` handed to *on_spawn* so another thread can kill it.
+
+    Same contract otherwise, except what a timeout stops: the whole tree
+    the tool started (:func:`_stop_tree`), not the tool alone. omc runs the
+    compiled simulation under ``/bin/sh -c``; ``subprocess.run`` killed
+    only omc, and on a 340-test run six simulations were still running 30
+    minutes after the run ended. ``TimeoutExpired`` carries what the tool
+    had written.
+
+    *cwd* is the one test's own directory, used by no other test: on Linux
+    what the tree left there is found by it (:func:`orphans_in`).
+    """
+    with subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        # review 2026-07-06 (finding 75): pin utf-8 + replace so a
+        # non-ASCII traceback can't crash decoding on cp1252 hosts.
+        encoding="utf-8",
+        errors="replace",
+    ) as proc:
+        born = created_at({proc.pid})
+        if on_spawn is not None:
+            on_spawn(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _stop_tree(proc, cwd, born)
+            exc.stdout, exc.stderr = _drain(proc)
+            raise
+        except BaseException:
+            _stop_tree(proc, cwd, born)
+            raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
+#: How long :func:`_stop_tree` waits for the killed descendants to exit,
+#: and :func:`_drain` for the pipes to close, before going on without them.
+_STOP_GRACE = 5.0
+
+
+def _stop_tree(proc: subprocess.Popen, cwd: Path, born: float | None) -> None:
+    """Kill *proc* and every process it started, and what they left in
+    *cwd* (the test's own directory).
+
+    The descendants are recorded while *proc* still lives: once it is gone
+    nothing links them to it. Then the tree is killed children first, the
+    tool last. A child forked between the walk and the kills, whose parent
+    the kills then took, is reparented to init and out of every walk's
+    reach — so, once the killed ones have exited, :func:`orphans_in` looks
+    for what is left in the test's directory, born after the tool. No name
+    guard on *proc*: this is our own unreaped ``Popen``, whose PID cannot
+    have been reissued.
+    """
+    snapshot = snapshot_children(proc.pid)
+    kill_process_tree(proc.pid)
+    for pid, created in snapshot:
+        kill_process_tree(pid, create_time=created)
+    if proc.poll() is None:
+        # The tree kill is a no-op without psutil; the Popen is ours.
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=_STOP_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    pids = {pid for pid, _ in snapshot}
+    deadline = time.monotonic() + _STOP_GRACE
+    while pids and not process_gone(pids) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if born is not None:
+        for pid, created in orphans_in(str(cwd), born):
+            kill_process_tree(pid, create_time=created)
+
+
+def _drain(proc: subprocess.Popen) -> tuple[str | bytes | None, str | bytes | None]:
+    """What *proc* wrote, read to the end once its tree is stopped. A
+    process that escaped the stop (a new session, another directory) and
+    still holds the pipes would keep the read waiting for it to end: past
+    :data:`_STOP_GRACE` the pipes are closed with what had arrived, as
+    bytes (``decode_output`` reads both)."""
+    try:
+        return proc.communicate(timeout=_STOP_GRACE)
+    except subprocess.TimeoutExpired as partial:
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        proc.wait()
+        return partial.stdout, partial.stderr

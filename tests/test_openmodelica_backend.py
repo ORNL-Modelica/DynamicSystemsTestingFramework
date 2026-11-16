@@ -1,6 +1,6 @@
 """OpenModelica backend tests.
 
-Unit tests here stub subprocess.run so they don't require an omc binary.
+Unit tests here stub the omc launch (run_killable) so they don't require an omc binary.
 Integration tests at the bottom exercise real omc. They carry the
 ``ompython`` marker, which CI's selection deselects, and skip where omc is
 not installed.
@@ -192,8 +192,7 @@ class TestOpenModelicaBackendUnit:
             / "pid_controller_res.mat"
         )
 
-        def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
-            # **kwargs absorbs encoding/errors (review 2026-07-06, finding 75)
+        def fake_run(cmd, *, cwd, timeout):
             shutil.copy(fixture_mat, Path(cwd) / "result_res.mat")
             captured_call["cmd"] = list(cmd)
             captured_call["cwd"] = cwd
@@ -203,7 +202,7 @@ class TestOpenModelicaBackendUnit:
 
         captured_call: dict = {}
         monkeypatch.setattr(
-            "dstf.backends.openmodelica.backend.subprocess.run",
+            "dstf.backends.openmodelica.backend.run_killable",
             fake_run,
         )
 
@@ -243,7 +242,7 @@ class TestOpenModelicaBackendUnit:
         )
         backend = OpenModelicaBackend(cfg)
         # A run starts with an omc that was found; this machine's is not
-        # asked (CI has none) — subprocess.run is faked below.
+        # asked (CI has none) — the launch is faked below.
         backend.om_config = dataclasses.replace(backend.om_config, omc_path="omc")
         test = TestModel(
             model_id="Lib.DoesNotExist",
@@ -269,14 +268,13 @@ class TestOpenModelicaBackendUnit:
             "end SimulationResult;\n"
         )
 
-        def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
-            # **kwargs absorbs encoding/errors (review 2026-07-06, finding 75)
+        def fake_run(cmd, *, cwd, timeout):
             return CompletedProcess(
                 args=cmd, returncode=0, stdout=stdout_synth, stderr=""
             )
 
         monkeypatch.setattr(
-            "dstf.backends.openmodelica.backend.subprocess.run",
+            "dstf.backends.openmodelica.backend.run_killable",
             fake_run,
         )
 
@@ -329,14 +327,12 @@ class TestOpenModelicaBackendUnit:
             "end SimulationResult;\n"
         )
 
-        def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
+        def fake_run(cmd, *, cwd, timeout):
             return CompletedProcess(
                 args=cmd, returncode=0, stdout=stdout_synth, stderr=""
             )
 
-        monkeypatch.setattr(
-            "dstf.backends.openmodelica.backend.subprocess.run", fake_run
-        )
+        monkeypatch.setattr("dstf.backends.openmodelica.backend.run_killable", fake_run)
 
         result = backend.run_single_test(test, test_key="test_0001", index=1, total=1)
 
@@ -457,7 +453,7 @@ class TestASolverOpenModelicaDoesNotKnow:
             work_dir=tmp_path / "work",
         )
 
-        def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
+        def fake_run(cmd, *, cwd, timeout):
             shutil.copy(
                 FIXTURES / "pid_controller_res.mat", Path(cwd) / "result_res.mat"
             )
@@ -465,9 +461,7 @@ class TestASolverOpenModelicaDoesNotKnow:
                 args=cmd, returncode=0, stdout=self.STDOUT, stderr=""
             )
 
-        monkeypatch.setattr(
-            "dstf.backends.openmodelica.backend.subprocess.run", fake_run
-        )
+        monkeypatch.setattr("dstf.backends.openmodelica.backend.run_killable", fake_run)
         return OpenModelicaBackend(cfg)
 
     @staticmethod

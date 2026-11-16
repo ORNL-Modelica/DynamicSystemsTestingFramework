@@ -456,7 +456,7 @@ class TestMatSync:
                 live_results=live,
             )
             monkeypatch.setattr(
-                "dstf.backends.openmodelica.backend.subprocess.run",
+                "dstf.backends.openmodelica.backend.run_killable",
                 lambda cmd, **kw: CompletedProcess(cmd, 1, stdout="", stderr=""),
             )
             OpenModelicaBackend(cfg).run_single_test(
