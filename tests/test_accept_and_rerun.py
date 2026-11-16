@@ -151,7 +151,7 @@ def test_open_queue_accept_queue_again_over_the_python_example(tmp_path, capsys,
     assert [i.model_id for i in session.queue] == [CONSTANT_CSV]
     tool.until("started")
     assert session.queue_state(CONSTANT_CSV) is ItemState.RUNNING
-    assert suite_row(session, CONSTANT_CSV).status == RUNNING
+    assert suite_row(session, CONSTANT_CSV, edits={}).status == RUNNING
     assert CONSTANT_CSV not in project.results
     assert classify(session.comparisons[CONSTANT_CSV]) == NOT_RUN
 

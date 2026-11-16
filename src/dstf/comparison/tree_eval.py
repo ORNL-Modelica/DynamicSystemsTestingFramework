@@ -241,6 +241,28 @@ def advisory_comparisons(tree: MetricResult | None) -> list[VariableComparison]:
     return out
 
 
+def outvoted_comparisons(tree: MetricResult | None) -> list[VariableComparison]:
+    """The leaf comparisons under a group that PASSED, in tree order: a
+    failure among them did not fail the test — an ``or`` another child of
+    which passed, a ``k-of-n`` that had enough, a ``weighted`` whose sum
+    held (and a ``warn``, which always passes: those are also
+    :func:`advisory_comparisons`). ``[]`` for no tree."""
+    out: list[VariableComparison] = []
+
+    def _walk(node: MetricResult) -> None:
+        if not node.children:
+            return
+        if node.passed:
+            _walk_leaves(node, out)
+            return
+        for child in node.children:
+            _walk(child)
+
+    if tree is not None:
+        _walk(tree)
+    return out
+
+
 def failed_groups(tree: MetricResult | None) -> list[tuple[str, MetricResult]]:
     """The groups that fail ON THEIR OWN: a combinator that did not pass
     though every child of it did — a ``weighted`` whose sum is on the wrong

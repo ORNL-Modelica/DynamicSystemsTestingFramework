@@ -53,11 +53,102 @@ from ..types import (
     timeout_message,
 )
 from .init_xml import with_system_size
-from .log_parser import parse_omc_stdout
+from .log_parser import ParsedOmcOutput, parse_omc_stdout
 from .mos_generator import build_simulate_mos
 from .solvers import solver as om_solver
 
 logger = logging.getLogger(__name__)
+
+
+def timing(parsed: ParsedOmcOutput) -> tuple[float | None, float | None, dict | None]:
+    """A simulate() call's (translation wall, simulation wall, statistics)
+    from the times omc reported: the translation is every phase before the
+    simulation; the statistics hold them all under ``timing``. Nones where
+    omc reported none."""
+    if parsed.timings is None:
+        return None, None, None
+    t = parsed.timings
+    translation = (
+        t.get("frontend", 0.0)
+        + t.get("backend", 0.0)
+        + t.get("simcode", 0.0)
+        + t.get("templates", 0.0)
+        + t.get("compile", 0.0)
+    )
+    return translation, t.get("simulation"), {"timing": dict(t)}
+
+
+def outcome(
+    parsed: ParsedOmcOutput,
+    test: TestModel,
+    test_key: str,
+    elapsed: float,
+    mat_path: Path,
+    *,
+    exit_code: int | None = None,
+) -> TestRunResult:
+    """What one simulate() call came to — ONE reading for the batch path
+    (``parsed`` from omc's stdout, ``exit_code`` omc's) and the persistent
+    worker (``parsed`` from the record and getErrorString): either reports
+    a result with the same times, statistics and message. A success whose
+    result file ``mat_path`` stops before the stop time is refused, said
+    among omc's notices: a partial .mat blessed by --accept poisons the
+    baseline (D93 precedent, D99)."""
+    translation_wall, sim_wall, statistics = timing(parsed)
+    notices = list(parsed.error_notices)
+    if parsed.success and mat_path.exists():
+        # Empirically (D99, omc 1.27) mid-run aborts return an EMPTY
+        # resultFile and never take this branch — this guards against a
+        # future omc populating resultFile on partial runs or a truncated
+        # write.
+        reached, last_time = mat_reaches_time(mat_path, float(test.stop_time))
+        if reached:
+            return TestRunResult(
+                model_id=test.model_id,
+                test_key=test_key,
+                success=True,
+                elapsed=elapsed,
+                translation_wall=translation_wall,
+                sim_wall=sim_wall,
+                statistics=statistics,
+            )
+        notices.append(
+            f"simulate() reported success but {mat_path.name} "
+            f"reaches t={last_time!r} of stop_time={test.stop_time} — "
+            f"partial result refused"
+        )
+
+    # Failure: both the notices before the record and the simulate()
+    # record's `messages` field.
+    err_parts: list[str] = []
+    if exit_code:
+        err_parts.append(f"omc exit code {exit_code}")
+    if notices:
+        err_parts.append("; ".join(notices[:5]))
+    if parsed.messages:
+        err_parts.append(parsed.messages.strip())
+    if not parsed.result_file:
+        err_parts.append("no result file produced")
+    msg = failure_message(" | ".join(p for p in err_parts if p)) or (
+        "omc simulation failed"
+    )
+    # If MSL wasn't installed, surface a clear hint.
+    if any("Failed to load package Modelica" in n for n in notices):
+        msg = (
+            "MSL not installed. Run: omc -e "
+            "'updatePackageIndex(); installPackage(Modelica); "
+            "getErrorString();' | " + msg
+        )
+    return TestRunResult(
+        model_id=test.model_id,
+        test_key=test_key,
+        success=False,
+        elapsed=elapsed,
+        error_message=msg,
+        translation_wall=translation_wall,
+        sim_wall=sim_wall,
+        statistics=statistics,
+    )
 
 
 @dataclass(frozen=True)
@@ -304,97 +395,26 @@ class OpenModelicaBackend(Backend):
         stdout_text = proc.stdout or ""
         (test_dir / self.STDOUT_FILENAME).write_text(stdout_text, encoding="utf-8")
 
-        parsed = parse_omc_stdout(stdout_text)
-
-        # Build statistics.timing — wall-clock seconds captured Python-side.
-        stats: dict = {}
-        if parsed.timings is not None:
-            stats["timing"] = dict(parsed.timings)
-
-        # Translation-wall = sum of all pre-simulation phases.
-        translation_wall: float | None = None
-        sim_wall: float | None = None
-        if parsed.timings is not None:
-            t = parsed.timings
-            translation_wall = (
-                t.get("frontend", 0.0)
-                + t.get("backend", 0.0)
-                + t.get("simcode", 0.0)
-                + t.get("templates", 0.0)
-                + t.get("compile", 0.0)
-            )
-            sim_wall = t.get("simulation")
-
-        mat_path = test_dir / self.RESULT_MAT_FILENAME
-        if parsed.success and mat_path.exists():
-            # Belt on the accept-integrity invariant (D93 precedent): a
-            # partial .mat blessed by --accept poisons the baseline, so
-            # even a success-reporting record must show a trajectory that
-            # reached stop_time. Empirically (D99, omc 1.27) mid-run
-            # aborts return an EMPTY resultFile and never take this
-            # branch — this guards against a future omc populating
-            # resultFile on partial runs or a truncated write.
-            reached, last_time = mat_reaches_time(mat_path, float(test.stop_time))
-            if reached:
-                if self.progress:
-                    self.progress.on_phase(test_key, "simulating")
-                    self.progress.on_finish(test_key, success=True, elapsed=elapsed)
-                return TestRunResult(
-                    model_id=test.model_id,
-                    test_key=test_key,
-                    success=True,
-                    elapsed=elapsed,
-                    translation_wall=translation_wall,
-                    sim_wall=sim_wall,
-                    statistics=stats or None,
-                )
-            parsed.error_notices.append(
-                f"simulate() reported success but {self.RESULT_MAT_FILENAME} "
-                f"reaches t={last_time!r} of stop_time={test.stop_time} — "
-                f"partial result refused"
-            )
-
-        # Failure: build an error message that surfaces both pre-record
-        # notices and the simulate() record's `messages` field.
-        err_parts: list[str] = []
-        if proc.returncode != 0:
-            err_parts.append(f"omc exit code {proc.returncode}")
-        if parsed.error_notices:
-            err_parts.append("; ".join(parsed.error_notices[:5]))
-        if parsed.messages:
-            err_parts.append(parsed.messages.strip())
-        if not parsed.result_file:
-            err_parts.append("no result file produced")
-        msg = (
-            failure_message(" | ".join(p for p in err_parts if p))
-            or "omc simulation failed"
+        result = outcome(
+            parse_omc_stdout(stdout_text),
+            test,
+            test_key,
+            elapsed,
+            test_dir / self.RESULT_MAT_FILENAME,
+            exit_code=proc.returncode,
         )
-
-        # If MSL wasn't installed, surface a clear hint.
-        if any("Failed to load package Modelica" in n for n in parsed.error_notices):
-            msg = (
-                "MSL not installed. Run: omc -e "
-                "'updatePackageIndex(); installPackage(Modelica); "
-                "getErrorString();' | " + msg
-            )
-
         if self.progress:
-            self.progress.on_finish(
-                test_key,
-                success=False,
-                elapsed=elapsed,
-                detail=msg[:120],
-            )
-        return TestRunResult(
-            model_id=test.model_id,
-            test_key=test_key,
-            success=False,
-            elapsed=elapsed,
-            error_message=msg,
-            translation_wall=translation_wall,
-            sim_wall=sim_wall,
-            statistics=stats or None,
-        )
+            if result.success:
+                self.progress.on_phase(test_key, "simulating")
+                self.progress.on_finish(test_key, success=True, elapsed=elapsed)
+            else:
+                self.progress.on_finish(
+                    test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    detail=(result.error_message or "")[:120],
+                )
+        return result
 
     # ------------------------------------------------------------------
     # Reading

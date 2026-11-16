@@ -60,14 +60,13 @@ import numpy as np
 
 from ..storage.baseline_diff import (
     SeriesChange,
-    VariableDiff,
     agree_at,
     agrees_within,
+    change_rank,
     difference_series,
     series_change,
 )
 from ..storage.baseline_history import Run, named_tests
-from .baseline_diff_text import change_rank
 from .run_history import RunDir, RunError, paired_folders, read_runs
 from .stats_rows import StatRow, statistics_rows
 
@@ -543,7 +542,7 @@ def signal_order(s: Signal) -> tuple:
     little, the largest absolute difference."""
     if s.kind == "near zero":
         return (KINDS.index(s.kind), 0, -(s.largest_absolute or 0.0), 0.0, s.name)
-    nf, pct, absolute = change_rank([VariableDiff(s.name, s.name, "changed", s.change)])
+    nf, pct, absolute = change_rank([s.change])
     return (KINDS.index(s.kind), -nf, -pct, -absolute, s.name)
 
 

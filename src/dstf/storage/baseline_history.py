@@ -49,6 +49,7 @@ from .baseline_diff import (
     Difference,
     DiffError,
     SeriesChange,
+    change_rank,
     compare_series,
     diff_files,
     difference_series,
@@ -376,7 +377,7 @@ def _folder(
                 kept.append((revision, baseline))
     if len(kept) < 2:
         return None
-    kept, thinned = _thin(kept)
+    kept, thinned = _thin(kept, digits)
     drawn = {revision for revision, _ in kept}
     return FolderHistory(
         folder=folder,
@@ -406,13 +407,15 @@ def _equal(a: list[float], b: list[float]) -> bool:
 
 def _thin(
     kept: list[tuple[Revision, Baseline]],
+    digits: Mapping[Source, int | None],
 ) -> tuple[list[tuple[Revision, Baseline]], list[Revision]]:
     """At most :data:`MAX_KEPT`: the first, the last, and the ones between
-    that moved most against the kept revision before them."""
+    that moved most against the kept revision before them; ``digits`` the
+    digits each revision's file spells."""
     if len(kept) <= MAX_KEPT:
         return kept, []
     middle = range(1, len(kept) - 1)
-    moves = {i: _move(kept[i - 1][1], kept[i][1]) for i in middle}
+    moves = {i: _move(kept[i - 1], kept[i], digits) for i in middle}
     best = sorted(middle, key=lambda i: moves[i], reverse=True)[: MAX_KEPT - 2]
     keep = {0, len(kept) - 1, *best}
     return (
@@ -421,28 +424,32 @@ def _thin(
     )
 
 
-def _move(a: Baseline, b: Baseline) -> tuple[int, float, float]:
-    """How much ``b`` moved against ``a``: any non-finite difference first,
-    then the largest percent, then the largest absolute difference (the
-    order ``baseline diff`` ranks its tests in)."""
-    non_finite, pct, absolute = 0, -1.0, -1.0
-    for old, new in pair_variables(a.variables, b.variables):
+def _move(
+    a: tuple[Revision, Baseline],
+    b: tuple[Revision, Baseline],
+    digits: Mapping[Source, int | None],
+) -> tuple[int, float, float]:
+    """How much ``b`` moved against ``a``, by ``baseline diff``'s rank of
+    a change (`~.baseline_diff.change_rank`): any non-finite difference
+    first, then the largest percent, then the largest absolute difference,
+    each variable's change read as that command reads it — the rounding of
+    a file saved with fewer digits is no move (`~.baseline_diff.with_rounding`,
+    ``digits`` the digits each revision's file spells)."""
+    (ra, a_base), (rb, b_base) = a, b
+    ta, tb = np.asarray(a_base.time, float), np.asarray(b_base.time, float)
+    changes = []
+    for old, new in pair_variables(a_base.variables, b_base.variables):
         if old is None or new is None:
             continue
-        c = compare_series(
-            np.asarray(a.time, float),
-            np.asarray(old.values, float),
-            np.asarray(b.time, float),
-            np.asarray(new.values, float),
+        yo, yn = np.asarray(old.values, float), np.asarray(new.values, float)
+        changes.append(
+            with_rounding(
+                compare_series(ta, yo, tb, yn),
+                (ta, yo, digits[ra]),
+                (tb, yn, digits[rb]),
+            )
         )
-        non_finite = max(non_finite, int(c.non_finite > 0))
-        if c.largest is None:
-            continue
-        if c.scale == "absolute":
-            absolute = max(absolute, c.largest)
-        else:
-            pct = max(pct, c.largest)
-    return (non_finite, pct, absolute)
+    return change_rank(changes)
 
 
 def variable_histories(

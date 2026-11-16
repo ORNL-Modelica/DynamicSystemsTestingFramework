@@ -37,7 +37,9 @@ from ..storage.baseline_diff import (
     SettingChange,
     TestDiff,
     VariableDiff,
+    change_rank,
     machine_dependent,
+    moved_by,
     short_name,
 )
 from ..storage.baseline_history import unchanged
@@ -108,13 +110,6 @@ def _seconds(t: float) -> str:
     return f"{t:g} s"
 
 
-def _moved_by(change: SeriesChange) -> float:
-    """A compared change's size as a cell and the order read it: none for
-    the files' rounding (``within_saved_digits``)."""
-    assert change.largest is not None
-    return 0.0 if change.within_saved_digits else change.largest
-
-
 def _amount(change: SeriesChange) -> str:
     """A change's size as a cell says it: :func:`_true_amount`, and ``0 %``
     for the files' rounding."""
@@ -178,30 +173,12 @@ def value_change(change: SeriesChange) -> str:
 # --- ranking ---------------------------------------------------------------
 
 
-def change_rank(variables: list[VariableDiff]) -> tuple[int, float, float]:
-    """How large a set of variable changes is, for sorting: any non-finite
-    difference first, then the largest percent, then the largest absolute
-    difference."""
-    non_finite = _non_finite(variables)
-    pct = [
-        _moved_by(v.change)
-        for v in variables
-        if v.change and v.change.largest is not None and v.change.scale != "absolute"
-    ]
-    absolute = [
-        _moved_by(v.change)
-        for v in variables
-        if v.change and v.change.largest is not None and v.change.scale == "absolute"
-    ]
-    return (int(non_finite), max(pct, default=-1.0), max(absolute, default=-1.0))
-
-
 def _size(change: SeriesChange) -> tuple[int, int, float]:
     """How large a compared change is: any move above none, then any
     percent above any absolute difference, then by its number — so a cell
     never reads ``0 %`` beside a variable that moved. The files' rounding
-    is none (:func:`_moved_by`)."""
-    moved = _moved_by(change)
+    is none (`~dstf.storage.baseline_diff.moved_by`)."""
+    moved = moved_by(change)
     return (int(moved != 0), int(change.scale != "absolute"), moved)
 
 
@@ -223,7 +200,7 @@ def _test_rank(test: TestDiff) -> tuple[int, int, float, float]:
     if not compared:
         return (1, 0, 0.0, 0.0)
     variables = [v for b in compared for v in b.variables]
-    nf, pct, absolute = change_rank(variables)
+    nf, pct, absolute = change_rank(v.change for v in variables)
     return (0, -nf, -pct, -absolute)
 
 

@@ -231,7 +231,7 @@ def test_the_queue_runs_first_in_first_out_and_numbers_its_rows(h):
     assert indicator(h.session).tone == "running"
     assert stop_reason(h.session) == "3 tests are queued or running"
     # the Suite rows follow
-    assert [suite_row(h.session, m).status for m in (A, B, D)] == [
+    assert [suite_row(h.session, m, edits={}).status for m in (A, B, D)] == [
         RUNNING,
         QUEUED,
         QUEUED,
@@ -334,7 +334,7 @@ def test_a_waiting_item_is_removed_and_a_running_one_is_not(h):
 
     assert h.session.remove(d) is True
     assert [i.model_id for i in h.session.queue] == [A, B]
-    assert h.state(D) is None and suite_row(h.session, D).status == PASS
+    assert h.state(D) is None and suite_row(h.session, D, edits={}).status == PASS
     assert h.session.remove(a) is False and h.state(A) is ItemState.RUNNING
     assert h.session.cancel(b) is False  # waiting: remove it
 
@@ -357,12 +357,12 @@ def test_a_cancelled_run_leaves_no_result_and_says_cancelled(h):
     assert classify(h.session.comparisons[A]) == NOT_RUN
     row = queue_row(h.session, A)
     assert (row.status, row.words, row.actions) == (CANCELLED, "cancelled", ("open",))
-    assert suite_row(h.session, A).status == CANCELLED
+    assert suite_row(h.session, A, edits={}).status == CANCELLED
     assert h.manifest()[A] == "cancelled"
     assert EnqueueTests().caption(h.view(A)) == "Queue again"
     # the row cleared, the test is what a reader of the work dir finds
     h.session.clear_finished()
-    assert h.session.queue == [] and suite_row(h.session, A).status == NOT_RUN
+    assert h.session.queue == [] and suite_row(h.session, A, edits={}).status == NOT_RUN
 
 
 def test_a_simulation_that_raises_fails_with_the_backend_s_message(h):
@@ -1094,7 +1094,7 @@ def test_an_item_the_pool_ended_reads_running_until_the_session_took_it_in(h):
     assert h.state(A) is ItemState.RUNNING
     row = queue_row(h.session, A)
     assert (row.state, row.status) == (ItemState.RUNNING, RUNNING)
-    assert suite_row(h.session, A).status == RUNNING
+    assert suite_row(h.session, A, edits={}).status == RUNNING
     assert A not in h.session.project.results
 
     h.loop.pump()

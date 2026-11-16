@@ -79,7 +79,13 @@ def said(schema: Mapping[str, Any]) -> str | None:
     if kind == "string" and schema.get("minLength"):
         text = "a non-empty string"
     items = schema.get("items")
-    if kind == "array" and isinstance(items, dict) and items.get("type") in _SAID_MANY:
+    if kind == "array" and isinstance(items, dict) and "enum" in items:
+        choices = ", ".join(json.dumps(choice) for choice in items["enum"])
+        of = "values of " if len(items["enum"]) > 1 else ""
+        text += f" that holds only {of}{choices}"
+    elif (
+        kind == "array" and isinstance(items, dict) and items.get("type") in _SAID_MANY
+    ):
         many = _SAID_MANY[items["type"]]
         text += f" of non-empty {many}" if items.get("minLength") else f" of {many}"
     if "minimum" in schema:

@@ -141,9 +141,17 @@ def _interactive_review(
             # failure`.
             not_passed = failed_criteria(comp)
             n_advisory = sum(1 for c in not_passed if c.advisory)
+            # A failure inside a group that passed (an `or` another child of
+            # which passed) is not listed there either, yet it did not pass:
+            # left out of this count, `1/3 passed, 1 failed` did not add up.
+            # It is counted, and the clause says why no block names it.
+            n_inside = n_criteria - n_pass - len(not_passed)
             said = [f"{n_pass}/{n_criteria} passed"]
             if not comp.passed:
-                said.append(f"{len(not_passed) - n_advisory} failed")
+                failed = f"{len(not_passed) - n_advisory + n_inside} failed"
+                if n_inside:
+                    failed += f" ({n_inside} inside a group that passed)"
+                said.append(failed)
             if n_advisory:
                 said.append(advisory_text(n_advisory))
             print(f"  Criteria: {', '.join(said)}")
