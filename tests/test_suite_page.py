@@ -419,7 +419,7 @@ async def test_a_model_whose_scoring_raised_reads_scoring_failed(
         await _settled(lambda: shell.load.phase == "done")
         await _settled(lambda: (D, "SIM_FAIL", 0) in _updates(sent))
         assert (A, "FAIL", 0) in _updates(sent)
-        row = suite_row(shell.session, D, failed=shell.load.failed_models)
+        row = suite_row(shell.session, D, failed=shell.load.failed_models, edits={})
         assert row.message.startswith("scoring failed")
 
 
@@ -432,7 +432,7 @@ async def test_a_transaction_is_one_call_to_the_tables_script(shell):
         page = _suite(shell, user)
         calls: list[str] = []
         page.client.run_javascript = lambda code, **kw: calls.append(code)
-        row = suite_row(shell.session, A)
+        row = suite_row(shell.session, A, edits={})
         page.grid.transaction(update=[row], remove=[B], select=[A])
         (code,) = calls
         assert code.startswith("DstfSuite.apply(") and code.endswith(")")
@@ -561,7 +561,7 @@ def test_a_worst_nrmse_of_nan_reaches_the_grid_as_a_number_above_every_other(tmp
     result.write_text(json.dumps(data), encoding="utf-8")
     s = Session()
     s.open(cfg, work_dir=work)
-    sent = json.loads(ng_json.dumps(row_json(suite_row(s, D))))
+    sent = json.loads(ng_json.dumps(row_json(suite_row(s, D, edits={}))))
     assert sent["nrmse"] == "nan"
     assert float(sent["nrmse__sort"]) == math.inf
 

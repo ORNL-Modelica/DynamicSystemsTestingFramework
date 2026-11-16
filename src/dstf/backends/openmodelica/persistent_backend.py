@@ -38,13 +38,12 @@ from pathlib import Path
 from ...config import Config
 from ...discovery.library_state import LibraryChanges, dependency_root, under
 from ...discovery.test_registry import TestModel, diagnostic_names
-from ..common.failure_message import failure_message
 from ..common.mat_reader import mat_reaches_time
 from ..common.proc_kill import live_children
 from ..common.total_model import QUESTION_BOUND
 from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
-from .backend import OpenModelicaBackend, OpenModelicaConfig
+from .backend import OpenModelicaBackend, OpenModelicaConfig, outcome, timing
 from .log_parser import _TIMING_KEYS, ParsedOmcOutput, parse_omc_stdout
 from .mos_generator import build_simulate_args, classify_dependency
 from .session_loader import load_omc_session
@@ -763,8 +762,6 @@ class OpenModelicaWorker(Worker):
         # concurrently with the next test.
         session = self.session
         start = time.monotonic()
-        translation_wall: float | None = None
-        sim_wall: float | None = None
         record_dict: dict | None = None
         try:
             test_dir_fwd = str(test_dir).replace("\\", "/")
@@ -792,8 +789,6 @@ class OpenModelicaWorker(Worker):
                 success=False,
                 elapsed=elapsed,
                 error_message=f"OMCSessionZMQ error: {type(exc).__name__}: {exc}",
-                translation_wall=translation_wall,
-                sim_wall=sim_wall,
             )
 
         error_string = _raw_get_error_string(session)
@@ -803,17 +798,6 @@ class OpenModelicaWorker(Worker):
             if line.strip() and _is_notice_line(line.strip())
         ]
         parsed = _parsed_from_record(record_dict, error_notices)
-
-        if parsed.timings is not None:
-            t = parsed.timings
-            translation_wall = (
-                t.get("frontend", 0.0)
-                + t.get("backend", 0.0)
-                + t.get("simcode", 0.0)
-                + t.get("templates", 0.0)
-                + t.get("compile", 0.0)
-            )
-            sim_wall = t.get("simulation")
 
         if progress is not None:
             progress.on_phase(test_key, "simulating")
@@ -842,76 +826,19 @@ class OpenModelicaWorker(Worker):
         elapsed = time.monotonic() - start
 
         mat_path = test_dir / OpenModelicaBackend.RESULT_MAT_FILENAME
-        stats: dict = {}
-        if parsed.timings is not None:
-            stats["timing"] = dict(parsed.timings)
-
-        if parsed.success and mat_path.exists():
-            # Belt on the accept-integrity invariant (D93 precedent / D99):
-            # even a success-reporting simulate() record must show a
-            # trajectory that reached stop_time — a partial .mat blessed
-            # by --accept poisons the baseline. Same rule + tolerance as
-            # the disk rescue below, so the two paths can't disagree.
-            reached, last_time = mat_reaches_time(mat_path, float(test.stop_time))
-            if reached:
-                return TestRunResult(
-                    model_id=test.model_id,
-                    test_key=test_key,
-                    success=True,
-                    elapsed=elapsed,
-                    translation_wall=translation_wall,
-                    sim_wall=sim_wall,
-                    statistics=stats or None,
+        if not (parsed.success and mat_path.exists()):
+            # Disk-based cross-check — the record may have misread success.
+            # Same rule + tolerance as `outcome`'s refusal of a partial
+            # result, so the two cannot disagree.
+            disk_ok = self._evaluate_from_disk(test, test_key, elapsed)
+            if disk_ok.success:
+                disk_ok.translation_wall, disk_ok.sim_wall, disk_ok.statistics = timing(
+                    parsed
                 )
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=False,
-                elapsed=elapsed,
-                error_message=(
-                    f"simulate() reported success but result_res.mat reaches "
-                    f"t={last_time!r} of stop_time={test.stop_time} — "
-                    f"partial result refused"
-                ),
-            )
-
-        # Disk-based cross-check — record may have misread success.
-        disk_ok = self._evaluate_from_disk(test, test_key, elapsed)
-        if disk_ok.success:
-            disk_ok.translation_wall = translation_wall
-            disk_ok.sim_wall = sim_wall
-            disk_ok.statistics = stats or None
-            return disk_ok
-
-        err_parts: list[str] = []
-        if error_notices:
-            err_parts.append("; ".join(error_notices[:5]))
-        if parsed.messages:
-            err_parts.append(parsed.messages.strip())
-        if not parsed.result_file:
-            err_parts.append("no result file produced")
-        msg = (
-            failure_message(" | ".join(p for p in err_parts if p))
-            or "omc simulation failed"
-        )
-
-        if any("Failed to load package Modelica" in n for n in error_notices):
-            msg = (
-                "MSL not installed. Run: omc -e "
-                "'updatePackageIndex(); installPackage(Modelica); "
-                "getErrorString();' | " + msg
-            )
-
-        return TestRunResult(
-            model_id=test.model_id,
-            test_key=test_key,
-            success=False,
-            elapsed=elapsed,
-            error_message=msg,
-            translation_wall=translation_wall,
-            sim_wall=sim_wall,
-            statistics=stats or None,
-        )
+                return disk_ok
+        # The batch path's reading of the same call (`outcome`): a partial
+        # result is refused with omc's times, statistics and notices.
+        return outcome(parsed, test, test_key, elapsed, mat_path)
 
     def _evaluate_from_disk(
         self,

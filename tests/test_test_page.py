@@ -7131,12 +7131,12 @@ class TestRail:
             drawer = page.rail.tests
             assert drawer is not None
             rows = dict(drawer.list.rows)
-            assert rows[D].verdict == "PASS"
+            assert rows[D].status == "PASS"
             rebuilds = []
             real = drawer.list.rebuild
             drawer.list.rebuild = lambda *a, **kw: (rebuilds.append(1), real(*a, **kw))
             shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
-            await _settled(lambda: drawer.list.rows[D].verdict == "FAIL")
+            await _settled(lambda: drawer.list.rows[D].status == "FAIL")
             row = drawer.list.rows[D]
             assert row.badge.text == "FAIL"
             assert "dstf-tint-fail" in row.container.classes
@@ -7145,20 +7145,21 @@ class TestRail:
             assert rebuilds == []
 
     async def test_a_row_not_scored_yet_wears_scoring_not_queued(self, shell):
-        """A test with no verdict yet reads `…` under the SCORING class —
-        its fill and its tint. `queued` is the simulation queue's (D150):
-        a row wearing it says the test waits for a worker."""
+        """A test with no verdict yet reads SCORING, as the Suite's row
+        does, under the SCORING class — its fill and its tint. `queued` is
+        the simulation queue's (D150): a row wearing it says the test waits
+        for a worker."""
         async with user_simulation(root=shell.index) as user:
             page = await _test_page(shell, user)
             user.find(marker="rail:tests").click()
             drawer = page.rail.tests
             assert drawer is not None
-            assert drawer.list.rows[D].verdict == "PASS"
+            assert drawer.list.rows[D].status == "PASS"
             del shell.session.comparisons[D]
             shell.session._emit("results", models={D})
-            await _settled(lambda: drawer.list.rows[D].verdict == "")
+            await _settled(lambda: drawer.list.rows[D].status == "SCORING")
             row = drawer.list.rows[D]
-            assert row.badge.text == "…"
+            assert row.badge.text == "SCORING"
             assert row.badge._style["background-color"] == "var(--dstf-scoring-fill)"
             assert "dstf-tint-scoring" in row.container.classes
             assert "dstf-tint-queued" not in row.container.classes
@@ -7220,9 +7221,10 @@ class TestTestsDrawerControls:
             await _settled(lambda: page.state.tests_sort == "name")
             assert _shown(shell, user) == [A, B, C, D, G]
 
-    async def test_scoring_failed_sorts_after_sim_fail_and_unscored_last(self, shell):
-        """FAIL, SIM_FAIL, scoring failed, NO_REF, PASS, NOT RUN, then a test
-        with no verdict yet — not `STATUS_ORDER`, which lists PASS first."""
+    async def test_scoring_failed_sorts_as_sim_fail_and_unscored_last(self, shell):
+        """FAIL, SIM_FAIL (a scoring failure is one, as in the Suite),
+        NO_REF, PASS, NOT RUN, then a test with no verdict yet — not
+        `STATUS_ORDER`, which lists PASS first."""
         async with user_simulation(root=shell.index) as user:
             await _tests_drawer(shell, user)
             shell.load.failed_models.append(G)
@@ -7230,6 +7232,25 @@ class TestTestsDrawerControls:
             shell.session.comparisons.pop(D)
             await _pick(user, "tests-drawer:sort", "status")
             await _settled(lambda: _shown(shell, user) == [A, G, B, C, D])
+
+    async def test_a_scoring_failure_s_badge_says_the_suite_s_message(self, shell):
+        """The drawer's SIM_FAIL of a scoring failure says why, as the
+        Suite's Status cell does: its message is the badge's tooltip, and a
+        rescore that scores the test takes it away."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _tests_drawer(shell, user)
+            drawer = page.rail.tests
+            assert "title" not in drawer.list.rows[A].badge.props
+            shell.load.failed_models.append(G)
+            del shell.session.comparisons[G]
+            await _pick(user, "tests-drawer:sort", "status")
+            await _settled(lambda: drawer.list.rows[G].status == "SIM_FAIL")
+            badge = drawer.list.rows[G].badge
+            assert badge.props["title"] == "scoring failed (see the log)"
+            shell.session.stage([PatchOp(G, "add", "/comparison", {"tolerance": 1e-5})])
+            await _settled(lambda: drawer.list.rows[G].status != "SIM_FAIL")
+            assert drawer.list.rows[G].badge is badge
+            assert "title" not in badge.props
 
     async def test_the_status_sort_follows_a_rescore(self, shell):
         async with user_simulation(root=shell.index) as user:
@@ -7239,7 +7260,7 @@ class TestTestsDrawerControls:
             # D's nrmse 6e-4 fails at 1e-5: D moves up among the failures
             shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
             drawer = page.rail.tests
-            await _settled(lambda: drawer.list.rows[D].verdict == "FAIL")
+            await _settled(lambda: drawer.list.rows[D].status == "FAIL")
             await _settled(lambda: _shown(shell, user) == [A, D, B, G, C])
 
     async def test_flat_and_full_names(self, shell):
@@ -7373,7 +7394,7 @@ class TestTestsDrawerControls:
             asked.clear()
             shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
             await _settled(
-                lambda: _page(shell, user).rail.tests.list.rows[D].verdict == "FAIL"
+                lambda: _page(shell, user).rail.tests.list.rows[D].status == "FAIL"
             )
             assert _shown(shell, user) == [D]
             assert asked == []
@@ -7433,7 +7454,7 @@ class TestTestsDrawerControls:
             user.find(marker="tests-drawer:pill:FAIL").click()
             await _settled(lambda: _shown(shell, user) == [A])
             shell.session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
-            await _settled(lambda: page.rail.tests.list.rows[A].verdict == "PASS")
+            await _settled(lambda: page.rail.tests.list.rows[A].status == "PASS")
             pill = _one(user, "tests-drawer:pill:FAIL")
             assert pill.text == "FAIL 0" and pill.enabled
             assert pill.props["aria-pressed"] == "true" and _shown(shell, user) == []
@@ -7453,10 +7474,9 @@ class TestTestsDrawerControls:
             await _settled(lambda: _shown(shell, user)[-1] == CASES_X)
 
     async def test_scoring_failed_counts_and_filters_as_sim_fail(self, shell):
-        """The Suite's rule (`suite_rows`): a test the open could not score
-        is SIM_FAIL to the pills — counted there and kept by that pill — and
-        keeps its own place in the status sort, after SIM_FAIL: B, the one
-        here, comes before C in package order."""
+        """The Suite's row (`suite_rows`): a test the open could not score
+        reads SIM_FAIL — counted under that pill, kept by it and sorted
+        with the other SIM_FAIL in package order."""
         async with user_simulation(root=shell.index) as user:
             page = await _tests_drawer(shell, user)
             # C ran and failed here (the fixture's C never finished: NOT
@@ -7466,15 +7486,13 @@ class TestTestsDrawerControls:
             shell.load.failed_models.append(B)
             del shell.session.comparisons[B]
             page.rail.tests._rebuild()
-            await _settled(
-                lambda: page.rail.tests.list.rows[B].verdict == "scoring failed"
-            )
+            await _settled(lambda: page.rail.tests.list.rows[B].status == "SIM_FAIL")
             assert _one(user, "tests-drawer:pill:SIM_FAIL").text == "SIM_FAIL 2"
             assert _one(user, "tests-drawer:pill:NO_REF").text == "NO_REF 0"
             user.find(marker="tests-drawer:pill:SIM_FAIL").click()
             await _settled(lambda: _shown(shell, user) == [B, C])
             await _pick(user, "tests-drawer:sort", "status")
-            await _settled(lambda: _shown(shell, user) == [C, B])
+            await _settled(lambda: _shown(shell, user) == [B, C])
 
     async def test_a_status_sort_reorder_does_not_search_again(
         self, shell, monkeypatch
@@ -9009,7 +9027,9 @@ async def test_the_strip_follows_a_test_through_the_queue(shell):
         assert "dstf-strip-grey" in _one(user, "strip").classes
         assert (strip.remove.visible, strip.cancel.visible) == (True, False)
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
-        assert page.badge.text == "FAIL"  # its last result stands while it waits
+        # The Suite's word while it waits, as the Tests drawer's (it read
+        # FAIL, the last result's, beside a strip saying it waits).
+        assert page.badge.text == "QUEUED"
 
         item.state, item.started_at, item.worker_id = ItemState.RUNNING, time.time(), 0
         session._item_started(item)
@@ -9023,7 +9043,8 @@ async def test_the_strip_follows_a_test_through_the_queue(shell):
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
         # Its run dropped the last result and every verdict with it — not
         # the page's layout (D151): its plots stay until its own arrives.
-        assert page.badge.text == "NOT RUN"
+        # The badge says it runs, as the Suite does (it read NOT RUN).
+        assert page.badge.text == "RUNNING"
         assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
         assert page.body.props["data-unscored"] == "waiting for result"
 
@@ -9049,11 +9070,12 @@ async def test_the_strip_of_a_cancelled_run_fills_queue_again(shell):
         assert (page.strip.remove.visible, page.strip.cancel.visible) == (False, False)
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "filled"}
         assert _one(user, "action:enqueue").text == "Queue again"
-        assert page.badge.text == "NOT RUN"
+        assert page.badge.text == "CANCELLED"
         # Its row cleared, the test is one with no result.
         shell.session.clear_finished()
         shell.tick()
         assert page.strip.situation is Situation.NO_RESULT
+        assert page.badge.text == "NOT RUN"
         assert _one(user, "action:enqueue").text == "Queue 1"
 
 
@@ -9282,9 +9304,11 @@ async def test_a_read_but_unscored_test_waits_while_the_project_is_read(shell):
 
 
 async def test_the_badge_of_a_test_not_scored_yet_wears_scoring_not_queued(shell):
-    """The header's badge of a test with no verdict yet reads `…` under the
-    SCORING class. `queued` is the simulation queue's (D150): a badge
-    wearing it says the test waits for a worker."""
+    """The header's badge of a test with no verdict yet reads SCORING under
+    the SCORING class, the Suite's word for it (it read `…`). `queued` is
+    the simulation queue's (D150): a badge wearing it says the test waits
+    for a worker. A scoring failure the load announced reads SIM_FAIL, as
+    on the Suite and in the Tests drawer."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
         assert page.badge.text == "PASS"
@@ -9292,8 +9316,13 @@ async def test_the_badge_of_a_test_not_scored_yet_wears_scoring_not_queued(shell
         del shell.session.comparisons[D]
         with page.client:
             page.sync()
-        assert page.badge.text == "…"
+        assert page.badge.text == "SCORING"
         assert page.badge._style["background-color"] == "var(--dstf-scoring-fill)"
+        shell.load.failed_models.append(D)
+        with page.client:
+            page.sync()
+        assert page.badge.text == "SIM_FAIL"
+        assert page.badge._style["background-color"] == "var(--dstf-sim-fail-fill)"
 
 
 def _strip_raises(monkeypatch) -> None:

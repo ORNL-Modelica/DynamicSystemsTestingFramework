@@ -174,7 +174,7 @@ def test_a_running_test_s_trace_grows_and_ends_on_its_scored_result(
         _run_and_open(page)
         strip = page.locator(STRIP)
         expect(strip).to_have_text(RUNNING_AT, timeout=RUN_TIMEOUT)
-        expect(page.locator(".dstf-subheader .dstf-badge")).to_have_text("NOT RUN")
+        expect(page.locator(".dstf-subheader .dstf-badge")).to_have_text("RUNNING")
 
         # The trace gains points over three consecutive seconds.
         page.wait_for_function(f"() => (({PLOT})() || {{x: []}}).x.length > 2")
@@ -265,7 +265,7 @@ def test_a_cancelled_run_shows_its_partial_trace_and_is_not_accepted(
         expect(strip).to_have_text(
             "Cancelled at t = 0.3 of 1 s — not scored", timeout=RUN_TIMEOUT
         )
-        expect(page.locator(".dstf-subheader .dstf-badge")).to_have_text("NOT RUN")
+        expect(page.locator(".dstf-subheader .dstf-badge")).to_have_text("CANCELLED")
 
         # What it wrote, to where it stopped, and the marker there.
         page.wait_for_function(f"() => !!(({PLOT})() || {{}}).stopped")

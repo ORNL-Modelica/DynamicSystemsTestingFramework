@@ -173,7 +173,7 @@ async def test_the_page_s_words_through_a_whole_run(live):
         assert re.fullmatch(
             r"Running on worker 1 — (starting|t = [\d.]+ / 1 s)", _strip(user)
         )
-        assert _one(user, "status").text == "NOT RUN"
+        assert _one(user, "status").text == "RUNNING"
         assert page.body.props["data-unscored"] == WAITING
         assert _texts(user, "criterion-readout:") == [WAITING, WAITING]
         assert _one(user, "tree:summary").text == WAITING
@@ -338,7 +338,7 @@ async def test_a_cancelled_run_s_page_shows_what_it_wrote(live):
         assert page.body.props["data-unscored"] == NOT_SCORED
         assert _texts(user, "criterion-readout:") == [NOT_SCORED, NOT_SCORED]
         assert _one(user, "tree:summary").text == NOT_SCORED
-        assert _one(user, "status").text == "NOT RUN"
+        assert _one(user, "status").text == "CANCELLED"
         figure = page.cards[0].plot.figure
         assert list(_actual(page.cards[0])["x"]) == STEPS[:7]
         (line,) = [

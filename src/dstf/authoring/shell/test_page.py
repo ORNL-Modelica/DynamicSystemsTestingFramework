@@ -26,10 +26,8 @@ from ...discovery.patch_apply import PatchError
 from ...discovery.plots import PlotExtra, ResolvedPlot
 from ...discovery.test_registry import diagnostic_names
 from ...reporting.status import (
-    SCORING_CLASS,
     SCORING_FAILED,
     classify,
-    classify_with_class,
     refusal,
 )
 from ...reporting.tree_rows import leaves_of
@@ -40,6 +38,7 @@ from ..layout import layout_op, remove_context, remove_watch, reset_op
 from ..queue_rows import queue_row
 from ..situation import Situation, Strip, new_variables, strip_for
 from ..spec_document import edit_counts
+from ..suite_rows import suite_row
 from ..tree_pointer import node_or_none
 from .actions import ActionBar, RowBuild, RowTarget
 from .family_fold import Folding
@@ -1126,11 +1125,16 @@ class TestPage:
             return
         session = self.shell.session
         comp = session.comparisons.get(self.model_id)
-        verdict, css = (
-            classify_with_class(comp) if comp is not None else ("", SCORING_CLASS)
+        # The Suite's status, as the Tests drawer reads it (`suite_row`):
+        # read off the comparison alone, a running test's badge said NOT RUN
+        # beside a strip saying it runs, and CANCELLED, QUEUED and a scoring
+        # failure were words of the Suite and the drawer only. Its edits are
+        # no part of the word.
+        row = suite_row(
+            session, self.model_id, failed=self.shell.load.failed_models, edits={}
         )
-        self.badge.set_text(verdict or "…")
-        self.badge.style(f"background-color: var(--dstf-{css}-fill)")
+        self.badge.set_text(row.status_text)
+        self.badge.style(f"background-color: var(--dstf-{row.status_class}-fill)")
         project = session.project
         if project is None:
             return

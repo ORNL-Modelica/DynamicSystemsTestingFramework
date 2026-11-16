@@ -414,7 +414,15 @@ class TestARecognizerEntry:
             ({"name": 3}, "recognizers[2].name: must be a non-empty string, got 3"),
             (
                 {"applies_to": "modelica"},
-                'recognizers[2].applies_to: must be a list of strings, got "modelica"',
+                "recognizers[2].applies_to: must be a list that holds only "
+                '"modelica", got "modelica"',
+            ),
+            # A recognizer reads Modelica files only: one for another source
+            # type loaded and never ran.
+            (
+                {"applies_to": ["modelica", "python"]},
+                "recognizers[2].applies_to: must be a list that holds only "
+                '"modelica", got ["modelica", "python"]',
             ),
             (
                 {"paths_include": [1]},

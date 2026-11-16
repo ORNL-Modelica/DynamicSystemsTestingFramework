@@ -561,6 +561,49 @@ class TestJUnitReport:
         # a test that simply passes says nothing
         assert list(root.find(".//testcase[@name='Lib.Examples.A']")) == []
 
+    def test_a_failing_criterion_in_a_group_that_passed_is_not_listed(self, tmp_path):
+        """`and[or[nrmse FAILS, tube passes], nrmse FAILS]`: the `or`
+        passed, so its failing nrmse did not fail the test — the console
+        and JUnit list the one that did, as `dstf summary` reads the file
+        (`results_summary.failing_criterion`)."""
+        from dstf.reporting.console_report import failure_blocks
+
+        comp = _scored(
+            {
+                "combinator": "and",
+                "children": [
+                    {
+                        "combinator": "or",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x", "tolerance": 1e-9},
+                            {
+                                "metric": "tube",
+                                "variable": "x",
+                                "tube_width_mode": "band",
+                                "tube_abs": 0.01,
+                            },
+                        ],
+                    },
+                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-8},
+                ],
+            }
+        )
+        assert not comp.passed
+        assert [v.passed for v in comp.variables] == [False, True, False]
+        out = tmp_path / "junit.xml"
+        generate_junit_report([comp], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure.get("message") == "1 criterion failed"
+        assert failure.text == (
+            "x: nrmse · against primary — NRMSE 2.500e-03 vs tolerance 1.000e-08 → FAIL"
+        )
+        assert [block[:2] for block in failure_blocks(comp)] == [
+            [
+                "    x: nrmse · against primary",
+                "      NRMSE 2.500e-03 vs tolerance 1.000e-08 → FAIL",
+            ]
+        ]
+
     def test_criteria_in_a_group_under_warn_are_advisory_too(self, tmp_path):
         """`and[fail, warn[and[fail, fail]]]`: the `warn` holds a GROUP, and
         both of its criteria are under the warn — one level down."""

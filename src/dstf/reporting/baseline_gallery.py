@@ -34,6 +34,7 @@ from ..figures.history import KIND_WORDS, HistoryTrace, cut, history_figure
 from ..storage.baseline_diff import (
     BaselineDiff,
     VariableDiff,
+    change_rank,
     folder_order,
     short_name,
 )
@@ -51,7 +52,6 @@ from ..storage.baseline_history import (
 from .baseline_diff_text import (
     LIMITS,
     change_cell,
-    change_rank,
     overview_cells,
     overview_header,
     sorted_tests,
@@ -554,7 +554,7 @@ def run_sections(history: RunHistory) -> list[tuple[TestHistory, FolderHistory]]
 
     def key(item: tuple[TestHistory, FolderHistory]):
         test, folder = item
-        nf, pct, absolute = change_rank(_run_changes(folder))
+        nf, pct, absolute = change_rank(v.change for v in _run_changes(folder))
         return (-nf, -pct, -absolute, test.model_id, folder_order(folder.folder))
 
     return sorted(((t, f) for t in history.tests for f in t.folders), key=key)

@@ -23,7 +23,7 @@ def session(tmp_path) -> Session:
 
 
 def test_a_scored_pass(session):
-    row = suite_row(session, D)
+    (row,) = suite_rows(session, [D])
     assert row.status == "PASS" and row.model_id == D
     assert row.n_vars == 1 and row.n_vars_passed == 1
     assert row.worst_score is not None and row.worst_score < 0.01
@@ -49,15 +49,15 @@ def test_a_nan_score_is_the_rows_worst_and_sorts_above_every_number(tmp_path):
     s = Session()
     s.open(cfg, work_dir=work)
     (nrmse,) = [c for c in COLUMNS if c.key == "nrmse"]
-    row = suite_row(s, D)
+    row = suite_row(s, D, edits={})
     assert (nrmse.text(row), nrmse.sort(row)) == ("nan", math.inf)
-    fine = suite_row(s, A)
+    fine = suite_row(s, A, edits={})
     assert nrmse.text(fine) == "1.5309e-01"
     assert nrmse.sort(fine) == pytest.approx(0.153093108924, rel=1e-12)
 
 
 def test_no_baseline_has_no_ref_id(session):
-    row = suite_row(session, B)
+    row = suite_row(session, B, edits={})
     assert row.status == "NO_REF"
     assert row.ref_id is None  # never "ref_None"
 
@@ -66,7 +66,7 @@ def test_a_test_its_run_never_finished_is_not_run(session):
     """D145: C's manifest entry is still pending — the last run never
     finished it — so it has no result: NOT RUN, in the grey token's class,
     not SIM_FAIL."""
-    row = suite_row(session, C)
+    row = suite_row(session, C, edits={})
     assert (row.status, row.status_text, row.status_class) == (
         "NOT RUN",
         "NOT RUN",
@@ -78,19 +78,19 @@ def test_walls_from_the_results_timing(session):
     session.project.results[D].statistics = {
         "timing": {"sim_wall": 1.5, "total_wall": 2.0}
     }
-    row = suite_row(session, D)
+    row = suite_row(session, D, edits={})
     assert row.sim_wall == 1.5 and row.total_wall == 2.0
 
 
 def test_the_message_is_the_comparisons_error(session):
     session.comparisons[D] = replace(session.comparisons[D], error_message="boom")
-    assert suite_row(session, D).message == "boom"
+    assert suite_row(session, D, edits={}).message == "boom"
 
 
 def test_a_staged_edit_counts_and_rescores(session):
-    assert suite_row(session, A).status == "FAIL"
+    assert suite_row(session, A, edits={}).status == "FAIL"
     session.stage([LOOSEN])
-    row = suite_row(session, A)
+    (row,) = suite_rows(session, [A])
     # A first LOOSEN writes A's implicit tree out too: two ops, and ONE
     # edit — what the user did — as the header counts it.
     assert len([op for op in session.spec.pending if op.model_id == A]) == 2
@@ -104,17 +104,17 @@ def test_queued_and_running_beat_everything(session):
     it reads its verdict again."""
     running = fake_item(session, A, ItemState.RUNNING)
     waiting = fake_item(session, D, ItemState.WAITING)
-    assert suite_row(session, A, failed={A}).status == "RUNNING"
-    assert suite_row(session, D, failed={D}).status == "QUEUED"
+    assert suite_row(session, A, failed={A}, edits={}).status == "RUNNING"
+    assert suite_row(session, D, failed={D}, edits={}).status == "QUEUED"
     drop_item(session, running)
     drop_item(session, waiting)
-    assert suite_row(session, A).status == "FAIL"
-    assert suite_row(session, D).status == "PASS"
+    assert suite_row(session, A, edits={}).status == "FAIL"
+    assert suite_row(session, D, edits={}).status == "PASS"
 
 
 def test_a_failed_scoring(session):
     del session.comparisons[D]  # `_reload_results` pops a failed model's verdict
-    row = suite_row(session, D, failed={D})
+    row = suite_row(session, D, failed={D}, edits={})
     assert row.status == "SIM_FAIL"
     assert row.message.startswith("scoring failed")
 
@@ -123,12 +123,12 @@ def test_a_comparison_beats_an_earlier_scoring_failure(session):
     """The shell's failed set is only reset by the next open: a model whose
     scoring failed on open and that a later rescore scored reads its
     verdict, not "scoring failed" for the rest of the session."""
-    assert suite_row(session, D, failed={D}).status == "PASS"
+    assert suite_row(session, D, failed={D}, edits={}).status == "PASS"
 
 
 def test_waiting_before_a_comparison(session):
     del session.comparisons[C]
-    row = suite_row(session, C)
+    row = suite_row(session, C, edits={})
     assert row.status is None and row.waiting and row.status_text == "SCORING"
 
 

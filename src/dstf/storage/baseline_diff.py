@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -467,6 +467,28 @@ def agree_at(old: np.ndarray, new: np.ndarray, step: np.ndarray) -> np.ndarray:
         near = np.abs(new - old) <= step * _ONE_STEP
     same = (old == new) | (np.isnan(old) & np.isnan(new))
     return near | same
+
+
+def moved_by(change: SeriesChange) -> float:
+    """A compared change's size as a cell and the order read it: none for
+    the files' rounding (``within_saved_digits``)."""
+    assert change.largest is not None
+    return 0.0 if change.within_saved_digits else change.largest
+
+
+def change_rank(changes: Iterable[SeriesChange | None]) -> tuple[int, float, float]:
+    """How large a set of changes is, for sorting: any non-finite
+    difference first, then the largest percent, then the largest absolute
+    difference — each by :func:`moved_by`, so the files' rounding is no
+    move. The one rank ``baseline diff`` orders its tests by, ``baseline
+    plot`` its sections and the revisions it keeps, and ``plot`` / ``diff``
+    their signals; -1 where no change of a kind was compared."""
+    compared = [c for c in changes if c is not None]
+    non_finite = any(c.non_finite for c in compared)
+    sized = [c for c in compared if c.largest is not None]
+    pct = [moved_by(c) for c in sized if c.scale != "absolute"]
+    absolute = [moved_by(c) for c in sized if c.scale == "absolute"]
+    return (int(non_finite), max(pct, default=-1.0), max(absolute, default=-1.0))
 
 
 def compare_series(

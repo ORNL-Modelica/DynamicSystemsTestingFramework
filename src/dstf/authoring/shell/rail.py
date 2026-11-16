@@ -10,6 +10,7 @@ it open."""
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from contextlib import ExitStack
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -18,18 +19,22 @@ from urllib.parse import quote
 import regex
 from nicegui import ui
 
+from ...reporting.rows import TestRow
 from ...reporting.status import (
     FAIL,
     NO_REF,
     NOT_RUN,
     PASS,
-    SCORING_FAILED,
+    QUEUED,
+    RUNNING,
+    SCORING_CLASS,
     SIM_FAIL,
     STATUS_CLASSES,
-    classify,
 )
 from ..needle import matcher
+from ..suite_rows import suite_rows
 from .drawer_controls import TIP_ABOVE, filter_box, menu_button
+from .suite_grid import PILLS
 from .test_list import Row, TestList, _name, _package
 from .variables_drawer import VariablesDrawer
 
@@ -169,16 +174,22 @@ _BLUR = """(e) => {
 }"""
 
 
-EDITED = "EDITED"
-#: The Tests drawer's status pills, in the Suite's order, and EDITED.
-PILLS = (PASS, FAIL, SIM_FAIL, NO_REF, NOT_RUN, EDITED)
-#: Each pill's `.dstf-pill-<status>` tokens; EDITED reads as the Suite's
-#: Edits cell and the rows' ``N unsaved`` pill do.
-PILL_CSS = {**{s: STATUS_CLASSES[s] for s in PILLS if s != EDITED}, EDITED: "warn"}
-#: "Status, failures first": FAIL, SIM_FAIL, scoring failed, NO_REF, PASS,
-#: NOT RUN (no result, D145), then no verdict yet — NOT `STATUS_ORDER`,
-#: which lists PASS first.
-FAILURES_FIRST = (FAIL, SIM_FAIL, SCORING_FAILED, NO_REF, PASS, NOT_RUN, "")
+#: The word of each of the Suite's count pills (`suite_grid.PILLS`), by
+#: its key: a row's status class, or ``edited``. The drawer's pills are the
+#: Suite's, and a row counts under the one its class is the key of —
+#: CANCELLED under NOT RUN, as in the Suite.
+PILL_WORDS = {key: word for key, word, _ in PILLS}
+EDITED = PILL_WORDS["edited"]
+#: "Status, failures first", by a row's class: FAIL, SIM_FAIL (a scoring
+#: failure is one, as in the Suite), NO_REF, PASS, NOT RUN (no result,
+#: D145, or a cancelled run), then the queue's RUNNING and QUEUED and no
+#: verdict yet — NOT `STATUS_ORDER`, which lists PASS first.
+FAILURES_FIRST = (
+    *(STATUS_CLASSES[s] for s in (FAIL, SIM_FAIL, NO_REF, PASS, NOT_RUN)),
+    STATUS_CLASSES[RUNNING],
+    STATUS_CLASSES[QUEUED],
+    SCORING_CLASS,
+)
 SORTS = (
     ("package", "Package order"),
     ("name", "Name A→Z"),
@@ -238,19 +249,22 @@ class TestsDrawer:
                 )
             with ui.row().classes("items-center gap-1 w-full"):
                 self.pills: dict[str, ui.button] = {}
-                for word in PILLS:
+                #: The pills a row only passes through: drawn while a row
+                #: counts under one, or it filters (the Suite's rule).
+                self.passing = {word for _, word, passing in PILLS if passing}
+                for key, word, _ in PILLS:
+                    # EDITED reads as the Suite's Edits cell and the rows'
+                    # ``N unsaved`` pill do.
+                    css = "warn" if word == EDITED else key
                     self.pills[word] = (
                         ui.button(on_click=partial(self._on_pill, word))
                         .props("flat dense no-caps")
-                        .classes(
-                            f"dstf-count-pill dstf-pill dstf-pill-{PILL_CSS[word]}"
-                        )
+                        .classes(f"dstf-count-pill dstf-pill dstf-pill-{css}")
                         # One word: NiceGUI splits a marker on whitespace,
                         # and "NOT RUN" has a space.
                         .mark(f"tests-drawer:pill:{word.replace(' ', '_')}")
                     )
             self.list = TestList(
-                page.shell,
                 on_open=self._open,
                 current=page.model_id,
                 marker="tests-drawer:",
@@ -291,9 +305,15 @@ class TestsDrawer:
 
     # -- the rows ----------------------------------------------------------------
 
-    def _ids(self) -> list[str]:
-        """The tests in the chosen order; package order is the shell's."""
-        ids = self.page.shell.visible_tests()
+    def _rows(self, model_ids: Iterable[str]) -> list[TestRow]:
+        """The Suite's rows of ``model_ids`` (`suite_rows`: the edits
+        counted once for them all)."""
+        shell = self.page.shell
+        return suite_rows(shell.session, model_ids, failed=shell.load.failed_models)
+
+    def _ordered(self, ids: list[str], css: Mapping[str, str]) -> list[str]:
+        """``ids`` (package order: the shell's) in the chosen order;
+        ``css`` is each row's status class, for the status sort."""
         state = self.page.state
         if state.tests_sort == "name":
             return sorted(
@@ -301,21 +321,15 @@ class TestsDrawer:
             )
         if state.tests_sort == "status":
             position = {m: i for i, m in enumerate(ids)}
-            return sorted(ids, key=lambda m: (_rank(self._verdict(m)), position[m]))
+            return sorted(ids, key=lambda m: (_rank(css.get(m, "")), position[m]))
         return ids
 
-    def _verdict(self, model_id: str) -> str:
-        """What the row's badge says (`TestList.paint`), read before the
-        rows exist: the order is decided first."""
-        comp = self.page.shell.session.comparisons.get(model_id)
-        if comp is not None:
-            return classify(comp)
-        return SCORING_FAILED if model_id in self.page.shell.load.failed_models else ""
-
     def _drawn(self) -> list[str]:
-        """The order the rows are drawn in now: `_ids`, by package first
-        when grouped (`TestList.rebuild`)."""
-        ids = self._ids()
+        """The order the rows should be drawn in now, by the statuses
+        they are painted with: `_ordered`, by package first when grouped
+        (`TestList.rebuild`)."""
+        css = {m: row.css for m, row in self.list.rows.items()}
+        ids = self._ordered(self.page.shell.visible_tests(), css)
         if not self.page.state.tests_grouped:
             return ids
         position = {m: i for i, m in enumerate(ids)}
@@ -327,10 +341,19 @@ class TestsDrawer:
         showed the filter in its box over every row until some event
         happened to apply it."""
         state = self.page.state
+        rows = {r.model_id: r for r in self._rows(self.page.shell.visible_tests())}
+        order = self._ordered(list(rows), {m: r.status_class for m, r in rows.items()})
         self.list.rebuild(
-            self._ids(), grouped=state.tests_grouped, short=state.tests_short
+            [rows[m] for m in order],
+            grouped=state.tests_grouped,
+            short=state.tests_short,
         )
         self._filter()
+
+    def _paint(self, model_ids: Iterable[str]) -> None:
+        """Repaint the rows of ``model_ids`` the list has."""
+        for row in self._rows(str(m) for m in model_ids if str(m) in self.list.rows):
+            self.list.paint(row)
 
     def _open(self, model_id: str) -> None:
         ui.navigate.to(f"/test/{quote(model_id, safe='')}")
@@ -363,20 +386,20 @@ class TestsDrawer:
     def _filter(self) -> None:
         """The filter and the pills over the rows; the pills count every
         row, whatever the filter. The statuses pressed are OR'd, and EDITED
-        with them — the Suite's rule (`suite_grid.js`). A test the open
-        could not score is SIM_FAIL to the pills, counted and kept, as the
-        Suite's row says it (`suite_rows`); the status sort keeps it a
-        place of its own (`FAILURES_FIRST`)."""
+        with them — the Suite's rule (`suite_grid.js`), over the Suite's
+        rows: a row counts under its class's pill. SCORING, QUEUED and
+        RUNNING show while a row counts under one, or while it filters."""
         state = self.page.state
-        counts = dict.fromkeys(PILLS, 0)
+        counts = dict.fromkeys(self.pills, 0)
         for row in self.list.rows.values():
-            pill = _pill_word(row)
+            pill = PILL_WORDS.get(row.css)
             if pill in counts:
                 counts[pill] += 1
             if row.pending:
                 counts[EDITED] += 1
         for word, button in self.pills.items():
             on = word in state.tests_pills
+            button.set_visibility(word not in self.passing or counts[word] > 0 or on)
             button.set_text(f"{word} {counts[word]}")
             button.props(f'aria-pressed="{str(on).lower()}"')
             if on:
@@ -394,32 +417,32 @@ class TestsDrawer:
                 return False
             if not pills:
                 return True
-            return _pill_word(row) in pills or (EDITED in pills and row.pending > 0)
+            return PILL_WORDS.get(row.css) in pills or (
+                EDITED in pills and row.pending > 0
+            )
 
         self.list.filter(keep)
 
     def handle(self, event: dict[str, Any]) -> None:
         """The Suite page's rules for its rows (`SuitePage.handle`): a `spec`
         that moved the test set rebuilds them, and one that did not repaints
-        the rows whose edits it moved; a scored model repaints its own row.
-        Under the status sort, a verdict that moved the order rebuilds
-        them."""
+        the rows whose edits it moved; a scored model repaints its own row,
+        and so does one whose place in the queue moved. Under the status
+        sort, a status that moved the order rebuilds them."""
         kind = event["event"]
         if kind == "spec":
             if set(self.list.rows) != set(self.page.shell.visible_tests()):
                 self._rebuild()
                 return
-            for model_id in event.get("models") or list(self.list.rows):
-                self.list.paint(str(model_id))
+            self._paint(event.get("models") or list(self.list.rows))
         elif kind == "loading":
             if event.get("phase") == "results":
                 if not self.list.rows:
                     self._rebuild()  # a drawer opened before the spec event
                     return
-                self.list.paint(str(event["model"]))
-        elif kind == "results":
-            for model_id in event.get("models", ()):
-                self.list.paint(str(model_id))
+                self._paint([event["model"]])
+        elif kind in ("results", "queue"):
+            self._paint(event.get("models", ()))
         if self.page.state.tests_sort == "status" and list(self.list.rows) != (
             self._drawn()
         ):
@@ -428,20 +451,10 @@ class TestsDrawer:
         self._filter()
 
 
-def _pill_word(row: Row) -> str:
-    """The status pill a row counts under: its verdict, SIM_FAIL for
-    "scoring failed"."""
-    return SIM_FAIL if row.verdict == SCORING_FAILED else row.verdict
-
-
-def _rank(verdict: str) -> int:
-    """Where "Status, failures first" puts a verdict: a word it does not
+def _rank(css: str) -> int:
+    """Where "Status, failures first" puts a row's class: one it does not
     list goes last."""
-    return (
-        FAILURES_FIRST.index(verdict)
-        if verdict in FAILURES_FIRST
-        else len(FAILURES_FIRST)
-    )
+    return FAILURES_FIRST.index(css) if css in FAILURES_FIRST else len(FAILURES_FIRST)
 
 
 class Rail:

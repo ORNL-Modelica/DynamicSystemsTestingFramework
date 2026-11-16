@@ -331,6 +331,15 @@ _NOT_SCORED = {"metric": "nrmse", "variable": "gone"}
         # A failed branch of an `or` that passes is no failure of the test
         # and none under a `warn`: the count says it, and no clause.
         ("or", [_FAILS, _PASSES], "PASS", "1/2 passed"),
+        # In a test that fails, the failed branch is counted with the
+        # failures, so that the line adds up, and the clause says why
+        # neither the console nor JUnit lists it.
+        (
+            "and",
+            [{"combinator": "or", "children": [_FAILS, _PASSES]}, _FAILS],
+            "FAIL",
+            "1/3 passed, 2 failed (1 inside a group that passed)",
+        ),
     ],
     ids=[
         "all pass",
@@ -341,6 +350,7 @@ _NOT_SCORED = {"metric": "nrmse", "variable": "gone"}
         "one fails, two advisory",
         "one not scored",
         "a failed branch of a passing or",
+        "a failed branch of a passing or in a failing test",
     ],
 )
 def test_the_review_does_not_count_an_advisory_failure_as_a_failure(
@@ -365,9 +375,14 @@ def test_the_review_does_not_count_an_advisory_failure_as_a_failure(
     n_advisory = sum(c.advisory for c in not_passed)
     failed = re.search(r"(\d+) failed", line)
     advisory = re.search(r"(\d+) advisory failure", line)
+    inside = re.search(r"\((\d+) inside a group that passed\)", line)
     assert (int(advisory.group(1)) if advisory else 0) == n_advisory
     if status == "FAIL":
-        assert int(failed.group(1)) == len(not_passed) - n_advisory
+        n_inside = int(inside.group(1)) if inside else 0
+        assert int(failed.group(1)) - n_inside == len(not_passed) - n_advisory
+        # It adds up: every criterion passed, failed or failed advisory.
+        n_passed, n_criteria = map(int, re.match(r"(\d+)/(\d+)", line).groups())
+        assert n_passed + int(failed.group(1)) + n_advisory == n_criteria
 
 
 # ---------------------------------------------------------------------------

@@ -28,16 +28,12 @@ if TYPE_CHECKING:
     from .session import Session
 
 
-def _edits(session: Session) -> Mapping[str, int]:
-    return edit_counts(session.spec.pending)
-
-
 def suite_row(
     session: Session,
     model_id: str,
     *,
     failed: Collection[str] = (),
-    edits: Mapping[str, int] | None = None,
+    edits: Mapping[str, int],
 ) -> TestRow:
     """One Suite row. A test the queue holds reads QUEUED or RUNNING,
     whatever else is true of it — QUEUED from the click on, while the
@@ -47,15 +43,14 @@ def suite_row(
     row is cleared); then a scoring failure the open announced (``failed`` —
     the shell's set, kept until the next open, so a model a later rescore
     scored reads its verdict, not the failure); else the row waits for its
-    verdict. ``edits`` is the pending-edit count per model; ``suite_rows``
-    counts it once for every row."""
-    counts = _edits(session) if edits is None else edits
+    verdict. ``edits`` is the pending-edit count per model (`edit_counts`);
+    ``suite_rows`` counts it once for every row."""
     project = session.project
     test = project.test(model_id) if project is not None else None
     row = TestRow(
         model_id=model_id,
         field_sources=dict(test.field_sources) if test is not None else {},
-        edits=counts.get(model_id, 0),
+        edits=edits.get(model_id, 0),
     )
     state = session.queue_state(model_id)
     comp = session.comparisons.get(model_id)
@@ -96,6 +91,6 @@ def suite_rows(
     session: Session, model_ids: Iterable[str], *, failed: Collection[str] = ()
 ) -> list[TestRow]:
     """The rows of ``model_ids``, in that order; the edits counted once."""
-    counts = _edits(session)
+    counts = edit_counts(session.spec.pending)
     failed_set = set(failed)
     return [suite_row(session, m, failed=failed_set, edits=counts) for m in model_ids]

@@ -290,19 +290,25 @@ class FailedCriterion:
 
 
 def failed_criteria(comp: TestComparison) -> list[FailedCriterion]:
-    """The criteria of ``comp`` that did not pass, in TREE order — two
-    criteria on one variable are two entries, and each says which it is.
-    THE one reading of a failing criterion for a surface with no page: the
-    console's failure blocks and JUnit's failure lines are both written from
-    it, so they cannot name a criterion differently. (JUnit wrote every
-    metric's number as ``x: NRMSE=…``, and two failing criteria on one
-    variable as two identical lines.) Imported late, as below."""
+    """The criteria of ``comp`` that failed the test, in TREE order — two
+    criteria on one variable are two entries, and each says which it is —
+    and, marked ``advisory``, the ones that failed under a ``warn``. A
+    criterion that failed under a group that passed (an ``or`` another
+    child of which passed) did not fail the test and is not listed: the
+    rule ``dstf summary`` reads ``verdicts.json`` by
+    (``results_summary.failing_criterion``). THE one reading of a failing
+    criterion for a surface with no page: the console's failure blocks and
+    JUnit's failure lines are both written from it, so they cannot name a
+    criterion differently. (JUnit wrote every metric's number as
+    ``x: NRMSE=…``, and two failing criteria on one variable as two
+    identical lines.) Imported late, as below."""
     from ..backends.types import label_with_name
     from ..comparison.registry import summarize
     from ..comparison.tree_eval import (
         advisory_comparisons,
         flatten_evaluation,
         leaf_comparisons_by_path,
+        outvoted_comparisons,
     )
 
     tree = comp.metric_tree
@@ -316,9 +322,11 @@ def failed_criteria(comp: TestComparison) -> list[FailedCriterion]:
     else:
         leaves = [(vc, {}) for vc in comp.variables]
     advisory = {id(vc) for vc in advisory_comparisons(tree)}
+    outvoted = {id(vc) for vc in outvoted_comparisons(tree)}
     out: list[FailedCriterion] = []
     for vc, leaf in leaves:
-        if vc.passed:
+        under_warn = id(vc) in advisory
+        if vc.passed or (id(vc) in outvoted and not under_warn):
             continue
         name = label_with_name(vc.name, vc.expression)
         # The metric is the comparison's own `mode`, as on every surface;
@@ -331,7 +339,6 @@ def failed_criteria(comp: TestComparison) -> list[FailedCriterion]:
         # The baseline it READ, where it reads one: a `range` names none.
         if vc.against:
             what.append(f"against {vc.against}")
-        under_warn = id(vc) in advisory
         lead = "advisory — " if under_warn else ""
         head = f"{lead}{': '.join([name, ' · '.join(what)] if what else [name])}"
         reason = not_scored_reason(vc)

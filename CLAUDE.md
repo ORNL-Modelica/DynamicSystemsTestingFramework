@@ -103,7 +103,7 @@ DynamicSystemsTestingFramework/
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + palette.py (what a figure takes from a theme, by name) + LTTB decimate; both tiers draw from it
 │   │                             #      + assemble.py (a comparison and a trajectory to a VariableView: the assembly the report and the tool's Session share)
 │   │                             #      + history.py (`baseline plot`'s and `plot`'s figure: a variable's revisions or runs overlaid, the change from the first under them)
-│   └── reporting/                # status.py (the classifier + every status word and class, a refusal's reason, and failed_criteria — the one reading of a failing criterion the console's blocks and JUnit's lines are written from) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
+│   └── reporting/                # status.py (the classifier + every status word and class, a refusal's reason, and failed_criteria — the one reading of a failing criterion the console's blocks and JUnit's lines are written from: the criteria that failed the test, none under a group that passed, the rule `summary` reads verdicts.json by, and the advisory ones under `warn`) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
 │       │                         #      + tree_rows.py (a plot's criteria rows with their crumbs — the one walk both tiers list them by)
 │       │                         #      + stats_rows.py (the Statistics rows both tiers render: the report's table and the card; one "changed")
 │       │                         #      + baseline_diff_text.py (`baseline diff`'s Markdown and JSON)
