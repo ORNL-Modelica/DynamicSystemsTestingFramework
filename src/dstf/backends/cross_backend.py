@@ -1,4 +1,4 @@
-"""Cross-backend orchestration (4.B.3). **EXPERIMENTAL** (D65).
+"""Cross-backend orchestration. **EXPERIMENTAL** (D65).
 
 Helpers that chain backends to produce a **soft_check** baseline (D66).
 Today the only chain is **dymola-via-fmpy**: Dymola exports the model as

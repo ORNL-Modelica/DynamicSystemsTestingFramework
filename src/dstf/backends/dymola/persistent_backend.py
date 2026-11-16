@@ -539,7 +539,7 @@ class DymolaWorker(Worker):
         return result
 
     def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
-        """Export ``test.model_id`` as an FMU into ``output_dir`` (4.B.2).
+        """Export ``test.model_id`` as an FMU into ``output_dir``.
 
         Uses Dymola's ``translateModelFMU`` API. Dymola produces the FMU in
         the current working directory; we cd to ``output_dir`` so it lands
@@ -926,7 +926,7 @@ class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
         return None
 
     def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
-        """Spin up a one-shot worker to export a single FMU (4.B.2).
+        """Spin up a one-shot worker to export a single FMU.
 
         Heavier than reusing a worker from the pool, but keeps the export
         path independent of the pool's lifecycle (so 4.B's cross-backend
