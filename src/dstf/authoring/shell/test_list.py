@@ -1,25 +1,21 @@
 """The tests as rows, grouped by package or flat (brief §3.2; DESIGN.md
 "Tables"): the Tests drawer's list (the Suite page's is a table,
-`suite_grid.py`). A row's verdict and its unsaved edits repaint in place;
-the list is rebuilt only when the test set, the order or the layout
-moves."""
+`suite_grid.py`). Each row is painted from the Suite's row model
+(`suite_rows`), so the two say the same status. A row's status and its
+unsaved edits repaint in place; the list is rebuilt only when the test
+set, the order or the layout moves."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from nicegui import ui
 from nicegui.elements.mixins.text_element import TextElement
 
-from ...reporting.rows import unsaved_text
-from ...reporting.status import SCORING_CLASS, SCORING_FAILED, classify_with_class
+from ...reporting.rows import TestRow, unsaved_text
+from ...reporting.status import SCORING_CLASS
 from ...reporting.theme import STATUS
-from ..spec_document import edit_counts
-
-if TYPE_CHECKING:
-    from .shell import Shell
 
 
 @dataclass
@@ -34,7 +30,10 @@ class Row:
     badge: ui.badge
     #: ``N unsaved`` while the test has staged edits, hidden otherwise
     edits: ui.label
-    verdict: str = ""  # the classifier's word, "" while unscored
+    #: the word the Suite's Status cell reads (``TestRow.status_text``)
+    status: str = ""
+    #: its class (``TestRow.status_class``): the fill, the tint and the pill
+    css: str = SCORING_CLASS
     pending: int = 0  # the test's staged edits
 
 
@@ -66,13 +65,11 @@ class TestList:
 
     def __init__(
         self,
-        shell: Shell,
         *,
         on_open: Callable[[str], None],
         current: str | None = None,
         marker: str,
     ) -> None:
-        self.shell = shell
         self.on_open = on_open
         self.current = current
         self.marker = marker
@@ -82,18 +79,22 @@ class TestList:
             ui.column().classes("dstf-tests w-full gap-0").mark(f"{marker}tests")
         )
 
-    def rebuild(self, ids: Sequence[str], *, grouped: bool, short: bool) -> None:
-        """The rows from scratch, in ``ids`` order — by package first when
-        ``grouped``, each group under its label."""
+    def rebuild(self, rows: Sequence[TestRow], *, grouped: bool, short: bool) -> None:
+        """The rows from scratch, in ``rows`` order — by package first when
+        ``grouped``, each group under its label — each painted from its
+        row."""
         self.column.clear()
         self.rows, self.groups = {}, {}
-        position = {m: i for i, m in enumerate(ids)}
+        position = {r.model_id: i for i, r in enumerate(rows)}
         order = (
-            sorted(ids, key=lambda m: (_package(m), position[m])) if grouped else ids
+            sorted(rows, key=lambda r: (_package(r.model_id), position[r.model_id]))
+            if grouped
+            else rows
         )
         with self.column:
             current: str | None = None
-            for model_id in order:
+            for test_row in order:
+                model_id = test_row.model_id
                 group = _package(model_id)
                 if grouped and group != current:
                     current = group
@@ -136,35 +137,30 @@ class TestList:
                 self.rows[model_id] = Row(
                     model_id, group, container, name, badge, edits
                 )
-                self.paint(model_id)
+                self.paint(test_row)
 
-    def paint(self, model_id: str) -> None:
-        """One row's verdict: the badge's word and fill, the row's tint.
-        `…` while unscored; `scoring failed` for a model the open announced
-        with `error=True` (Task 1 of the 2026-09-16 Suite page plan). And
-        its staged edits: ``N unsaved``, as the Suite's Edits column."""
-        row = self.rows.get(model_id)
+    def paint(self, test_row: TestRow) -> None:
+        """One row as the Suite's says it: the badge's word and fill, the
+        row's tint — QUEUED or RUNNING while the queue holds the test,
+        CANCELLED once its run there was stopped, SCORING before its
+        verdict, SIM_FAIL for a model whose scoring failed. And its staged
+        edits: ``N unsaved``, as the Suite's Edits column."""
+        row = self.rows.get(test_row.model_id)
         if row is None:
             return
-        comp = self.shell.session.comparisons.get(model_id)
-        if comp is not None:
-            verdict, css = classify_with_class(comp)
-        elif model_id in self.shell.load.failed_models:
-            verdict, css = SCORING_FAILED, "sim-fail"
-        else:
-            verdict, css = "", SCORING_CLASS
-        row.verdict = verdict
-        row.pending = edit_counts(self.shell.session.spec.pending)[model_id]
+        row.status, row.css = test_row.status_text, test_row.status_class
+        row.pending = test_row.edits
         row.edits.set_text(unsaved_text(row.pending))
         row.edits.set_visibility(row.pending > 0)
-        row.badge.set_text(verdict or "…")
-        row.badge.style(f"background-color: var(--dstf-{css}-fill)")
+        row.badge.set_text(row.status)
+        row.badge.style(f"background-color: var(--dstf-{row.css}-fill)")
         # Add and remove, never replace: NiceGUI hides an element by appending
         # a `hidden` class, and a replaced list dropped it — every filtered-out
         # row came back on a rescore (the review's probe of Task 6 of the
         # 2026-09-16 Suite page plan).
         row.container.classes(
-            remove=" ".join(f"dstf-tint-{s}" for s in STATUS), add=f"dstf-tint-{css}"
+            remove=" ".join(f"dstf-tint-{s}" for s in STATUS),
+            add=f"dstf-tint-{row.css}",
         )
 
     def filter(self, keep: Callable[[Row], bool]) -> None:

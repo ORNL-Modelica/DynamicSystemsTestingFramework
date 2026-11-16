@@ -48,6 +48,10 @@ this file says when they do.
 - OpenModelica: an omc that a worker killed (a timeout, a cancel) is no
   longer left in the process table as a dead entry (`<defunct>`) until the
   run ends; a long suite collected one per restarted worker.
+- `dstf author`: the Tests drawer says what the Suite's table says of each
+  test — RUNNING, QUEUED or CANCELLED while the queue holds it or stopped
+  it, where it read NOT RUN or the old verdict — and its pills are the
+  Suite's.
 
 ## [1.6.0] - 2026-11-12
 

@@ -573,9 +573,9 @@ def test_with_a_loop_a_clicks_tests_show_as_taken_before_the_read_is_back(
     assert indicator(lib.session).text == "2 queued"
     assert counts_text(rows) == "2 queued"
     assert stop_reason(lib.session) == "2 tests are queued or running"
-    assert suite_row(lib.session, A).status == QUEUED
-    assert suite_row(lib.session, B).status == QUEUED
-    assert suite_row(lib.session, C).status != QUEUED
+    assert suite_row(lib.session, A, edits={}).status == QUEUED
+    assert suite_row(lib.session, B, edits={}).status == QUEUED
+    assert suite_row(lib.session, C, edits={}).status != QUEUED
     assert strip_for(queue=queue_row(lib.session, A)).sentence == f"Queued — {words}"
     # Said by an event that names them: their rows are repainted.
     assert [(e["state"], e["models"]) for e in lib.events if e["event"] == "queue"] == [
@@ -626,7 +626,7 @@ def test_a_test_the_read_refuses_loses_its_row_and_says_why(looped, monkeypatch)
     lib.loop.until(lambda: lib.notices() == [said], what="the notice")
     assert lib.session.checking == ()
     assert [r.model_id for r in queue_rows(lib.session)] == [A]
-    assert suite_row(lib.session, B).status != QUEUED
+    assert suite_row(lib.session, B, edits={}).status != QUEUED
     # The event that takes B's row back names it.
     states = [(e["state"], e["models"]) for e in lib.events if e["event"] == "queue"]
     assert ("refused", {B}) in states and ("queued", {A}) in states

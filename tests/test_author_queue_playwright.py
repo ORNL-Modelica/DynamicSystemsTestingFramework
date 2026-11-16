@@ -365,6 +365,104 @@ def test_three_queued_one_removed_one_cancelled_one_finished_and_accepted(
         _stop(proc)
 
 
+def _drawer_status(page, model_id: str):
+    """The model's badge in the Tests drawer (its name button's title is
+    the full id)."""
+    return (
+        page.locator(".dstf-drawer-panel .dstf-row")
+        .filter(has=page.locator(f"button[title='{model_id}']"))
+        .locator(".dstf-badge")
+    )
+
+
+def _drawer_pill(page, word: str):
+    """The Tests drawer's count pill of ``word``, shown."""
+    return page.locator(".dstf-drawer-panel .dstf-count-pill:visible").filter(
+        has_text=re.compile(f"^{word} \\d+$")
+    )
+
+
+def test_the_tests_drawer_reads_the_queue_as_the_suite_does(
+    tmp_path, playwright_browser
+):
+    """A running test reads RUNNING in the Tests drawer, a waiting one
+    QUEUED and a cancelled one CANCELLED — what the Suite's table says of
+    each — and the drawer follows the queue while it is open: a cancel, the
+    next test starting and a Queue again, which moves nothing but the
+    queue."""
+    proc, _url, page, _context, errors, cfg = _served(
+        tmp_path, playwright_browser, setup=_gated()
+    )
+    try:
+        _hold(cfg, A, B, D)
+        for model_id in (A, B, D):
+            _box(page, model_id).click()
+        _queue(page, "Queue 3")
+        expect(page.locator(INDICATOR)).to_have_text(
+            "1 running · 2 queued", timeout=EXPECT_TIMEOUT
+        )
+        for model_id, word in ((A, "RUNNING"), (B, "QUEUED"), (D, "QUEUED")):
+            expect(_suite_status(page, model_id)).to_have_text(word)
+
+        # A's page, the Tests drawer open: the queue's words, as the table's.
+        _row(page, A).get_by_role("link").click()
+        expect(page).to_have_url(
+            re.compile(r"/test/FakeLib\.A$"), timeout=EXPECT_TIMEOUT
+        )
+        page.locator(".dstf-rail").get_by_text("Tests", exact=True).click()
+        for model_id, word in (
+            (A, "RUNNING"),
+            (B, "QUEUED"),
+            (D, "QUEUED"),
+            (G, "PASS"),
+        ):
+            expect(_drawer_status(page, model_id)).to_have_text(
+                word, timeout=EXPECT_TIMEOUT
+            )
+        expect(_drawer_pill(page, "RUNNING")).to_have_text("RUNNING 1")
+        expect(_drawer_pill(page, "QUEUED")).to_have_text("QUEUED 2")
+        _keep(page, tmp_path, "queue-tests-drawer-running")
+
+        # Cancel A from its strip: CANCELLED, and B starts.
+        page.locator(".dstf-strip").get_by_role("button", name="Cancel").click()
+        expect(_drawer_status(page, A)).to_have_text("CANCELLED", timeout=RUN_TIMEOUT)
+        expect(_drawer_status(page, B)).to_have_text("RUNNING", timeout=RUN_TIMEOUT)
+        expect(_drawer_status(page, D)).to_have_text("QUEUED")
+        expect(_drawer_pill(page, "RUNNING")).to_have_text("RUNNING 1")
+        expect(_drawer_pill(page, "QUEUED")).to_have_text("QUEUED 1")
+        # CANCELLED counts under NOT RUN, as in the Suite: C, X and A.
+        expect(_drawer_pill(page, "NOT RUN")).to_have_text("NOT RUN 3")
+
+        page.get_by_role("link", name="← Suite").click()
+        for model_id, word in ((A, "CANCELLED"), (B, "RUNNING"), (D, "QUEUED")):
+            expect(_suite_status(page, model_id)).to_have_text(
+                word, timeout=EXPECT_TIMEOUT
+            )
+
+        # Queue A again from its page: only the queue moves, and the drawer
+        # follows it.
+        _row(page, A).get_by_role("button", name="Open test").click()
+        expect(page).to_have_url(
+            re.compile(r"/test/FakeLib\.A$"), timeout=EXPECT_TIMEOUT
+        )
+        expect(_drawer_status(page, A)).to_have_text(
+            "CANCELLED", timeout=EXPECT_TIMEOUT
+        )
+        page.locator(".dstf-strip").get_by_role("button", name="Queue again").click()
+        page.locator(".q-dialog").get_by_role(
+            "button", name="Queue again", exact=True
+        ).click()
+        expect(_drawer_status(page, A)).to_have_text("QUEUED", timeout=RUN_TIMEOUT)
+        expect(_drawer_pill(page, "QUEUED")).to_have_text("QUEUED 2")
+        assert _console(errors) == []
+        _release(cfg, A, B, D)
+        expect(page.locator(INDICATOR)).to_have_text("idle", timeout=RUN_TIMEOUT)
+        expect(_drawer_status(page, A)).to_have_text("FAIL", timeout=EXPECT_TIMEOUT)
+        expect(_drawer_status(page, D)).to_have_text("PASS")
+    finally:
+        _stop(proc)
+
+
 def test_an_edit_made_while_its_test_runs_is_scored_and_a_raise_is_said(
     tmp_path, playwright_browser
 ):
