@@ -49,7 +49,6 @@ exclude_patterns = [
     "constraints.md",
     "releasing.md",
     "qa",
-    "design",
 ]
 
 html_theme = "furo"
