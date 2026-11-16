@@ -291,7 +291,7 @@ def test_three_queued_one_removed_one_cancelled_one_finished_and_accepted(
         expect(
             page.locator(".dstf-strip").get_by_role("button", name="Cancel")
         ).to_be_visible()
-        expect(page.locator(".dstf-subheader .dstf-badge")).to_have_text("NOT RUN")
+        expect(page.locator(".dstf-subheader .dstf-badge")).to_have_text("RUNNING")
         expect(page.locator(INDICATOR)).to_have_text("1 running")
         _keep(page, tmp_path, "queue-test-running")
         assert _console(errors) == [], "running page"

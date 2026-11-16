@@ -9005,7 +9005,9 @@ async def test_the_strip_follows_a_test_through_the_queue(shell):
         assert "dstf-strip-grey" in _one(user, "strip").classes
         assert (strip.remove.visible, strip.cancel.visible) == (True, False)
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
-        assert page.badge.text == "FAIL"  # its last result stands while it waits
+        # The Suite's word while it waits, as the Tests drawer's (it read
+        # FAIL, the last result's, beside a strip saying it waits).
+        assert page.badge.text == "QUEUED"
 
         item.state, item.started_at, item.worker_id = ItemState.RUNNING, time.time(), 0
         session._item_started(item)
@@ -9019,7 +9021,8 @@ async def test_the_strip_follows_a_test_through_the_queue(shell):
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "menu"}
         # Its run dropped the last result and every verdict with it — not
         # the page's layout (D151): its plots stay until its own arrives.
-        assert page.badge.text == "NOT RUN"
+        # The badge says it runs, as the Suite does (it read NOT RUN).
+        assert page.badge.text == "RUNNING"
         assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
         assert page.body.props["data-unscored"] == "waiting for result"
 
@@ -9045,11 +9048,12 @@ async def test_the_strip_of_a_cancelled_run_fills_queue_again(shell):
         assert (page.strip.remove.visible, page.strip.cancel.visible) == (False, False)
         assert _strip_buttons(user) == {"accept": "menu", "enqueue": "filled"}
         assert _one(user, "action:enqueue").text == "Queue again"
-        assert page.badge.text == "NOT RUN"
+        assert page.badge.text == "CANCELLED"
         # Its row cleared, the test is one with no result.
         shell.session.clear_finished()
         shell.tick()
         assert page.strip.situation is Situation.NO_RESULT
+        assert page.badge.text == "NOT RUN"
         assert _one(user, "action:enqueue").text == "Queue 1"
 
 
@@ -9278,9 +9282,11 @@ async def test_a_read_but_unscored_test_waits_while_the_project_is_read(shell):
 
 
 async def test_the_badge_of_a_test_not_scored_yet_wears_scoring_not_queued(shell):
-    """The header's badge of a test with no verdict yet reads `…` under the
-    SCORING class. `queued` is the simulation queue's (D150): a badge
-    wearing it says the test waits for a worker."""
+    """The header's badge of a test with no verdict yet reads SCORING under
+    the SCORING class, the Suite's word for it (it read `…`). `queued` is
+    the simulation queue's (D150): a badge wearing it says the test waits
+    for a worker. A scoring failure the load announced reads SIM_FAIL, as
+    on the Suite and in the Tests drawer."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
         assert page.badge.text == "PASS"
@@ -9288,8 +9294,13 @@ async def test_the_badge_of_a_test_not_scored_yet_wears_scoring_not_queued(shell
         del shell.session.comparisons[D]
         with page.client:
             page.sync()
-        assert page.badge.text == "…"
+        assert page.badge.text == "SCORING"
         assert page.badge._style["background-color"] == "var(--dstf-scoring-fill)"
+        shell.load.failed_models.append(D)
+        with page.client:
+            page.sync()
+        assert page.badge.text == "SIM_FAIL"
+        assert page.badge._style["background-color"] == "var(--dstf-sim-fail-fill)"
 
 
 def _strip_raises(monkeypatch) -> None:
