@@ -5303,11 +5303,13 @@ async def test_only_an_event_that_moved_the_data_re_sends_the_plots(shell):
         assert synced[4:] == [True, True] and sent[0] == 2
         hear("notice", message="Accepted 1 baseline")
         assert synced[6:] == [True] and sent[0] == 3
-        # Another test's place in the queue and the worker count are not
-        # this page's to sync on.
+        # Another test's place in the queue, the worker count and a notice
+        # with no message (a refused read forgotten) are not this page's to
+        # sync on.
         for state in ("queued", "started", "ended", "removed"):
             hear("queue", state=state, models={D})
         hear("queue", state="workers", models=set())
+        hear("notice")
         assert len(synced) == 7 and sent[0] == 3
 
 
