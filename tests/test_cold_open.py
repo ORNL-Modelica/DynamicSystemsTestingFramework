@@ -208,7 +208,7 @@ async def test_a_tick_handles_a_run_of_scan_steps_as_its_last(tmp_path):
 
     from dstf.authoring import capabilities
     from dstf.authoring.builtin import register_builtins
-    from dstf.authoring.shell.shell import Shell
+    from dstf.authoring.shell.shell import LoadState, Shell
     from dstf.authoring.shell.suite import SuitePage
     from dstf.authoring.shell.test_page import TestPage
     from test_test_page import _open
@@ -229,6 +229,8 @@ async def test_a_tick_handles_a_run_of_scan_steps_as_its_last(tmp_path):
             (page,) = [p for p in shell.pages if isinstance(p, TestPage)]
             synced: list[bool] = []
             page.sync = lambda force=False: synced.append(force)  # type: ignore[method-assign]
+            # A reopen, as `open_async` starts one: the load state first.
+            shell.load = LoadState(phase="scan")
             for i in range(n):
                 shell._events.put(
                     {"event": "loading", "phase": "scan", "done": i + 1, "total": n}

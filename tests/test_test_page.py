@@ -22,7 +22,7 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 from conftest import PROVENANCE  # noqa: E402
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.capabilities import Artifact, Patch, Placement  # noqa: E402
+from dstf.authoring.capabilities import Patch, Placement, StoreWrite  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
 from dstf.authoring.shell import plot_card  # noqa: E402
 from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
@@ -189,7 +189,7 @@ def _only(*caps):
 LEAF = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics/children/0")
 #: Something the Session applies without touching the spec or the store —
 #: what a probe's act returns when the point is that it DID apply something.
-OUTCOME = Artifact(paths=[], label="probe")
+OUTCOME = StoreWrite(run=lambda store: None, models=frozenset())
 RELAYOUT = {"shapes[0].y0": 1}
 
 
@@ -5303,12 +5303,11 @@ async def test_only_an_event_that_moved_the_data_re_sends_the_plots(shell):
         assert synced[4:] == [True, True] and sent[0] == 2
         hear("notice", message="Accepted 1 baseline")
         assert synced[6:] == [True] and sent[0] == 3
-        # Another test's place in the queue, the worker count, and a notice
-        # that carries an artifact are not this page's to sync on.
+        # Another test's place in the queue and the worker count are not
+        # this page's to sync on.
         for state in ("queued", "started", "ended", "removed"):
             hear("queue", state=state, models={D})
         hear("queue", state="workers", models=set())
-        hear("notice", artifact=OUTCOME)
         assert len(synced) == 7 and sent[0] == 3
 
 
@@ -5358,8 +5357,8 @@ def _project_without(tmp_path, model):
 async def test_a_page_whose_test_is_gone_says_so_instead_of_raising(
     shell, tmp_path, caplog
 ):
-    """An `OpenProject` outcome swaps the library under an open page: every
-    read below `sync` raised, the page kept showing the old test's cards,
+    """A reopen on a library without the open page's test: every read
+    below `sync` raised, the page kept showing the old test's cards,
     and every event logged a traceback."""
     cfg2, work2 = _project_without(tmp_path, A)
     async with user_simulation(root=shell.index) as user:
@@ -5369,7 +5368,9 @@ async def test_a_page_whose_test_is_gone_says_so_instead_of_raising(
         with caplog.at_level(logging.ERROR, logger="dstf"):
             shell.session.open(cfg2, work_dir=work2)
             await _settled(lambda: page.gone)
-            shell.session.apply(Artifact(paths=[], label="probe"))
+            shell.session.apply(
+                StoreWrite(run=lambda store: "probe", models=frozenset())
+            )
             await asyncio.sleep(0.3)
         assert [r for r in caplog.records if "a page failed" in r.getMessage()] == []
         assert page.cards == [] and _none(user, "plot-slot:0")
@@ -5383,7 +5384,9 @@ async def test_a_page_whose_test_is_gone_says_so_instead_of_raising(
         assert page.actions.actions == {} and _none(user, "action:enqueue")
         assert page.actions.container.visible is False
         # And no later event brings them back while the test is gone.
-        shell.session.apply(Artifact(paths=[], label="probe again"))
+        shell.session.apply(
+            StoreWrite(run=lambda store: "probe again", models=frozenset())
+        )
         await asyncio.sleep(0.3)
         assert page.actions.actions == {} and page.badge.text == ""
 

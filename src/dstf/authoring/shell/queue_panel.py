@@ -2,7 +2,7 @@
 `QueueIndicator` artboards): the header's indicator, on every page, and the
 queue panel on the Suite page — one row per item in run order, drawn from
 `authoring.queue_rows`. The panel also carries what the runs card it
-replaced did beside the job: the store writes' lines and the artifacts.
+replaced did beside the job: the store writes' lines.
 
 Nothing here reads a file or a clock of its own: the rows are the Session's
 queue as data, repainted on its `queue` events, and the shell's `poll` —
@@ -266,12 +266,7 @@ class QueuePanel:
         with self.notes:
             for notice in session.notices:
                 ui.label(notice).classes("text-xs").mark("notice")
-            for artifact in session.artifacts:
-                for path in artifact.paths:
-                    ui.link(
-                        f"{artifact.label}: {path.name}", path.as_uri(), new_tab=True
-                    )
-        self.notes.set_visibility(bool(session.notices or session.artifacts))
+        self.notes.set_visibility(bool(session.notices))
 
     # -- one row -----------------------------------------------------------------
 

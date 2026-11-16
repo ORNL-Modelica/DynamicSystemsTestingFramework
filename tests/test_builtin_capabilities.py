@@ -4112,14 +4112,17 @@ def test_an_unknown_action_is_refused_before_its_inputs_are_read(session):
         EditTree().act(view, action="swap", model_id=A, path=ROOT)
 
 
-def test_a_move_after_rescore_stages_its_whole_tree_unmarked(two_var_session):
+def test_a_move_after_the_tree_was_written_out_stages_its_whole_tree_unmarked(
+    two_var_session,
+):
     from dstf.authoring.tree_move import Dest
 
     s = two_var_session
-    # The tree `rescore` writes out is no edit, beside another or alone:
-    # no op of it stays for a move to fold onto, and the move's is its own.
+    # The tree a flat entry scores by, written out, is no edit, beside
+    # another or alone: no op of it stays for a move to fold onto, and the
+    # move's is its own.
     s.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
-    s.rescore(A)
+    s.stage([PatchOp(A, "add", "/metrics", s.tree(A))])
     assert [op.path for op in s.spec.pending] == ["/plots"]
     s.apply(_move(s, "/metrics/children/1", Dest("at", ROOT, 0)))
     _plots, pending = s.spec.pending

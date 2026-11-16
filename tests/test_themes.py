@@ -620,8 +620,8 @@ class TestTheThemeIsHandedDown:
         # The eight of `cli/run_cmds.py`, the tool's two, the pipeline's,
         # the reporter's own and its construction, the suite's and the
         # review's page, and every figure built: the report's two, the
-        # Session's and its view's, the plot card's.
-        assert len(calls) == 25, [(p, n) for p, n, _ in calls]
+        # Session's, the plot card's.
+        assert len(calls) == 23, [(p, n) for p, n, _ in calls]
         silent = [
             (path, line)
             for path, line, call in calls

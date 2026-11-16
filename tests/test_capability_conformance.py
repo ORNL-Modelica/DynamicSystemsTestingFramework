@@ -31,9 +31,7 @@ from dstf import plugins  # noqa: E402
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.capabilities import (  # noqa: E402
-    Artifact,
     Enqueue,
-    OpenProject,
     Patch,
     Placement,
     StoreWrite,
@@ -233,7 +231,6 @@ def _effects(shell: Shell, tmp_path: Path) -> dict:
     return {
         "pending": [op.path for op in session.spec.pending],
         "queue": [(i.model_id, session.item_state(i).name) for i in session.queue],
-        "artifacts": [a.label for a in session.artifacts],
         "project": project.config.library_name if project else None,
         "files": _snapshot(tmp_path),
     }
@@ -472,52 +469,6 @@ async def test_enqueue_reaches_the_queue_and_the_queue_panel_says_so(tmp_path):
     assert [k for k in _changed(before, during) if k != "files"] == ["queue"]
     assert _changed(before, after) == ["queue", "files"]
     assert after["queue"] == [(A, "FINISHED")]
-
-
-async def test_artifact_is_shown_as_a_link_and_nothing_else(shell, tmp_path):
-    png = tmp_path / "figure.png"
-    png.write_bytes(b"\x89PNG")
-    cap = _Dummy(
-        "export",
-        {Placement.SUITE},
-        outcome=Artifact(paths=[png], label="Conformance PNG"),
-    )
-    only(cap)
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        before = _effects(shell, tmp_path)
-        await _submit(user, cap)
-        await user.should_see("Conformance PNG", retries=20)
-        (link,) = user.find(kind=ui.link, content="Conformance PNG").elements
-        assert link.props["href"] == png.as_uri()
-        after = _effects(shell, tmp_path)
-    assert _suite(shell, user).actions.errors == {}
-    assert _changed(before, after) == ["artifacts"]
-    assert after["artifacts"] == ["Conformance PNG"]
-
-
-async def test_open_project_swaps_the_project_in_the_header(shell, tmp_path):
-    other_cfg, other_work = _project(tmp_path / "other")
-    other_cfg.write_text(
-        other_cfg.read_text(encoding="utf-8").replace("FakeLib", "OtherLib", 1),
-        encoding="utf-8",
-    )
-    cap = _Dummy(
-        "recent",
-        {Placement.SUITE},
-        outcome=OpenProject(config_path=other_cfg, work_dir=other_work),
-    )
-    only(cap)
-    async with user_simulation(root=shell.index) as user:
-        await _open(user)
-        assert _one(user, "project").text == "FakeLib"
-        before = _effects(shell, tmp_path)
-        await _submit(user, cap)
-        await _settled(lambda: _one(user, "project").text == "OtherLib")
-        after = _effects(shell, tmp_path)
-    assert _suite(shell, user).actions.errors == {}
-    assert _changed(before, after) == ["project"]
-    assert shell.session.project.config.config_file == other_cfg
 
 
 async def test_an_act_that_raises_shows_in_the_dialog_and_changes_nothing(

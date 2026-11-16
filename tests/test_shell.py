@@ -749,14 +749,15 @@ async def test_the_open_drawer_holds_every_comparison_its_key_names(shell):
         await _settled(lambda: drawer.held == [])
 
 
-async def test_a_rescored_flat_test_has_nothing_to_preview(shell):
-    """`rescore` writes A's tree out and nothing else: the entry is as
-    saved but for the tree it already scores by, so nothing is pending and
-    the drawer has no section for it — it showed "1 edit" over a note and
-    no diff, and Save wrote the tree."""
+async def test_a_flat_tests_tree_written_out_has_nothing_to_preview(shell):
+    """A's tree written out and nothing else: the entry is as saved but
+    for the tree it already scores by, so nothing is pending and the
+    drawer has no section for it — it showed "1 edit" over a note and no
+    diff, and Save wrote the tree."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        shell.session.rescore(A)
+        session = shell.session
+        session.stage([PatchOp(A, "add", "/metrics", session.tree(A))])
         assert shell.session.spec.pending == []
         _open_drawer(user)
         await user.should_see("nothing staged", retries=20)

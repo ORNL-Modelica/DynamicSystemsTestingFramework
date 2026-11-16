@@ -950,9 +950,8 @@ The contract lives in `dstf.authoring.capabilities`: the `Capability` protocol
 the `Placement` enum (`SUITE`, `TEST`, `VARIABLE`, `CRITERION`, `NODE`,
 `STATISTIC`, `STATISTIC_CRITERION`, `TREE_CRITERION`, `FAMILY_CRITERION` —
 where the capability attaches; a capability names a frozenset of them), and the
-five outcomes `act` may return — `Patch` (ops for the Session to stage),
-`StoreWrite`, `Enqueue`, `Artifact`, `OpenProject` — or `None`, or a sequence of
-them. `Enqueue(models=...)` hands the Session tests for its simulation queue
+three outcomes `act` may return — `Patch` (ops for the Session to stage),
+`StoreWrite` and `Enqueue` — or `None`, or a sequence of them. `Enqueue(models=...)` hands the Session tests for its simulation queue
 (D150), in the order to run them; the Session appends them — one already
 queued or running is skipped — runs them on its pool, and reads each result
 back and rescores that test as it ends. A capability starts no thread and no
@@ -1005,14 +1004,14 @@ baselines were already stored would say something false. The Session appends
 that line to its notices and emits `notice` with that `message`; returning
 `None` says there is nothing to report and appends nothing.
 
-The view carries the panel's other readers: `notices`, the panel's lines
-oldest first — what each store write reported, plus the open-time warning where
-there was one — and `artifacts`; and the queue as a capability may read it:
+The view carries the queue as a capability may read it:
 `queue_state(model_id)` — `ItemState.WAITING` or `RUNNING` while the queue
 holds the test, how its last run there ended until that row is cleared, else
 `None` — and `queue_refusal`, why nothing can be queued on this backend. A
 queued or running test refuses nothing but a `StoreWrite` on it: `available`
-has no lock to answer for. `notices`, `artifacts` and the queue are per
+has no lock to answer for. The Session's notices — the queue panel's lines,
+oldest first: what each store write reported, plus the open-time warning where
+there was one — and the queue are per
 project: opening another one resets them at the commit point, so one
 library's panel is never shown
 under another's, and an open that fails leaves the live project's as it was.
@@ -1028,12 +1027,11 @@ name is an error rather than an import-order race.
 A capability receives a `SessionView` — readers only — and applies nothing
 itself: the Session is the single place a spec is mutated, a store is written or
 a test is queued. The view carries what a panel draws from: `comparisons`,
-`figure(model_id, variable)`, `tree_view(model_id)` — the read-only tree the
+`view(model_id, variable)`, `tree_view(model_id)` — the read-only tree the
 report page and the shell both show, built by the report's own function — and
 `tree(model_id)`, a copy of the raw tree a `Patch` edits (the entry's `metrics`
-block, else the tree a rescore would materialize for a test the flat path
-scored). `rescore` is the one reader that writes — it stages that
-materialization — so `available` must not call it.
+block, else the tree `stage` would materialize for a test the flat path
+scored).
 
 **Building a panel.** `Panel` is a container the capability owns entirely: it
 builds its controls into the slot its host owns — a dialog's, or an inline

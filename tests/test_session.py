@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from conftest import PROVENANCE, make_test_model, series
-from dstf.authoring.capabilities import Artifact, OpenProject, Patch, StoreWrite
+from dstf.authoring.capabilities import Patch, StoreWrite
 from dstf.authoring.session import (
     NO_TREE,
     NOTHING_SCORED,
@@ -887,7 +887,7 @@ class TestOpen:
         # Still the result read at open, which holds none of what Bar
         # tracks (this project's Python backend reads no UnitTests
         # variable): scored, it says so. A failed read would be SIM_FAIL.
-        comp = s.rescore("MyLib.Bar")
+        comp = s.comparisons["MyLib.Bar"]
         assert comp.sim_success and classify(comp) == FAIL
         assert comp.error_message.endswith(" — nothing was scored")
 
@@ -1093,14 +1093,11 @@ class TestRescoreAndStage:
             session.spec.pending[0].raw()
             == materialize_implicit_metrics(entry, [LOOSEN.raw()])[0]
         )
-        # And a rescore is a no-op: the tree is there now.
-        session.rescore(A)
-        assert len(session.spec.pending) == 2
 
-    def test_rescore_verdict_equals_the_loaded_one_when_nothing_changed(self, session):
-        assert classify(session.rescore(A)) == FAIL
+    def test_the_tree_written_out_scores_as_loaded_when_nothing_changed(self, session):
+        assert classify(_written_out(session, A)) == FAIL
         assert (
-            classify(session.rescore(D)) == PASS
+            classify(_written_out(session, D)) == PASS
         )  # the tree path keeps config.tolerance too
 
     def test_a_pattern_tracked_spec_materializes_its_resolved_names(self, session):
@@ -1263,8 +1260,7 @@ class TestRescoreAndStage:
         s = Session()
         s.open(cfg, work_dir=work)
         assert classify(s.comparisons[A]) == PASS
-        assert classify(s.rescore(A)) == PASS
-        assert s.spec.pending == []
+        assert s.tree_or_reason(A) == (None, NO_TREE)
         # A spec override for x shadows the baseline's: the tree scores the
         # same thing again, so materialization is back on the table.
         s.stage(
@@ -1294,8 +1290,6 @@ class TestRescoreAndStage:
         s = Session()
         s.open(cfg, work_dir=work)
         assert classify(s.comparisons[D]) == FAIL
-        assert classify(s.rescore(D)) == FAIL
-        assert s.spec.pending == []
         assert s.tree_or_reason(D) == (None, NO_TREE)
         # And the CLI's materialization refuses the same entry outright.
         from dstf.discovery.patch_apply import PatchError
@@ -1325,15 +1319,13 @@ class TestRescoreAndStage:
         s = Session()
         s.open(cfg, work_dir=work)
         assert classify(s.comparisons[D]) == FAIL
-        assert classify(s.rescore(D)) == FAIL
-        assert s.spec.pending == []
         assert s.tree_or_reason(D) == (None, NO_TREE)
 
-    def test_stage_materializes_like_rescore_and_refuses_an_unscored_test(
+    def test_stage_materializes_from_what_was_scored_and_refuses_an_unscored_test(
         self, session
     ):
-        """One rule on both paths: a per-leaf op on B (NO_REF, nothing scored)
-        cannot get a tree from the entry's list behind rescore's back."""
+        """A per-leaf op on B (NO_REF, nothing scored) cannot get a tree from
+        the entry's list: the tree is built from what the flat path scored."""
         from dstf.discovery.patch_apply import PatchError
 
         with pytest.raises(PatchError, match=f"{B}: {NOTHING_SCORED}$"):
@@ -1362,14 +1354,13 @@ class TestRescoreAndStage:
         assert D not in session.comparisons
         assert [t.model_id for t in session.project.tests] == [A, B, C, G]
 
-    def test_view_of_an_unknown_model_is_an_error_like_rescore(self, session):
+    def test_view_of_an_unknown_model_is_an_error(self, session):
         with pytest.raises(KeyError):
             session.view("FakeLib.Nope", "x")
 
-    def test_rescore_reflects_a_staged_op(self, session):
+    def test_a_staged_op_is_scored_with_the_tree_written_out(self, session):
         session.stage([LOOSEN])
         assert classify(session.comparisons[A]) == PASS
-        assert classify(session.rescore(A)) == PASS
         assert [op.path for op in session.spec.pending] == ["/metrics", LOOSEN.path]
 
     def test_save_refuses_a_base_tolerance_that_is_no_number(self, session):
@@ -1409,9 +1400,9 @@ class TestRescoreAndStage:
         assert len(session.spec.pending) == n  # folded into LOOSEN's add
         assert seen == [first + 1, first + 2] and session.spec_revision == first + 2
 
-    def test_no_result_and_no_baseline_rescore_to_the_cli_states(self, session):
-        assert classify(session.rescore(B)) == NO_REF
-        assert classify(session.rescore(C)) == NOT_RUN
+    def test_no_result_and_no_baseline_score_to_the_cli_states(self, session):
+        assert classify(session.comparisons[B]) == NO_REF
+        assert classify(session.comparisons[C]) == NOT_RUN
 
     def test_consecutive_replaces_of_one_path_collapse(self, session):
         """Edit criteria stages on every control change; the drawer and the
@@ -1899,22 +1890,13 @@ class TestOutcomes:
         assert session.notices == []
 
     def test_open_empties_the_notices(self, session):
-        """A notice names a project's models; an OpenProject swap calls open,
-        never close, so without this it would show in the next project's
-        panel."""
+        """A notice names a project's models; a reopen calls open, never
+        close, so without this it would show in the next project's panel."""
         session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
         assert session.notices == ["stored 1"]
         config = session.project.config
         session.open(config.config_file, work_dir=config.work_dir)
         assert session.notices == []
-
-    def test_open_empties_the_artifacts(self, session, tmp_path):
-        """An artifact's links point into this project's work dir; like a
-        notice, a swap must not leave them under the next project."""
-        session.apply(Artifact(paths=[Path("x.png")], label="PNG"))
-        other_cfg, other_work = _project(tmp_path / "other")
-        session.open(other_cfg, work_dir=other_work)
-        assert session.artifacts == [] and SessionView(session).artifacts == ()
 
     def test_a_failed_open_keeps_the_live_projects_notices(self, session):
         """The reset sits at the commit point, after the Project is built:
@@ -1923,35 +1905,14 @@ class TestOutcomes:
         from dstf.config import ConfigError
 
         session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
-        art = Artifact(paths=[Path("x.png")], label="PNG")
-        session.apply(art)
         config = session.project.config
         (config.work_dir / "status.json").write_text(
             json.dumps({"metadata": {"backend_name": "Nonesuch"}, "tests": []})
         )
         with pytest.raises(ConfigError, match="Nonesuch"):
             session.open(config.config_file, work_dir=config.work_dir)
-        assert session.notices == ["stored 1"] and session.artifacts == [art]
+        assert session.notices == ["stored 1"]
         assert session.project is not None
-
-    def test_artifact_is_recorded_noticed_and_nothing_reloads(self, session):
-        seen = []
-        session.on("results", lambda e: seen.append(e))
-        noticed = []
-        session.on("notice", noticed.append)
-        art = Artifact(paths=[Path("x.png")], label="PNG")
-        session.apply(art)
-        assert session.artifacts == [art] and seen == []
-        assert noticed == [{"event": "notice", "artifact": art}]
-
-    def test_open_project_swaps_the_project(self, session, tmp_path):
-        other_cfg, other_work = _project(tmp_path / "other")
-        old = session.project
-        session.apply(OpenProject(config_path=other_cfg, work_dir=other_work))
-        assert (
-            session.project is not old
-            and session.project.config.spec_path == other_cfg.parent / "test_spec.json"
-        )
 
     def test_open_and_close_refuse_while_edits_are_pending(self, session, tmp_path):
         from dstf.authoring.session import PendingEditsError
@@ -1962,10 +1923,10 @@ class TestOutcomes:
         assert raised.value.count == 1
         other_cfg, other_work = _project(tmp_path / "other")
         with pytest.raises(PendingEditsError):
-            session.apply(OpenProject(config_path=other_cfg, work_dir=other_work))
+            session.open(other_cfg, work_dir=other_work)
         session.discard()
         session.close()
-        assert session.project is None and session.artifacts == []
+        assert session.project is None
 
     def test_none_and_sequences(self, session):
         session.apply(None)
@@ -2264,17 +2225,11 @@ class TestSessionView:
         public = {n for n in dir(view) if not n.startswith("_")}
         assert public == {
             "project",
-            "spec_path",
             "pending",
             "partial",
             "selection",
             "comparisons",
-            "artifacts",
-            "notices",
-            "rescore",
             "view",
-            "figure",
-            "plot_figure",
             "plots",
             # the names the test lists: a scalar added on one is its
             # number's criterion (D162)
@@ -2348,10 +2303,7 @@ class TestSessionView:
         assert roles("primary") is BaselineRole.PRIMARY
         assert roles("om_cross") is BaselineRole.SOFT_CHECK
         assert roles("nope") is None
-        assert (
-            pv.config.backend_name == "Python"
-            and pv.dataset_kind is session.project.dataset_kind
-        )
+        assert pv.config.backend_name == "Python"
 
     def test_readers_reflect_the_session(self, session):
         view = SessionView(session)
@@ -2364,9 +2316,6 @@ class TestSessionView:
         _ended(session, item)
         with pytest.raises(TypeError):
             view.comparisons[A] = None  # a read-only mapping
-        assert view.notices == ()
-        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
-        assert view.notices == ("stored 1",)
 
 
 def _plots_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -2846,33 +2795,27 @@ class TestPlots:
         assert fig["config"] == every["config"] and fig["data"] == every["data"]
 
     def test_editing_survives_every_forward_to_the_figure(self, tmp_path):
-        """`editing` is handed on through three hops that could silently drop
-        it: `SessionView.figure`, `SessionView.plot_figure`, and the
-        single-series branch of `Session.plot_figure` (which IS `figure`)."""
+        """`editing` is handed on through both branches of
+        `Session.plot_figure`, either of which could silently drop it: the
+        single-series one (which IS `figure`) and the one with context."""
         import copy
 
-        from dstf.authoring.session import Selection, SessionView
         from test_handles import TREE
 
         s = self._open(tmp_path)
         s.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(TREE))])
-        view = SessionView(s, Selection())
 
         def rings(fig):
             return [sh for sh in fig["layout"]["shapes"] if sh.get("path") == RING_PATH]
 
         assert s.plots(A)[0].series == ("x",)  # the default layout: one series
-        assert rings(view.figure(A, "x"))
-        assert rings(view.plot_figure(A, 0))
         assert rings(s.plot_figure(A, 0))
-        assert not rings(view.figure(A, "x", editing=()))
-        assert not rings(view.plot_figure(A, 0, editing=()))
         assert not rings(s.plot_figure(A, 0, editing=()))
 
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         assert s.plots(A)[0].series == ("x", "z")  # and the branch with context
-        assert rings(view.plot_figure(A, 0))
-        assert not rings(view.plot_figure(A, 0, editing=()))
+        assert rings(s.plot_figure(A, 0))
+        assert not rings(s.plot_figure(A, 0, editing=()))
 
     def test_a_staged_layout_is_what_plots_answers(self, tmp_path):
         s = self._open(tmp_path)
@@ -3052,12 +2995,11 @@ class TestPlots:
         assert [p.missing for p in s.plots(A)] == [(), ()]
         assert s._reads_for(A).names_read
 
-    def test_the_session_view_mirrors_the_three_reads(self, tmp_path):
+    def test_the_session_view_mirrors_its_reads(self, tmp_path):
         s = self._open(tmp_path)
         v = SessionView(s, Selection())
         assert v.variable_names(A) == s.variable_names(A)
         assert v.plots(A) == s.plots(A)
-        assert v.plot_figure(A, 0) == s.plot_figure(A, 0)
 
 
 def _ordered_project(tmp_path: Path, names: list[str]) -> tuple[Path, Path]:
@@ -3246,8 +3188,8 @@ class TestPlotsMisses:
 
 
 def test_plot_figure_passes_the_pages_visibility(tmp_path):
-    """Legend b: the page's Visibility reaches both figure reads, on the
-    Session and through SessionView, with no new public name."""
+    """Legend b: the page's Visibility reaches both figure reads of the
+    Session, with no new public name."""
     from dstf.figures.plotly import Visibility
 
     cfg, work = _page_project(tmp_path)
@@ -3255,27 +3197,24 @@ def test_plot_figure_passes_the_pages_visibility(tmp_path):
     s.open(cfg, work_dir=work)
     range_x = "/metrics/children/1"
     hide = Visibility(hidden=frozenset({range_x}))
-    for reader in (s, SessionView(s)):
-        # Plot 0 draws x alone (the one-series branch), then with y beside it.
-        for extras in ([], [{"var": "x", "context": ["y"]}]):
-            s.discard()
-            if extras:
-                s.stage([PatchOp(A, "replace", "/plots", extras)])
-            fig = reader.plot_figure(A, 0, editing=(), visibility=hide)
-            mine = [
-                t for t in fig["data"] if (t.get("meta") or {}).get("leaf") == range_x
-            ]
-            assert mine and all(t["visible"] is False for t in mine), extras
+    # Plot 0 draws x alone (the one-series branch), then with y beside it.
+    for extras in ([], [{"var": "x", "context": ["y"]}]):
         s.discard()
-        fig = reader.figure(A, "x", visibility=Visibility(error="error/signed"))
-        shown = [
-            t["meta"]["id"]
-            for t in fig["data"]
-            if t["meta"].get("kind") == "error" and t["visible"] is True
-        ]
-        assert shown == ["error/signed"]
-        assert fig["layout"]["yaxis3"]["visible"] is True
-        assert fig["layout"]["yaxis4"]["visible"] is False
+        if extras:
+            s.stage([PatchOp(A, "replace", "/plots", extras)])
+        fig = s.plot_figure(A, 0, editing=(), visibility=hide)
+        mine = [t for t in fig["data"] if (t.get("meta") or {}).get("leaf") == range_x]
+        assert mine and all(t["visible"] is False for t in mine), extras
+    s.discard()
+    fig = s.figure(A, "x", visibility=Visibility(error="error/signed"))
+    shown = [
+        t["meta"]["id"]
+        for t in fig["data"]
+        if t["meta"].get("kind") == "error" and t["visible"] is True
+    ]
+    assert shown == ["error/signed"]
+    assert fig["layout"]["yaxis3"]["visible"] is True
+    assert fig["layout"]["yaxis4"]["visible"] is False
 
 
 L1 = [{"var": "x", "context": ["z"]}]
@@ -3382,29 +3321,6 @@ class TestOneStageIsOneEdit:
         # A discard of one test leaves the other's.
         session.discard({A})
         assert edit_counts(session.spec.pending) == {D: 1}
-
-    def test_a_rescore_that_writes_the_tree_out_is_no_act_of_the_users(self, session):
-        """An op on a flat entry's overrides — a capability's — and then a
-        `rescore`: it stages the tree those overrides now give, which
-        stays (it is no longer the tree the saved entry scores by). That
-        op is part of the edit that made it necessary: the count read 2
-        after one act."""
-        overrides = {"variable_overrides": {"x": {"tolerance": 0.5}}}
-        session.stage([PatchOp(G, "add", "/comparison", overrides)])
-        assert edit_counts(session.spec.pending) == {G: 1}
-        # Another test's edit in between: the tree is part of ITS test's.
-        session.stage([PatchOp(D, "add", "/plots", [{"var": "x"}])])
-        session.rescore(G)
-        assert [(op.model_id, op.path) for op in session.spec.pending] == [
-            (G, "/comparison"),
-            (D, "/plots"),
-            (G, "/metrics"),
-        ]
-        assert edit_counts(session.spec.pending) == {G: 1, D: 1}
-        # A second act is a second edit, and a rescore still adds none.
-        session.stage([PatchOp(G, "add", "/plots", [{"var": "x"}])])
-        session.rescore(G)
-        assert edit_counts(session.spec.pending) == {G: 2, D: 1}
 
     def test_two_acts_on_one_criterion_in_a_row_read_one_edit(self, tmp_path):
         """The collapse rule's reading (D155): an editor writes its
@@ -3683,14 +3599,14 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
         assert session.spec.entry(A)["metrics"]["children"][0]["tolerance"] == 0.5
 
     def test_a_flat_tests_tree_written_out_alone_is_no_pending_edit(self, session):
-        """`rescore` stages the tree a flat entry scores by and nothing
-        else: the entry differs from the file's only by that tree."""
+        """The tree a flat entry scores by, staged and nothing else: the entry
+        differs from the file's only by that tree."""
         events: list[dict] = []
         session.on("spec", events.append)
-        comp = session.rescore(A)
+        session.stage([PatchOp(A, "add", "/metrics", session.tree(A))])
         assert session.spec.pending == []
         assert "metrics" not in session.spec.entry(A)
-        assert comp is session.comparisons[A] and classify(comp) == FAIL
+        assert classify(session.comparisons[A]) == FAIL
         assert [e["models"] for e in events] == [{A}]
 
     def test_a_test_with_a_tree_in_the_file_is_as_it_was(self, tmp_path):
@@ -3785,7 +3701,7 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
             ("plot tolerance clear plot", ["/plots", "/plots/-"]),
             ("plot tolerance plot clear", ["/plots", "/plots/-"]),
             ("tolerance plot clear unplot", []),
-            ("plot rescore", ["/plots"]),
+            ("plot tree", ["/plots"]),
             ("test-tolerance tolerance clear", ["/comparison"]),
         ],
     )
@@ -3812,8 +3728,8 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
                 s.stage([PatchOp(A, "remove", "/plots")])
             elif step == "test-tolerance":
                 s.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
-            else:
-                s.rescore(A)
+            else:  # the tree it scores by, written out
+                s.stage([PatchOp(A, "add", "/metrics", s.tree(A))])
         assert [op.path for op in s.spec.pending] == left
         assert "metrics" not in s.spec.entry(A)
         if not left:
@@ -3832,7 +3748,7 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
         session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
         flat = session.comparisons[A]
         assert classify(flat) == PASS  # nrmse 0.153 under 1.0
-        session.rescore(A)
+        session.stage([PatchOp(A, "add", "/metrics", session.tree(A))])
         assert [op.path for op in session.spec.pending] == ["/comparison"]
         assert classify(session.comparisons[A]) == PASS
         assert session.comparisons[A].variables[0] == flat.variables[0]
@@ -3988,7 +3904,7 @@ class TestAnEditBackToTheSavedEntryIsNoPendingEdit:
                 )
             ]
         )
-        session.rescore(A)
+        session.stage([PatchOp(A, "add", "/metrics", session.tree(A))])
         assert [op.materializes for op in session.spec.pending] == [False, False]
         session.stage([PatchOp(A, "remove", "/comparison")])
         assert [op.path for op in session.spec.pending] == [
@@ -4103,20 +4019,6 @@ class TestTheMaterializationIsMarked:
             False,
         ]
 
-    def test_rescores_materialization_is_marked(self, session, monkeypatch):
-        """`rescore` marks the tree it stages as `stage` marks its own, and
-        the mark is what lets it go again at no cost: which tree the saved
-        entry scores by is read off the op, never by scoring the test as
-        saved (a merge of the whole spec and a compare, per look)."""
-
-        def scored(*_a, **_k):
-            raise AssertionError("the saved entry was scored for a rescore")
-
-        session.stage([PatchOp(A, "add", "/plots", [{"var": "x", "context": []}])])
-        monkeypatch.setattr(session, "saved_comparisons", scored)
-        session.rescore(A)
-        assert [op.path for op in session.spec.pending] == ["/plots"]
-
     def test_a_tree_written_out_beside_a_plots_edit_is_not_previewed_as_added(
         self, session
     ):
@@ -4141,23 +4043,6 @@ class TestTheMaterializationIsMarked:
         )
         assert not session.spec.pending[0].materializes
 
-    def test_rescore_after_an_overrides_edit_is_not_marked(self, session):
-        """`rescore`'s tree, built from overrides a pending op edited, is not
-        what the saved entry scores: unmarked, as `stage`'s."""
-        session.stage(
-            [
-                PatchOp(
-                    A,
-                    "add",
-                    "/comparison",
-                    {"variable_overrides": {"x": {"tolerance": 0.5}}},
-                )
-            ]
-        )
-        session.rescore(A)
-        assert [op.materializes for op in session.spec.pending] == [False, False]
-        assert session.spec.preview_base(A) == session.spec.saved_entry(A)
-
     def test_an_override_whose_value_moved_unmarks_the_tree(self, tmp_path):
         """The overrides are compared by value, not by their keys: x's saved
         tolerance moved, so the tree built from it is not the saved one."""
@@ -4178,8 +4063,9 @@ class TestTheMaterializationIsMarked:
 
     def test_a_saved_tree_removed_is_not_what_the_saved_entry_scores(self, tmp_path):
         """The saved entry scores its OWN tree: with it removed, the tree
-        `rescore` builds from the overrides is not that one, even though the
-        overrides are as saved — unmarked, it diffs as a change."""
+        `stage` builds from the overrides for a per-leaf op is not that one,
+        even though the overrides are as saved — unmarked, it diffs as a
+        change."""
         from dstf.authoring.spec_preview import entry_lines
 
         authored = {
@@ -4188,9 +4074,13 @@ class TestTheMaterializationIsMarked:
         }
         s = _session_with_entry(tmp_path, {"metrics": authored})
         s.stage([PatchOp(A, "remove", "/metrics")])
-        s.rescore(A)
-        assert not s.spec.pending[-1].materializes
-        assert entry_lines(s.spec.preview_base(A), s.spec.entry(A)) != []
+        s.stage([PatchOp(A, "add", "/metrics/children/0/window", {"end": 1.0})])
+        (tree,) = [
+            op for op in s.spec.pending if (op.op, op.path) == ("add", "/metrics")
+        ]
+        assert not tree.materializes
+        lines = entry_lines(s.spec.preview_base(A), s.spec.entry(A))
+        assert any(ln.kind == "del" and '"tolerance": 0.3' in ln.text for ln in lines)
 
 
 def _session_with_entry(tmp_path: Path, extra: dict) -> Session:

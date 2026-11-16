@@ -41,6 +41,13 @@ this file says when they do.
   never mentioned. Its lines name a test by its full model id where two
   tests share a short name.
 
+### Removed
+
+- Plug-in API: the `BATCH_FALLBACK` capability (it changed nothing), the
+  authoring tool's `Artifact` and `OpenProject` outcomes, and the
+  `SessionView` readers no capability used (`spec_path`, `artifacts`,
+  `notices`, `rescore`, `figure`, `plot_figure`, and `project.dataset_kind`).
+
 ### Fixed
 
 - Ctrl-C stops any command with one line (`Interrupted.`) and exit code 130,

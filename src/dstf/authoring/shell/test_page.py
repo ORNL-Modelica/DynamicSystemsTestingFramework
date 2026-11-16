@@ -229,8 +229,8 @@ class TestPage:
 
     def _known(self) -> bool:
         """Whether this page's test is a test of the OPEN project. It can
-        stop being one while the page is open: an `OpenProject` outcome
-        swaps the library, `Session.close()` takes it away."""
+        stop being one while the page is open: a reopen that no longer
+        holds it, or `Session.close()`, takes it away."""
         project = self.shell.session.project
         return project is not None and project.test(self.model_id) is not None
 
@@ -1266,11 +1266,10 @@ class TestPage:
         self.rail.refresh()
 
     def _gone(self) -> None:
-        """This page's test is no longer a test of the open project — an
-        `OpenProject` outcome swapped the library, or the Session was
-        closed. Every read below `sync` raises for it, so the page went on
-        showing the last project's cards while every event logged a
-        traceback. It says what a page BUILT for an unknown model says, and
+        """This page's test is no longer a test of the open project — a
+        reopen no longer holds it, or the Session was closed. Every read
+        below `sync` raises for it, so the page went on showing the last
+        project's cards while every event logged a traceback. It says what a page BUILT for an unknown model says, and
         a later event that finds the test again rebuilds (`_shape`).
 
         The sub-header and the strip go with the cards: they stayed live

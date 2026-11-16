@@ -10,9 +10,7 @@ import pytest
 from dstf import plugins
 from dstf.authoring import capabilities as caps
 from dstf.authoring.capabilities import (
-    Artifact,
     Enqueue,
-    OpenProject,
     Patch,
     Placement,
     StoreWrite,
@@ -151,7 +149,4 @@ def test_outcomes_are_frozen_and_carry_their_models():
     assert queued.models == ("M", "N")  # a tuple: the order to run them in
     with pytest.raises(dataclasses.FrozenInstanceError):
         queued.models = ()
-    assert Patch(ops=[]).ops == [] and Artifact(paths=[], label="png").label == "png"
-    assert (
-        OpenProject(config_path=__import__("pathlib").Path("x")).config_path.name == "x"
-    )
+    assert Patch(ops=[]).ops == []
