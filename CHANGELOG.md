@@ -60,7 +60,7 @@ this file says when they do.
 
 ### Fixed
 
-- When Dymola, OpenModelica or Julia crashes during a test on Linux, DSTF
+- When Dymola or OpenModelica crashes during a test on Linux, DSTF
   stops only the leftover processes started during that test in its folder;
   a shell you had open there is left alone.
 - Ctrl-C stops any command with one line (`Interrupted.`) and exit code 130,
