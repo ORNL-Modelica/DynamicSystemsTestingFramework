@@ -17,6 +17,7 @@ with fake workers (and real OS processes where the claim is about processes):
 from __future__ import annotations
 
 import http.client
+import os
 import subprocess
 import sys
 import threading
@@ -674,50 +675,147 @@ class TestWorkerDeath:
     ):
         """dymosim appears and the tool is killed within one tick: the
         record is empty. What the tool left is found by all of — parentless,
-        born after the tool, in this test's directory — and a process that
-        fails one of the three is never touched."""
+        born after this test began, in this test's directory — and a process
+        that fails one of the three is never touched: a shell the user had
+        open in the directory before the test began among them, though it
+        was started long after the tool."""
         test_dir, sibling = tmp_path / "test_0001", tmp_path / "test_0002"
         test_dir.mkdir()
         sibling.mkdir()
         sleeper = [sys.executable, "-c", _SLEEP]
         # Born before the tool, orphaned, in the test's directory.
-        launcher, (older,) = _spawn_tool(tmp_path, [(sleeper, str(test_dir))])
-        launcher.kill()
-        launcher.wait()
+        older = _orphan(tmp_path, sleeper, test_dir)
         time.sleep(0.1)
-        # The tool's own: one in the test's directory, one in a sibling's.
-        tool, (left_behind, elsewhere) = _spawn_tool(
-            tmp_path, [(sleeper, str(test_dir)), (sleeper, str(sibling))]
-        )
+        # The tool's own, started when the test is under way: one in the
+        # test's directory, one in a sibling's.
+        tool = _tool_on_cue([(sleeper, str(test_dir)), (sleeper, str(sibling))])
+        time.sleep(0.1)
+        # After the tool, before the test: orphaned, in the test's directory.
+        shell = _orphan(tmp_path, sleeper, test_dir)
         # Not an orphan: this process's child, in the test's directory.
         ours = subprocess.Popen(sleeper, cwd=test_dir)
-        strangers = {
-            "born before the tool": older,
-            "running in another test's directory": elsewhere,
-            "that is somebody's live child": psutil.Process(ours.pid),
-        }
+        time.sleep(0.1)  # the test begins a clock tick and more after both
+        born: list[psutil.Process] = []
 
         class _Blind(_Worker):
             def _live_descendants(self):
                 return set()  # no tick ever saw a child
 
+        def _spawn_then_die():
+            worker.entered.wait(30)
+            born.extend(_cue(tool, 2))
+            tool.kill()
+            tool.wait()
+
         worker = _Blind(0, _config(tmp_path))
         try:
             worker.start()
             worker.pids = {tool.pid}
-            threading.Thread(
-                target=lambda: (worker.entered.wait(30), tool.kill(), tool.wait())
-            ).start()
+            threading.Thread(target=_spawn_then_die).start()
             result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
 
             assert "exited during the test" in result.error_message
+            left_behind, elsewhere = born
             _wait_until(lambda: _gone(left_behind), 30)
             time.sleep(0.3)  # a kill of a stranger would have landed by now
+            strangers = {
+                "born before the tool": older,
+                "born after the tool but before this test began": shell,
+                "running in another test's directory": elsewhere,
+                "that is somebody's live child": psutil.Process(ours.pid),
+            }
             for why, proc in strangers.items():
                 assert not _gone(proc), f"killed a process {why}"
         finally:
-            _kill_quietly(left_behind, tool, ours, *strangers.values())
+            _kill_quietly(*born, tool, older, shell, ours)
             ours.wait()
+
+    @linux_only
+    @pytest.mark.parametrize(
+        "seconds", [-1.0, 1.0], ids=["clock-stepped-back", "clock-stepped-forward"]
+    )
+    def test_a_clock_step_during_the_test_moves_no_process_across_its_start(
+        self, tmp_path, monkeypatch, seconds
+    ):
+        """The wall clock steps while the test runs, as a WSL pause or an NTP
+        correction does: the leftover born during the test is still killed,
+        and a shell opened in the directory a moment before the test began
+        is still left alone. A start read on the wall clock moves by the
+        step (a creation time adds the boot time, read afresh), so a step
+        back spared the leftover and a step forward killed the shell."""
+        from test_batch_timeout_tree import _step_the_clock
+
+        test_dir = tmp_path / "test_0001"
+        test_dir.mkdir()
+        sleeper = [sys.executable, "-c", _SLEEP]
+        tool = _tool_on_cue([(sleeper, str(test_dir))])
+        time.sleep(0.1)
+        shell = _orphan(tmp_path, sleeper, test_dir)
+        time.sleep(0.1)  # the test begins a clock tick and more after it
+        step = _step_the_clock(monkeypatch, seconds)
+        born: list[psutil.Process] = []
+
+        class _Blind(_Worker):
+            def _live_descendants(self):
+                return set()  # no tick ever saw a child
+
+        def _spawn_then_die():
+            worker.entered.wait(30)
+            step()
+            born.extend(_cue(tool, 1))
+            tool.kill()
+            tool.wait()
+
+        worker = _Blind(0, _config(tmp_path))
+        try:
+            worker.start()
+            worker.pids = {tool.pid}
+            threading.Thread(target=_spawn_then_die).start()
+            result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
+
+            assert "exited during the test" in result.error_message
+            (left_behind,) = born
+            _wait_until(lambda: _gone(left_behind), 10)
+            time.sleep(0.3)  # a kill of the shell would have landed by now
+            assert not _gone(shell), "killed a shell opened before the test began"
+        finally:
+            _kill_quietly(*born, tool, shell)
+
+    @linux_only
+    def test_a_process_born_after_the_test_began_reads_as_born_after_it(self):
+        """The test's start is read on its leftovers' own clock — ticks since
+        boot, cut to the whole tick as the kernel cuts a process's start: a
+        process born just after it never reads as born before it, so the
+        sweep cannot spare it."""
+        from dstf.backends.common.proc_kill import started_ticks, ticks_now
+
+        for _ in range(20):
+            began = ticks_now()
+            proc = subprocess.Popen(["sleep", "0"])
+            try:
+                started = started_ticks({proc.pid})
+                assert began is not None and started is not None
+                assert started >= began
+            finally:
+                proc.wait()
+
+    @linux_only
+    def test_a_start_is_read_past_parentheses_in_the_process_name(self, tmp_path):
+        """A process's name is the file it runs and may hold spaces and
+        parentheses: its start still reads as psutil's own reading of it."""
+        from dstf.backends.common.proc_kill import started_ticks
+
+        exe = tmp_path / "a) 1 2 (b) 3"
+        _named_sleeper(exe)
+        proc = subprocess.Popen([str(exe)])
+        try:
+            started = started_ticks({proc.pid})
+            seconds = psutil.Process(proc.pid).create_time() - psutil.boot_time()
+            assert started is not None
+            assert started / os.sysconf("SC_CLK_TCK") == pytest.approx(seconds)
+        finally:
+            proc.kill()
+            proc.wait()
 
     def test_the_dispatch_step_restarts_after_a_death(self, tmp_path):
         """Failed, then the next test restarts the worker — as a worker
@@ -1155,6 +1253,45 @@ def _spawn_tool(
     if name is not None:
         _wait_until(lambda: psutil.Process(tool.pid).name() == name)
     return tool, found
+
+
+def _tool_on_cue(children: list[tuple[list[str], str]]) -> subprocess.Popen:
+    """A stand-in tool process that starts *children* — ``(argv, cwd)`` each
+    — only when :func:`_cue` tells it to: a tool started long before the
+    test whose simulation they are."""
+    import json
+
+    script = (
+        "import subprocess, sys, time, json\n"
+        "sys.stdin.readline()\n"
+        "for argv, cwd in json.loads(sys.argv[1]):\n"
+        "    print(subprocess.Popen(argv, cwd=cwd).pid, flush=True)\n"
+        "time.sleep(120)\n"
+    )
+    return subprocess.Popen(
+        [sys.executable, "-c", script, json.dumps(children)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _cue(tool: subprocess.Popen, n: int) -> list[psutil.Process]:
+    """Tell a :func:`_tool_on_cue` tool to start its *n* children; they run
+    once this returns."""
+    assert tool.stdin is not None and tool.stdout is not None
+    tool.stdin.write("\n")
+    tool.stdin.flush()
+    return [psutil.Process(int(tool.stdout.readline())) for _ in range(n)]
+
+
+def _orphan(tmp_path, argv: list[str], cwd: Path) -> psutil.Process:
+    """*argv* running in *cwd* with its parent gone: reparented, as a
+    process started from a shell that has since exited is."""
+    launcher, (proc,) = _spawn_tool(tmp_path, [(argv, str(cwd))])
+    launcher.kill()
+    launcher.wait()
+    return proc
 
 
 #: The compiler that builds dymosim: "dymosim" on its command line (``-o
