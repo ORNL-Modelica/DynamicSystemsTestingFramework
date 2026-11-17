@@ -1,6 +1,6 @@
 # Dynamic Systems Testing Framework (DSTF)
 
-[![quality](https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/actions/workflows/quality.yml/badge.svg)](https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/actions/workflows/quality.yml)
+[![quality](https://github.com/WyrdLab/DynamicSystemsTestingFramework/actions/workflows/quality.yml/badge.svg)](https://github.com/WyrdLab/DynamicSystemsTestingFramework/actions/workflows/quality.yml)
 
 DSTF is regression and unit testing for the behaviour of time-dependent
 systems: Modelica libraries, FMUs, Julia models, or anything Python can
@@ -30,7 +30,7 @@ The Python example library needs no simulator. From a clone of this
 repository, in a Python environment with numpy and scipy:
 
 ```console
-$ git clone https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework.git
+$ git clone https://github.com/WyrdLab/DynamicSystemsTestingFramework.git
 $ cd DynamicSystemsTestingFramework
 $ python3 -m pip install numpy scipy
 $ dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/testing.json run
@@ -39,7 +39,7 @@ $ dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/test
 It runs three tests, compares each with its stored baseline, prints a verdict
 per test and opens the dashboard:
 
-![The dashboard: one row per test with its status, worst NRMSE, criteria passed and times](https://raw.githubusercontent.com/ORNL-Modelica/DynamicSystemsTestingFramework/main/docs/img/dashboard.png)
+![The dashboard: one row per test with its status, worst NRMSE, criteria passed and times](https://raw.githubusercontent.com/WyrdLab/DynamicSystemsTestingFramework/main/docs/img/dashboard.png)
 
 ## Documentation
 
@@ -51,6 +51,6 @@ key and comparison mode.
 ## Changelog and licence
 
 What changed in each version is in
-[CHANGELOG.md](https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/CHANGELOG.md).
+[CHANGELOG.md](https://github.com/WyrdLab/DynamicSystemsTestingFramework/blob/main/CHANGELOG.md).
 DSTF is released under the MIT licence:
-[LICENSE](https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/LICENSE).
+[LICENSE](https://github.com/WyrdLab/DynamicSystemsTestingFramework/blob/main/LICENSE).

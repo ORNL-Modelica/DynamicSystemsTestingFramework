@@ -33,7 +33,7 @@ $ uv tool install "dynamic-systems-testing-framework[author]"
 The example libraries are in the repository, not in the package:
 
 ```console
-$ git clone https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework.git
+$ git clone https://github.com/WyrdLab/DynamicSystemsTestingFramework.git
 $ cd DynamicSystemsTestingFramework
 ```
 

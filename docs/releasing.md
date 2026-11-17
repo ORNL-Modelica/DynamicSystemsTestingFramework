@@ -16,7 +16,7 @@ added before the project exists; the first upload creates it).
 | Field | PyPI | TestPyPI |
 |---|---|---|
 | PyPI project name | `dynamic-systems-testing-framework` | `dynamic-systems-testing-framework` |
-| Owner | `ORNL-Modelica` | `ORNL-Modelica` |
+| Owner | `WyrdLab` | `WyrdLab` |
 | Repository name | `DynamicSystemsTestingFramework` | `DynamicSystemsTestingFramework` |
 | Workflow name | `publish.yml` | `publish.yml` |
 | Environment name | `pypi` | `testpypi` |
