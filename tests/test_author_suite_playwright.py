@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import psutil
 import pytest
 
 pytest.importorskip("nicegui")
@@ -57,51 +58,117 @@ _WITH_HOOKS = (
 def _start(
     cfg: Path, work: Path, log: Path, *, hooks: bool | Path = False
 ) -> tuple[subprocess.Popen, str]:
-    """`dstf author` as a plain process: NiceGUI's `ui.run` treats an
-    inherited PYTEST_CURRENT_TEST as "I am a screen test" and demands
-    NICEGUI_SCREEN_TEST_PORT, ignoring --port. ``hooks`` adds
-    `author_hooks.py`'s routes — or runs the file given in their place."""
-    port = _free_port()
-    env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
-    sink = log.open("wb")
-    script = HOOKS if hooks is True else hooks
-    launcher = ["-c", _WITH_HOOKS, str(script)] if script else ["-m", "dstf"]
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            *launcher,
-            "--config",
-            str(cfg),
-            "author",
-            "--work-dir",
-            str(work),
-            "--port",
-            str(port),
-            "--no-browser",
-        ],
-        stdout=sink,
-        stderr=subprocess.STDOUT,
-        env=env,
-    )
-    return proc, f"http://127.0.0.1:{port}/"
+    """`dstf author` as a plain process, serving: (proc, url). NiceGUI's
+    `ui.run` treats an inherited PYTEST_CURRENT_TEST as "I am a screen test"
+    and demands NICEGUI_SCREEN_TEST_PORT, ignoring --port. ``hooks`` adds
+    `author_hooks.py`'s routes — or runs the file given in their place.
+
+    `_free_port` lets the port go before the server binds it, and under
+    xdist another test's server can take it in between. The 200 that said
+    "serving" was then the OTHER test's server, and this test drove that
+    one's page: its editor rebuilt under another test's typing (CI, the
+    half-pair test: `+ Default tolerance` read 0.3, 0, 0.25, 0.4 — the
+    values another test typed). Serving is THIS process listening on the
+    port; one that lost the port is started again on another."""
+    for _ in range(PORT_TRIES):
+        port = _free_port()
+        env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+        script = HOOKS if hooks is True else hooks
+        launcher = ["-c", _WITH_HOOKS, str(script)] if script else ["-m", "dstf"]
+        with log.open("wb") as sink:
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    *launcher,
+                    "--config",
+                    str(cfg),
+                    "author",
+                    "--work-dir",
+                    str(work),
+                    "--port",
+                    str(port),
+                    "--no-browser",
+                ],
+                stdout=sink,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+        url = f"http://127.0.0.1:{port}/"
+        # Every caller stops the server in a `finally` entered only once
+        # this returns: a raise from the wait would leave it running.
+        try:
+            serving = _serving(url, port, proc, log)
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+        if serving:
+            return proc, url
+    pytest.fail(f"no free port in {PORT_TRIES} tries\n{log.read_text()}")
 
 
-def _wait_until_serving(url: str, proc: subprocess.Popen, log: Path) -> float:
-    """Seconds to the first 200 — the page must appear before the results
-    are read, so this is short even over a large project."""
-    started = time.monotonic()
-    deadline = started + READY_TIMEOUT
+#: Servers started before one keeps its port.
+PORT_TRIES = 5
+
+
+def _serving(url: str, port: int, proc: subprocess.Popen, log: Path) -> bool:
+    """Whether ``proc`` serves ``url``: a 200 once it listens on ``port`` —
+    the page must appear before the results are read, so this is short even
+    over a large project. False when it exited because the port was taken."""
+    deadline = time.monotonic() + READY_TIMEOUT
+    listening = False
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            pytest.fail(f"dstf author exited with {proc.returncode}\n{log.read_text()}")
-        try:
-            with urllib.request.urlopen(url, timeout=1) as response:
-                if response.status == 200:
-                    return time.monotonic() - started
-        except (urllib.error.URLError, OSError):
-            pass
+            text = log.read_text()
+            # asyncio's create_server refusing the port, as uvicorn logs it
+            if "error while attempting to bind" in text:
+                return False
+            pytest.fail(f"dstf author exited with {proc.returncode}\n{text}")
+        if not listening:
+            listening = _listens(proc, port)
+        if listening:
+            try:
+                with urllib.request.urlopen(url, timeout=1) as response:
+                    if response.status == 200:
+                        return True
+            except (urllib.error.URLError, OSError):
+                pass
         time.sleep(0.2)
+    _stop(proc)
     pytest.fail(f"no 200 from {url} within {READY_TIMEOUT}s\n{log.read_text()}")
+
+
+def _listens(proc: subprocess.Popen, port: int) -> bool:
+    """Whether ``proc`` or a process under it holds a listening socket on
+    ``port`` — on Windows a venv's python.exe is a launcher, and the server
+    is its child. A process that has just exited is not yet reaped, and its
+    sockets cannot be read: not listening — the next look sees its exit."""
+    try:
+        top = psutil.Process(proc.pid)
+        family = [top, *top.children(recursive=True)]
+    except psutil.Error:
+        return False
+    for member in family:
+        try:
+            sockets = member.net_connections("tcp")
+        except psutil.Error:
+            continue
+        if any(
+            c.status == psutil.CONN_LISTEN and c.laddr.port == port for c in sockets
+        ):
+            return True
+    return False
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    """End a server this test started: asked to stop, then killed if it has
+    not exited within half a minute."""
+    proc.terminate()
+    try:
+        proc.wait(30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 #: A test's row in the Suite table (a group row is a full-width row, not
@@ -156,7 +223,6 @@ def test_the_suite_page_fills_in_keeps_its_selection_across_a_click_and_stops(
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log)
     try:
-        _wait_until_serving(url, proc, log)
         context = playwright_browser.new_context(
             viewport={"width": 1280, "height": 900}
         )
@@ -302,7 +368,6 @@ def _served(
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log, hooks=hooks)
     try:
-        _wait_until_serving(url, proc, log)
         context = playwright_browser.new_context(
             viewport={"width": width, "height": 900}
         )
@@ -898,7 +963,6 @@ def test_rows_not_scored_yet_read_scoring_and_never_queued(
         cfg, work, log, hooks=Path(__file__).with_name("slow_open_hooks.py")
     )
     try:
-        _wait_until_serving(url, proc, log)
         page = playwright_browser.new_context(
             viewport={"width": 1280, "height": 900}
         ).new_page()
@@ -1367,7 +1431,6 @@ def test_the_rows_fill_the_table_on_a_second_load(tmp_path, playwright_browser):
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log)
     try:
-        _wait_until_serving(url, proc, log)
         # The cause, whatever the race does: the grid's height is in the
         # page's FIRST HTML, there before the grid is built.
         with urllib.request.urlopen(url, timeout=10) as response:
@@ -1516,7 +1579,6 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log)
     try:
-        _wait_until_serving(url, proc, log)
         context = playwright_browser.new_context(
             viewport={"width": 1280, "height": 900}
         )
@@ -1607,7 +1669,6 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log)
     try:
-        _wait_until_serving(url, proc, log)
         context = playwright_browser.new_context(
             viewport={"width": 1280, "height": 900}
         )

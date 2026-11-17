@@ -25,7 +25,7 @@ from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.situation import Situation  # noqa: E402
 from dstf.backends.pool import ItemState, StartingWorker  # noqa: E402
 from test_session import LOOSEN, A, B, D, _project  # noqa: E402
-from test_session_queue import fake_item  # noqa: E402
+from test_session_queue import drop_item, fake_item  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -277,6 +277,39 @@ async def test_the_tick_moves_a_running_row_s_seconds_and_nothing_else(shell):
         # the rows were not rebuilt: the same labels stand
         assert panel._moving[A][1] is row_a
         assert _one(user, f"queue-words:{B}") is waiting
+
+
+async def test_an_event_that_changes_no_row_leaves_the_rows_standing(shell):
+    """A test's start is said after the pool's thread already marked it
+    running, so the rows (and the header's "1 running · 1 queued") read
+    running before the Session's `results` and `queue` events for it arrive.
+    Those events changed no row, and each drew every row again: a row a
+    person was about to click was another element by the time the click
+    landed (CI: a row's scroll failed with "Element is not attached to the
+    DOM"). Only the words move — here, a clock that ran on meanwhile."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        item = _hold(shell, A, ItemState.RUNNING)
+        b = _hold(shell, B, ItemState.WAITING)
+        row_a, row_b = _one(user, f"queue-row:{A}"), _one(user, f"queue-row:{B}")
+        remove_b = _one(user, f"queue-remove:{B}")
+
+        item.started_at -= 42.0
+        shell.session._emit("results", models={A})
+        shell.session._emit("queue", state="started", models={A})
+        shell.tick()
+
+        assert _one(user, f"queue-row:{A}") is row_a and not row_a.is_deleted
+        assert _one(user, f"queue-row:{B}") is row_b and not row_b.is_deleted
+        assert _one(user, f"queue-remove:{B}") is remove_b
+        assert _one(user, f"queue-words:{A}").text.startswith("running · 4")
+        assert _one(user, f"queue-words:{B}").text == "waiting · 1 ahead"
+
+        # A row that did change is drawn again: B, taken out, is gone.
+        drop_item(shell.session, b)
+        shell.session._emit("queue", state="removed", models={B})
+        shell.tick()
+        assert not _has(user, f"queue-row:{B}") and row_b.is_deleted
 
 
 async def test_the_shell_polls_only_while_a_test_runs(shell):

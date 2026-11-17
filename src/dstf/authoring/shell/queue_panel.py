@@ -4,7 +4,8 @@ order, drawn from `authoring.queue_rows`. The panel also carries the store
 writes' lines.
 
 Nothing here reads a file or a clock of its own: the rows are the Session's
-queue as data, repainted on its `queue` events, and the shell's `poll` —
+queue as data, drawn again on its events when one of them changed (else
+only their words move), and the shell's `poll` —
 once a second while a test runs or a worker starts — moves only the words of the
 rows still to end and the lines of the workers being started."""
 
@@ -12,12 +13,13 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from nicegui import ui
 
-from ...backends.pool import ItemState
+from ...backends.pool import ItemState, QueueItem
 from ...reporting.status import STATUS_CLASSES, STATUS_LABELS
 from ..capabilities import Capability, Placement
 from ..errors import user_text
@@ -131,6 +133,10 @@ class QueuePanel:
         self._moving: dict[str, tuple[ItemState, ui.label]] = {}
         #: One line per worker being started (`_paint_starting`).
         self._starting: list[ui.label] = []
+        #: What the rows were last drawn as (`_Drawn`), and each row's
+        #: words: an event that leaves every row as drawn moves only words.
+        self._drawn: list[_Drawn] = []
+        self._word_labels: list[ui.label] = []
         cores = os.cpu_count() or 1
         with (
             ui.column()
@@ -256,11 +262,22 @@ class QueuePanel:
         self.error.set_text(stopped or "")
         self.error.set_visibility(stopped is not None)
         self._paint_starting()
-        self.rows.clear()
-        self._moving = {}
-        with self.rows:
-            for row in rows:
-                self._row(row)
+        drawn = [self._drawing(row) for row in rows]
+        if drawn == self._drawn:
+            # Nothing a row draws changed: its elements stay. A row drawn
+            # again under the pointer took a click on Remove or Cancel with
+            # it, and a test's start — said after the pool's thread had
+            # already marked it running — drew every row again.
+            for row, words in zip(rows, self._word_labels):
+                words.set_text(_words(row))
+        else:
+            self.rows.clear()
+            self._moving = {}
+            self._word_labels = []
+            with self.rows:
+                for one in drawn:
+                    self._row(one)
+            self._drawn = drawn
         self.notes.clear()
         with self.notes:
             for notice in session.notices:
@@ -269,7 +286,37 @@ class QueuePanel:
 
     # -- one row -----------------------------------------------------------------
 
-    def _row(self, row: QueueRow) -> None:
+    def _drawing(self, row: QueueRow) -> _Drawn:
+        """What ``row`` draws: its row, the queue item its Remove or Cancel
+        acts on — none while its click is being read — and the Suite's
+        actions it offers, each with its caption and why it is off."""
+        if not row.actions and row.cancel_why is None:
+            return _Drawn(row, None, ())
+        item = self.shell.session.queue[row.number - 1]
+        if OPEN not in row.actions or not row.latest:
+            # An earlier run of a test that ran again: what acts on the
+            # TEST is on its latest row (`QueueRow.latest`).
+            return _Drawn(row, item, ())
+        # What the Suite's batch bar offers, for this one test: Accept on a
+        # finished row, Queue again on any. The panel knows neither by name.
+        view = self.shell.view_for(Selection(tests=frozenset({row.model_id})))
+        offers: list[tuple[Capability, str, str | None]] = []
+        for cap, avail in self.shell.placed(Placement.SUITE, view):
+            try:
+                caption = cap.caption(view)
+            except Exception as e:  # the label is the fallback; the row draws
+                caption = cap.label
+                self.shell.report_once(cap.name, "caption", e)
+            reason = (
+                None
+                if avail is True
+                else (avail if isinstance(avail, str) else "not available")
+            )
+            offers.append((cap, caption, reason))
+        return _Drawn(row, item, tuple(offers))
+
+    def _row(self, drawn: _Drawn) -> None:
+        row = drawn.row
         model_id = row.model_id
         # An earlier run's row of a test that ran again wears no verdict
         # (`QueueRow.status`): no tint, no badge.
@@ -303,16 +350,17 @@ class QueuePanel:
                     # The backend's message in full; the row says its first line.
                     with words:
                         ui.tooltip(row.message).mark(f"queue-words:{model_id}:tip")
+                self._word_labels.append(words)
                 if row.state in (ItemState.WAITING, ItemState.RUNNING):
                     self._moving[model_id] = (row.state, words)
             with ui.row().classes("dstf-queue-acts items-center gap-1 no-wrap"):
-                self._actions(row)
+                self._actions(drawn)
 
-    def _actions(self, row: QueueRow) -> None:
+    def _actions(self, drawn: _Drawn) -> None:
+        row, item = drawn.row, drawn.item
         model_id = row.model_id
-        if not row.actions and row.cancel_why is None:
+        if item is None:
             return  # a test whose click is still being read: no item yet
-        item = self.shell.session.queue[row.number - 1]
         if REMOVE in row.actions:
             with (
                 ui.button("Remove", on_click=lambda: self._do(self._remove, item))
@@ -338,24 +386,7 @@ class QueuePanel:
         ui.button("Open test", on_click=lambda: ui.navigate.to(url)).props(
             "flat dense no-caps"
         ).mark(f"queue-open:{model_id}")
-        if not row.latest:
-            # An earlier run of a test that ran again: what acts on the
-            # TEST is on its latest row (`QueueRow.latest`).
-            return
-        # What the Suite's batch bar offers, for this one test: Accept on a
-        # finished row, Queue again on any. The panel knows neither by name.
-        view = self.shell.view_for(Selection(tests=frozenset({model_id})))
-        for cap, avail in self.shell.placed(Placement.SUITE, view):
-            try:
-                caption = cap.caption(view)
-            except Exception as e:  # the label is the fallback; the row draws
-                caption = cap.label
-                self.shell.report_once(cap.name, "caption", e)
-            reason = (
-                None
-                if avail is True
-                else (avail if isinstance(avail, str) else "not available")
-            )
+        for cap, caption, reason in drawn.offers:
             marker = f"queue-{cap.name}:{model_id}"
             icon = getattr(cap, "icon", None)
             action: Action | IconAction
@@ -416,6 +447,27 @@ class QueuePanel:
             ui.notify(user_text(e), type="warning")
             return
         ui.notify("workers stopped")
+
+
+@dataclass(frozen=True)
+class _Drawn:
+    """One row as the panel draws it. Equal to the row's last drawing, it
+    is not drawn again: only its words (`_words`) move, in place."""
+
+    row: QueueRow = field(compare=False)
+    #: The queue item its Remove or Cancel acts on — another item for a
+    #: test removed and queued again (`QueueItem` compares by identity) —
+    #: None while its click is being read.
+    item: QueueItem | None
+    #: The Suite's actions it offers: (capability, caption, why it is off).
+    offers: tuple[tuple[Capability, str, str | None], ...]
+    #: The row without what only its words say: the seconds that move every
+    #: tick, a live view's progress, the worker.
+    still: QueueRow = field(init=False)
+
+    def __post_init__(self) -> None:
+        still = replace(self.row, words="", elapsed=None, progress=None, worker=None)
+        object.__setattr__(self, "still", still)
 
 
 def _words(row: QueueRow) -> str:
