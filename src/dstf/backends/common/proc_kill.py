@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import subprocess
 import sys
@@ -131,7 +130,7 @@ def snapshot_children(
 
 
 def orphans_in(
-    directory: str, born_after: float | None, token: str | None = None
+    directory: str, born_after: int | None, token: str | None = None
 ) -> set[tuple[int, float]]:
     """Linux only: the processes a dead tool left behind in *directory*, as
     ``(pid, create_time)`` pairs for :func:`kill_process_tree`.
@@ -144,9 +143,11 @@ def orphans_in(
     * it runs in *directory* or below — the scratch directory of the one
       test the dead tool was running, which the tool was told to work in
       and no other worker uses;
-    * it was created no earlier than *born_after*, on the clock of
-      :func:`clock_now` — the moment the dead tool began that test (what it
-      left cannot predate it; a shell opened in the folder before it can);
+    * it started no earlier than *born_after*, in clock ticks since boot
+      (:func:`ticks_now`) — the moment the dead tool began that test (what
+      it left cannot predate it; a shell opened in the folder before it
+      can). Ticks since boot are what the kernel records a process's start
+      in, and no step of the wall clock moves them;
     * it has no parent of its own left: it hangs under init, or under a
       reaper among this process's ancestors — where the kernel puts the
       orphans of our descendants. A child of this process is not one, and
@@ -161,9 +162,7 @@ def orphans_in(
     instead: a process in the folder whose environment holds the token.
     Whether it was reparented yet does not matter then, nor when it was
     born — only the tool's descendants can carry the token — so a token's
-    sweep passes *born_after* ``None``: a wall-clock birth read at the
-    launch is moved by every step of the clock since (``create_time``
-    adds the boot time, read afresh), and would spare a leftover.
+    sweep passes *born_after* ``None``.
 
     Unreadable means unmarked: a process whose directory, parent or
     environment cannot be read is left alone. Other platforms report no
@@ -186,8 +185,7 @@ def orphans_in(
                 continue
             if token is None and proc.ppid() not in reapers:
                 continue
-            created = proc.create_time()
-            if born_after is not None and created < born_after:
+            if born_after is not None and _start_ticks(proc.pid) < born_after:
                 continue
             if proc.status() == psutil.STATUS_ZOMBIE:
                 continue
@@ -196,44 +194,53 @@ def orphans_in(
                 continue
             if token is not None and proc.environ().get(TREE_TOKEN) != token:
                 continue
-            found.add((proc.pid, created))
+            found.add((proc.pid, proc.create_time()))
         except Exception:
             continue
     return found
 
 
-def created_at(pids: set[int]) -> float | None:
-    """When the earliest of *pids* was created (the clock of
-    :func:`orphans_in`), or ``None`` when that cannot be read."""
+def started_ticks(pids: set[int]) -> int | None:
+    """When the earliest of *pids* started, in clock ticks since boot (the
+    clock of :func:`ticks_now` and :func:`orphans_in`), or ``None`` when
+    that cannot be read: no *pids*, one of them gone or unreadable, or not
+    Linux."""
+    if not pids or not sys.platform.startswith("linux"):
+        return None
     try:
-        import psutil
-
-        return min(psutil.Process(pid).create_time() for pid in pids)
+        return min(_start_ticks(pid) for pid in pids)
     except Exception:
         return None
 
 
-def clock_now() -> float | None:
-    """Now, on the clock of :func:`created_at` and :func:`orphans_in` — a
-    process born from this moment on is created no earlier than it — or
-    ``None`` where that clock cannot be read.
+def ticks_now() -> int | None:
+    """Now, in clock ticks since boot — a process started from this moment
+    on started no earlier than it (:func:`orphans_in`) — or ``None`` where
+    that clock cannot be read.
 
-    Not :func:`time.time`: a process's creation time is the boot time in
-    whole seconds plus the clock ticks from boot to its birth, so it runs up
-    to a second behind the wall clock, and a child born just after a
-    ``time.time()`` reading would read as born before it. Ticks since boot
-    plus that same boot time is the clock itself, cut to the tick as a
-    creation time is."""
+    The kernel records a process's start as the ticks from boot to its
+    birth, cut down to the whole tick; this is the same clock cut the same
+    way. Not a wall-clock time: psutil's ``create_time`` adds the boot time,
+    read afresh on each call, so a step of the wall clock between this
+    reading and a later ``create_time`` would move every process by the
+    step."""
     if not sys.platform.startswith("linux"):
         return None
     try:
-        import psutil
-
         ticks = os.sysconf("SC_CLK_TCK")
-        since_boot = time.clock_gettime(time.CLOCK_BOOTTIME)
-        return math.floor(since_boot * ticks) / ticks + psutil.boot_time()
+        return time.clock_gettime_ns(time.CLOCK_BOOTTIME) * ticks // 1_000_000_000
     except Exception:
         return None
+
+
+def _start_ticks(pid: int) -> int:
+    """When *pid* started, in clock ticks since boot: field 22 of
+    ``/proc/<pid>/stat``. Field 2, the name, is in parentheses and may hold
+    spaces and parentheses itself, so the fields are counted from its last
+    ``)``. Raises when the file cannot be read (Linux only)."""
+    with open(f"/proc/{pid}/stat", "rb") as stat:
+        data = stat.read()
+    return int(data[data.rindex(b")") + 1 :].split()[19])
 
 
 def process_gone(pids: set[int], name_hint: str | None = None) -> bool:

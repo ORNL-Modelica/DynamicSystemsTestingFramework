@@ -17,6 +17,7 @@ with fake workers (and real OS processes where the claim is about processes):
 from __future__ import annotations
 
 import http.client
+import os
 import subprocess
 import sys
 import threading
@@ -730,22 +731,91 @@ class TestWorkerDeath:
             ours.wait()
 
     @linux_only
+    @pytest.mark.parametrize(
+        "seconds", [-1.0, 1.0], ids=["clock-stepped-back", "clock-stepped-forward"]
+    )
+    def test_a_clock_step_during_the_test_moves_no_process_across_its_start(
+        self, tmp_path, monkeypatch, seconds
+    ):
+        """The wall clock steps while the test runs, as a WSL pause or an NTP
+        correction does: the leftover born during the test is still killed,
+        and a shell opened in the directory a moment before the test began
+        is still left alone. A start read on the wall clock moves by the
+        step (a creation time adds the boot time, read afresh), so a step
+        back spared the leftover and a step forward killed the shell."""
+        from test_batch_timeout_tree import _step_the_clock
+
+        test_dir = tmp_path / "test_0001"
+        test_dir.mkdir()
+        sleeper = [sys.executable, "-c", _SLEEP]
+        tool = _tool_on_cue([(sleeper, str(test_dir))])
+        time.sleep(0.1)
+        shell = _orphan(tmp_path, sleeper, test_dir)
+        time.sleep(0.1)  # the test begins a clock tick and more after it
+        step = _step_the_clock(monkeypatch, seconds)
+        born: list[psutil.Process] = []
+
+        class _Blind(_Worker):
+            def _live_descendants(self):
+                return set()  # no tick ever saw a child
+
+        def _spawn_then_die():
+            worker.entered.wait(30)
+            step()
+            born.extend(_cue(tool, 1))
+            tool.kill()
+            tool.wait()
+
+        worker = _Blind(0, _config(tmp_path))
+        try:
+            worker.start()
+            worker.pids = {tool.pid}
+            threading.Thread(target=_spawn_then_die).start()
+            result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
+
+            assert "exited during the test" in result.error_message
+            (left_behind,) = born
+            _wait_until(lambda: _gone(left_behind), 10)
+            time.sleep(0.3)  # a kill of the shell would have landed by now
+            assert not _gone(shell), "killed a shell opened before the test began"
+        finally:
+            _kill_quietly(*born, tool, shell)
+
+    @linux_only
     def test_a_process_born_after_the_test_began_reads_as_born_after_it(self):
-        """The test's start is read on its leftovers' own clock: a process
-        born just after it never reads as born before it, so the sweep
-        cannot spare it. (Read with ``time.time()``, the start runs ahead of
-        that clock by up to a second: the boot time a creation time adds is
-        in whole seconds.)"""
-        from dstf.backends.common.proc_kill import clock_now
+        """The test's start is read on its leftovers' own clock — ticks since
+        boot, cut to the whole tick as the kernel cuts a process's start: a
+        process born just after it never reads as born before it, so the
+        sweep cannot spare it."""
+        from dstf.backends.common.proc_kill import started_ticks, ticks_now
 
         for _ in range(20):
-            began = clock_now()
+            began = ticks_now()
             proc = subprocess.Popen(["sleep", "0"])
             try:
-                assert began is not None
-                assert psutil.Process(proc.pid).create_time() >= began
+                started = started_ticks({proc.pid})
+                assert began is not None and started is not None
+                assert started >= began
             finally:
                 proc.wait()
+
+    @linux_only
+    def test_a_start_is_read_past_parentheses_in_the_process_name(self, tmp_path):
+        """A process's name is the file it runs and may hold spaces and
+        parentheses: its start still reads as psutil's own reading of it."""
+        from dstf.backends.common.proc_kill import started_ticks
+
+        exe = tmp_path / "a) 1 2 (b) 3"
+        _named_sleeper(exe)
+        proc = subprocess.Popen([str(exe)])
+        try:
+            started = started_ticks({proc.pid})
+            seconds = psutil.Process(proc.pid).create_time() - psutil.boot_time()
+            assert started is not None
+            assert started / os.sysconf("SC_CLK_TCK") == pytest.approx(seconds)
+        finally:
+            proc.kill()
+            proc.wait()
 
     def test_the_dispatch_step_restarts_after_a_death(self, tmp_path):
         """Failed, then the next test restarts the worker — as a worker

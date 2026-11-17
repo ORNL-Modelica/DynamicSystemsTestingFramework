@@ -43,12 +43,12 @@ from .base import (
     no_worker_message,
 )
 from .common.proc_kill import (
-    clock_now,
-    created_at,
     kill_process_tree,
     orphans_in,
     process_gone,
     snapshot_children,
+    started_ticks,
+    ticks_now,
 )
 from .types import TestRunResult, timeout_message
 
@@ -713,7 +713,7 @@ class Worker(ABC):
             found |= snapshot_children(pid, name_hint=self.kill_name_hint)
         return found
 
-    def _record_orphans(self, test_key: str, born_after: float | None) -> None:
+    def _record_orphans(self, test_key: str, born_after: int | None) -> None:
         """The tool died by itself while it ran *test_key*: add what it left
         behind to the record :meth:`_kill_tracked_pids` kills.
 
@@ -721,7 +721,8 @@ class Worker(ABC):
         appears and the tool is killed within the same half second. On
         Linux such a child is still found, by the mark of
         :func:`~.common.proc_kill.orphans_in`: parentless, born after this
-        test began (*born_after*), running in this test's own directory.
+        test began (*born_after*, read by :func:`~.common.proc_kill.ticks_now`),
+        running in this test's own directory.
         A process that fails any part is never touched — a shell somebody
         had open in the directory before the test began among them, however
         long after the tool it was started.
@@ -889,14 +890,10 @@ class Worker(ABC):
         # Read while the tool is certain to be there: what it leaves behind
         # if it dies is told by having been born after this test began —
         # not after the tool, which may have started hours and many tests
-        # ago, with a user's shell opened in this directory since.
-        tool_born = created_at(self.pids)
-        test_began = clock_now()
-        born_after = (
-            None
-            if tool_born is None
-            else max(tool_born, test_began if test_began is not None else tool_born)
-        )
+        # ago, with a user's shell opened in this directory since. Both are
+        # clock ticks since boot, which no step of the wall clock moves; a
+        # tool whose start cannot be read is not swept for.
+        born_after = ticks_now() if started_ticks(self.pids) is not None else None
         t.start()
         try:
             return self._watch_test(
@@ -950,7 +947,7 @@ class Worker(ABC):
         left: threading.Event,
         result_box: list,
         exc_box: list,
-        born_after: float | None,
+        born_after: int | None,
     ) -> "TestRunResult":
         """The watchdog's wait, and what each way out of it returns."""
 
