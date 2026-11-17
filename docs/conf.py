@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent / "_ext"))
 
 project = "Dynamic Systems Testing Framework"
 author = "Scott Greenwood"
-copyright = "2026 ORNL-Modelica"
+copyright = "2026 WyrdLab"
 # The installed distribution's version: the one the reference describes.
 release = _version("dynamic-systems-testing-framework")
 version = ".".join(release.split(".")[:2])

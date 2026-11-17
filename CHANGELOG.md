@@ -323,7 +323,7 @@ rewrites a companion's path to another library's baseline, and deletes
 `.id_high_water.json`.
 
 1. Get the script from the DSTF repository:
-   [`scripts/convert_baseline_names.py`](https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/scripts/convert_baseline_names.py).
+   [`scripts/convert_baseline_names.py`](https://github.com/WyrdLab/DynamicSystemsTestingFramework/blob/main/scripts/convert_baseline_names.py).
    It needs only Python 3.10 or later, not DSTF.
 2. See what it would do, over the reference root and every other root whose
    companions point into it, all in one run:
@@ -746,11 +746,11 @@ command is `dstf`. The code is 1.0.0's.
 
 The first tagged version. It was not published to PyPI.
 
-[1.6.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.5.0...v1.6.0
-[1.5.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.0.1...v1.1.0
-[1.0.1]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/releases/tag/v1.0.0
+[1.6.0]: https://github.com/WyrdLab/DynamicSystemsTestingFramework/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/WyrdLab/DynamicSystemsTestingFramework/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/WyrdLab/DynamicSystemsTestingFramework/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/WyrdLab/DynamicSystemsTestingFramework/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/WyrdLab/DynamicSystemsTestingFramework/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/WyrdLab/DynamicSystemsTestingFramework/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/WyrdLab/DynamicSystemsTestingFramework/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/WyrdLab/DynamicSystemsTestingFramework/releases/tag/v1.0.0

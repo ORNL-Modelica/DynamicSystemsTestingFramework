@@ -79,11 +79,11 @@ docs = ["sphinx>=8.1", "myst-parser>=4.0", "furo>=2024.8.6"]
 browser = ["playwright>=1.64"]
 
 [project.urls]
-Homepage = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework"
-Repository = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework"
+Homepage = "https://github.com/WyrdLab/DynamicSystemsTestingFramework"
+Repository = "https://github.com/WyrdLab/DynamicSystemsTestingFramework"
 Documentation = "https://dstf.readthedocs.io/"
-Issues = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/issues"
-Changelog = "https://github.com/ORNL-Modelica/DynamicSystemsTestingFramework/blob/main/CHANGELOG.md"
+Issues = "https://github.com/WyrdLab/DynamicSystemsTestingFramework/issues"
+Changelog = "https://github.com/WyrdLab/DynamicSystemsTestingFramework/blob/main/CHANGELOG.md"
 
 [project.scripts]
 dstf = "dstf.cli:main_entry"
