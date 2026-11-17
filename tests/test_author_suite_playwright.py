@@ -94,7 +94,15 @@ def _start(
                 env=env,
             )
         url = f"http://127.0.0.1:{port}/"
-        if _serving(url, port, proc, log):
+        # Every caller stops the server in a `finally` entered only once
+        # this returns: a raise from the wait would leave it running.
+        try:
+            serving = _serving(url, port, proc, log)
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+        if serving:
             return proc, url
     pytest.fail(f"no free port in {PORT_TRIES} tries\n{log.read_text()}")
 
@@ -112,7 +120,8 @@ def _serving(url: str, port: int, proc: subprocess.Popen, log: Path) -> bool:
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             text = log.read_text()
-            if "error while attempting to bind" in text:  # uvicorn's words
+            # asyncio's create_server refusing the port, as uvicorn logs it
+            if "error while attempting to bind" in text:
                 return False
             pytest.fail(f"dstf author exited with {proc.returncode}\n{text}")
         if not listening:
@@ -125,20 +134,41 @@ def _serving(url: str, port: int, proc: subprocess.Popen, log: Path) -> bool:
             except (urllib.error.URLError, OSError):
                 pass
         time.sleep(0.2)
-    proc.terminate()
-    proc.wait(10)
+    _stop(proc)
     pytest.fail(f"no 200 from {url} within {READY_TIMEOUT}s\n{log.read_text()}")
 
 
 def _listens(proc: subprocess.Popen, port: int) -> bool:
-    """Whether ``proc`` holds a listening socket on ``port``. A process that
-    has just exited is not yet reaped, and its sockets cannot be read: not
-    listening — the next look sees its exit."""
+    """Whether ``proc`` or a process under it holds a listening socket on
+    ``port`` — on Windows a venv's python.exe is a launcher, and the server
+    is its child. A process that has just exited is not yet reaped, and its
+    sockets cannot be read: not listening — the next look sees its exit."""
     try:
-        sockets = psutil.Process(proc.pid).net_connections("tcp")
+        top = psutil.Process(proc.pid)
+        family = [top, *top.children(recursive=True)]
     except psutil.Error:
         return False
-    return any(c.status == psutil.CONN_LISTEN and c.laddr.port == port for c in sockets)
+    for member in family:
+        try:
+            sockets = member.net_connections("tcp")
+        except psutil.Error:
+            continue
+        if any(
+            c.status == psutil.CONN_LISTEN and c.laddr.port == port for c in sockets
+        ):
+            return True
+    return False
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    """End a server this test started: asked to stop, then killed if it has
+    not exited within half a minute."""
+    proc.terminate()
+    try:
+        proc.wait(30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 #: A test's row in the Suite table (a group row is a full-width row, not

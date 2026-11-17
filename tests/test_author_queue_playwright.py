@@ -30,6 +30,7 @@ from test_author_suite_playwright import (  # noqa: E402
     _box,
     _keep,
     _served,
+    _stop,
 )
 from test_session import CASES_X, A, B, C, D, G  # noqa: E402
 from test_session_queue import SIMULATE  # noqa: E402
@@ -67,11 +68,6 @@ def _hold(cfg: Path, *models: str) -> None:
 def _release(cfg: Path, *models: str) -> None:
     for m in models:
         (cfg.parent.parent / "Examples" / f"{_short(m)}.hold").unlink()
-
-
-def _stop(proc) -> None:
-    proc.terminate()
-    proc.wait(30)
 
 
 def _queue(page, caption: str) -> None:
@@ -661,11 +657,16 @@ def test_the_rows_scroll_inside_the_panel_above_the_table(tmp_path, playwright_b
             _box(page, model_id).click()
         _queue(page, "Queue 6")
         expect(page.locator(".dstf-queue-row")).to_have_count(6, timeout=RUN_TIMEOUT)
-        # The rows are read once A runs. A's start, said after the pool's
-        # thread marked it running, changes no row and leaves them standing
-        # (test_queue_panel's test_an_event_that_changes_no_row_…)
+        # The rows are read once they draw A running. The header says so
+        # first: it is redrawn on every poll, the rows only on an event, and
+        # A's start redraws every row — under a scroll begun before it, the
+        # row scrolled to is gone. After it, A's tick rewrites only its words
+        # (test_queue_panel's test_an_event_that_changes_no_row_…).
         expect(page.locator(INDICATOR)).to_have_text(
             "1 running · 5 queued", timeout=RUN_TIMEOUT
+        )
+        expect(_words(page, A)).to_have_text(
+            re.compile(r"^running"), timeout=RUN_TIMEOUT
         )
         rows = page.locator(".dstf-queue-rows")
         held = rows.evaluate(read)
