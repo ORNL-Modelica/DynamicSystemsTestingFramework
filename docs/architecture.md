@@ -728,14 +728,16 @@ that cannot build the backend prints one `Config error: ...` line and exits 2.
 candidates=None, selection=None) -> RunOutcome` is the run itself, without a
 CLI around it: the ref-ID mapping, the stale-state wipe for the tests in
 scope, the live dashboard's first paint, `backend.run_tests` (with
-`selection`, what chose the tests — `run --changed-since`'s block, D168 —
-set on the backend, which writes it to `status.json`), the cross-backend chains, the
+`selection`, what chose the tests — the block `cmd_run` records for a run
+of fewer than the project's tests (`_narrowed`: `--filter`, `--package`,
+`--rerun`, `--changed-since`), D168, D169 — set on the backend, which writes it to `status.json`), the cross-backend chains, the
 `merge` scope widening and the result read. It prints the backend's narration unless
 `backend.quiet` is set (below); it never exits the process, never opens a
 browser and never prompts; a backend that cannot start raises, and the caller
 decides whether that is an exit code or a red panel. It does not score and
 writes no `verdicts.json`: `cmd_run` and `cmd_compare` score.
-`cmd_run` is its CLI wrapper — selection (and `--changed-since`'s, D168),
+`cmd_run` is its CLI wrapper — selection (and `--changed-since`'s, D168;
+the block that records it, D169),
 the outcome's notices printed,
 `--accept` / `-i` / the report. The authoring tool runs through the simulation
 pool instead (`open_pool`, below): the same per-test path, one test at a time.

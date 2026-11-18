@@ -6,7 +6,8 @@ The Markdown: a matrix — a row per backend/os, a column per label, each
 cell PASS over the run's total, then in one parenthesis the other status
 words' counts (NO_REF's as ``no baseline``) and, with a base, ``K also fail
 on <base>`` of a cell's failures and ``J also have none on <base>`` of its
-tests with no baseline — under it one key line, then one folded list per
+tests with no baseline, and last ``· N of M tests run`` for a run of fewer
+than the project's tests (:attr:`Cell.selected`) — under it one key line, then one folded list per
 cell with tests that did not pass, its summary line ``<Backend>/<os>,
 <label>: N not passing, K also fail on <base>; M no baseline``. A list's
 table holds what failed; a test with no baseline is no failure, and is
@@ -60,11 +61,13 @@ def _matrix_cell(summary: Summary, cell: Cell | None) -> str:
         also.append(_also_none(cell.none_on_base, summary.base))
     if also:
         others = "; ".join(filter(None, [others, ", ".join(also)]))
+    text = f"{cell.passed}/{cell.total}"
+    if others:
+        text += f" ({others})"
     if cell.selected:
         n, of = cell.selected
-        others = "; ".join(filter(None, [others, f"{n} of {of} tests selected"]))
-    text = f"{cell.passed}/{cell.total}"
-    return f"{text} ({others})" if others else text
+        text += f" · {n} of {of} tests run"
+    return text
 
 
 def _open(summary: Summary, cell: Cell) -> bool:
@@ -162,9 +165,13 @@ def as_markdown(summary: Summary) -> str:
         )
     if any(cell.selected for cell in summary.cells.values()):
         key += (
-            ' "N of M tests selected" = the run simulated only the tests a '
-            "change touches (run --changed-since): not a full run."
+            ' "N of M tests run" = the run simulated N of the project\'s M tests '
+            "(--filter, --package, --rerun or --changed-since): not a full run."
         )
+        if any(cell.selected and cell.merged for cell in summary.cells.values()):
+            key += (
+                " With --merge or --rerun the others were scored on their last results."
+            )
     lines += ["", key, ""]
     for folder in summary.folders:
         for label in summary.labels:

@@ -225,9 +225,11 @@ def run_pipeline(
             earlier runs recorded, as ``run --merge`` does.
         candidates: The tests that widening may draw from, in their order;
             without it, only ``tests``.
-        selection: What ``tests`` were chosen by — ``run --changed-since``'s
-            block — written to ``status.json`` under ``selection``; None,
-            the default, for any other run, and written as null.
+        selection: What ``tests`` were chosen by — the block ``dstf run``
+            records when it simulates fewer than the project's tests
+            (``--filter``, ``--package``, ``--rerun``, ``--changed-since``)
+            — written to ``status.json`` under ``selection``; None, the
+            default, for a run of every test, and written as null.
 
     Returns:
         The run's manifests, the tests in scope and their results.

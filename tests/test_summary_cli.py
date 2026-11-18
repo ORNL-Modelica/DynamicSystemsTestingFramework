@@ -198,12 +198,13 @@ def test_a_run_of_only_the_tests_a_change_touches_says_so(tmp_path, capsys):
     assert main(["summary", f"full={full}", f"some={some}", f"every={every}"]) == 0
     out = capsys.readouterr().out
     assert (
-        "| Python/linux | 2/3 (1 FAIL) | 1/2 (1 FAIL; 2 of 3 tests selected) | 1/1 |"
+        "| Python/linux | 2/3 (1 FAIL) | 1/2 (1 FAIL) · 2 of 3 tests run | 1/1 |"
     ) in out
     assert (
-        '"N of M tests selected" = the run simulated only the tests a change '
-        "touches (run --changed-since): not a full run."
+        '"N of M tests run" = the run simulated N of the project\'s M tests '
+        "(--filter, --package, --rerun or --changed-since): not a full run."
     ) in out
+    assert "last results" not in out
 
 
 def test_the_json_gives_each_run_s_selection(tmp_path, capsys):
@@ -224,7 +225,7 @@ def test_the_json_gives_each_run_s_selection(tmp_path, capsys):
 def test_no_run_selected_no_key_line(runs, capsys):
     base, head = runs
     assert main(["summary", f"base={base}", f"head={head}"]) == 0
-    assert "tests selected" not in capsys.readouterr().out
+    assert "tests run" not in capsys.readouterr().out
 
 
 def _refused(argv, capsys) -> str:

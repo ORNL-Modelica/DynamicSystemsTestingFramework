@@ -30,6 +30,14 @@ this file says when they do.
 
 ### Changed
 
+- A `dstf run` narrowed by `--filter`, `--package` or `--rerun` now says it
+  was not a full run, as `--changed-since` did: `selection` in
+  `status.json` and `verdicts.json`, the console's `Results:` line and the
+  dashboard say how many of the project's tests ran and what chose them,
+  and every `dstf summary` cell of such a run reads `0/29 (29 SIM_FAIL) ·
+  29 of 340 tests run` (it read `29 of 340 tests selected` for
+  `--changed-since` only). The count is of the project's tests also beside
+  `--changed-since`, no longer of those the filter left.
 - `dstf plot` with three runs or more ranks a section, and gives its
   `Change`, by the largest move of ANY later run against the first (and a
   point not finite in any of them), not the last run's only: a test that

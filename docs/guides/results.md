@@ -93,11 +93,13 @@ Two files in the work directory are written for programs:
   tree with each node's verdict, score and tolerance. Beside them, the totals
   by status and the exit code they give, the run's `metadata` (backend,
   tool version, OS), and `selection`: null for a run of every test the
-  filter left; for a run started with `--changed-since`, what chose its
-  tests — the revision as given (`changed_since`), the commit it resolved
-  to in each repository (`commits`), how many files differ (`files`), how
-  many tests were run (`selected`) of how many the filter left (`of`), and
-  how many of them could not be asked what they use
+  project has; for a run of fewer, how many tests were run (`selected`) of
+  how many the project has (`of`) and what chose them — `filter`,
+  `package` and `rerun` as given, `merged: true` where the tests not run
+  were scored on their last results (`--merge`, `--rerun`), and for
+  `--changed-since` the revision as given (`changed_since`), the commit it
+  resolved to in each repository (`commits`), how many files differ
+  (`files`) and how many of the tests could not be asked what they use
   (`could_not_be_asked`). `selected` below `of` is not a full run.
 - `status.json` — what became of each SIMULATION: `passed` there means the
   simulation finished, not that the test passed. Once a run is scored each

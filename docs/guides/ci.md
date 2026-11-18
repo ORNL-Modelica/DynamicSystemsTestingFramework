@@ -117,8 +117,9 @@ jobs:
   selected job prints `Nothing changed` and passes without running
   anything. The full run on `main` is what checks it.
 - The selected run is not a full run, and says so on the dashboard, in
-  `verdicts.json` and in `dstf summary`. The JUnit file does not: it is a
-  plain suite of the tests that ran. The run on `main` is the check.
+  `verdicts.json` and in `dstf summary` (`2/2 · 2 of 14 tests run`). The
+  JUnit file does not: it is a plain suite of the tests that ran. The run
+  on `main` is the check.
 
 ## Exit codes
 

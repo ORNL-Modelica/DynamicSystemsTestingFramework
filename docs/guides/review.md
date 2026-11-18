@@ -672,21 +672,24 @@ Changed since main (1a2b3c4 Tune the thermostat example): 2 files
   Icons/Example.mo        ModelicaTestingLib.Icons.Example
 Selected 2 of 14 tests: the ones that use what changed. Not a full run.
 ...
-Results: 2/2 passed (2 of 14 tests selected; not a full run)
+Results: 2/2 passed (2 of 14 tests run; not a full run)
 ```
 
-The tests are chosen from those `--filter` and `--package` leave, and
-`2 of 14` counts those. A test the simulator could not be asked about is
-run, and named under `Could not be asked:` with its reason. A changed file
-no class stores runs every test:
+The tests are chosen from those `--filter` and `--package` leave; the
+`Selected` line counts those, and `2 of 14 tests run` the project's. A
+test the simulator could not be asked about is run, and named under
+`Could not be asked:` with its reason. A changed file no class stores runs
+every test:
 `1 file that no class stores changed: every test is run (14 tests).`
 
 Wherever the result is read, it says it was not a full run: a line under
 the dashboard's status line (`Not a full run. 2 of 14 tests were run: the
 ones that use what changed since main (2 files). The other 12 were not
 run.`), `selection` in `status.json` and `verdicts.json`, and the cell of
-`dstf summary` (`2/2 (2 of 14 tests selected)`). A later `compare` over the
-work directory still says so; a later run without the flag does not. The
+`dstf summary` (`2/2 · 2 of 14 tests run`). A later `compare` over the
+work directory still says so; a later full run does not. Any run of fewer
+than the project's tests says the same — by `--filter`, `--package` or
+`--rerun` too, each named on the dashboard. The
 JUnit file does not say it: it is a plain suite of the tests that ran.
 
 When nothing changed, it prints `No test to run.`; when no test uses what

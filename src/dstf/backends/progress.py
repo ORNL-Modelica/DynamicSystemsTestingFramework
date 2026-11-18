@@ -86,11 +86,11 @@ class ProgressReporter:
         # later `compare` renders the page with the run's own for every flag
         # it does not read itself (`--timeout`).
         self.run_given = run_given
-        # The tests this run was chosen by (`run --changed-since`'s block:
-        # the revision, the files that differ, N selected of M), or None
-        # for a run of every test the filter left. Written to status.json
-        # under "selection"; the dashboard says a run of fewer is not a
-        # full run, and verdicts.json copies it.
+        # What this run's tests were narrowed by (`cmd_run`'s block: N
+        # selected of the project's M, and the filter, package, rerun or
+        # revision that chose them), or None for a run of every test.
+        # Written to status.json under "selection"; the dashboard says a
+        # run of fewer is not a full run, and verdicts.json copies it.
         self.selection = selection
         # Run-level provenance (backend family/configured name/os/version). Serialized into
         # status.json under "metadata" and rendered as a banner by the

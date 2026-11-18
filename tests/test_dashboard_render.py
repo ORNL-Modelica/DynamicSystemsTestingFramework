@@ -2353,12 +2353,64 @@ def test_a_selected_run_says_it_is_not_a_full_run(tmp_path, selection, mode, sai
 
 
 @pytest.mark.parametrize(
+    ("selection", "mode", "said"),
+    [
+        (
+            {"filter": "Lib.A*", "selected": 2, "of": 14},
+            "final",
+            "Not a full run. 2 of 14 tests were run: the ones that --filter "
+            "Lib.A* matches. The other 12 were not run.",
+        ),
+        (
+            {"package": "Lib.Fluid", "rerun": "failed", "merged": True}
+            | {"selected": 1, "of": 14},
+            "live",
+            "Not a full run. 1 of 14 tests is being run: the one in --package "
+            "Lib.Fluid that the last run left in failed (--rerun). The other 13 "
+            "are not run: their last results are scored.",
+        ),
+        (
+            _selection(3, 14, unasked=3) | {"filter": "Lib.A*"},
+            "final",
+            "Not a full run. 3 of 14 tests were run: the ones that --filter "
+            "Lib.A* matches; the simulator could not say what they use, and 2 "
+            "files changed since base. The other 11 were not run.",
+        ),
+        (
+            _selection(5, 14, unasked=2) | {"package": "Lib.Fluid"},
+            "final",
+            "Not a full run. 5 of 14 tests were run: the ones in --package "
+            "Lib.Fluid that use what changed since base (2 files), and 2 that "
+            "could not be asked what they use. The other 9 were not run.",
+        ),
+        (
+            # a block that says only how many: no clause to name
+            {"selected": 1, "of": 3},
+            "final",
+            "Not a full run. 1 of 3 tests was run. The other 2 were not run.",
+        ),
+    ],
+)
+def test_a_narrowed_run_names_what_narrowed_it(tmp_path, selection, mode, said):
+    assert _notice(tmp_path, selection, mode) == said
+
+
+def test_a_filter_is_the_user_s_text_and_is_escaped(tmp_path):
+    _notice(tmp_path, {"filter": "<i>*", "selected": 1, "of": 3}, "final")
+    page = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    notice = _NOTICE.search(page)
+    assert notice is not None
+    assert "--filter <code>&lt;i&gt;*</code> matches" in notice.group(1)
+
+
+@pytest.mark.parametrize(
     "selection",
     [
-        None,  # a run without --changed-since
+        None,  # a run of every test
         _selection(14, 14),  # every test selected
         "base",  # a block that is not one
         {"selected": 2, "of": "14", "files": 2},
+        {"changed_since": "base", "selected": 2, "of": 14},  # no file count
     ],
 )
 @pytest.mark.parametrize("mode", ["live", "final"])

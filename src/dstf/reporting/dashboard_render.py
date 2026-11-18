@@ -413,20 +413,42 @@ def _whole(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
-def run_notice(selection: object, mode: str) -> dict | None:
-    """The notice a run of only the tests a change touches carries
-    (``status.json``'s ``selection``, ``run --changed-since``), as the
-    sentence before the revision, the revision, and the sentence after it;
-    None for a run of every test the filter left, a run that selected all
-    of them, and a block that is not one."""
+def _given(selection: Mapping, key: str) -> str | None:
+    value = selection.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def run_notice(selection: object, mode: str) -> list[dict] | None:
+    """The notice a run of fewer than the project's tests carries
+    (``status.json``'s ``selection``: ``cli.run_cmds._narrowed``'s block),
+    as the sentence's parts in order — each ``{"text", "code"}``, ``code``
+    true for a value the user gave (a filter, a package, a revision),
+    drawn as code. None for a run of every test, a run that selected all
+    of them, and a block that is not one.
+
+    The tests run are "the ones" the narrowing flags leave, each flag a
+    clause: ``in --package P``, then ``that --filter F matches``, ``that
+    the last run left in C (--rerun)``, ``that use what changed since REV
+    (N files)``; a merged run's others "were not run: their last results
+    are scored"."""
     if not isinstance(selection, Mapping):
         return None
-    n, of, files, unasked = (
-        selection.get(k) for k in ("selected", "of", "files", "could_not_be_asked")
-    )
-    if not (_whole(n) and _whole(of) and _whole(files) and n < of):
+    n, of = selection.get("selected"), selection.get("of")
+    if not (_whole(n) and _whole(of) and n < of):
         return None
-    unasked = unasked if _whole(unasked) and unasked <= n else 0
+    rev = selection.get("changed_since")
+    files = selection.get("files")
+    if rev is not None and not _whole(files):
+        return None
+    unasked = selection.get("could_not_be_asked")
+    unasked = unasked if rev is not None and _whole(unasked) and unasked <= n else 0
+
+    def text(t: str) -> dict:
+        return {"text": t, "code": False}
+
+    def code(t: str) -> dict:
+        return {"text": t, "code": True}
+
     rest = of - n
     if mode == "live":
         ran = "is being run" if n == 1 else "are being run"
@@ -434,29 +456,61 @@ def run_notice(selection: object, mode: str) -> dict | None:
     else:
         ran = "was run" if n == 1 else "were run"
         left = "was not run" if rest == 1 else "were not run"
+    others = f". The other {rest} {left}"
+    if selection.get("merged") is True:
+        others += ": their last results are scored"
+    others += "."
+
+    package, pattern, rerun = (
+        _given(selection, k) for k in ("package", "filter", "rerun")
+    )
+    within = [text(" in --package "), code(package)] if package else []
+    clauses = []
+    if pattern:
+        clauses.append([text("--filter "), code(pattern), text(" matches")])
+    if rerun:
+        clauses.append([text("the last run left in "), code(rerun), text(" (--rerun)")])
     changed = f"{files} file{'' if files == 1 else 's'}"
-    others = f". The other {rest} {left}."
-    if unasked and unasked == n:
+    if rev is not None and unasked == n:
+        # None of the tests run could be asked: none is said to use it.
         they = "it uses" if n == 1 else "they use"
-        before = (
-            f"{n} of {of} tests {ran}: the simulator could not say what "
-            f"{they}, and {changed} changed since"
+        parts = [text(f"{n} of {of} tests {ran}: ")]
+        if within or clauses:
+            parts += [text("the one" if n == 1 else "the ones"), *within]
+            parts += _that(clauses, text)
+            parts.append(text("; "))
+        parts += [
+            text(
+                f"the simulator could not say what {they}, and {changed} changed since "
+            ),
+            code(str(rev)),
+            text(others),
+        ]
+        return parts
+    head = n - unasked
+    if rev is not None:
+        uses = "uses" if head == 1 else "use"
+        clauses.append(
+            [text(f"{uses} what changed since "), code(str(rev)), text(f" ({changed})")]
         )
-        after = others
-    else:
-        using = n - unasked
-        which = "the one that uses" if using == 1 else "the ones that use"
-        before = f"{n} of {of} tests {ran}: {which} what changed since"
-        after = f" ({changed})"
-        if unasked:
-            they = "it uses" if unasked == 1 else "they use"
-            after += f", and {unasked} that could not be asked what {they}"
-        after += others
-    return {
-        "before": before,
-        "rev": str(selection.get("changed_since", "")),
-        "after": after,
-    }
+    if not (within or clauses):
+        return [text(f"{n} of {of} tests {ran}{others}")]
+    parts = [text(f"{n} of {of} tests {ran}: ")]
+    parts += [text("the one" if head == 1 else "the ones"), *within]
+    parts += _that(clauses, text)
+    if unasked:
+        they = "it uses" if unasked == 1 else "they use"
+        parts.append(text(f", and {unasked} that could not be asked what {they}"))
+    parts.append(text(others))
+    return parts
+
+
+def _that(clauses: list[list[dict]], text) -> list[dict]:
+    """``that A and that B``: the clauses after "the ones"."""
+    parts: list[dict] = []
+    for i, clause in enumerate(clauses):
+        parts += [text(" that " if i == 0 else " and that "), *clause]
+    return parts
 
 
 def build_dashboard_context(
@@ -623,7 +677,7 @@ def build_dashboard_context(
         # Run provenance (backend/simulator/version/os) for the banner. None
         # for snapshots written before this field existed.
         "run_metadata": format_run_metadata(snapshot.get("metadata")),
-        # A run of only the tests a change touches says it is not a full
+        # A run of fewer than the project's tests says it is not a full
         # run, in a line of its own under the status line.
         "run_notice": run_notice(
             snapshot.get("selection") if selection is AS_RECORDED else selection,
@@ -692,8 +746,8 @@ def render_live(
     selection: object = AS_RECORDED,
 ) -> None:
     """Render dashboard.html in live mode (auto-refreshes via meta tag).
-    A run's first paint gives its ``selection`` (``run --changed-since``'s
-    block, or None): the snapshot is still the last run's."""
+    A run's first paint gives its ``selection`` (the block the run
+    records, or None): the snapshot is still the last run's."""
     _render(
         work_dir, mode="live", rerun_flags=rerun_flags, theme=theme, selection=selection
     )
