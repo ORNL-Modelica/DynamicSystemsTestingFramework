@@ -173,13 +173,17 @@ def test_a_manifest_key_not_shaped_like_a_test_names_no_directory(tmp_path, caps
     assert sorted(after) == ["test_0001", "test_0002", "test_0003"]
 
 
-@pytest.mark.parametrize("entry", [{"ref_id": None}, 5], ids=["no-model-id", "int"])
+@pytest.mark.parametrize(
+    "entry",
+    [{"ref_id": None}, 5, GONE],
+    ids=["no-model-id", "int", "model-id-alone"],
+)
 def test_a_manifest_entry_that_names_no_model_is_warned_and_left(
     entry, tmp_path, capsys, caplog
 ):
-    """An entry with no model id, or one that is not an object: whose it
-    was cannot be told, so it is warned of and kept, with its directories,
-    and the rest is cleaned up as before."""
+    """An entry with no model id, or one that is not an object (a bare model
+    id among them): whose it was cannot be told, so it is warned of and
+    kept, with its directories, and the rest is cleaned up as before."""
     config, argv = _project(tmp_path)
     work = config.work_dir
     path = work / "batch_manifest.json"

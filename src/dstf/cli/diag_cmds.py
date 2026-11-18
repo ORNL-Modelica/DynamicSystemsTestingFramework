@@ -230,7 +230,8 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     if not manifest_path.is_file():
         raise ConfigError(f"{manifest_path} is not there — nothing was removed")
     # Read here, not by `BatchManifest.load`: that moves a file it cannot
-    # read aside to `.corrupt`, and a refusal removes nothing.
+    # read aside to `.corrupt` — an entry that names no model among what it
+    # cannot read — and a refusal removes nothing.
     try:
         entries = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(entries, dict):
@@ -243,8 +244,8 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     from ..backends import BatchManifest
     from ..storage.reference_store import ReferenceStore
 
-    store = ReferenceStore(config)  # refuses a folder of old names
-    manifest = BatchManifest.load(manifest_path)
+    store = ReferenceStore(config)
+    manifest = BatchManifest(work_dir=work, manifest=entries)
     declared = {t.model_id for t in discover_tests(config)}
 
     # Each entry's model. One that names none (no model_id, or not an

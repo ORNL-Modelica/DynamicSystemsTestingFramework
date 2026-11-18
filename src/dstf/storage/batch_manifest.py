@@ -152,6 +152,17 @@ class BatchManifest:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError(f"expected a JSON object, got {type(data).__name__}")
+            for key, entry in data.items():
+                # Every reader takes an entry's model id as `entry["model_id"]`:
+                # an entry that names none is refused here, with the file,
+                # rather than raised over later.
+                if not isinstance(entry, dict):
+                    raise ValueError(
+                        f"{key}: expected a JSON object, got {type(entry).__name__}"
+                    )
+                model_id = entry.get("model_id")
+                if not (isinstance(model_id, str) and model_id):
+                    raise ValueError(f"{key}: no model_id")
         except (ValueError, OSError) as exc:
             # A corrupt manifest must not crash startup. Quarantine it (keeping
             # the bytes for forensics) and start from an empty manifest — every
@@ -172,14 +183,7 @@ class BatchManifest:
                 where,
             )
             return cls(work_dir=path.parent, manifest={})
-        # Read the older format too: test_key -> model_id string
-        normalized = {}
-        for key, val in data.items():
-            if isinstance(val, str):
-                normalized[key] = {"model_id": val, "ref_id": None}
-            else:
-                normalized[key] = val
-        return cls(work_dir=path.parent, manifest=normalized)
+        return cls(work_dir=path.parent, manifest=data)
 
 
 def unfinished_run_models(work_dir: Path) -> set[str]:
