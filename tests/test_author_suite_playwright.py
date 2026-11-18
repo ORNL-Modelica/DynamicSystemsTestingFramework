@@ -341,8 +341,7 @@ def test_the_suite_page_fills_in_keeps_its_selection_across_a_click_and_stops(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
     assert spec_file.read_bytes() == before  # nothing was saved
 
@@ -386,8 +385,7 @@ def _served(
             1, timeout=EXPECT_TIMEOUT
         )
     except BaseException:
-        proc.terminate()
-        proc.wait(10)
+        _stop(proc)
         raise
     return proc, url, page, context, errors, cfg
 
@@ -524,8 +522,7 @@ def test_the_suite_table_groups_filters_sorts_and_names(tmp_path, playwright_bro
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 #: Every column filter input with its placeholder, title, and whether the
@@ -574,8 +571,7 @@ def test_every_column_filter_carries_the_dashboards_hint(tmp_path, playwright_br
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browser):
@@ -627,8 +623,7 @@ def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browse
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def _d_is_simulate_only(cfg: Path) -> None:
@@ -671,8 +666,7 @@ def test_accept_says_which_selected_test_was_simulate_only(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
@@ -726,8 +720,7 @@ def test_the_suite_tables_state_survives_a_reload(tmp_path, playwright_browser):
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_a_stored_view_naming_no_column_is_dropped(tmp_path, playwright_browser):
@@ -782,8 +775,7 @@ def test_a_stored_view_naming_no_column_is_dropped(tmp_path, playwright_browser)
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_an_edited_test_has_its_pill_and_its_cell(tmp_path, playwright_browser):
@@ -809,8 +801,7 @@ def test_an_edited_test_has_its_pill_and_its_cell(tmp_path, playwright_browser):
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_save_is_unfilled_at_zero_pending_and_filled_at_one(
@@ -838,8 +829,7 @@ def test_save_is_unfilled_at_zero_pending_and_filled_at_one(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_a_rescore_repaints_its_row_and_keeps_the_view(tmp_path, playwright_browser):
@@ -882,8 +872,7 @@ def test_a_rescore_repaints_its_row_and_keeps_the_view(tmp_path, playwright_brow
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_a_python_side_touch_does_not_rebuild_the_grid(tmp_path, playwright_browser):
@@ -930,8 +919,7 @@ def test_a_python_side_touch_does_not_rebuild_the_grid(tmp_path, playwright_brow
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def _d_sleeps(seconds: float):
@@ -986,8 +974,7 @@ def test_rows_not_scored_yet_read_scoring_and_never_queued(
         expect(page.locator("button[data-pill='queued']")).to_have_count(0)
     finally:
         hold.unlink(missing_ok=True)
-        proc.terminate()
-        proc.wait(10)
+        _stop(proc)
 
 
 def test_a_running_pill_that_is_on_stays_until_switched_off(
@@ -1027,8 +1014,7 @@ def test_a_running_pill_that_is_on_stays_until_switched_off(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_enter_on_a_test_cell_opens_its_page(tmp_path, playwright_browser):
@@ -1055,8 +1041,7 @@ def test_enter_on_a_test_cell_opens_its_page(tmp_path, playwright_browser):
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_enter_on_any_other_cell_stays_on_the_suite(tmp_path, playwright_browser):
@@ -1080,8 +1065,7 @@ def test_enter_on_any_other_cell_stays_on_the_suite(tmp_path, playwright_browser
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_the_header_checkbox_selects_only_the_rows_shown(tmp_path, playwright_browser):
@@ -1108,8 +1092,7 @@ def test_the_header_checkbox_selects_only_the_rows_shown(tmp_path, playwright_br
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_a_toolbar_control_keeps_the_focus_through_its_repaint(
@@ -1139,8 +1122,7 @@ def test_a_toolbar_control_keeps_the_focus_through_its_repaint(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 #: Holds the grid's `ready` until the page calls `window.__release()`: the
@@ -1184,8 +1166,7 @@ def test_a_transaction_before_the_grid_is_ready_is_applied_once_it_is(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 #: Where a column's header cell ends, against the grid's own viewport.
@@ -1295,8 +1276,7 @@ def test_the_table_fits_1280_and_shows_edits_at_900(tmp_path, playwright_browser
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 #: Whether a row's cell text is cut at the cell's edge.
@@ -1328,8 +1308,7 @@ def test_the_reference_column_shows_a_baselines_whole_name(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 #: An id as long as TRANSFORM's longest (149 characters, no space to wrap at).
@@ -1385,8 +1364,7 @@ def test_a_long_ids_tooltip_stays_in_the_viewport_at_900(tmp_path, playwright_br
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 #: The rows AG Grid drew and where the last one ends, against its viewport.
@@ -1453,8 +1431,7 @@ def test_the_rows_fill_the_table_on_a_second_load(tmp_path, playwright_browser):
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 #: Every child of the header's row whose right edge passes the viewport.
@@ -1651,8 +1628,7 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
@@ -1705,8 +1681,7 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def _cpu_time_only(cfg: Path) -> None:
@@ -1779,8 +1754,7 @@ def test_a_worst_nrmse_of_nan_sorts_above_every_number_and_passes_a_filter(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
 
 
 def test_a_cpu_time_in_sim_reads_its_tag_and_says_what_it_is(
@@ -1810,5 +1784,4 @@ def test_a_cpu_time_in_sim_reads_its_tag_and_says_what_it_is(
         context.close()
     finally:
         if proc.poll() is None:
-            proc.terminate()
-            proc.wait(10)
+            _stop(proc)
