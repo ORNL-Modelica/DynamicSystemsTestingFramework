@@ -9877,7 +9877,13 @@ one test of three wrote `selection: null`, and `dstf summary` read its
    `render_final_to`: their `selection`, status.json's `AS_RECORDED`
    unless given). A later compare that its own flags do not narrow reads
    the run's block again, as before — it scores that run's tests again.
-3. *Old data.* Nothing changes for a file: the block's keys are D169's.
+3. *A rerun with nothing to rerun says so.* `run --rerun` that finds no
+   test in its categories simulates nothing and scores the last results;
+   its `verdicts.json`, console and dashboard carry this invocation's
+   block (`selected: 0`, `rerun` as given, `merged: true` where the work
+   directory holds a last result), not the last run's. status.json keeps
+   that run's, as in point 2. The exit code stays 0.
+4. *Old data.* Nothing changes for a file: the block's keys are D169's.
 
 This closes D169's "Not in this decision" item for `compare`.
 

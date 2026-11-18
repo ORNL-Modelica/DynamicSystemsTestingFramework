@@ -434,6 +434,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             # the merged report so the dashboard reflects the (unchanged)
             # full-suite state.
             print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
+            # This invocation's block — 0 of the project's tests run, the
+            # rest scored on their last results — not the last run's, which
+            # status.json keeps: it records that run's simulations (D170).
+            selection = _narrowed(args, changed, tests, all_tests, _recorded(config))
             config.write_default_file()
             config.work_dir.mkdir(parents=True, exist_ok=True)
             from ..reporting.dashboard_render import build_rerun_flags, render_final
@@ -444,12 +448,22 @@ def cmd_run(args: argparse.Namespace) -> int:
                 theme=config.theme,
                 comparisons=prior_comps,
                 results=prior_results,
+                selection=selection,
             )
             # The verdicts as they stand, on whatever was asked for. The
             # exit code stays 0 regardless of them: "nothing to rerun" is
             # this invocation's whole outcome.
             scope_tests = [t for t in all_tests if t.model_id in prior_results]
-            _show_reports(prior_comps, prior_results, scope_tests, store, config, args)
+            _show_reports(
+                prior_comps,
+                prior_results,
+                scope_tests,
+                store,
+                config,
+                args,
+                note=_selection_note(selection),
+                selection=selection,
+            )
             return 0
 
     if not tests:

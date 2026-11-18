@@ -338,3 +338,29 @@ def test_a_compare_narrowed_by_package_says_so_in_its_html_file(proj, capsys, tm
         said,
         said,
     )
+
+
+def test_a_rerun_with_nothing_to_rerun_says_what_this_invocation_ran(proj, capsys):
+    """An earlier run of one test by --filter, all passing: `--rerun`
+    finds nothing to rerun, simulates nothing and exits 0. Its verdicts,
+    console and dashboard say it ran 0 of the project's 3 tests and scored
+    the last results — not the earlier run's "1 of 3 by --filter"."""
+    _run(proj, capsys, "--filter", SIMPLE_RAMP)
+    out = _run(proj, capsys, "--rerun")
+    assert "Nothing to rerun (no tests in categories: failed)" in out
+    block = {"rerun": "failed", "merged": True, "selected": 0, "of": 3}
+    assert _read(proj, "verdicts.json")["selection"] == block
+    assert "(0 of 3 tests run; not a full run)\n" in out
+    assert _notice(proj) == (
+        "Not a full run. 0 of 3 tests were run: the ones that the last run "
+        "left in failed (--rerun). The other 3 were not run: their last "
+        "results, where there are any, are scored."
+    )
+    markdown, cells = _summary(capsys, f"rerun={proj.work_dir}")
+    assert [c["selection"] for c in cells] == [block]
+    # status.json records the simulations: the run that made them
+    assert _read(proj, "status.json")["selection"] == {
+        "filter": SIMPLE_RAMP,
+        "selected": 1,
+        "of": 3,
+    }
