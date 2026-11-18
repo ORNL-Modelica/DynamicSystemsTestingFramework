@@ -177,7 +177,8 @@ def _manifest_entries(given: str, path: Path) -> dict[str, dict]:
         model_id = entry.get("model_id") if isinstance(entry, dict) else None
         if not (isinstance(model_id, str) and model_id):
             raise RunError(
-                f"{given}: its {MANIFEST} holds an entry with no model id ({key})"
+                f"{given}: its {MANIFEST} holds an entry this version does not "
+                f"read ({key}: not an object with a model_id)"
             )
         entries[key] = entry
     return entries

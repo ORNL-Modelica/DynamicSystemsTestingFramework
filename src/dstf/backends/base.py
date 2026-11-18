@@ -574,9 +574,11 @@ class Backend(ABC):
             :func:`~dstf.backends.register` refuses a class that declares one
             and does not override the method it needs.
         produced_datasets: The kinds of result data the backend produces
-            (:class:`~dstf.backends.types.DatasetType`), as a declaration.
-            What is checked is the data a result holds: a criterion whose
-            mode cannot score it fails.
+            (:class:`~dstf.backends.types.DatasetType`). It is checked
+            against the metrics, not against the data a result holds: with
+            exactly one kind declared, a leaf of a test's ``metrics`` tree
+            whose metric does not accept that kind fails; with several, the
+            test is scored as time-series. The plug-in guide says the rest.
         settings: The keys of the backend's block in ``testing.json``'s
             ``backends``, by name. Extend the default, which holds
             ``executables``: ``{**Backend.settings, "key": Setting(...)}``.

@@ -546,6 +546,20 @@ def test_a_stray_file_name_is_warned_and_left_out_not_called_numbered(
     assert fresh.index.refused() == said
 
 
+def test_a_numbered_file_alone_leaves_its_model_with_no_baseline(
+    sample_models_dir, tmp_path
+):
+    """A numbered file from before per-model names, holding a model's
+    baseline, is never opened for that model: the model has none."""
+    store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
+    _hand_written(store.ref_dir / "ref_0001.json", A)
+    fresh = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
+
+    assert fresh.list_models() == []
+    assert fresh.reference_file(A) is None
+    assert fresh.get_reference(A) is None
+
+
 def test_a_code_of_digits_alone_is_a_name_not_a_number(sample_models_dir, tmp_path):
     store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
     _hand_written(store.ref_dir / HEXE_FILE, HEXE)

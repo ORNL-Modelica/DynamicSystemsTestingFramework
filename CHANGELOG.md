@@ -59,8 +59,11 @@ this file says when they do.
   `notices`, `rescore`, `figure`, `plot_figure`, and `project.dataset_kind`).
 - The converter for numbered baseline files (`ref_0001.json`) is gone, and
   so is the refusal of a folder that still holds them: such a file is now
-  warned of and left out, so its test reads `NO_REF`. Convert such a folder
-  with 1.6.0's `scripts/convert_baseline_names.py` before upgrading.
+  warned of and left out, so its test reads `NO_REF`, and its
+  `soft_checks/ref_0001/` and `companions/ref_0001/` folders are no longer
+  read. Convert such a folder with 1.6.0's
+  [`scripts/convert_baseline_names.py`](https://github.com/WyrdLab/DynamicSystemsTestingFramework/blob/v1.6.0/scripts/convert_baseline_names.py)
+  before upgrading.
 
 ### Fixed
 

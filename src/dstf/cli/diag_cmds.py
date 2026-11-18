@@ -258,7 +258,9 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
             model_of[key] = model_id
         else:
             logger.warning(
-                "batch_manifest.json: %s names no model — left as it is", key
+                "batch_manifest.json: %s is not an entry this version reads "
+                "(an object with a model_id) — left as it is",
+                key,
             )
     # The names a declared test is reported under: its baseline's, when the
     # store reads one for it, and its manifest key.

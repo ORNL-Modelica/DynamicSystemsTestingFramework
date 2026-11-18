@@ -200,7 +200,8 @@ def test_a_manifest_entry_that_names_no_model_is_warned_and_left(
 
     assert rc == 0
     assert [r.getMessage() for r in caplog.records] == [
-        "batch_manifest.json: test_0005 names no model — left as it is"
+        "batch_manifest.json: test_0005 is not an entry this version reads "
+        "(an object with a model_id) — left as it is"
     ]
     assert capsys.readouterr().out.splitlines()[-1] == (
         "Removed 7 directories and 1 manifest entry."

@@ -575,8 +575,8 @@ def test_a_manifest_entry_with_no_model_id_is_refused_and_left_as_it_is(
     fix = write_python_run(tmp_path / "fix", {RAMP: RAMP_FIX})
     got = _refused(lib, [("main", main), ("fix", fix)])
     assert got == (
-        f"main={main}: its batch_manifest.json holds an entry with no model id "
-        "(test_0009)"
+        f"main={main}: its batch_manifest.json holds an entry this version "
+        "does not read (test_0009: not an object with a model_id)"
     )
     assert manifest.read_bytes() == before
 
