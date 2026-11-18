@@ -2367,7 +2367,7 @@ def test_a_selected_run_says_it_is_not_a_full_run(tmp_path, selection, mode, sai
             "live",
             "Not a full run. 1 of 14 tests is being run: the one in --package "
             "Lib.Fluid that the last run left in failed (--rerun). The other 13 "
-            "are not run: their last results are scored.",
+            "are not run: their last results, where there are any, are scored.",
         ),
         (
             _selection(3, 14, unasked=3) | {"filter": "Lib.A*"},
@@ -2382,6 +2382,32 @@ def test_a_selected_run_says_it_is_not_a_full_run(tmp_path, selection, mode, sai
             "Not a full run. 5 of 14 tests were run: the ones in --package "
             "Lib.Fluid that use what changed since base (2 files), and 2 that "
             "could not be asked what they use. The other 9 were not run.",
+        ),
+        (
+            # a changed file no class stores: each test the filter left runs
+            _selection(5, 14, files=1)
+            | {"filter": "Lib.A*", "every_test": "no class stores it"},
+            "final",
+            "Not a full run. 5 of 14 tests were run: the ones that --filter "
+            "Lib.A* matches; 1 file that no class stores changed since base, so "
+            "each of them was run. The other 9 were not run.",
+        ),
+        (
+            _selection(1, 14, files=3)
+            | {"package": "Lib.Fluid", "every_test": "no class stores it"},
+            "live",
+            "Not a full run. 1 of 14 tests is being run: the one in --package "
+            "Lib.Fluid; 3 files changed since base, among them one that no class "
+            "stores, so it is being run. The other 13 are not run.",
+        ),
+        (
+            # a file whose top package cannot be named: not a class either
+            _selection(2, 14, files=1)
+            | {"filter": "Lib.A*", "every_test": "its top package cannot be named"},
+            "final",
+            "Not a full run. 2 of 14 tests were run: the ones that --filter "
+            "Lib.A* matches; 1 file that cannot be asked as a class changed since "
+            "base, so each of them was run. The other 12 were not run.",
         ),
         (
             # a block that says only how many: no clause to name

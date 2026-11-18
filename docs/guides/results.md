@@ -95,12 +95,15 @@ Two files in the work directory are written for programs:
   tool version, OS), and `selection`: null for a run of every test the
   project has; for a run of fewer, how many tests were run (`selected`) of
   how many the project has (`of`) and what chose them — `filter`,
-  `package` and `rerun` as given, `merged: true` where the tests not run
-  were scored on their last results (`--merge`, `--rerun`), and for
+  `package` and `rerun` as given, `merged: true` where tests not run
+  were scored on their last results (`--merge` or `--rerun` over a work
+  directory that holds a result of at least one of them), and for
   `--changed-since` the revision as given (`changed_since`), the commit it
   resolved to in each repository (`commits`), how many files differ
-  (`files`) and how many of the tests could not be asked what they use
-  (`could_not_be_asked`). `selected` below `of` is not a full run.
+  (`files`), how many of the tests could not be asked what they use
+  (`could_not_be_asked`) and, where a changed file ran every test, why
+  (`every_test`: `no class stores it`, or `its top package cannot be
+  named`). `selected` below `of` is not a full run.
 - `status.json` — what became of each SIMULATION: `passed` there means the
   simulation finished, not that the test passed. Once a run is scored each
   test also carries its `verdict`. Its `selection` is the run's, as above;

@@ -38,6 +38,7 @@ from ..backends.common.result_variables import run_timing
 from ..backends.progress import read_status
 from ..backends.types import TestResult
 from ..comparison.types import TestComparison
+from ..discovery.uses import NO_CLASS
 from ..storage.names import baseline_stem
 from .rows import (
     COLUMNS,
@@ -418,6 +419,12 @@ def _given(selection: Mapping, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+#: A changed file that ran every test, by the reason ``selection`` records
+#: (``every_test``: :func:`dstf.cli.uses_cmd.every_test_reason`); any other
+#: reason reads "that cannot be asked as a class", as the console's line.
+_EVERY_TEST_FILE = {NO_CLASS: "that no class stores"}
+
+
 def run_notice(selection: object, mode: str) -> list[dict] | None:
     """The notice a run of fewer than the project's tests carries
     (``status.json``'s ``selection``: ``cli.run_cmds._narrowed``'s block),
@@ -429,8 +436,11 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
     The tests run are "the ones" the narrowing flags leave, each flag a
     clause: ``in --package P``, then ``that --filter F matches``, ``that
     the last run left in C (--rerun)``, ``that use what changed since REV
-    (N files)``; a merged run's others "were not run: their last results
-    are scored"."""
+    (N files)``; a merged run's others "were not run: their last results,
+    where there are any, are scored". A changed file no class could be
+    asked for (``every_test``) ran each test the other flags left: after
+    them, "1 file that no class stores changed since REV, so each of them
+    was run"."""
     if not isinstance(selection, Mapping):
         return None
     n, of = selection.get("selected"), selection.get("of")
@@ -458,7 +468,9 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
         left = "was not run" if rest == 1 else "were not run"
     others = f". The other {rest} {left}"
     if selection.get("merged") is True:
-        others += ": their last results are scored"
+        # Only those the work directory holds a last result of: a --merge
+        # beside one earlier run of some tests scores those, no others.
+        others += ": their last results, where there are any, are scored"
     others += "."
 
     package, pattern, rerun = (
@@ -471,6 +483,27 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
     if rerun:
         clauses.append([text("the last run left in "), code(rerun), text(" (--rerun)")])
     changed = f"{files} file{'' if files == 1 else 's'}"
+    every = _given(selection, "every_test") if rev is not None else None
+    if every is not None:
+        # Run for a file no class could be asked for, not for what each
+        # uses: none is said to use what changed (the console's "every
+        # test is run").
+        what = _EVERY_TEST_FILE.get(every, "that cannot be asked as a class")
+        each = "it" if n == 1 else "each of them"
+        one_ran = "is being run" if mode == "live" else "was run"
+        parts = [text(f"{n} of {of} tests {ran}: ")]
+        if within or clauses:
+            parts += [text("the one" if n == 1 else "the ones"), *within]
+            parts += _that(clauses, text)
+            parts.append(text("; "))
+        if files == 1:
+            parts += [text(f"1 file {what} changed since "), code(str(rev))]
+            parts.append(text(f", so {each} {one_ran}"))
+        else:
+            parts += [text(f"{changed} changed since "), code(str(rev))]
+            parts.append(text(f", among them one {what}, so {each} {one_ran}"))
+        parts.append(text(others))
+        return parts
     if rev is not None and unasked == n:
         # None of the tests run could be asked: none is said to use it.
         they = "it uses" if n == 1 else "they use"

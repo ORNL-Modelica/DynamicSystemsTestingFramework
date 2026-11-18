@@ -165,8 +165,8 @@ def test_a_rerun_says_so_and_that_the_others_were_scored_on_their_last_results(
     assert "\nResults: 2/3 passed (1 of 3 tests run; not a full run)\n" in out
     assert _notice(proj) == (
         "Not a full run. 1 of 3 tests was run: the one that the last run left "
-        "in failed (--rerun). The other 2 were not run: their last results "
-        "are scored."
+        "in failed (--rerun). The other 2 were not run: their last results, "
+        "where there are any, are scored."
     )
 
     markdown, _ = _summary(capsys, f"full={full}", f"rerun={proj.work_dir}")
@@ -175,7 +175,8 @@ def test_a_rerun_says_so_and_that_the_others_were_scored_on_their_last_results(
         "· 1 of 3 tests run |"
     ) in markdown
     assert (
-        " With --merge or --rerun the others were scored on their last results."
+        " With --merge or --rerun the others were scored on their last results, "
+        "where there were any."
     ) in markdown
 
 
@@ -190,6 +191,71 @@ def test_a_merged_filter_run_records_the_merge(proj, capsys):
     }
     assert _read(proj, "verdicts.json")["totals"]["total"] == 3
     assert "\nResults: 3/3 passed (1 of 3 tests run; not a full run)\n" in out
+
+
+def test_a_merge_with_no_earlier_results_claims_none_were_scored(proj, capsys):
+    """A fresh work directory holds no last result: the run scores only
+    the test it ran, and nothing says the others were scored."""
+    out = _run(proj, capsys, "--filter", SIMPLE_RAMP, "--merge")
+    block = {"filter": SIMPLE_RAMP, "selected": 1, "of": 3}
+    assert _read(proj, "status.json")["selection"] == block
+    verdicts = _read(proj, "verdicts.json")
+    assert (verdicts["selection"], verdicts["totals"]["total"]) == (block, 1)
+    assert "\nResults: 1/1 passed (1 of 3 tests run; not a full run)\n" in out
+    assert _notice(proj) == (
+        f"Not a full run. 1 of 3 tests was run: the one that --filter "
+        f"{SIMPLE_RAMP} matches. The other 2 were not run."
+    )
+    markdown, _ = _summary(capsys, f"merged={proj.work_dir}")
+    assert "| Python/linux | 1/1 · 1 of 3 tests run |" in markdown
+    assert "last results" not in markdown
+
+
+def test_a_merge_over_some_earlier_results_says_only_those_are_scored(proj, capsys):
+    """One of the two tests not run has a last result: it is scored, the
+    other is not, and the notice claims no result the work directory
+    lacks."""
+    _run(proj, capsys, "--filter", CONSTANT_CSV)
+    _run(proj, capsys, "--filter", SIMPLE_RAMP, "--merge")
+    selection = _read(proj, "status.json")["selection"]
+    assert selection == {
+        "filter": SIMPLE_RAMP,
+        "merged": True,
+        "selected": 1,
+        "of": 3,
+    }
+    assert _read(proj, "verdicts.json")["totals"]["total"] == 2
+    assert _notice(proj) == (
+        f"Not a full run. 1 of 3 tests was run: the one that --filter "
+        f"{SIMPLE_RAMP} matches. The other 2 were not run: their last results, "
+        "where there are any, are scored."
+    )
+    markdown, _ = _summary(capsys, f"merged={proj.work_dir}")
+    assert "| Python/linux | 2/2 · 1 of 3 tests run |" in markdown
+    assert (
+        " With --merge or --rerun the others were scored on their last results, "
+        "where there were any."
+    ) in markdown
+
+
+def test_a_rerun_that_accepts_scores_nothing_and_claims_no_merge(proj, capsys):
+    _tighten_constant_csv(proj)
+    rc = main(
+        ["run", "--config", str(proj.config_file), "--work-dir", str(proj.work_dir)]
+        + ["--no-browser"]
+    )
+    capsys.readouterr()
+    assert rc == 1
+    _run(proj, capsys, "--rerun", "--accept")
+    assert _read(proj, "status.json")["selection"] == {
+        "rerun": "failed",
+        "selected": 1,
+        "of": 3,
+    }
+    assert _notice(proj) == (
+        "Not a full run. 1 of 3 tests was run: the one that the last run left "
+        "in failed (--rerun). The other 2 were not run."
+    )
 
 
 def test_a_full_run_writes_no_block_and_summary_says_nothing_of_one(proj, capsys):

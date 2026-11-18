@@ -170,7 +170,8 @@ def as_markdown(summary: Summary) -> str:
         )
         if any(cell.selected and cell.merged for cell in summary.cells.values()):
             key += (
-                " With --merge or --rerun the others were scored on their last results."
+                " With --merge or --rerun the others were scored on their last "
+                "results, where there were any."
             )
     lines += ["", key, ""]
     for folder in summary.folders:

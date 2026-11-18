@@ -9829,14 +9829,25 @@ pull request it went into had to explain that by hand.
 3. *A merged run is not full either.* `--merge` and `--rerun` score every
    test with a result in the work directory, but simulate only the ones
    chosen; the others' verdicts come from earlier runs, possibly of older
-   files. The block says so (`merged: true`); the dashboard adds "their
-   last results are scored" and `dstf summary`'s key line says the others
-   were scored on their last results.
+   files. The block says so (`merged: true`) only when it is so: when at
+   least one test the run did not simulate is in the work directory's
+   batch manifest (what `run_pipeline` reads back), read before the run,
+   and the run scores (an accept scores none). A `--merge` on a fresh work
+   directory scores only what it ran and writes no `merged`. The dashboard
+   adds "their last results, where there are any, are scored" and `dstf
+   summary`'s key line says the others were scored on their last results,
+   where there were any: beside one earlier run of some tests, only those
+   have a result to score, and the block keeps no count of them.
 4. *One rendering.* `dstf summary`'s cell is the counts, then
    ` · N of M tests run` (it was `N of M tests selected` inside the
    parenthesis); the console's `Results:` line adds `(N of M tests run;
    not a full run)`; the dashboard's notice names each flag and its value
-   as a clause of "the ones …".
+   as a clause of "the ones …". A `--changed-since` run whose changed
+   file no class stores ran every test the other flags left records why
+   (`every_test`: `no class stores it`, or the other reason a file
+   cannot be asked as a class), and its notice says so — "1 file that no
+   class stores changed since REV, so each of them was run" — not that
+   they use what changed.
 5. *Old data.* A `status.json` or `verdicts.json` with no `selection`
    reads as a full run.
 

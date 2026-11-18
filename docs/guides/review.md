@@ -458,8 +458,13 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   in the same backend/os, failed it too (FAIL or SIM_FAIL) or ended it with
   the same status; a base that had no baseline for it (NO_REF) or never ran
   it (NOT RUN) did not fail it. A label with no run of a backend/os reads
-  `–`. NOT RUN is counted in the total and is not a pass. One key line under
-  the matrix says this short.
+  `–`. NOT RUN is counted in the total and is not a pass. A run of fewer
+  than the project's tests (by `--filter`, `--package`, `--rerun` or
+  `--changed-since`) ends its cell with ` · N of M tests run`: it simulated
+  N of the project's M tests, and is not a full run. Its total counts the
+  tests it scored: with `--merge` or `--rerun` that is also each test it
+  did not run that had a last result in the work directory, scored on that
+  result. One key line under the matrix says this short.
 - **No baseline is no failure.** A test with no stored baseline (NO_REF) was
   scored against nothing: the cell counts it as `1 no baseline`, never among
   those that also fail on the base, and with `--base`, `1 also has none on

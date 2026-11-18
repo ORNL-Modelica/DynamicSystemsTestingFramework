@@ -343,6 +343,28 @@ def test_a_file_no_class_stores_runs_every_test_and_asks_no_simulator(proj, caps
     assert (selection["selected"], selection["of"]) == (14, 14)
 
 
+def test_beside_a_filter_a_file_no_class_stores_runs_each_test_it_left(proj, capsys):
+    """The dashboard says what the console says: the filter chose the
+    tests, and a changed file no class stores ran each of them — none was
+    found to use what changed."""
+    image = proj.lib / "Resources" / "Images" / "ThermostatBuildingTest.png"
+    image.write_bytes(image.read_bytes() + b"\0")
+    rc, out, err = _run(
+        proj, capsys, "--changed-since", "HEAD", "--filter", f"{SIMPLE},{CONSTANT}"
+    )
+    assert rc == 0, out + err
+    assert proj.asked == [] and sorted(proj.simulated) == sorted([SIMPLE, CONSTANT])
+    assert "1 file that no class stores changed: every test is run (2 tests).\n" in out
+    assert _read(proj.work, "status.json")["selection"]["every_test"] == (
+        "no class stores it"
+    )
+    assert _painted(proj.work / "dashboard.html") == (
+        f"Not a full run. 2 of 14 tests were run: the ones that --filter "
+        f"{SIMPLE},{CONSTANT} matches; 1 file that no class stores changed since "
+        "HEAD, so each of them was run. The other 12 were not run."
+    )
+
+
 def _painted(page: Path) -> str | None:
     """The run notice of the page, as text; None when it has none."""
     import re
