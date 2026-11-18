@@ -9798,3 +9798,58 @@ reads like a run of all of them would undo that rule in silence.
 **Not in this decision.** `compare --changed-since`; JUnit saying a run
 was selected; the dashboard's Command menu offering the flag; the same
 selection in `dstf author`; source types other than Modelica.
+
+## D169 — Every run of fewer than the project's tests says so (2026-11-17)
+
+**Context.** D168 made a `--changed-since` run say it was not a full run;
+a run narrowed any other way wrote no `selection` and read as complete. A
+run of 29 tests chosen by a filter, given to `dstf summary` as the base,
+read `0/29 (29 SIM_FAIL)` with nothing saying it was a subset, and the
+pull request it went into had to explain that by hand.
+
+**Decision.**
+
+1. *Every narrowing is recorded.* `cmd_run` writes one `selection` block
+   (`cli/run_cmds._narrowed`) when it simulates fewer than every
+   discovered test: `--filter`, `--package`, `--rerun` and
+   `--changed-since`, alone or together. `selected` is the tests
+   simulated; the flags' values are kept as given (`filter`, `package`,
+   `rerun`) beside `--changed-since`'s keys, which are unchanged. A run of
+   every discovered test writes none (null), also when a filter was given
+   that leaves them all; a `--changed-since` run writes its block also
+   then, as before.
+2. *`of` is the project's count.* The tests discovered for the project
+   (after `paths_include` / `paths_exclude`, which define the project), not
+   those the filter left — also beside `--changed-since`, where D168.5
+   counted the filter's. `dstf summary` and the dashboard read the block
+   to say whether a run is a full run of the project, and a run of what a
+   filter left is not. The console's `Selected N of M` line under
+   `--changed-since` still counts the filter's tests: it answers which of
+   them use what changed.
+3. *A merged run is not full either.* `--merge` and `--rerun` score every
+   test with a result in the work directory, but simulate only the ones
+   chosen; the others' verdicts come from earlier runs, possibly of older
+   files. The block says so (`merged: true`) only when it is so: when at
+   least one test the run did not simulate is in the work directory's
+   batch manifest (what `run_pipeline` reads back), read before the run,
+   and the run scores (an accept scores none). A `--merge` on a fresh work
+   directory scores only what it ran and writes no `merged`. The dashboard
+   adds "their last results, where there are any, are scored" and `dstf
+   summary`'s key line says the others were scored on their last results,
+   where there were any: beside one earlier run of some tests, only those
+   have a result to score, and the block keeps no count of them.
+4. *One rendering.* `dstf summary`'s cell is the counts, then
+   ` · N of M tests run` (it was `N of M tests selected` inside the
+   parenthesis); the console's `Results:` line adds `(N of M tests run;
+   not a full run)`; the dashboard's notice names each flag and its value
+   as a clause of "the ones …". A `--changed-since` run whose changed
+   file no class stores ran every test the other flags left records why
+   (`every_test`: `no class stores it`, or the other reason a file
+   cannot be asked as a class), and its notice says so — "1 file that no
+   class stores changed since REV, so each of them was run" — not that
+   they use what changed.
+5. *Old data.* A `status.json` or `verdicts.json` with no `selection`
+   reads as a full run.
+
+**Not in this decision.** `dstf compare --filter` (it scores fewer tests
+and keeps the last run's block); the authoring tool's queue.

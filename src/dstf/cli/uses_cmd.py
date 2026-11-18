@@ -395,13 +395,24 @@ def _what(f) -> str:
     return f"deleted → {asked}" if f.deleted else asked
 
 
+def every_test_reason(changes) -> str:
+    """Why the changed files that count every test do: :data:`NO_CLASS`
+    when each is a file no class stores, else the first other reason one
+    of them has (:data:`NO_TOP`). The console's line words it, and ``run
+    --changed-since`` records it for the dashboard to."""
+    from ..discovery.uses import NO_CLASS
+
+    others = [f.reason for f in changes.every_test if f.reason != NO_CLASS]
+    return others[0] if others else NO_CLASS
+
+
 def _every_test(changes, tests: int, named: int, verb: str = "counted") -> str:
     """The line that says every test is counted (``run``: run), and why."""
     from ..discovery.uses import NO_CLASS
 
     files = changes.every_test
     n = len(files)
-    if all(f.reason == NO_CLASS for f in files):
+    if every_test_reason(changes) == NO_CLASS:
         why = f"{_count(n, 'file')} that no class stores changed"
     else:
         why = f"{_count(n, 'changed file')} cannot be asked as a class"

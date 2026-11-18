@@ -86,7 +86,7 @@ def test_only_the_tests_two_edits_touch_are_run(backend, tmp_path, monkeypatch, 
         "Selected 2 of 14 tests: the ones that use what changed. Not a full run.\n"
         in out
     )
-    assert "(2 of 14 tests selected; not a full run)\n" in out
+    assert "(2 of 14 tests run; not a full run)\n" in out
     verdicts = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
     assert sorted(t["model_id"] for t in verdicts["tests"]) == TOUCHED
     selection = verdicts["selection"]

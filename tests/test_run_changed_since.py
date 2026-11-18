@@ -163,7 +163,7 @@ def test_only_the_tests_that_use_what_changed_are_simulated(proj, capsys):
         f"  Examples/SimpleTest.mo    {SIMPLE}\n"
         "Selected 2 of 14 tests: the ones that use what changed. Not a full run.\n"
     ), out
-    assert "\nResults: 2/2 passed (2 of 14 tests selected; not a full run)\n" in out
+    assert "\nResults: 2/2 passed (2 of 14 tests run; not a full run)\n" in out
     assert "Could not be asked" not in out
     # the progress lines on stderr, as `dstf uses` says them
     assert err.startswith(
@@ -206,26 +206,43 @@ def test_the_run_s_files_say_what_it_was_selected_by(proj, capsys):
     )
     assert _painted(proj.work / "dashboard.html") == _painted(page) == said
 
-    # a later run without the flag: null, and nothing said of a selection
+    # a later run without the flag: its own block, nothing of the revision
     rc, out, err = _run(proj, capsys, "--filter", SIMPLE)
     assert rc == 0, out + err
-    assert _read(proj.work, "status.json")["selection"] is None
-    assert _read(proj.work, "verdicts.json")["selection"] is None
-    assert "\nResults: 1/1 passed\n" in out
-    assert _painted(proj.work / "dashboard.html") is None
+    block = {"filter": SIMPLE, "selected": 1, "of": 14}
+    assert _read(proj.work, "status.json")["selection"] == block
+    assert _read(proj.work, "verdicts.json")["selection"] == block
+    assert _painted(proj.work / "dashboard.html") == (
+        f"Not a full run. 1 of 14 tests was run: the one that --filter {SIMPLE} "
+        "matches. The other 13 were not run."
+    )
 
 
-def test_the_filter_narrows_first_and_all_of_it_selected_is_no_partial_run(
+def test_the_filter_narrows_first_and_the_block_counts_the_project_s_tests(
     proj, capsys
 ):
+    """Every test the filter left is selected: the console's Selected line
+    is of those, but the run is still 1 of the project's 14."""
     _accept_both(proj, capsys)
     _touch(proj, "Examples", "SimpleTest.mo")
     rc, out, err = _run(proj, capsys, "--changed-since", "HEAD", "--filter", SIMPLE)
     assert rc == 0, out + err
     assert "Selected the 1 test: it uses what changed.\n" in out
-    assert "\nResults: 1/1 passed\n" in out
-    selection = _read(proj.work, "status.json")["selection"]
-    assert (selection["selected"], selection["of"]) == (1, 1)
+    assert "\nResults: 1/1 passed (1 of 14 tests run; not a full run)\n" in out
+    assert _read(proj.work, "status.json")["selection"] == {
+        "changed_since": "HEAD",
+        "commits": [proj.short],
+        "files": 1,
+        "selected": 1,
+        "of": 14,
+        "could_not_be_asked": 0,
+        "filter": SIMPLE,
+    }
+    assert _painted(proj.work / "dashboard.html") == (
+        f"Not a full run. 1 of 14 tests was run: the one that --filter {SIMPLE} "
+        "matches and that uses what changed since HEAD (1 file). The other 13 "
+        "were not run."
+    )
 
 
 def test_with_merge_the_counts_are_the_merged_scope_s(proj, capsys):
@@ -239,7 +256,7 @@ def test_with_merge_the_counts_are_the_merged_scope_s(proj, capsys):
     rc, out, err = _run(proj, capsys, "--changed-since", "HEAD", "--merge")
     assert proj.simulated == [SIMPLE], out + err
     # every test scored as the full run scored it; the run was of one
-    assert f"\n{results[0]} (1 of 14 tests selected; not a full run)\n" in out
+    assert f"\n{results[0]} (1 of 14 tests run; not a full run)\n" in out
     assert len(_read(proj.work, "verdicts.json")["tests"]) == 14
     status = _read(proj.work, "status.json")
     assert [t["model_id"] for t in status["tests"]] == [SIMPLE]
@@ -326,6 +343,28 @@ def test_a_file_no_class_stores_runs_every_test_and_asks_no_simulator(proj, caps
     assert (selection["selected"], selection["of"]) == (14, 14)
 
 
+def test_beside_a_filter_a_file_no_class_stores_runs_each_test_it_left(proj, capsys):
+    """The dashboard says what the console says: the filter chose the
+    tests, and a changed file no class stores ran each of them — none was
+    found to use what changed."""
+    image = proj.lib / "Resources" / "Images" / "ThermostatBuildingTest.png"
+    image.write_bytes(image.read_bytes() + b"\0")
+    rc, out, err = _run(
+        proj, capsys, "--changed-since", "HEAD", "--filter", f"{SIMPLE},{CONSTANT}"
+    )
+    assert rc == 0, out + err
+    assert proj.asked == [] and sorted(proj.simulated) == sorted([SIMPLE, CONSTANT])
+    assert "1 file that no class stores changed: every test is run (2 tests).\n" in out
+    assert _read(proj.work, "status.json")["selection"]["every_test"] == (
+        "no class stores it"
+    )
+    assert _painted(proj.work / "dashboard.html") == (
+        f"Not a full run. 2 of 14 tests were run: the ones that --filter "
+        f"{SIMPLE},{CONSTANT} matches; 1 file that no class stores changed since "
+        "HEAD, so each of them was run. The other 12 were not run."
+    )
+
+
 def _painted(page: Path) -> str | None:
     """The run notice of the page, as text; None when it has none."""
     import re
@@ -366,7 +405,11 @@ def test_the_first_paint_says_this_run_s_selection_not_the_last_run_s(
     selected = painted[:]
     painted.clear()
     main([*argv, "--filter", f"{LIB}.Examples.S*"])
-    assert painted == [("opened", None), ("started", None)]
+    filtered = (
+        "Not a full run. 2 of 14 tests are being run: the ones that --filter "
+        f"{LIB}.Examples.S* matches. The other 12 are not run."
+    )
+    assert painted == [("opened", filtered), ("started", filtered)]
     painted.clear()
     assert main([*argv, "--changed-since", "HEAD"]) == 0
     capsys.readouterr()

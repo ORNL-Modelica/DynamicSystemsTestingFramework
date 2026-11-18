@@ -458,8 +458,13 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   in the same backend/os, failed it too (FAIL or SIM_FAIL) or ended it with
   the same status; a base that had no baseline for it (NO_REF) or never ran
   it (NOT RUN) did not fail it. A label with no run of a backend/os reads
-  `–`. NOT RUN is counted in the total and is not a pass. One key line under
-  the matrix says this short.
+  `–`. NOT RUN is counted in the total and is not a pass. A run of fewer
+  than the project's tests (by `--filter`, `--package`, `--rerun` or
+  `--changed-since`) ends its cell with ` · N of M tests run`: it simulated
+  N of the project's M tests, and is not a full run. Its total counts the
+  tests it scored: with `--merge` or `--rerun` that is also each test it
+  did not run that had a last result in the work directory, scored on that
+  result. One key line under the matrix says this short.
 - **No baseline is no failure.** A test with no stored baseline (NO_REF) was
   scored against nothing: the cell counts it as `1 no baseline`, never among
   those that also fail on the base, and with `--base`, `1 also has none on
@@ -672,21 +677,24 @@ Changed since main (1a2b3c4 Tune the thermostat example): 2 files
   Icons/Example.mo        ModelicaTestingLib.Icons.Example
 Selected 2 of 14 tests: the ones that use what changed. Not a full run.
 ...
-Results: 2/2 passed (2 of 14 tests selected; not a full run)
+Results: 2/2 passed (2 of 14 tests run; not a full run)
 ```
 
-The tests are chosen from those `--filter` and `--package` leave, and
-`2 of 14` counts those. A test the simulator could not be asked about is
-run, and named under `Could not be asked:` with its reason. A changed file
-no class stores runs every test:
+The tests are chosen from those `--filter` and `--package` leave; the
+`Selected` line counts those, and `2 of 14 tests run` the project's. A
+test the simulator could not be asked about is run, and named under
+`Could not be asked:` with its reason. A changed file no class stores runs
+every test:
 `1 file that no class stores changed: every test is run (14 tests).`
 
 Wherever the result is read, it says it was not a full run: a line under
 the dashboard's status line (`Not a full run. 2 of 14 tests were run: the
 ones that use what changed since main (2 files). The other 12 were not
 run.`), `selection` in `status.json` and `verdicts.json`, and the cell of
-`dstf summary` (`2/2 (2 of 14 tests selected)`). A later `compare` over the
-work directory still says so; a later run without the flag does not. The
+`dstf summary` (`2/2 · 2 of 14 tests run`). A later `compare` over the
+work directory still says so; a later full run does not. Any run of fewer
+than the project's tests says the same — by `--filter`, `--package` or
+`--rerun` too, each named on the dashboard. The
 JUnit file does not say it: it is a plain suite of the tests that ran.
 
 When nothing changed, it prints `No test to run.`; when no test uses what

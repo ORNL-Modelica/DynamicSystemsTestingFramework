@@ -1379,10 +1379,14 @@ def _add_run(tree: _Tree, top) -> None:
             With --changed-since REV, only the tests that use a class
             changed since the git revision REV are simulated: the tests
             `dstf uses --since REV` lists, asked of the same simulator,
-            which is closed before the run starts its own. The console, the
-            dashboard, status.json and verdicts.json say it was not a full
-            run. It is for speed while you work; a full run stays the check
-            before a release or a merge.
+            which is closed before the run starts its own. It is for speed
+            while you work; a full run stays the check before a release or
+            a merge.
+
+            A run of fewer than the project's tests — by --filter,
+            --package, --rerun or --changed-since — says it was not a full
+            run: on the console, the dashboard, in status.json and
+            verdicts.json (`selection`), and in `dstf summary`.
 
             Exit code: 0 when every test that ran passed, and with nothing
             to run: no test is in --rerun's categories, or no test uses

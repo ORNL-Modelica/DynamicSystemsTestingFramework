@@ -83,8 +83,8 @@ def build_verdicts(
         # (backend, tool version, os), or null where there is none.
         "metadata": dict(metadata) if metadata else None,
         # What the run's tests were chosen by: status.json's ``selection``
-        # (`run --changed-since`: N of M tests, since which revision), or
-        # null for a run of every test the filter left.
+        # (N of the project's M tests, and the filter, package, rerun or
+        # revision that chose them), or null for a run of every test.
         "selection": dict(selection) if selection else None,
         "totals": {"total": len(comps), **totals},
         "exit_code": exit_code(comps),

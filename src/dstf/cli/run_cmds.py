@@ -213,12 +213,19 @@ def _selected_line(n: int, of: int, unasked: int) -> str:
 
 def _select_changed(args: argparse.Namespace, config, tests: list):
     """``--changed-since REV``: the tests of ``tests`` that use what
-    changed since REV and the ``selection`` block the run records — or the
-    exit code, when the selection is refused (1, 2) or leaves nothing to
-    run (0). Everything it says is printed here, and nothing is written:
-    the work directory is left as it is."""
+    changed since REV and the keys it adds to the ``selection`` block the
+    run records (:func:`_narrowed` counts the tests) — or the exit code,
+    when the selection is refused (1, 2) or leaves nothing to run (0).
+    Everything it says is printed here, and nothing is written: the work
+    directory is left as it is."""
     from ..backends import BackendUnavailableError
-    from .uses_cmd import Refused, _every_test, can_answer, select_since
+    from .uses_cmd import (
+        Refused,
+        _every_test,
+        can_answer,
+        every_test_reason,
+        select_since,
+    )
 
     rev = args.changed_since
     # The source type first: on a project that is not Modelica, whether its
@@ -273,13 +280,75 @@ def _select_changed(args: argparse.Namespace, config, tests: list):
             print(f"  {model_id} — {reason}")
         if len(unasked) > UNASKED_LISTED:
             print(f"  … and {len(unasked) - UNASKED_LISTED} more")
-    return selected, {
+    block = {
         "changed_since": rev,
         "commits": chosen.commits,
         "files": chosen.files,
-        "selected": len(selected),
-        "of": of,
         "could_not_be_asked": len(unasked),
+    }
+    if chosen.every_test:
+        # Each test is run for a file no class could be asked for, not
+        # because it uses what changed: the dashboard says which.
+        block["every_test"] = every_test_reason(chosen.changes)
+    return selected, block
+
+
+def _narrowed(
+    args: argparse.Namespace,
+    changed: dict | None,
+    tests: list,
+    all_tests: list,
+    recorded: set[str],
+) -> dict | None:
+    """The ``selection`` block a run records in status.json: the tests it
+    simulates (``selected``, of ``tests``) of the tests discovered for the
+    project (``of``, of ``all_tests``), and what narrowed them —
+    ``--changed-since``'s keys (``changed``), the values of ``--filter``,
+    ``--package`` and ``--rerun`` as given, and ``merged`` where tests it
+    does not simulate are scored on their last results. None for a run of
+    every discovered test; a ``--changed-since`` run writes its block also
+    then.
+
+    ``of`` is the project's count, not the filter's: ``dstf summary`` and
+    the dashboard read the block to say whether a run is a full run of
+    the project, and a run of the tests a filter left is not (D169).
+
+    ``merged`` is what the run will score, not the flag: a ``--merge`` or
+    ``--rerun`` scores, beside its own tests, those the work directory's
+    earlier runs recorded (``recorded``, :func:`_recorded`), and an accept
+    scores none. On a fresh work directory a ``--merge`` scores only what
+    it runs, and the block says nothing of last results it has not."""
+    selected, of = len(tests), len(all_tests)
+    if changed is None and selected >= of:
+        return None
+    block = {**(changed or {}), "selected": selected, "of": of}
+    for key in ("filter", "package", "rerun"):
+        value = getattr(args, key, None)
+        if value is not None:
+            block[key] = value
+    beside = recorded - {t.model_id for t in tests}
+    if (
+        getattr(args, "merge", False)
+        and not args.accept
+        and any(t.model_id in beside for t in all_tests)
+    ):
+        block["merged"] = True
+    return block
+
+
+def _recorded(config) -> set[str]:
+    """The tests the work directory's earlier runs recorded (its batch
+    manifest): those a ``--merge`` reads back and scores beside the ones it
+    runs (:func:`dstf.pipeline.run_pipeline`'s scope). Read before the run,
+    which records its own tests there and no others."""
+    manifest_path = config.work_dir / "batch_manifest.json"
+    if not manifest_path.exists():
+        return set()
+    from ..backends import BatchManifest
+
+    return {
+        entry["model_id"]
+        for entry in BatchManifest.load(manifest_path).manifest.values()
     }
 
 
@@ -295,7 +364,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         _refuse_batch_without_workers(config)
     all_tests = discover_tests(config)
     tests = _filter_tests(all_tests, args.filter, args.package)
-    selection = None
+    changed = None
     if args.changed_since is not None:
         # The whole choice before anything is read that may write (the
         # manifest's check of orphans moves a corrupt one aside), and so
@@ -307,7 +376,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         chosen = _select_changed(args, config, tests)
         if isinstance(chosen, int):
             return chosen
-        tests, selection = chosen
+        tests, changed = chosen
     _notify_orphans(config, all_tests)
 
     from ..storage.reference_store import ReferenceStore
@@ -386,6 +455,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not tests:
         print("No tests matched the filter.")
         return 1
+    selection = _narrowed(args, changed, tests, all_tests, _recorded(config))
     # Past the run's checks: the project's testing.json, if this run is
     # the one that starts it, before the dashboard that names it.
     config.write_default_file()
@@ -674,12 +744,10 @@ def _rerun_flags(config, args) -> dict[str, str]:
 
 def _selection_note(selection: dict | None) -> str | None:
     """What the Results line adds for a run that simulated only some of
-    the tests (``--changed-since``); None for every other run."""
+    the project's tests (:func:`_narrowed`); None for every other run."""
     if selection is None or selection["selected"] == selection["of"]:
         return None
-    return (
-        f"{selection['selected']} of {selection['of']} tests selected; not a full run"
-    )
+    return f"{selection['selected']} of {selection['of']} tests run; not a full run"
 
 
 def _show_reports(

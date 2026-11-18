@@ -23,10 +23,13 @@ this file says when they do.
   files listed first. A deleted file counts the package that held it; a
   changed file no class stores counts every test. Git is only read.
 - `dstf run --changed-since REV`: simulate and score only the tests
-  `dstf uses --since REV` lists. The run says it was not a full run on the
-  console, on the dashboard, in `status.json` and `verdicts.json`
-  (`selection`) and in `dstf summary`. With nothing to run it exits 0 and
+  `dstf uses --since REV` lists. With nothing to run it exits 0 and
   writes nothing, not even the report file.
+- A `dstf run` of fewer than the project's tests — by `--changed-since`,
+  `--filter`, `--package` or `--rerun` — says so: the console's `Results:`
+  line, the dashboard, `selection` in `status.json` and `verdicts.json`,
+  and each `dstf summary` cell of it (`0/29 (29 SIM_FAIL) · 29 of 340
+  tests run`) say how many of the project's tests ran and what chose them.
 
 ### Changed
 

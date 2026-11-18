@@ -625,8 +625,9 @@ class Backend(ABC):
     #: Declared on the class as well as set in ``__init__`` so a test double
     #: that never calls ``__init__`` still reads a value.
     quiet: bool = False
-    #: What the run this backend is about to make was chosen by: ``run
-    #: --changed-since``'s block, or None. The pipeline sets it before every
+    #: What the run this backend is about to make was chosen by: the
+    #: block ``dstf run`` records for a run of fewer than the project's
+    #: tests, or None. The pipeline sets it before every
     #: ``run_tests``, and :meth:`_prepare_run` hands it to the reporter that
     #: writes ``status.json``. On the class, as ``quiet`` is.
     selection: dict | None = None

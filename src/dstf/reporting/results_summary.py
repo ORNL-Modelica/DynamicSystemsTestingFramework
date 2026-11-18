@@ -93,9 +93,10 @@ class Cell:
     #: why there is no such count where there is a base ("no main run for
     #: Dymola/linux"); "" otherwise
     base_note: str = ""
-    #: the file's ``selection`` (``run --changed-since``: the revision, N
-    #: selected of M); None for a run of every test, and in a file written
-    #: before the key existed
+    #: the file's ``selection`` (a run of N of the project's M tests: N, M
+    #: and what narrowed them — a filter, a package, a rerun, a revision);
+    #: None for a run of every test, and in a file written before the key
+    #: existed
     selection: dict | None = None
 
     @property
@@ -106,6 +107,12 @@ class Cell:
         n, of = sel.get("selected"), sel.get("of")
         whole = all(isinstance(v, int) and not isinstance(v, bool) for v in (n, of))
         return (n, of) if whole and 0 <= n < of else None
+
+    @property
+    def merged(self) -> bool:
+        """The run scored every test, those it did not simulate on their
+        last results (``run --merge``, ``--rerun``)."""
+        return (self.selection or {}).get("merged") is True
 
     @property
     def failing(self) -> list[NotPassing]:
