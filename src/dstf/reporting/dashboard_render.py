@@ -35,7 +35,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..backends.base import kept_run_result
 from ..backends.common.result_variables import run_timing
-from ..backends.progress import read_status
+from ..backends.progress import AS_RECORDED, read_status
 from ..backends.types import TestResult
 from ..comparison.types import TestComparison
 from ..discovery.uses import NO_CLASS
@@ -402,12 +402,6 @@ def _manifest_rows(work_dir: Path) -> dict[str, tuple[TestRow, float | None]]:
             last_run_at,
         )
     return rows
-
-
-#: ``selection``'s default: the snapshot's. A first paint is given its
-#: run's own instead — status.json is still the LAST run's until the
-#: reporter's first write, and would say that run's notice, or none.
-AS_RECORDED: object = object()
 
 
 def _whole(value: object) -> bool:
@@ -792,10 +786,13 @@ def render_final(
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",
+    selection: object = AS_RECORDED,
 ) -> None:
     """Render dashboard.html in final mode (refresh stripped, the
     comparisons' verdicts and the sidecars merged; the results' CPU
-    times where no wall time was kept)."""
+    times where no wall time was kept). ``selection``: what the scored
+    tests were chosen by — the snapshot's (the last run's) unless the
+    command that scores them narrowed them itself."""
     _render(
         work_dir,
         mode="final",
@@ -803,6 +800,7 @@ def render_final(
         comparisons=comparisons,
         results=results,
         theme=theme,
+        selection=selection,
     )
 
 
@@ -813,6 +811,7 @@ def render_final_to(
     comparisons: Iterable[TestComparison] = (),
     results: Mapping[str, TestResult] | None = None,
     theme: str = "default",
+    selection: object = AS_RECORDED,
 ) -> None:
     """Render the final-mode dashboard page to a caller-chosen path.
 
@@ -829,4 +828,5 @@ def render_final_to(
         comparisons=comparisons,
         results=results,
         theme=theme,
+        selection=selection,
     )

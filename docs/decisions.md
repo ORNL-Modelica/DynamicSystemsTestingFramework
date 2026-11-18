@@ -9853,3 +9853,34 @@ pull request it went into had to explain that by hand.
 
 **Not in this decision.** `dstf compare --filter` (it scores fewer tests
 and keeps the last run's block); the authoring tool's queue.
+
+## D170 — A compare of fewer than the project's tests says so too (2026-11-18)
+
+**Context.** D169 left `dstf compare --filter` out: a compare narrowed by
+`--filter` or `--package` scores fewer tests, but its `verdicts.json` and
+dashboard kept the last run's `selection`. After a full run, a compare of
+one test of three wrote `selection: null`, and `dstf summary` read its
+`1/1` as a full run.
+
+**Decision.**
+
+1. *A narrowed compare records its own block.* When its `--filter` /
+   `--package` leave fewer than the project's tests, `cmd_compare` builds
+   the block a run builds (`cli/run_cmds._narrowed`): `selected` is the
+   tests it scores, `of` the project's discovered tests, the flags' values
+   as given. It never says `merged`: a compare scores only the tests it
+   names. The console's `Results:` line, `verdicts.json`, the dashboard and
+   the `--report-format html` page say it, through D169's one rendering.
+2. *status.json keeps the run's block.* status.json records the last run's
+   simulations, so its `selection` stays the run's; the compare's block is
+   handed to what it writes (`write_verdicts`, `render_final`,
+   `render_final_to`: their `selection`, status.json's `AS_RECORDED`
+   unless given). A later compare that its own flags do not narrow reads
+   the run's block again, as before — it scores that run's tests again.
+3. *Old data.* Nothing changes for a file: the block's keys are D169's.
+
+This closes D169's "Not in this decision" item for `compare`.
+
+**Not in this decision.** The authoring tool's queue. The words of the
+shared rendering — "N of M tests were run", "The other K were not run" —
+are a run's; under a compare they count the tests it scored.

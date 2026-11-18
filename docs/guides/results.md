@@ -107,7 +107,11 @@ Two files in the work directory are written for programs:
 - `status.json` — what became of each SIMULATION: `passed` there means the
   simulation finished, not that the test passed. Once a run is scored each
   test also carries its `verdict`. Its `selection` is the run's, as above;
-  `verdicts.json` copies it from here, so a later `compare` keeps it.
+  `verdicts.json` copies it from here, so a later `compare` keeps it —
+  unless that compare's own `--filter` or `--package` leave fewer than the
+  project's tests: then `verdicts.json` and the dashboard hold the
+  compare's block (`selected`: the tests it scored), and `status.json`
+  keeps the run's.
 
 ```python
 import json

@@ -275,3 +275,66 @@ def test_a_filter_that_leaves_every_test_writes_no_block(proj, capsys):
     assert _read(proj, "status.json")["selection"] is None
     assert "\nResults: 3/3 passed\n" in out
     assert _notice(proj) is None
+
+
+def _compare(proj, capsys, *argv) -> str:
+    rc = main(
+        ["compare", "--config", str(proj.config_file), "--work-dir", str(proj.work_dir)]
+        + ["--no-browser", *argv]
+    )
+    out, err = capsys.readouterr()
+    assert rc == 0, out + err
+    return out
+
+
+def test_a_compare_narrowed_by_filter_says_how_many_it_scored(proj, capsys):
+    """After a full run, `compare --filter` scores one of the three tests:
+    its verdicts, console, dashboard and `summary` cell say so. status.json
+    keeps the run's block — it records the simulations — and a later
+    compare without a filter reads that again: a full run."""
+    _run(proj, capsys)
+    out = _compare(proj, capsys, "--filter", "*Constant*")
+    block = {"filter": "*Constant*", "selected": 1, "of": 3}
+    verdicts = _read(proj, "verdicts.json")
+    assert (verdicts["selection"], verdicts["totals"]["total"]) == (block, 1)
+    assert "\nResults: 1/1 passed (1 of 3 tests run; not a full run)\n" in out
+    assert _notice(proj) == (
+        "Not a full run. 1 of 3 tests was run: the one that --filter "
+        "*Constant* matches. The other 2 were not run."
+    )
+    markdown, cells = _summary(capsys, f"some={proj.work_dir}")
+    assert "| Python/linux | 1/1 · 1 of 3 tests run |" in markdown
+    assert [c["selection"] for c in cells] == [block]
+    assert _read(proj, "status.json")["selection"] is None
+
+    out = _compare(proj, capsys)
+    assert _read(proj, "verdicts.json")["selection"] is None
+    assert "\nResults: 3/3 passed\n" in out
+    assert _notice(proj) is None
+
+
+def test_a_compare_narrowed_by_package_says_so_in_its_html_file(proj, capsys, tmp_path):
+    _run(proj, capsys)
+    page = tmp_path / "page.html"
+    _compare(
+        proj,
+        capsys,
+        "--package",
+        SIMPLE_RAMP,
+        "--report-format",
+        "html",
+        "-o",
+        str(page),
+    )
+    block = {"package": SIMPLE_RAMP, "selected": 1, "of": 3}
+    assert _read(proj, "verdicts.json")["selection"] == block
+    said = (
+        f"Not a full run. 1 of 3 tests was run: the one in --package "
+        f"{SIMPLE_RAMP}. The other 2 were not run."
+    )
+    found = _NOTICE.search(page.read_text(encoding="utf-8"))
+    assert found is not None
+    assert (markupsafe.Markup(found.group(1)).striptags(), _notice(proj)) == (
+        said,
+        said,
+    )

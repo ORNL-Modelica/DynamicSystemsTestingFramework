@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..backends.progress import AS_RECORDED
 from ..comparison.types import TestComparison
 from ..storage.names import baseline_stem
 from ..storage.ref_index import _atomic_write_text
@@ -105,16 +106,23 @@ def write_verdicts(
     comparisons: Iterable[TestComparison],
     tests: Iterable[Any],
     results: Mapping[str, Any] | None = None,
+    selection: object = AS_RECORDED,
 ) -> Path:
     """Write ``<work_dir>/verdicts.json`` — atomically, as strict JSON (a
     sentinel's inf/nan is ``null``) — and stamp each test's verdict into
-    ``status.json`` beside its simulation status. Returns the path."""
+    ``status.json`` beside its simulation status. Returns the path.
+
+    ``selection``: what the scored tests were chosen by — status.json's
+    (the last run's) unless the command that scores them narrowed them
+    itself: a ``compare --filter``, a ``run --rerun`` with nothing to
+    rerun (D170)."""
     from ..backends.progress import read_status, stamp_verdicts
     from .report_suite import _json_sanitize
 
     comps = list(comparisons)
     snapshot = read_status(work_dir) or {}
-    selection = snapshot.get("selection")
+    if selection is AS_RECORDED:
+        selection = snapshot.get("selection")
     document = build_verdicts(
         comps,
         tests,

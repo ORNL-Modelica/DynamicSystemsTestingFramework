@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from ..backends import dataset_kind_for
-from ..backends.progress import recorded_backend, refuse_unregistered
+from ..backends.progress import AS_RECORDED, recorded_backend, refuse_unregistered
 from ..config import ConfigError
 from ..config_shape import default
 from ..discovery.spec_shape import SIMULATION
@@ -644,6 +644,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
     all_tests = discover_tests(config)
     tests = _filter_tests(all_tests, args.filter, args.package)
     _notify_orphans(config, all_tests)
+    # What it scores, when its own --filter / --package leave fewer than
+    # the project's tests: the block a run records, of the tests it scores
+    # (D170). Otherwise the last run's, which it scores again, as recorded.
+    # status.json keeps the run's either way: it records the simulations.
+    narrowed = _narrowed(args, None, tests, all_tests, set())
 
     from ..comparison.comparator import compare_all
     from ..storage.reference_store import ReferenceStore
@@ -718,15 +723,26 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # result; the Reference link is the sidecar's, and stays empty.
     from ..reporting.dashboard_render import render_final
 
+    selection = AS_RECORDED if narrowed is None else narrowed
     render_final(
         config.work_dir,
         rerun_flags=_rerun_flags(config, args),
         theme=config.theme,
         comparisons=comparisons,
         results=results,
+        selection=selection,
     )
 
-    _show_reports(comparisons, results, tests, store, config, args)
+    _show_reports(
+        comparisons,
+        results,
+        tests,
+        store,
+        config,
+        args,
+        note=_selection_note(narrowed),
+        selection=selection,
+    )
     return _exit_code(comparisons)
 
 
@@ -751,13 +767,22 @@ def _selection_note(selection: dict | None) -> str | None:
 
 
 def _show_reports(
-    comparisons, results, tests, store, config, args, note: str | None = None
+    comparisons,
+    results,
+    tests,
+    store,
+    config,
+    args,
+    note: str | None = None,
+    selection: object = AS_RECORDED,
 ) -> None:
     """What a scored ``run`` or ``compare`` shows — three independent
     things, and any combination does all of what it asks:
 
     * ``verdicts.json`` in the work dir and the console verdict table,
-      ALWAYS (``note``: what its Results line adds in brackets);
+      ALWAYS (``note``: what its Results line adds in brackets;
+      ``selection``: the block verdicts.json and the dashboard say the
+      scored tests were chosen by, status.json's unless given);
     * ``--report``: the per-test pages;
     * ``--report-format junit|html``: that file, at ``--output``.
 
@@ -772,7 +797,7 @@ def _show_reports(
 
     # What was decided, for a script: one file, on every scoring route, and
     # each test's verdict beside its simulation status in status.json.
-    write_verdicts(config.work_dir, comparisons, tests, results)
+    write_verdicts(config.work_dir, comparisons, tests, results, selection=selection)
     print_report(comparisons, note=note)
     if getattr(args, "report", False):
         _generate_report_suite(
@@ -783,8 +808,9 @@ def _show_reports(
             config,
             browser=_browser(args),
             rerun_flags=_rerun_flags(config, args),
+            selection=selection,
         )
-    _write_report_file(comparisons, args, config, results)
+    _write_report_file(comparisons, args, config, results, selection=selection)
 
 
 def _generate_report_suite(
@@ -796,6 +822,7 @@ def _generate_report_suite(
     *,
     browser: bool,
     rerun_flags: dict[str, str],
+    selection: object = AS_RECORDED,
 ) -> None:
     """Generate per-test reports + refresh the unified dashboard, and open
     it in a browser tab when ``browser``.
@@ -815,6 +842,7 @@ def _generate_report_suite(
         theme=config.theme,
         comparisons=comparisons,
         results=results,
+        selection=selection,
     )
     dashboard_path = config.work_dir / "dashboard.html"
     print(f"Report: {dashboard_path}")
@@ -830,7 +858,11 @@ def _report_output(args: argparse.Namespace, fmt: str) -> str:
 
 
 def _write_report_file(
-    comparisons: list, args: argparse.Namespace, config, results: dict
+    comparisons: list,
+    args: argparse.Namespace,
+    config,
+    results: dict,
+    selection: object = AS_RECORDED,
 ) -> None:
     """Write the file ``--report-format junit|html`` asks for (``console``,
     the default, asks for none); ``results`` give the HTML page its CPU
@@ -856,6 +888,7 @@ def _write_report_file(
             theme=config.theme,
             comparisons=comparisons,
             results=results,
+            selection=selection,
         )
         print(f"HTML report written to {out}")
         if out.resolve().parent != config.work_dir.resolve():
