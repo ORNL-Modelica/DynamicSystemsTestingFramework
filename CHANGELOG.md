@@ -13,9 +13,10 @@ this file says when they do.
 - `dstf manifest cleanup` no longer ends with "every entry and directory
   belongs to a test" when it left a manifest entry it cannot read: the line
   names that entry as left as it is.
-- `dstf compare --filter` / `--package` of fewer than the project's tests
-  says so — on the console, the dashboard, in `verdicts.json` and in `dstf
-  summary` (`1/1 · 1 of 3 tests run`) — where it read as a full run.
+- A `dstf compare` whose `--filter` or `--package` leave fewer than the
+  project's tests says so — on the console, the dashboard, in
+  `verdicts.json` and in `dstf summary` (`1/1 · 1 of 3 tests run`) — where
+  it read as a full run.
   `status.json` keeps the run's `selection`.
 - `dstf run --rerun` with nothing to rerun says it ran 0 of the project's
   tests and scored their last results, where its dashboard, `verdicts.json`
