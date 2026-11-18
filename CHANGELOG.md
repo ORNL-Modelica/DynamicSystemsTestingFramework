@@ -57,6 +57,10 @@ this file says when they do.
   authoring tool's `Artifact` and `OpenProject` outcomes, and the
   `SessionView` readers no capability used (`spec_path`, `artifacts`,
   `notices`, `rescore`, `figure`, `plot_figure`, and `project.dataset_kind`).
+- The converter for numbered baseline files (`ref_0001.json`) is gone, and
+  so is the refusal of a folder that still holds them: such a file is now
+  warned of and left out, so its test reads `NO_REF`. Convert such a folder
+  with 1.6.0's `scripts/convert_baseline_names.py` before upgrading.
 
 ### Fixed
 
@@ -326,7 +330,7 @@ rewrites a companion's path to another library's baseline, and deletes
 `.id_high_water.json`.
 
 1. Get the script from the DSTF repository:
-   [`scripts/convert_baseline_names.py`](https://github.com/WyrdLab/DynamicSystemsTestingFramework/blob/main/scripts/convert_baseline_names.py).
+   [`scripts/convert_baseline_names.py`](https://github.com/WyrdLab/DynamicSystemsTestingFramework/blob/v1.6.0/scripts/convert_baseline_names.py).
    It needs only Python 3.10 or later, not DSTF.
 2. See what it would do, over the reference root and every other root whose
    companions point into it, all in one run:

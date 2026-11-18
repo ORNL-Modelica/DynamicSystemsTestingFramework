@@ -201,8 +201,8 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     by is not there or cannot be read: the reference folder, which says
     which tests are reported under ``ref_<code>``, and the batch manifest,
     which says which ``test_NNNN`` is whose. Without them every report dir
-    would read as unused. A reference folder of old numbered names is
-    refused by the store (`OldBaselineNames`).
+    would read as unused. An old numbered baseline (``ref_0001.json``) is
+    no one's baseline, so a report dir under its name is unused too.
     """
     config = _build_config(args)
     # What it reads, named on the line: one that is not there would read as

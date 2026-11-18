@@ -275,18 +275,3 @@ def test_a_batch_manifest_missing_or_unreadable_is_refused_and_nothing_removed(
     if state == "unreadable":
         # Not quarantined to .corrupt, as a run's read of it would.
         assert path.read_text(encoding="utf-8") == '{"test_0001": '
-
-
-def test_a_reference_folder_of_old_names_is_refused_and_nothing_removed(
-    tmp_path, capsys
-):
-    config, argv = _project(tmp_path)
-    (config.reference_dir / "ref_0001.json").write_text("{}", encoding="utf-8")
-
-    err = _refused(tmp_path, capsys, argv)
-
-    assert err == (
-        f"Config error: {config.reference_dir} holds baselines under the old "
-        "numbered names (ref_0001.json) — convert them with "
-        "scripts/convert_baseline_names.py, see CHANGELOG"
-    )

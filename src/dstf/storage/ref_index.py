@@ -16,23 +16,16 @@ import time
 import uuid
 from pathlib import Path
 
-from ..config import ConfigError
 from .names import baseline_file, baseline_stem
 
 logger = logging.getLogger(__name__)
 
 
-#: A baseline file's name today: ``ref_`` and the 12 lowercase hex digits of
-#: its model's code.
+#: A baseline file's name: ``ref_`` and the 12 lowercase hex digits of its
+#: model's code. Any other ``ref_*.json`` (a copy, ``ref_<code> copy.json``;
+#: a code in capitals; an old numbered ``ref_0001.json``) is a stray file,
+#: warned of by a listing and opened by no lookup.
 _NAME = re.compile(r"^ref_[0-9a-f]{12}\.json$")
-
-#: The old numbered form (``ref_0001.json``): ``ref_`` and 1 to 11 digits —
-#: never 12, since a real code can be all digits (``ref_121677875640.json``,
-#: names.py). Any other ``ref_*.json`` that is not `_NAME` (a copy,
-#: ``ref_<code> copy.json``; a code in capitals) is a stray file, warned of
-#: and left out, not an old name: the folder is refused whole only for an old
-#: name.
-_OLD_NAME = re.compile(r"^ref_[0-9]{1,11}\.json$")
 
 #: The statuses a baseline may have. ``obsolete`` is not one (the owner's
 #: ruling, 2026-11-10): a baseline is removed by deleting its file, and a
@@ -48,13 +41,6 @@ def _status_refusal(name: str, status: str) -> str:
         f"{name}: status {json.dumps(status)} is not a status — "
         "delete the file to remove a baseline"
     )
-
-
-class OldBaselineNames(ConfigError):
-    """A reference folder holds baselines under the old numbered names
-    (``ref_0001.json``). Refused whole: read as it is, every test of it
-    would read NO_REF and an accept would write a second file beside each
-    old one."""
 
 
 def _atomic_write_text(path: Path, text: str, *, newline: str = "\n") -> None:
@@ -130,27 +116,6 @@ class RefIndex:
         #: whose name is no baseline name (both found by a listing).
         self._misnamed: dict[str, str] = {}
         self._loaded = False
-        self._refuse_old_names()
-
-    def _refuse_old_names(self) -> None:
-        """Refuse a folder that still holds a numbered file (`OldBaselineNames`).
-
-        Checked when the index is made, before any lookup or write: a
-        lookup there finds nothing (every test NO_REF) and an accept writes
-        ``ref_<code>.json`` beside the old file, two baselines of one model
-        in one folder."""
-        if not self.ref_dir.is_dir():
-            return
-        old = sorted(
-            p.name for p in self.ref_dir.glob("ref_*.json") if _OLD_NAME.match(p.name)
-        )
-        if old:
-            more = ", …" if len(old) > 1 else ""
-            raise OldBaselineNames(
-                f"{self.ref_dir} holds baselines under the old numbered names "
-                f"({old[0]}{more}) — convert them with "
-                "scripts/convert_baseline_names.py, see CHANGELOG"
-            )
 
     def _read(self, name: str) -> tuple[str, str] | None:
         """``(model_id, status)`` of the file ``name``, or None: not there,
@@ -212,7 +177,6 @@ class RefIndex:
                 if _NAME.match(ref_file.name):
                     self._files[ref_file.name] = self._read(ref_file.name)
                 else:
-                    # Not an old name: the folder would have been refused.
                     said = (
                         f"{ref_file.name} is not a baseline name (ref_ and 12 "
                         "lowercase hex digits) — rename or delete it"

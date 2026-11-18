@@ -257,9 +257,8 @@ its model id, so `RefIndex` opens that one file to look a model up and reads
 the whole folder only for a listing. The one valid status is `active`. Any
 other status — an old `skip` or `obsolete` — refuses the test, by name; a
 baseline is removed by deleting its file. A file named for a model that holds another fails that
-test; a file whose name is not its model's code is warned of and left out;
-a folder that still holds numbered files (`ref_0001.json`) is refused whole
-(D165).
+test; a file whose name is not its model's code, or no baseline name at all (an
+old numbered `ref_0001.json` among them), is warned of and left out (D165).
 
 ### Multiple named baselines (D66)
 
