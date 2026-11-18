@@ -20,7 +20,7 @@ from conftest import PROJECT_ROOT, PROVENANCE, PROVENANCES
 from dstf.backends.types import TestResult, VariableResult
 from dstf.cli.main import main
 from dstf.comparison.comparator import compare_one
-from dstf.config import Config, ConfigError
+from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
 from dstf.reporting.overlay_loader import load_sibling_backend_overlays
 from dstf.reporting.status import FAIL, NO_REF, classify, refusal
@@ -514,61 +514,18 @@ def test_a_run_over_a_soft_check_whose_body_is_broken_scores_the_test_without_it
     }
 
 
-def test_a_folder_of_numbered_names_is_refused_with_the_way_to_convert_it(
-    sample_models_dir, tmp_path
-):
-    config = _config(sample_models_dir, tmp_path / "refs")
-    _hand_written(config.reference_dir / "ref_0001.json", A)
-    _hand_written(config.reference_dir / "ref_0002.json", OTHER)
-
-    with pytest.raises(ConfigError) as caught:
-        ReferenceStore(config)
-
-    assert str(caught.value) == (
-        f"{config.reference_dir} holds baselines under the old numbered names "
-        "(ref_0001.json, …) — convert them with scripts/convert_baseline_names.py, "
-        "see CHANGELOG"
-    )
-
-
-def test_a_command_over_a_numbered_folder_exits_with_the_sentence(tmp_path):
-    lib = tmp_path / "lib"
-    shutil.copytree(
-        PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
-        lib,
-        ignore=shutil.ignore_patterns("__pycache__"),
-    )
-    folder = lib / "Resources" / "ReferenceResults" / "Python" / "linux"
-    (folder / RAMP_FILE).rename(folder / "ref_0003.json")
-    err = io.StringIO()
-    with redirect_stdout(io.StringIO()), redirect_stderr(err):
-        code = main(
-            [
-                "--config",
-                str(lib / "Resources" / "ReferenceResults" / "testing.json"),
-                "manifest",
-                "show",
-            ]
-        )
-    assert code == 2
-    assert err.getvalue() == (
-        f"Config error: {folder} holds baselines under the old numbered names "
-        "(ref_0003.json) — convert them with scripts/convert_baseline_names.py, "
-        "see CHANGELOG\n"
-    )
-
-
 def test_a_stray_file_name_is_warned_and_left_out_not_called_numbered(
     sample_models_dir, tmp_path, caplog
 ):
-    """Only ``ref_`` and 1 to 11 digits is the old numbered form. A copy
-    left beside a baseline, or a code in capitals, is no baseline name: the
-    folder is read, the good baseline is found, and each stray file is
-    warned of by name and listed as refused."""
+    """A copy left beside a baseline, a code in capitals or an old numbered
+    name (``ref_0001.json``) is no baseline name: the folder is read, the
+    good baseline is found, and each stray file is warned of by name and
+    listed as refused."""
     store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
     _hand_written(store.ref_dir / A_FILE, A)
     _hand_written(store.ref_dir / "ref_6e187be76792 copy.json", A)
     _hand_written(store.ref_dir / "ref_6E187BE76792.json", A)
+    _hand_written(store.ref_dir / "ref_0001.json", A)
     fresh = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
 
     with caplog.at_level(logging.WARNING, logger="dstf.storage.ref_index"):
@@ -577,7 +534,11 @@ def test_a_stray_file_name_is_warned_and_left_out_not_called_numbered(
     said = {
         name: f"{name} is not a baseline name (ref_ and 12 lowercase hex digits)"
         " — rename or delete it"
-        for name in ("ref_6E187BE76792.json", "ref_6e187be76792 copy.json")
+        for name in (
+            "ref_0001.json",
+            "ref_6E187BE76792.json",
+            "ref_6e187be76792 copy.json",
+        )
     }
     assert listed == [A]
     assert fresh.reference_file(A) == store.ref_dir / A_FILE
@@ -585,18 +546,18 @@ def test_a_stray_file_name_is_warned_and_left_out_not_called_numbered(
     assert fresh.index.refused() == said
 
 
-def test_eleven_digits_are_an_old_number(sample_models_dir, tmp_path):
-    config = _config(sample_models_dir, tmp_path / "refs")
-    _hand_written(config.reference_dir / "ref_12345678901.json", A)
+def test_a_numbered_file_alone_leaves_its_model_with_no_baseline(
+    sample_models_dir, tmp_path
+):
+    """A numbered file from before per-model names, holding a model's
+    baseline, is never opened for that model: the model has none."""
+    store = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
+    _hand_written(store.ref_dir / "ref_0001.json", A)
+    fresh = ReferenceStore(_config(sample_models_dir, tmp_path / "refs"))
 
-    with pytest.raises(ConfigError) as caught:
-        ReferenceStore(config)
-
-    assert str(caught.value) == (
-        f"{config.reference_dir} holds baselines under the old numbered names "
-        "(ref_12345678901.json) — convert them with "
-        "scripts/convert_baseline_names.py, see CHANGELOG"
-    )
+    assert fresh.list_models() == []
+    assert fresh.reference_file(A) is None
+    assert fresh.get_reference(A) is None
 
 
 def test_a_code_of_digits_alone_is_a_name_not_a_number(sample_models_dir, tmp_path):

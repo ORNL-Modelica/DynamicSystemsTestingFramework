@@ -4,26 +4,10 @@
 
 ## Conceptual Model (Forward)
 
-The framework is a pipeline of six typed, plug-in layers:
-
-```
-  Source          → what holds the behavior to test
-    │               (Modelica library, FMU, Julia script, Simulink model, CSV / HDF5 data file)
-    ▼
-  Discovery       → how tests are produced from a Source
-    │               (.mo UnitTests scan, test_spec.json, FMU directory scan, experiment registry)
-    ▼
-  Backend         → how a test is executed, with declared capabilities
-    │               (Dymola Python / FMPy / OMPython / JuliaCall / MATLAB engine / data-file ingest)
-    ▼
-  Dataset         → typed result
-    │               (TimeSeries, Scalars, Events, Spectrum, Distribution; Field reserved)
-    ▼
-  Metric          → scoring function on Dataset vs. baseline
-    │               (NRMSE, tube, points, event-timing, spectral, Fréchet, KS, user-defined)
-    ▼
-  MetricTree      → composition: AND / OR / weighted / K-of-N → overall pass/fail + diagnostics
-```
+The framework is a pipeline of six typed, plug-in layers — Source → Discovery →
+Backend → Dataset → Metric → MetricTree — drawn once, with what each layer
+holds, in [vision.md](vision.md)'s "Six-layer abstraction". The table below
+maps each layer to today's code.
 
 **Backend capabilities** are declared on the backend contract, not inferred from type:
 - `capabilities: frozenset[Capability]` (`PERSISTENT_WORKERS`,
@@ -257,9 +241,8 @@ its model id, so `RefIndex` opens that one file to look a model up and reads
 the whole folder only for a listing. The one valid status is `active`. Any
 other status — an old `skip` or `obsolete` — refuses the test, by name; a
 baseline is removed by deleting its file. A file named for a model that holds another fails that
-test; a file whose name is not its model's code is warned of and left out;
-a folder that still holds numbered files (`ref_0001.json`) is refused whole
-(D165).
+test; a file whose name is not its model's code, or no baseline name at all (an
+old numbered `ref_0001.json` among them), is warned of and left out (D165).
 
 ### Multiple named baselines (D66)
 
@@ -456,7 +439,7 @@ A backend whose result file grows during a run declares
 
 ```python
 @classmethod
-def live_result_path(cls, test_dir: Path) -> Path:   # test_dir = work_dir/<test_key>
+def live_result_path(cls, test_dir: Path) -> Path:  # test_dir = work_dir/<test_key>
     return test_dir / "dsres.mat"
 ```
 
@@ -468,8 +451,8 @@ end, and do not.
 The file is followed with `backends/common/live_mat.py`:
 
 ```python
-reader = LiveMatReader(path, max_rows=2000)   # one per result-file path; no I/O yet
-snap = reader.poll(names)                     # about once a second
+reader = LiveMatReader(path, max_rows=2000)  # one per result-file path; no I/O yet
+snap = reader.poll(names)  # about once a second
 ```
 
 `poll(names)` returns an immutable `LiveSnapshot`:

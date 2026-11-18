@@ -106,8 +106,7 @@ class RunDir:
     folder: str
     #: the name of the backend that ran it, as its status.json says it
     backend_name: str
-    #: its manifest: each test key's entry, an old manifest's bare model id
-    #: read as ``{"model_id": ...}``
+    #: its manifest: each test key's entry
     entries: dict[str, dict]
 
     @property
@@ -175,13 +174,13 @@ def _manifest_entries(given: str, path: Path) -> dict[str, dict]:
         raise RunError(f"{given}: its {MANIFEST} holds no JSON object")
     entries = {}
     for key, entry in data.items():
-        # an old manifest names its model alone; a newer one in an object
-        model_id = entry.get("model_id") if isinstance(entry, dict) else entry
+        model_id = entry.get("model_id") if isinstance(entry, dict) else None
         if not (isinstance(model_id, str) and model_id):
             raise RunError(
-                f"{given}: its {MANIFEST} holds an entry with no model id ({key})"
+                f"{given}: its {MANIFEST} holds an entry this version does not "
+                f"read ({key}: not an object with a model_id)"
             )
-        entries[key] = entry if isinstance(entry, dict) else {"model_id": model_id}
+        entries[key] = entry
     return entries
 
 

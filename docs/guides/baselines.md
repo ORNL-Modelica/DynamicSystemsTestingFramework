@@ -105,12 +105,13 @@ not read with the sentence that says why. To remove a baseline, delete its file.
 
 dstf checks each file it reads against its name:
 
-- A folder that still holds numbered files from before (`ref_0001.json`) is
-  refused whole; convert it first, as the [changelog](../changelog.md)'s
-  "How to convert your baseline names" says.
 - A file whose name is not its model's code is warned of and left out: its
   model reads `NO_REF`. So is a file whose name is no baseline name at all,
-  such as a copy left as `ref_<code> copy.json`.
+  such as a copy left as `ref_<code> copy.json` (delete or rename it) or a
+  numbered file from before 1.4.0 (`ref_0001.json`), whose soft-check and
+  companion folders are not read either: convert a numbered folder with
+  1.6.0's converter, as the [changelog](../changelog.md)'s "How to convert
+  your baseline names" says.
 - A file named for a model that holds another model's baseline, or whose
   `status` is not `active`, fails that test with a sentence
   that names the file, and an accept skips the test.

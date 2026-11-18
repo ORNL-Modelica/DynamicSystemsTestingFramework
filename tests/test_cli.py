@@ -1953,6 +1953,33 @@ class TestBatchManifestRobustness:
         assert bm.manifest == {}
         assert (tmp_path / "batch_manifest.json.corrupt").exists()
 
+    @pytest.mark.parametrize(
+        ("text", "why"),
+        [
+            ('{"test_0001": "Lib.T1"}', "test_0001: expected a JSON object, got str"),
+            ('{"test_0001": {"ref_id": null}}', "test_0001: no model_id"),
+        ],
+        ids=["model-id-alone", "no-model-id"],
+    )
+    def test_an_entry_that_names_no_model_is_quarantined(
+        self, text, why, tmp_path, caplog
+    ):
+        """An entry that is no object holding a model id — the bare model id
+        an older manifest held among them — is a corrupt manifest:
+        moved aside whole with its bytes, and the run starts from none."""
+        p = tmp_path / "batch_manifest.json"
+        p.write_text(text, encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="dstf.storage.batch_manifest"):
+            bm = BatchManifest.load(p)
+        assert bm.manifest == {}
+        assert not p.exists()
+        corrupt = tmp_path / "batch_manifest.json.corrupt"
+        assert corrupt.read_text(encoding="utf-8") == text
+        assert [r.getMessage() for r in caplog.records] == [
+            f"Corrupt batch manifest {p} ({why}); moved to "
+            "batch_manifest.json.corrupt — starting with an empty manifest"
+        ]
+
     def test_assign_test_keys_survives_corrupt_manifest(self, tmp_path):
         """The startup-crash regression: run/compare must proceed with fresh
         keys instead of dying on a torn manifest."""

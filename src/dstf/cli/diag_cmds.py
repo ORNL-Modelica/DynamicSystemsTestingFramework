@@ -201,8 +201,8 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     by is not there or cannot be read: the reference folder, which says
     which tests are reported under ``ref_<code>``, and the batch manifest,
     which says which ``test_NNNN`` is whose. Without them every report dir
-    would read as unused. A reference folder of old numbered names is
-    refused by the store (`OldBaselineNames`).
+    would read as unused. An old numbered baseline (``ref_0001.json``) is
+    no one's baseline, so a report dir under its name is unused too.
     """
     config = _build_config(args)
     # What it reads, named on the line: one that is not there would read as
@@ -230,7 +230,8 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     if not manifest_path.is_file():
         raise ConfigError(f"{manifest_path} is not there — nothing was removed")
     # Read here, not by `BatchManifest.load`: that moves a file it cannot
-    # read aside to `.corrupt`, and a refusal removes nothing.
+    # read aside to `.corrupt` — an entry that names no model among what it
+    # cannot read — and a refusal removes nothing.
     try:
         entries = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(entries, dict):
@@ -243,8 +244,8 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     from ..backends import BatchManifest
     from ..storage.reference_store import ReferenceStore
 
-    store = ReferenceStore(config)  # refuses a folder of old names
-    manifest = BatchManifest.load(manifest_path)
+    store = ReferenceStore(config)
+    manifest = BatchManifest(work_dir=work, manifest=entries)
     declared = {t.model_id for t in discover_tests(config)}
 
     # Each entry's model. One that names none (no model_id, or not an
@@ -257,7 +258,9 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
             model_of[key] = model_id
         else:
             logger.warning(
-                "batch_manifest.json: %s names no model — left as it is", key
+                "batch_manifest.json: %s is not an entry this version reads "
+                "(an object with a model_id) — left as it is",
+                key,
             )
     # The names a declared test is reported under: its baseline's, when the
     # store reads one for it, and its manifest key.

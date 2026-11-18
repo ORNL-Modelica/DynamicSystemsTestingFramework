@@ -173,13 +173,17 @@ def test_a_manifest_key_not_shaped_like_a_test_names_no_directory(tmp_path, caps
     assert sorted(after) == ["test_0001", "test_0002", "test_0003"]
 
 
-@pytest.mark.parametrize("entry", [{"ref_id": None}, 5], ids=["no-model-id", "int"])
+@pytest.mark.parametrize(
+    "entry",
+    [{"ref_id": None}, 5, GONE],
+    ids=["no-model-id", "int", "model-id-alone"],
+)
 def test_a_manifest_entry_that_names_no_model_is_warned_and_left(
     entry, tmp_path, capsys, caplog
 ):
-    """An entry with no model id, or one that is not an object: whose it
-    was cannot be told, so it is warned of and kept, with its directories,
-    and the rest is cleaned up as before."""
+    """An entry with no model id, or one that is not an object (a bare model
+    id among them): whose it was cannot be told, so it is warned of and
+    kept, with its directories, and the rest is cleaned up as before."""
     config, argv = _project(tmp_path)
     work = config.work_dir
     path = work / "batch_manifest.json"
@@ -196,7 +200,8 @@ def test_a_manifest_entry_that_names_no_model_is_warned_and_left(
 
     assert rc == 0
     assert [r.getMessage() for r in caplog.records] == [
-        "batch_manifest.json: test_0005 names no model — left as it is"
+        "batch_manifest.json: test_0005 is not an entry this version reads "
+        "(an object with a model_id) — left as it is"
     ]
     assert capsys.readouterr().out.splitlines()[-1] == (
         "Removed 7 directories and 1 manifest entry."
@@ -275,18 +280,3 @@ def test_a_batch_manifest_missing_or_unreadable_is_refused_and_nothing_removed(
     if state == "unreadable":
         # Not quarantined to .corrupt, as a run's read of it would.
         assert path.read_text(encoding="utf-8") == '{"test_0001": '
-
-
-def test_a_reference_folder_of_old_names_is_refused_and_nothing_removed(
-    tmp_path, capsys
-):
-    config, argv = _project(tmp_path)
-    (config.reference_dir / "ref_0001.json").write_text("{}", encoding="utf-8")
-
-    err = _refused(tmp_path, capsys, argv)
-
-    assert err == (
-        f"Config error: {config.reference_dir} holds baselines under the old "
-        "numbered names (ref_0001.json) — convert them with "
-        "scripts/convert_baseline_names.py, see CHANGELOG"
-    )

@@ -6,8 +6,8 @@ file with a function
 ```python
 def simulate(stop_time: float, tolerance: float) -> dict:
     return {
-        "time": [...],               # increasing times
-        "variables": {"x": [...]},   # one list per variable, as long as time
+        "time": [...],  # increasing times
+        "variables": {"x": [...]},  # one list per variable, as long as time
     }
 ```
 

@@ -570,14 +570,19 @@ def test_a_partial_result_file_is_never_compared(tmp_path, capsys):
     assert lines[-1] == f"Not compared: `A` (fix: {_PARTIAL})."
 
 
-def test_a_partial_result_under_an_old_manifest_is_never_compared(tmp_path, capsys):
-    """An old manifest names its models alone and records no verdict."""
+def test_a_partial_result_under_a_manifest_with_no_verdict_is_never_compared(
+    tmp_path, capsys
+):
+    """A manifest written before verdicts were recorded holds none."""
     a = _run(tmp_path / "main", {A: {"trajectories": {"x": RAMP}}})
     b = _run(tmp_path / "fix", {A: None})
     _partial(b)
     for run in (a, b):
         held = json.loads((run / "batch_manifest.json").read_text())
-        bare = {key: entry["model_id"] for key, entry in held.items()}
+        bare = {
+            key: {"model_id": entry["model_id"], "ref_id": entry["ref_id"]}
+            for key, entry in held.items()
+        }
         (run / "batch_manifest.json").write_text(json.dumps(bare))
         status = json.loads((run / "status.json").read_text())
         (run / "status.json").write_text(json.dumps({**status, "tests": []}))

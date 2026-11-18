@@ -105,8 +105,18 @@ method it needs.
 | `USES` | `uses(tests)`: per test, the classes its model uses, its own class and the packages that hold it included (an answer without the test's own model is not believed), or the simulator's reason in one line; asked of the simulator (`dstf uses`, and `dstf run --changed-since REV` before it runs); declared on the class whose workers stay open, where there is one |
 | `PERSISTENT_WORKERS` | `persistent_backend_cls()`, the class whose workers stay open |
 
-`produced_datasets` is a declaration only. What is checked is the data a
-result holds: a criterion whose mode cannot score it fails, with a reason.
+`produced_datasets` says what kind of data the backend's results are:
+`time-series` (what every bundled backend declares), `scalars`, `events`,
+`spectrum` or `distribution`. It is checked against the metrics, not
+against the data: when a backend declares exactly one kind, every leaf of a
+test's `metrics` tree is scored as that kind, and a leaf whose metric's
+`accepted_datasets` does not hold it fails with the reason (`metric 'nrmse' accepts time-series;
+got events`). A backend that declares several kinds is scored as
+`time-series`. Nothing reads what a result really holds to check the
+declaration, `register` does not check it, and a test with no `metrics`
+tree is scored the same whatever its backend declares. No bundled metric
+accepts `events`, `spectrum` or `distribution` yet: those kinds are
+reserved for metrics to come.
 
 A simulator that is slow to start and quick to run a test pays for workers
 that stay open: subclass `PersistentBackendBase` and a `Worker`, whose
