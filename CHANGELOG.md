@@ -14,12 +14,13 @@ this file says when they do.
   belongs to a test" when it left a manifest entry it cannot read: the line
   names that entry as left as it is.
 - A `dstf compare` whose `--filter` or `--package` leave fewer than the
-  project's tests says so — on the console, the dashboard, in
-  `verdicts.json` and in `dstf summary` (`1/1 · 1 of 3 tests run`) — where
-  it read as a full run.
-  `status.json` keeps the run's `selection`.
-- `dstf run --rerun` with nothing to rerun says it ran 0 of the project's
-  tests and scored their last results, where its dashboard, `verdicts.json`
+  project's tests says it scored only those — "1 of 3 tests scored; not a
+  full compare" on the console, the dashboard, in `verdicts.json`
+  (`selection`, marked `compare: true`) and in `dstf summary` (`1/1 · 1 of
+  3 tests scored`) — where it read as a full run. `status.json` keeps the
+  run's `selection`.
+- `dstf run --rerun` with nothing to rerun says it ran none of the
+  project's tests and scored their last results, where its dashboard, `verdicts.json`
   and `dstf summary` repeated the previous run's selection (`29 of 340
   tests run`).
 - On Linux, a leftover process recorded when a simulator closed is still
