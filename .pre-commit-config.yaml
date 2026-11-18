@@ -16,6 +16,9 @@ repos:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
+        # CI's `ruff format --check .` also formats the Python blocks in
+        # Markdown; the hook's default file types leave .md out.
+        types_or: [python, pyi, jupyter, markdown]
 
   - repo: local
     hooks:

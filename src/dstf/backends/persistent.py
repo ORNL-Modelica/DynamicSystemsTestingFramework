@@ -195,10 +195,11 @@ class Worker(ABC):
         self.config = config
         #: PIDs attributed to this worker's simulator process.
         self.pids: set[int] = set()
-        #: ``(pid, create_time)`` of descendants snapshotted before a
-        #: graceful shutdown — the parent may exit and orphan them, putting
-        #: them out of reach of a tree walk. The create time is what makes
-        #: the recorded PID safe to kill afterwards.
+        #: ``(pid, started)`` of descendants snapshotted before a graceful
+        #: shutdown — the parent may exit and orphan them, putting them out
+        #: of reach of a tree walk. The start (``proc_kill.started_at``:
+        #: clock ticks since boot on Linux) is what makes the recorded PID
+        #: safe to kill afterwards.
         self._orphan_children: set[tuple[int, float]] = set()
         #: The handles of the simulator processes this worker launched
         #: itself (``subprocess.Popen``), kept so a killed one is waited
@@ -746,12 +747,11 @@ class Worker(ABC):
         for pid in list(self.pids):
             kill_process_tree(pid, name_hint=self.kill_name_hint)
         # Orphans were recorded seconds ago, so PID reuse applies to them
-        # exactly as it does to a tracked parent — their create times are
-        # the guard. The name hint is not: an orphan is the *child*
-        # (dymosim, the compiled model binary), which the hint would
-        # wrongly exclude.
-        for pid, create_time in list(self._orphan_children):
-            kill_process_tree(pid, create_time=create_time)
+        # exactly as it does to a tracked parent — their starts are the
+        # guard. The name hint is not: an orphan is the *child* (dymosim,
+        # the compiled model binary), which the hint would wrongly exclude.
+        for pid, started in list(self._orphan_children):
+            kill_process_tree(pid, started=started)
         self.pids = set()
         self._orphan_children = set()
         self._reap_launched()

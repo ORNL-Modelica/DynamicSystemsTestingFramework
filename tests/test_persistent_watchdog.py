@@ -90,6 +90,10 @@ def _install_fake_psutil(monkeypatch, table: dict[int, _FakeProcess]):
         Process=_process,
         NoSuchProcess=_FakeNoSuchProcess,
         AccessDenied=_FakeAccessDenied,
+        # A process here starts at its create_time(): the guard reads the
+        # start in clock ticks from /proc only on Linux, which holds none
+        # of these PIDs.
+        LINUX=False,
     )
     monkeypatch.setitem(__import__("sys").modules, "psutil", fake)
     return fake
@@ -242,6 +246,72 @@ class TestKillProcessTreeRealProcesses:
                 except Exception:
                     pass
             parent.stdout.close()
+
+
+def _step_the_clock(monkeypatch, seconds: float) -> None:
+    """Step the wall clock by *seconds*, as a WSL pause or an NTP correction
+    does, where psutil reads it: the boot time, read afresh on every
+    ``create_time()``. The clock itself is not touched."""
+    import psutil._pslinux as pslinux
+
+    real_boot_time = pslinux.boot_time
+    monkeypatch.setattr(pslinux, "boot_time", lambda: real_boot_time() + seconds)
+
+
+@pytest.mark.skipif(
+    not __import__("sys").platform.startswith("linux"),
+    reason="start ticks since boot are read from /proc",
+)
+class TestTheReusedPidGuardOverAClockStep:
+    """A child recorded before a graceful shutdown is killed afterwards only
+    if it is still the process recorded. A step of the wall clock in
+    between must not make it read as another: it was left running."""
+
+    @pytest.fixture
+    def sleeper(self):
+        import subprocess
+
+        proc = subprocess.Popen(["sleep", "30"])
+        try:
+            yield proc
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    def _recorded(self, proc) -> tuple[int, float]:
+        import os
+
+        from dstf.backends.common.proc_kill import snapshot_children
+
+        (pair,) = [p for p in snapshot_children(os.getpid()) if p[0] == proc.pid]
+        return pair
+
+    @pytest.mark.parametrize("seconds", [5.0, -5.0], ids=["forward", "backward"])
+    def test_the_recorded_child_is_still_killed(self, sleeper, monkeypatch, seconds):
+        import signal
+
+        from dstf.backends.common.proc_kill import kill_process_tree
+
+        pid, started = self._recorded(sleeper)
+        _step_the_clock(monkeypatch, seconds)
+
+        kill_process_tree(pid, started=started)
+
+        assert sleeper.wait(timeout=10) == -signal.SIGKILL
+
+    def test_a_process_that_started_at_another_moment_is_left(
+        self, sleeper, monkeypatch
+    ):
+        import subprocess
+
+        from dstf.backends.common.proc_kill import kill_process_tree
+
+        pid, started = self._recorded(sleeper)
+
+        kill_process_tree(pid, started=started + 1)
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            sleeper.wait(timeout=1)
 
 
 # ---------------------------------------------------------------------------

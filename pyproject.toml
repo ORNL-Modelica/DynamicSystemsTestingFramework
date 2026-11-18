@@ -45,6 +45,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-xdist>=3.6",
     "types-regex>=2026.9.10",
+    # The browser tests read a server's sockets through
+    # `Process.net_connections` (psutil 6.0); the package itself needs 5.9.
+    "psutil>=6.0",
 ]
 # The authoring shell (`dstf author`). NiceGUI serves the browser UI; the
 # figure layer hands it plain figure dicts, so plotly.py stays out of the

@@ -2415,6 +2415,19 @@ def test_a_selected_run_says_it_is_not_a_full_run(tmp_path, selection, mode, sai
             "final",
             "Not a full run. 1 of 3 tests was run. The other 2 were not run.",
         ),
+        (
+            # a compare's: it scored them, and ran none
+            {"package": "P", "filter": "F", "selected": 2, "of": 14, "compare": True},
+            "final",
+            "Not a full compare. 2 of 14 tests were scored: the ones in --package "
+            "P that --filter F matches. The other 12 were not scored.",
+        ),
+        (
+            {"filter": "X*", "selected": 0, "of": 3, "compare": True},
+            "final",
+            "Not a full compare. None of the 3 tests was scored: there is none "
+            "that --filter X* matches.",
+        ),
     ],
 )
 def test_a_narrowed_run_names_what_narrowed_it(tmp_path, selection, mode, said):

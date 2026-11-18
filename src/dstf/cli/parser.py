@@ -1525,6 +1525,12 @@ def _add_compare(tree: _Tree, top) -> None:
             With --accept those results are stored as the new baselines
             instead of being scored.
 
+            A compare whose --filter or --package leave fewer than the
+            project's tests says so — "N of M tests scored; not a full
+            compare" — on the console, the dashboard, in verdicts.json
+            (`selection`, marked `compare`), and in `dstf summary`. Without
+            them it says what the last run said.
+
             Exit code: as `dstf run`.
             """,
         examples=(

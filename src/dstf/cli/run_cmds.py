@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from ..backends import dataset_kind_for
-from ..backends.progress import recorded_backend, refuse_unregistered
+from ..backends.progress import AS_RECORDED, recorded_backend, refuse_unregistered
 from ..config import ConfigError
 from ..config_shape import default
 from ..discovery.spec_shape import SIMULATION
@@ -300,8 +300,10 @@ def _narrowed(
     all_tests: list,
     recorded: set[str],
 ) -> dict | None:
-    """The ``selection`` block a run records in status.json: the tests it
-    simulates (``selected``, of ``tests``) of the tests discovered for the
+    """The ``selection`` block a run records in status.json — and a
+    ``compare`` of fewer than the project's tests hands to what it writes,
+    marked ``compare`` (D170): the tests it simulates, or a compare scores
+    (``selected``, of ``tests``), of the tests discovered for the
     project (``of``, of ``all_tests``), and what narrowed them —
     ``--changed-since``'s keys (``changed``), the values of ``--filter``,
     ``--package`` and ``--rerun`` as given, and ``merged`` where tests it
@@ -434,6 +436,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             # the merged report so the dashboard reflects the (unchanged)
             # full-suite state.
             print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
+            # This invocation's block — 0 of the project's tests run, the
+            # rest scored on their last results — not the last run's, which
+            # status.json keeps: it records that run's simulations (D170).
+            selection = _narrowed(args, changed, tests, all_tests, _recorded(config))
             config.write_default_file()
             config.work_dir.mkdir(parents=True, exist_ok=True)
             from ..reporting.dashboard_render import build_rerun_flags, render_final
@@ -444,12 +450,22 @@ def cmd_run(args: argparse.Namespace) -> int:
                 theme=config.theme,
                 comparisons=prior_comps,
                 results=prior_results,
+                selection=selection,
             )
             # The verdicts as they stand, on whatever was asked for. The
             # exit code stays 0 regardless of them: "nothing to rerun" is
             # this invocation's whole outcome.
             scope_tests = [t for t in all_tests if t.model_id in prior_results]
-            _show_reports(prior_comps, prior_results, scope_tests, store, config, args)
+            _show_reports(
+                prior_comps,
+                prior_results,
+                scope_tests,
+                store,
+                config,
+                args,
+                note=_selection_note(selection),
+                selection=selection,
+            )
             return 0
 
     if not tests:
@@ -644,6 +660,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
     all_tests = discover_tests(config)
     tests = _filter_tests(all_tests, args.filter, args.package)
     _notify_orphans(config, all_tests)
+    # What it scores, when its own --filter / --package leave fewer than
+    # the project's tests: the block a run records, of the tests it scores,
+    # marked a compare's — every surface then says "scored", not "run"
+    # (D170). Otherwise the last run's, which it scores again, as recorded.
+    # status.json keeps the run's either way: it records the simulations.
+    narrowed = _narrowed(args, None, tests, all_tests, set())
+    if narrowed is not None:
+        narrowed["compare"] = True
 
     from ..comparison.comparator import compare_all
     from ..storage.reference_store import ReferenceStore
@@ -718,15 +742,26 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # result; the Reference link is the sidecar's, and stays empty.
     from ..reporting.dashboard_render import render_final
 
+    selection = AS_RECORDED if narrowed is None else narrowed
     render_final(
         config.work_dir,
         rerun_flags=_rerun_flags(config, args),
         theme=config.theme,
         comparisons=comparisons,
         results=results,
+        selection=selection,
     )
 
-    _show_reports(comparisons, results, tests, store, config, args)
+    _show_reports(
+        comparisons,
+        results,
+        tests,
+        store,
+        config,
+        args,
+        note=_selection_note(narrowed),
+        selection=selection,
+    )
     return _exit_code(comparisons)
 
 
@@ -744,20 +779,33 @@ def _rerun_flags(config, args) -> dict[str, str]:
 
 def _selection_note(selection: dict | None) -> str | None:
     """What the Results line adds for a run that simulated only some of
-    the project's tests (:func:`_narrowed`); None for every other run."""
+    the project's tests, or a compare that scored only some of them
+    (:func:`_narrowed`); None for every other run or compare."""
     if selection is None or selection["selected"] == selection["of"]:
         return None
-    return f"{selection['selected']} of {selection['of']} tests run; not a full run"
+    did, what = ("scored", "compare") if selection.get("compare") else ("run", "run")
+    return (
+        f"{selection['selected']} of {selection['of']} tests {did}; not a full {what}"
+    )
 
 
 def _show_reports(
-    comparisons, results, tests, store, config, args, note: str | None = None
+    comparisons,
+    results,
+    tests,
+    store,
+    config,
+    args,
+    note: str | None = None,
+    selection: object = AS_RECORDED,
 ) -> None:
     """What a scored ``run`` or ``compare`` shows — three independent
     things, and any combination does all of what it asks:
 
     * ``verdicts.json`` in the work dir and the console verdict table,
-      ALWAYS (``note``: what its Results line adds in brackets);
+      ALWAYS (``note``: what its Results line adds in brackets;
+      ``selection``: the block verdicts.json and the dashboard say the
+      scored tests were chosen by, status.json's unless given);
     * ``--report``: the per-test pages;
     * ``--report-format junit|html``: that file, at ``--output``.
 
@@ -772,7 +820,7 @@ def _show_reports(
 
     # What was decided, for a script: one file, on every scoring route, and
     # each test's verdict beside its simulation status in status.json.
-    write_verdicts(config.work_dir, comparisons, tests, results)
+    write_verdicts(config.work_dir, comparisons, tests, results, selection=selection)
     print_report(comparisons, note=note)
     if getattr(args, "report", False):
         _generate_report_suite(
@@ -783,8 +831,9 @@ def _show_reports(
             config,
             browser=_browser(args),
             rerun_flags=_rerun_flags(config, args),
+            selection=selection,
         )
-    _write_report_file(comparisons, args, config, results)
+    _write_report_file(comparisons, args, config, results, selection=selection)
 
 
 def _generate_report_suite(
@@ -796,6 +845,7 @@ def _generate_report_suite(
     *,
     browser: bool,
     rerun_flags: dict[str, str],
+    selection: object = AS_RECORDED,
 ) -> None:
     """Generate per-test reports + refresh the unified dashboard, and open
     it in a browser tab when ``browser``.
@@ -815,6 +865,7 @@ def _generate_report_suite(
         theme=config.theme,
         comparisons=comparisons,
         results=results,
+        selection=selection,
     )
     dashboard_path = config.work_dir / "dashboard.html"
     print(f"Report: {dashboard_path}")
@@ -830,7 +881,11 @@ def _report_output(args: argparse.Namespace, fmt: str) -> str:
 
 
 def _write_report_file(
-    comparisons: list, args: argparse.Namespace, config, results: dict
+    comparisons: list,
+    args: argparse.Namespace,
+    config,
+    results: dict,
+    selection: object = AS_RECORDED,
 ) -> None:
     """Write the file ``--report-format junit|html`` asks for (``console``,
     the default, asks for none); ``results`` give the HTML page its CPU
@@ -856,6 +911,7 @@ def _write_report_file(
             theme=config.theme,
             comparisons=comparisons,
             results=results,
+            selection=selection,
         )
         print(f"HTML report written to {out}")
         if out.resolve().parent != config.work_dir.resolve():

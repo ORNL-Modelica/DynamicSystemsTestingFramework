@@ -103,11 +103,19 @@ Two files in the work directory are written for programs:
   (`files`), how many of the tests could not be asked what they use
   (`could_not_be_asked`) and, where a changed file ran every test, why
   (`every_test`: `no class stores it`, or `its top package cannot be
-  named`). `selected` below `of` is not a full run.
+  named`). `selected` below `of` is not a full run. A compare that scored
+  fewer than the project's tests (its own `--filter` or `--package`)
+  writes the same block with `compare: true`: `selected` is then the tests
+  it scored, and it simulated none.
 - `status.json` — what became of each SIMULATION: `passed` there means the
   simulation finished, not that the test passed. Once a run is scored each
-  test also carries its `verdict`. Its `selection` is the run's, as above;
-  `verdicts.json` copies it from here, so a later `compare` keeps it.
+  test also carries its `verdict`. Its `selection` is the run's that
+  simulated, as above. `verdicts.json` and the dashboard copy it from here
+  — so a later `compare` keeps it — except for two invocations that
+  simulate nothing and say what they did themselves: a `compare` whose
+  own `--filter` or `--package` leave fewer than the project's tests (its
+  block, marked `compare: true`), and a `run --rerun` with nothing to
+  rerun (`selected: 0`). `status.json` keeps the run's block then.
 
 ```python
 import json

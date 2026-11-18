@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 def kill_process_tree(
     pid: int,
     name_hint: str | None = None,
-    create_time: float | None = None,
+    started: float | None = None,
 ) -> None:
     """Kill *pid* and its entire child tree, children first.
 
@@ -33,8 +33,8 @@ def kill_process_tree(
 
     * ``name_hint`` — nothing is killed unless the process's name still
       contains the hint (``"dymola"``, ``"omc"``, ``"julia"``).
-    * ``create_time`` — the exact process-creation timestamp recorded when
-      the PID was captured. A recycled PID has a later one, and nothing is
+    * ``started`` — when the process started, recorded with the PID
+      (:func:`started_at`). A recycled PID started later, and nothing is
       killed. Pass it whenever the PID was recorded earlier and the caller
       can't otherwise prove the process is the same one.
 
@@ -42,8 +42,8 @@ def kill_process_tree(
     they are read from the process we just validated, and the hint would
     wrongly exclude exactly the children we're after (dymosim under
     dymola). Children recorded *earlier* do need both: see
-    :func:`snapshot_children`, which records them with their create times
-    for feeding back through this function.
+    :func:`snapshot_children`, which records them with their starts for
+    feeding back through this function.
 
     A parent that already exited takes its children out of reach here,
     which is what ``snapshot_children`` exists to cover.
@@ -60,7 +60,7 @@ def kill_process_tree(
         parent = psutil.Process(pid)
         if name_hint and name_hint not in (parent.name() or "").lower():
             return
-        if create_time is not None and parent.create_time() != create_time:
+        if started is not None and started_at(parent) != started:
             # PID reused since it was recorded — this is somebody else.
             return
         children = parent.children(recursive=True)
@@ -83,8 +83,8 @@ def snapshot_children(
     pid: int,
     name_hint: str | None = None,
 ) -> set[tuple[int, float]]:
-    """Descendants of *pid* as ``(pid, create_time)`` pairs, recorded while
-    the parent is still alive.
+    """Descendants of *pid* as ``(pid, started)`` pairs (:func:`started_at`),
+    recorded while the parent is still alive.
 
     Covers exactly one case: a graceful shutdown that succeeds. dymola.exe
     exits on ``close()`` while dymosim keeps running and keeps the result
@@ -95,7 +95,7 @@ def snapshot_children(
     *before* ``close()`` was ever called has already orphaned its children
     beyond the reach of this snapshot.)
 
-    The create times are what make the recorded PIDs safe to kill later:
+    The starts are what make the recorded PIDs safe to kill later:
     the graceful window is seconds long, and a PID freed inside it can be
     reissued to an unrelated process — or to another worker's fresh
     dymosim. ``name_hint`` guards the parent the same way
@@ -121,10 +121,10 @@ def snapshot_children(
     snapshot: set[tuple[int, float]] = set()
     for child in children:
         try:
-            snapshot.add((child.pid, child.create_time()))
+            snapshot.add((child.pid, started_at(child)))
         except Exception:
             # Vanished or inaccessible between the walk and the read —
-            # a PID without its create time is not safe to kill later.
+            # a PID without its start is not safe to kill later.
             continue
     return snapshot
 
@@ -133,7 +133,8 @@ def orphans_in(
     directory: str, born_after: int | None, token: str | None = None
 ) -> set[tuple[int, float]]:
     """Linux only: the processes a dead tool left behind in *directory*, as
-    ``(pid, create_time)`` pairs for :func:`kill_process_tree`.
+    ``(pid, started)`` pairs (:func:`started_at`) for
+    :func:`kill_process_tree`.
 
     A tool that dies by itself orphans its children, and a child nobody
     recorded while the tool was alive cannot be found through it any more.
@@ -194,10 +195,31 @@ def orphans_in(
                 continue
             if token is not None and proc.environ().get(TREE_TOKEN) != token:
                 continue
-            found.add((proc.pid, proc.create_time()))
+            found.add((proc.pid, started_at(proc)))
         except Exception:
             continue
     return found
+
+
+def started_at(proc: psutil.Process) -> float:
+    """When *proc* started, as the guard against a reissued PID compares it
+    (:func:`kill_process_tree`, with the pairs :func:`snapshot_children`
+    and :func:`orphans_in` record): on Linux its start in clock ticks since
+    boot (:func:`_start_ticks`), elsewhere psutil's ``create_time``. Raises
+    when it cannot be read.
+
+    Not ``create_time`` on Linux: psutil adds the boot time to it, read
+    afresh on each call, so a step of the wall clock (a WSL pause, an NTP
+    correction) between the record and the kill made the same process read
+    as another, and it was left running. The ticks are what the kernel
+    records a process's start in, and no step moves them. Asked of psutil,
+    whose platform it is: the platform a fake psutil declares is the one
+    it models."""
+    import psutil
+
+    if getattr(psutil, "LINUX", False):
+        return _start_ticks(proc.pid)
+    return proc.create_time()
 
 
 def started_ticks(pids: set[int]) -> int | None:
@@ -441,8 +463,8 @@ def _sweep(cwd: Path, token: str) -> None:
     :func:`orphans_in` with the launch's *token*: in the folder and
     carrying the mark — a person's shell in the same folder carries
     none."""
-    for pid, created in orphans_in(str(cwd), None, token=token):
-        kill_process_tree(pid, create_time=created)
+    for pid, started in orphans_in(str(cwd), None, token=token):
+        kill_process_tree(pid, started=started)
 
 
 def _drain(proc: subprocess.Popen) -> tuple[str | bytes | None, str | bytes | None]:

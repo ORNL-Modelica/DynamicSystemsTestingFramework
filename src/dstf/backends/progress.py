@@ -25,6 +25,15 @@ from pathlib import Path
 #: test was still "finalizing".
 DONE_PHASE = "done"
 
+#: A ``selection`` read from status.json — the last run's block — where a
+#: caller gives none of its own: the dashboard's and verdicts.json's
+#: default. A run's first paint is given its own instead (status.json is
+#: still the LAST run's until the reporter's first write), and so is a
+#: command that scores fewer tests than that run without simulating
+#: (``cli.run_cmds``: a ``compare --filter``, a ``run --rerun`` with
+#: nothing to rerun).
+AS_RECORDED: object = object()
+
 
 @dataclass
 class TestStatus:

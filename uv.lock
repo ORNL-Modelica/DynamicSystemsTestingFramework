@@ -683,6 +683,7 @@ browser = [
 ]
 dev = [
     { name = "mypy" },
+    { name = "psutil" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -715,6 +716,7 @@ requires-dist = [
     { name = "ompython", marker = "extra == 'om'", specifier = ">=3.5" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.64" },
     { name = "psutil", specifier = ">=5.9" },
+    { name = "psutil", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
