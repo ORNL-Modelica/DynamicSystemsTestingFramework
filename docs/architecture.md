@@ -439,7 +439,7 @@ A backend whose result file grows during a run declares
 
 ```python
 @classmethod
-def live_result_path(cls, test_dir: Path) -> Path:   # test_dir = work_dir/<test_key>
+def live_result_path(cls, test_dir: Path) -> Path:  # test_dir = work_dir/<test_key>
     return test_dir / "dsres.mat"
 ```
 
@@ -451,8 +451,8 @@ end, and do not.
 The file is followed with `backends/common/live_mat.py`:
 
 ```python
-reader = LiveMatReader(path, max_rows=2000)   # one per result-file path; no I/O yet
-snap = reader.poll(names)                     # about once a second
+reader = LiveMatReader(path, max_rows=2000)  # one per result-file path; no I/O yet
+snap = reader.poll(names)  # about once a second
 ```
 
 `poll(names)` returns an immutable `LiveSnapshot`:
