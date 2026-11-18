@@ -465,8 +465,9 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   tests it scored: with `--merge` or `--rerun` that is also each test it
   did not run that had a last result in the work directory, scored on that
   result. A `compare` whose `--filter` or `--package` leave fewer than the
-  project's tests ends its cell the same way, N the tests it scored. One
-  key line under the matrix says this short.
+  project's tests ends its cell with ` · N of M tests scored`: it scored N
+  of them and simulated none. One key line under the matrix says this
+  short.
 - **No baseline is no failure.** A test with no stored baseline (NO_REF) was
   scored against nothing: the cell counts it as `1 no baseline`, never among
   those that also fail on the base, and with `--base`, `1 also has none on
@@ -696,7 +697,8 @@ run.`), `selection` in `status.json` and `verdicts.json`, and the cell of
 `dstf summary` (`2/2 · 2 of 14 tests run`). A later `compare` over the
 work directory still says so; a later full run does not. A `compare`
 narrowed by its own `--filter` or `--package` says how many tests it
-scored instead, and a compare after it without them says the run's again.
+scored instead (`Not a full compare. 1 of 14 tests was scored: …`), and a
+compare after it without them says the run's again.
 Any run of fewer than the project's tests says the same — by `--filter`,
 `--package` or `--rerun` too, each named on the dashboard. The JUnit file
 does not say it: it is a plain suite of the tests that ran.

@@ -1526,9 +1526,10 @@ def _add_compare(tree: _Tree, top) -> None:
             instead of being scored.
 
             A compare whose --filter or --package leave fewer than the
-            project's tests says it scored only those: on the console, the
-            dashboard, in verdicts.json (`selection`), and in `dstf
-            summary`. Without them it says what the last run said.
+            project's tests says so — "N of M tests scored; not a full
+            compare" — on the console, the dashboard, in verdicts.json
+            (`selection`, marked `compare`), and in `dstf summary`. Without
+            them it says what the last run said.
 
             Exit code: as `dstf run`.
             """,

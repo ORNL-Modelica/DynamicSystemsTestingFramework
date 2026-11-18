@@ -9860,33 +9860,52 @@ and keeps the last run's block); the authoring tool's queue.
 `--filter` or `--package` scores fewer tests, but its `verdicts.json` and
 dashboard kept the last run's `selection`. After a full run, a compare of
 one test of three wrote `selection: null`, and `dstf summary` read its
-`1/1` as a full run.
+`1/1` as a full run. Said in a run's words, the same block was false the
+other way: after `run --filter '*Constant*'`, a `compare --filter
+'*Ramp*'` would have named SimpleRamp as run (its row: NOT RUN) and
+ConstantCsv as not run (its row: SIMULATED).
 
 **Decision.**
 
-1. *A narrowed compare records its own block.* When its `--filter` /
-   `--package` leave fewer than the project's tests, `cmd_compare` builds
-   the block a run builds (`cli/run_cmds._narrowed`): `selected` is the
-   tests it scores, `of` the project's discovered tests, the flags' values
-   as given. It never says `merged`: a compare scores only the tests it
-   names. The console's `Results:` line, `verdicts.json`, the dashboard and
-   the `--report-format html` page say it, through D169's one rendering.
-2. *status.json keeps the run's block.* status.json records the last run's
+1. *A narrowed compare records its own block, marked.* When its
+   `--filter` / `--package` leave fewer than the project's tests,
+   `cmd_compare` builds the block a run builds (`cli/run_cmds._narrowed`)
+   and adds `compare: true`: `selected` is the tests it scored, `of` the
+   project's discovered tests, the flags' values as given. It never says
+   `merged`: a compare scores only the tests it names.
+2. *A compare's block is said as scored.* Each surface renders both kinds
+   of block in its one renderer, and says what the invocation did: a
+   compare SCORED its tests and simulated none.
+   - The dashboard (`dashboard_render.run_notice`): "Not a full compare.
+     1 of 3 tests was scored: the one that --filter *Constant* matches.
+     The other 2 were not scored."
+   - The console's `Results:` line (`run_cmds._selection_note`): "(1 of 3
+     tests scored; not a full compare)".
+   - `dstf summary`'s cell (`· 1 of 3 tests scored`) and its key line
+     (`"N of M tests scored" = a compare scored N of the project's M tests
+     (--filter or --package), the others not: not a full compare.`).
+   A run's block keeps D169's words.
+3. *status.json keeps the run's block.* status.json records the last run's
    simulations, so its `selection` stays the run's; the compare's block is
    handed to what it writes (`write_verdicts`, `render_final`,
    `render_final_to`: their `selection`, status.json's `AS_RECORDED`
-   unless given). A later compare that its own flags do not narrow reads
-   the run's block again, as before — it scores that run's tests again.
-3. *A rerun with nothing to rerun says so.* `run --rerun` that finds no
+   unless given), the `--report` suite's dashboard and the
+   `--report-format html` page included. A later compare that its own
+   flags do not narrow reads the run's block again, as before — it scores
+   that run's tests again.
+4. *A rerun with nothing to rerun says so.* `run --rerun` that finds no
    test in its categories simulates nothing and scores the last results;
    its `verdicts.json`, console and dashboard carry this invocation's
-   block (`selected: 0`, `rerun` as given, `merged: true` where the work
-   directory holds a last result), not the last run's. status.json keeps
-   that run's, as in point 2. The exit code stays 0.
-4. *Old data.* Nothing changes for a file: the block's keys are D169's.
+   block, built by `_narrowed` as D169 builds a rerun's: `selected: 0`,
+   `rerun` as given, and `merged: true` when the work directory's batch
+   manifest holds one of the project's tests — except beside `--accept`, which scores none
+   (D169.3) and writes no `merged`. It is a run's block, in a run's words;
+   with none run the dashboard reads "None of the 3 tests was run: there
+   is none that the last run left in failed (--rerun). Their last
+   results, where there are any, are scored." status.json keeps the last
+   run's block, as in point 3. The exit code stays 0.
+5. *Old data.* A file with no `compare` key is a run's, as before.
 
 This closes D169's "Not in this decision" item for `compare`.
 
-**Not in this decision.** The authoring tool's queue. The words of the
-shared rendering — "N of M tests were run", "The other K were not run" —
-are a run's; under a compare they count the tests it scored.
+**Not in this decision.** The authoring tool's queue.

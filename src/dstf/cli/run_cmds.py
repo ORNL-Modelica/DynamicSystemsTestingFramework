@@ -300,8 +300,10 @@ def _narrowed(
     all_tests: list,
     recorded: set[str],
 ) -> dict | None:
-    """The ``selection`` block a run records in status.json: the tests it
-    simulates (``selected``, of ``tests``) of the tests discovered for the
+    """The ``selection`` block a run records in status.json — and a
+    ``compare`` of fewer than the project's tests hands to what it writes,
+    marked ``compare`` (D170): the tests it simulates, or a compare scores
+    (``selected``, of ``tests``), of the tests discovered for the
     project (``of``, of ``all_tests``), and what narrowed them —
     ``--changed-since``'s keys (``changed``), the values of ``--filter``,
     ``--package`` and ``--rerun`` as given, and ``merged`` where tests it
@@ -659,10 +661,13 @@ def cmd_compare(args: argparse.Namespace) -> int:
     tests = _filter_tests(all_tests, args.filter, args.package)
     _notify_orphans(config, all_tests)
     # What it scores, when its own --filter / --package leave fewer than
-    # the project's tests: the block a run records, of the tests it scores
+    # the project's tests: the block a run records, of the tests it scores,
+    # marked a compare's — every surface then says "scored", not "run"
     # (D170). Otherwise the last run's, which it scores again, as recorded.
     # status.json keeps the run's either way: it records the simulations.
     narrowed = _narrowed(args, None, tests, all_tests, set())
+    if narrowed is not None:
+        narrowed["compare"] = True
 
     from ..comparison.comparator import compare_all
     from ..storage.reference_store import ReferenceStore
@@ -774,10 +779,14 @@ def _rerun_flags(config, args) -> dict[str, str]:
 
 def _selection_note(selection: dict | None) -> str | None:
     """What the Results line adds for a run that simulated only some of
-    the project's tests (:func:`_narrowed`); None for every other run."""
+    the project's tests, or a compare that scored only some of them
+    (:func:`_narrowed`); None for every other run or compare."""
     if selection is None or selection["selected"] == selection["of"]:
         return None
-    return f"{selection['selected']} of {selection['of']} tests run; not a full run"
+    did, what = ("scored", "compare") if selection.get("compare") else ("run", "run")
+    return (
+        f"{selection['selected']} of {selection['of']} tests {did}; not a full {what}"
+    )
 
 
 def _show_reports(

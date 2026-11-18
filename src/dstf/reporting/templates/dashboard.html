@@ -193,7 +193,7 @@ body.has-selection { padding-bottom: 5em; }
   {% endif %}
 </div>
 {% if run_notice %}
-<div class="run-notice" id="run-notice"><strong>Not a full run.</strong> {% for part in run_notice %}{% if part.code %}<code>{{ part.text }}</code>{% else %}{{ part.text }}{% endif %}{% endfor %}</div>
+<div class="run-notice" id="run-notice">{% for part in run_notice %}{% if part.strong %}<strong>{{ part.text }}</strong> {% elif part.code %}<code>{{ part.text }}</code>{% else %}{{ part.text }}{% endif %}{% endfor %}</div>
 {% endif %}
 
 <div class="bar" id="progress-bar"></div>

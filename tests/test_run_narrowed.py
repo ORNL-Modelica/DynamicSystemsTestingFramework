@@ -277,33 +277,43 @@ def test_a_filter_that_leaves_every_test_writes_no_block(proj, capsys):
     assert _notice(proj) is None
 
 
-def _compare(proj, capsys, *argv) -> str:
-    rc = main(
+def _compare(proj, capsys, *argv, rc: int = 0) -> str:
+    got = main(
         ["compare", "--config", str(proj.config_file), "--work-dir", str(proj.work_dir)]
         + ["--no-browser", *argv]
     )
     out, err = capsys.readouterr()
-    assert rc == 0, out + err
+    assert got == rc, out + err
     return out
+
+
+#: The summary's key line for a compare of fewer than the project's tests.
+COMPARE_KEY = (
+    ' "N of M tests scored" = a compare scored N of the project\'s M tests '
+    "(--filter or --package), the others not: not a full compare."
+)
 
 
 def test_a_compare_narrowed_by_filter_says_how_many_it_scored(proj, capsys):
     """After a full run, `compare --filter` scores one of the three tests:
-    its verdicts, console, dashboard and `summary` cell say so. status.json
-    keeps the run's block — it records the simulations — and a later
-    compare without a filter reads that again: a full run."""
+    its verdicts, console, dashboard and `summary` cell say it SCORED one,
+    never that only one was run — the other two were, and their rows say
+    so. status.json keeps the run's block — it records the simulations —
+    and a later compare without a filter reads that again: a full run."""
     _run(proj, capsys)
     out = _compare(proj, capsys, "--filter", "*Constant*")
-    block = {"filter": "*Constant*", "selected": 1, "of": 3}
+    block = {"filter": "*Constant*", "selected": 1, "of": 3, "compare": True}
     verdicts = _read(proj, "verdicts.json")
     assert (verdicts["selection"], verdicts["totals"]["total"]) == (block, 1)
-    assert "\nResults: 1/1 passed (1 of 3 tests run; not a full run)\n" in out
+    assert "\nResults: 1/1 passed (1 of 3 tests scored; not a full compare)\n" in out
     assert _notice(proj) == (
-        "Not a full run. 1 of 3 tests was run: the one that --filter "
-        "*Constant* matches. The other 2 were not run."
+        "Not a full compare. 1 of 3 tests was scored: the one that --filter "
+        "*Constant* matches. The other 2 were not scored."
     )
     markdown, cells = _summary(capsys, f"some={proj.work_dir}")
-    assert "| Python/linux | 1/1 · 1 of 3 tests run |" in markdown
+    assert "| Python/linux | 1/1 · 1 of 3 tests scored |" in markdown
+    assert COMPARE_KEY in markdown
+    assert "tests run" not in markdown
     assert [c["selection"] for c in cells] == [block]
     assert _read(proj, "status.json")["selection"] is None
 
@@ -311,6 +321,43 @@ def test_a_compare_narrowed_by_filter_says_how_many_it_scored(proj, capsys):
     assert _read(proj, "verdicts.json")["selection"] is None
     assert "\nResults: 3/3 passed\n" in out
     assert _notice(proj) is None
+
+
+def test_a_compare_of_another_filter_than_the_run_s_names_what_it_scored(proj, capsys):
+    """The run simulated ConstantCsv alone; the compare scores SimpleRamp
+    alone, which has no result: it says SimpleRamp was scored and the
+    other two were not — not that SimpleRamp ran and ConstantCsv did
+    not."""
+    _run(proj, capsys, "--filter", "*Constant*")
+    out = _compare(proj, capsys, "--filter", "*Ramp*", rc=1)
+    block = {"filter": "*Ramp*", "selected": 1, "of": 3, "compare": True}
+    verdicts = _read(proj, "verdicts.json")
+    assert verdicts["selection"] == block
+    assert [(t["model_id"], t["status"]) for t in verdicts["tests"]] == [
+        (SIMPLE_RAMP, "NOT RUN")
+    ]
+    assert "(1 of 3 tests scored; not a full compare)\n" in out
+    assert "tests run" not in out
+    assert _notice(proj) == (
+        "Not a full compare. 1 of 3 tests was scored: the one that --filter "
+        "*Ramp* matches. The other 2 were not scored."
+    )
+    markdown, _ = _summary(capsys, f"ramp={proj.work_dir}")
+    assert "· 1 of 3 tests scored |" in markdown and COMPARE_KEY in markdown
+    assert "tests run" not in markdown
+    # status.json is still the run's: ConstantCsv simulated, by --filter
+    assert _read(proj, "status.json")["selection"] == {
+        "filter": "*Constant*",
+        "selected": 1,
+        "of": 3,
+    }
+
+
+#: The notice of a compare of SimpleRamp alone, by --package.
+_RAMP_BY_PACKAGE = (
+    f"Not a full compare. 1 of 3 tests was scored: the one in --package "
+    f"{SIMPLE_RAMP}. The other 2 were not scored."
+)
 
 
 def test_a_compare_narrowed_by_package_says_so_in_its_html_file(proj, capsys, tmp_path):
@@ -326,25 +373,30 @@ def test_a_compare_narrowed_by_package_says_so_in_its_html_file(proj, capsys, tm
         "-o",
         str(page),
     )
-    block = {"package": SIMPLE_RAMP, "selected": 1, "of": 3}
+    block = {"package": SIMPLE_RAMP, "selected": 1, "of": 3, "compare": True}
     assert _read(proj, "verdicts.json")["selection"] == block
-    said = (
-        f"Not a full run. 1 of 3 tests was run: the one in --package "
-        f"{SIMPLE_RAMP}. The other 2 were not run."
-    )
     found = _NOTICE.search(page.read_text(encoding="utf-8"))
     assert found is not None
     assert (markupsafe.Markup(found.group(1)).striptags(), _notice(proj)) == (
-        said,
-        said,
+        _RAMP_BY_PACKAGE,
+        _RAMP_BY_PACKAGE,
     )
+
+
+def test_a_narrowed_compare_s_report_suite_dashboard_says_so(proj, capsys):
+    """`--report` writes the dashboard again beside the per-test pages: it
+    says what the compare scored too, not the run's (full) block."""
+    _run(proj, capsys)
+    _compare(proj, capsys, "--package", SIMPLE_RAMP, "--report")
+    assert (Path(proj.work_dir) / "reports").is_dir()
+    assert _notice(proj) == _RAMP_BY_PACKAGE
 
 
 def test_a_rerun_with_nothing_to_rerun_says_what_this_invocation_ran(proj, capsys):
     """An earlier run of one test by --filter, all passing: `--rerun`
     finds nothing to rerun, simulates nothing and exits 0. Its verdicts,
-    console and dashboard say it ran 0 of the project's 3 tests and scored
-    the last results — not the earlier run's "1 of 3 by --filter"."""
+    console and dashboard say it ran none of the project's 3 tests and
+    scored the last results — not the earlier run's "1 of 3 by --filter"."""
     _run(proj, capsys, "--filter", SIMPLE_RAMP)
     out = _run(proj, capsys, "--rerun")
     assert "Nothing to rerun (no tests in categories: failed)" in out
@@ -352,11 +404,12 @@ def test_a_rerun_with_nothing_to_rerun_says_what_this_invocation_ran(proj, capsy
     assert _read(proj, "verdicts.json")["selection"] == block
     assert "(0 of 3 tests run; not a full run)\n" in out
     assert _notice(proj) == (
-        "Not a full run. 0 of 3 tests were run: the ones that the last run "
-        "left in failed (--rerun). The other 3 were not run: their last "
-        "results, where there are any, are scored."
+        "Not a full run. None of the 3 tests was run: there is none that the "
+        "last run left in failed (--rerun). Their last results, where there "
+        "are any, are scored."
     )
     markdown, cells = _summary(capsys, f"rerun={proj.work_dir}")
+    assert "· 0 of 3 tests run |" in markdown
     assert [c["selection"] for c in cells] == [block]
     # status.json records the simulations: the run that made them
     assert _read(proj, "status.json")["selection"] == {

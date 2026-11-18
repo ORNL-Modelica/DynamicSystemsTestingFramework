@@ -94,19 +94,26 @@ class Cell:
     #: Dymola/linux"); "" otherwise
     base_note: str = ""
     #: the file's ``selection`` (a run of N of the project's M tests: N, M
-    #: and what narrowed them — a filter, a package, a rerun, a revision);
-    #: None for a run of every test, and in a file written before the key
-    #: existed
+    #: and what narrowed them — a filter, a package, a rerun, a revision;
+    #: or a compare that scored N of them, marked ``compare``); None for a
+    #: run of every test, and in a file written before the key existed
     selection: dict | None = None
 
     @property
     def selected(self) -> tuple[int, int] | None:
-        """``(N, M)`` when the run simulated N of M tests, N < M: not a
-        full run. None otherwise."""
+        """``(N, M)`` when the run simulated N of M tests, or the compare
+        scored N of them, N < M: not a full run (:attr:`compared` says
+        which). None otherwise."""
         sel = self.selection or {}
         n, of = sel.get("selected"), sel.get("of")
         whole = all(isinstance(v, int) and not isinstance(v, bool) for v in (n, of))
         return (n, of) if whole and 0 <= n < of else None
+
+    @property
+    def compared(self) -> bool:
+        """The file is a compare's that scored only some of the project's
+        tests (``compare --filter`` / ``--package``): it simulated none."""
+        return (self.selection or {}).get("compare") is True
 
     @property
     def merged(self) -> bool:

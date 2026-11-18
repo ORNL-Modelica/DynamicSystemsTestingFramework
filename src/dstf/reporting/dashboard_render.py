@@ -422,10 +422,17 @@ _EVERY_TEST_FILE = {NO_CLASS: "that no class stores"}
 def run_notice(selection: object, mode: str) -> list[dict] | None:
     """The notice a run of fewer than the project's tests carries
     (``status.json``'s ``selection``: ``cli.run_cmds._narrowed``'s block),
-    as the sentence's parts in order — each ``{"text", "code"}``, ``code``
+    or a compare that scored fewer (the block marked ``compare``, D170), as
+    the sentence's parts in order — each ``{"text", "code"}``, ``code``
     true for a value the user gave (a filter, a package, a revision),
-    drawn as code. None for a run of every test, a run that selected all
-    of them, and a block that is not one.
+    drawn as code; the first is its head, ``strong``: "Not a full run." or
+    "Not a full compare.". None for a run of every test, a run that
+    selected all of them, and a block that is not one.
+
+    A compare's tests "were scored", its others "were not scored": a
+    compare simulates nothing, and the tests it did not score may well
+    have run. A run that ran none (``--rerun`` with nothing to rerun)
+    says "None of the M tests was run: there is none that …".
 
     The tests run are "the ones" the narrowing flags leave, each flag a
     clause: ``in --package P``, then ``that --filter F matches``, ``that
@@ -437,6 +444,15 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
     was run"."""
     if not isinstance(selection, Mapping):
         return None
+    parts = _notice_body(selection, mode)
+    if parts is None:
+        return None
+    whole = "compare" if selection.get("compare") is True else "run"
+    return [{"text": f"Not a full {whole}.", "code": False, "strong": True}, *parts]
+
+
+def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
+    """:func:`run_notice`'s sentence after its head."""
     n, of = selection.get("selected"), selection.get("of")
     if not (_whole(n) and _whole(of) and n < of):
         return None
@@ -453,15 +469,18 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
     def code(t: str) -> dict:
         return {"text": t, "code": True}
 
+    # A compare scores the tests it names and simulates none.
+    did = "scored" if selection.get("compare") is True else "run"
     rest = of - n
     if mode == "live":
-        ran = "is being run" if n == 1 else "are being run"
-        left = "is not run" if rest == 1 else "are not run"
+        ran = f"is being {did}" if n <= 1 else f"are being {did}"
+        left = f"is not {did}" if rest == 1 else f"are not {did}"
     else:
-        ran = "was run" if n == 1 else "were run"
-        left = "was not run" if rest == 1 else "were not run"
+        ran = f"was {did}" if n <= 1 else f"were {did}"
+        left = f"was not {did}" if rest == 1 else f"were not {did}"
+    merged = selection.get("merged") is True
     others = f". The other {rest} {left}"
-    if selection.get("merged") is True:
+    if merged:
         # Only those the work directory holds a last result of: a --merge
         # beside one earlier run of some tests scores those, no others.
         others += ": their last results, where there are any, are scored"
@@ -476,6 +495,14 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
         clauses.append([text("--filter "), code(pattern), text(" matches")])
     if rerun:
         clauses.append([text("the last run left in "), code(rerun), text(" (--rerun)")])
+    if n == 0 and rev is None:
+        # None ran (a --rerun with nothing to rerun): no "ones" to name,
+        # and every test is among the others.
+        parts = [text(f"None of the {of} tests {ran}")]
+        if within or clauses:
+            parts += [text(": there is none"), *within, *_that(clauses, text)]
+        last = " Their last results, where there are any, are scored." if merged else ""
+        return [*parts, text("." + last)]
     changed = f"{files} file{'' if files == 1 else 's'}"
     every = _given(selection, "every_test") if rev is not None else None
     if every is not None:

@@ -7,7 +7,8 @@ cell PASS over the run's total, then in one parenthesis the other status
 words' counts (NO_REF's as ``no baseline``) and, with a base, ``K also fail
 on <base>`` of a cell's failures and ``J also have none on <base>`` of its
 tests with no baseline, and last ``· N of M tests run`` for a run of fewer
-than the project's tests (:attr:`Cell.selected`) — under it one key line, then one folded list per
+than the project's tests (:attr:`Cell.selected`), ``· N of M tests scored``
+for such a compare (:attr:`Cell.compared`) — under it one key line, then one folded list per
 cell with tests that did not pass, its summary line ``<Backend>/<os>,
 <label>: N not passing, K also fail on <base>; M no baseline``. A list's
 table holds what failed; a test with no baseline is no failure, and is
@@ -66,7 +67,7 @@ def _matrix_cell(summary: Summary, cell: Cell | None) -> str:
         text += f" ({others})"
     if cell.selected:
         n, of = cell.selected
-        text += f" · {n} of {of} tests run"
+        text += f" · {n} of {of} tests {'scored' if cell.compared else 'run'}"
     return text
 
 
@@ -163,7 +164,7 @@ def as_markdown(summary: Summary) -> str:
             f' "{NO_BASELINE}" = NO_REF: nothing stored to score against, so not '
             "a failure."
         )
-    if any(cell.selected for cell in summary.cells.values()):
+    if any(cell.selected and not cell.compared for cell in summary.cells.values()):
         key += (
             ' "N of M tests run" = the run simulated N of the project\'s M tests '
             "(--filter, --package, --rerun or --changed-since): not a full run."
@@ -173,6 +174,11 @@ def as_markdown(summary: Summary) -> str:
                 " With --merge or --rerun the others were scored on their last "
                 "results, where there were any."
             )
+    if any(cell.selected and cell.compared for cell in summary.cells.values()):
+        key += (
+            ' "N of M tests scored" = a compare scored N of the project\'s M tests '
+            "(--filter or --package), the others not: not a full compare."
+        )
     lines += ["", key, ""]
     for folder in summary.folders:
         for label in summary.labels:
