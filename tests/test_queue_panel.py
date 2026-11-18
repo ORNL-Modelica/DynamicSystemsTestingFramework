@@ -23,6 +23,7 @@ from dstf.authoring.shell.shell import TICK, Shell  # noqa: E402
 from dstf.authoring.shell.suite import SuitePage  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.situation import Situation  # noqa: E402
+from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.backends.pool import ItemState, StartingWorker  # noqa: E402
 from test_session import LOOSEN, A, B, D, _project  # noqa: E402
 from test_session_queue import drop_item, fake_item  # noqa: E402
@@ -310,6 +311,82 @@ async def test_an_event_that_changes_no_row_leaves_the_rows_standing(shell):
         shell.session._emit("queue", state="removed", models={B})
         shell.tick()
         assert not _has(user, f"queue-row:{B}") and row_b.is_deleted
+
+
+# Each part of what a row draws, changed alone, draws the row again: the
+# rows stand still only while none of them moved.
+
+
+class _RemovingPool:
+    """A pool whose ``remove`` takes any item, and records which."""
+
+    can_cancel = True
+    stopped = None
+    starting = ()
+
+    def __init__(self) -> None:
+        self.removed: list = []
+
+    def remove(self, item) -> bool:
+        self.removed.append(item)
+        return True
+
+
+async def test_a_test_removed_and_queued_again_is_removed_by_its_new_item(shell):
+    """The row reads as it did — waiting, first, nothing ahead — but its
+    item is another: its Remove acts on the item the queue holds now."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        first = _hold(shell, A, ItemState.WAITING)
+        drop_item(shell.session, first)
+        again = _hold(shell, A, ItemState.WAITING)
+        assert _one(user, f"queue-words:{A}").text == "waiting · next"
+
+        pool = shell.session._pool = _RemovingPool()
+        try:
+            user.find(marker=f"queue-remove:{A}").click()
+            await _settled(lambda: pool.removed != [])
+            assert pool.removed == [again]
+            assert shell.session.queue == []
+        finally:
+            shell.session._pool = None
+
+
+async def test_a_finished_row_s_offers_follow_an_edit_that_keeps_its_verdict(shell):
+    """An unsaved edit that leaves A failing changes what its Queue offers
+    — the edits the run would take — and nothing else of its row."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        _end(shell, _hold(shell, A, ItemState.RUNNING), ItemState.FINISHED)
+        assert _one(user, f"queue-status:{A}").text == "FAIL"
+        assert _one(user, f"queue-enqueue:{A}:tip").text == "Queue 1"
+
+        # nrmse 0.153 against 0.02: still a FAIL
+        shell.session.stage([PatchOp(A, "add", "/metrics/children/0/tolerance", 0.02)])
+        shell.tick()
+
+        assert _one(user, f"queue-status:{A}").text == "FAIL"
+        assert _one(user, f"queue-enqueue:{A}:tip").text == (
+            "Queue 1 (with 1 unsaved edit, as they stand when each starts)"
+        )
+
+
+async def test_a_waiting_row_that_starts_is_drawn_running(shell):
+    """The item is the same and a running row offers no Suite action, as a
+    waiting one does not: only the row itself moved — its badge, and
+    Cancel in Remove's place."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        item = _hold(shell, A, ItemState.WAITING)
+        assert _one(user, f"queue-status:{A}").text == "QUEUED"
+        assert _has(user, f"queue-remove:{A}")
+
+        item.state, item.started_at, item.worker_id = ItemState.RUNNING, 1.0, 0
+        shell.session._emit("queue", state="started", models={A})
+        shell.tick()
+
+        assert _one(user, f"queue-status:{A}").text == "RUNNING"
+        assert _has(user, f"queue-cancel:{A}") and not _has(user, f"queue-remove:{A}")
 
 
 async def test_the_shell_polls_only_while_a_test_runs(shell):
