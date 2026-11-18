@@ -9898,8 +9898,9 @@ ConstantCsv as not run (its row: SIMULATED).
    its `verdicts.json`, console and dashboard carry this invocation's
    block, built by `_narrowed` as D169 builds a rerun's: `selected: 0`,
    `rerun` as given, and `merged: true` when the work directory's batch
-   manifest holds one of the project's tests — except beside `--accept`, which scores none
-   (D169.3) and writes no `merged`. It is a run's block, in a run's words;
+   manifest holds one of the project's tests. Beside `--accept` no
+   `merged` is written (as D169.3), though this path still scores the
+   last results. It is a run's block, in a run's words;
    with none run the dashboard reads "None of the 3 tests was run: there
    is none that the last run left in failed (--rerun). Their last
    results, where there are any, are scored." status.json keeps the last
