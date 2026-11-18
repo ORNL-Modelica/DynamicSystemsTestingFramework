@@ -599,6 +599,14 @@ def _kill_quietly(*procs) -> None:
             pass
 
 
+class _Unwatched(_Worker):
+    """No watch tick within a test: the tick waits longer than any test
+    here runs, so a child the tool starts is on no record, and only the
+    sweep of the test's directory can find what a dead tool left."""
+
+    _CHILD_WATCH_SECONDS = 600.0
+
+
 linux_only = pytest.mark.skipif(
     not sys.platform.startswith("linux"),
     reason="an orphan is found by its working directory and its parent",
@@ -729,6 +737,76 @@ class TestWorkerDeath:
         finally:
             _kill_quietly(*born, tool, older, shell, ours)
             ours.wait()
+
+    @linux_only
+    def test_an_exception_after_the_tool_died_still_finds_what_it_left(self, tmp_path):
+        """The tool starts its child in the test's directory and dies, and
+        the call into it raises: the worker exception's way out sweeps the
+        directory as the watch's does. No tick saw the child, so nothing
+        else reaches it."""
+        test_dir = tmp_path / "test_0001"
+        test_dir.mkdir()
+        tool = _tool_on_cue([([sys.executable, "-c", _SLEEP], str(test_dir))])
+        born: list[psutil.Process] = []
+
+        class _Raises(_Unwatched):
+            def run_test(self, test, test_key, progress=None):
+                born.extend(_cue(tool, 1))
+                tool.kill()
+                tool.wait()
+                raise ConnectionError("the tool is gone")
+
+        worker = _Raises(0, _config(tmp_path))
+        try:
+            worker.start()
+            worker.pids = {tool.pid}
+            result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
+
+            assert result.error_message == (
+                "Worker exception: ConnectionError: the tool is gone"
+            )
+            (left_behind,) = born
+            _wait_until(lambda: _gone(left_behind), 10)
+        finally:
+            _kill_quietly(*born, tool)
+
+    @linux_only
+    def test_a_test_that_returned_though_the_tool_died_still_loses_what_it_left(
+        self, tmp_path
+    ):
+        """The tool starts its child in the test's directory and dies, and
+        the call into it returns a failed result (an interface that turns a
+        lost connection into one): the worker is closed and the directory
+        swept. No tick saw the child, so nothing else reaches it."""
+        test_dir = tmp_path / "test_0001"
+        test_dir.mkdir()
+        tool = _tool_on_cue([([sys.executable, "-c", _SLEEP], str(test_dir))])
+        born: list[psutil.Process] = []
+
+        class _Returns(_Unwatched):
+            def run_test(self, test, test_key, progress=None):
+                born.extend(_cue(tool, 1))
+                tool.kill()
+                tool.wait()
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    error_message="connection lost",
+                )
+
+        worker = _Returns(0, _config(tmp_path))
+        try:
+            worker.start()
+            worker.pids = {tool.pid}
+            result = worker.run_test_with_timeout(make_test_model(), "test_0001", 60)
+
+            assert result.error_message == "connection lost"
+            assert not worker.is_alive()
+            (left_behind,) = born
+            _wait_until(lambda: _gone(left_behind), 10)
+        finally:
+            _kill_quietly(*born, tool)
 
     @linux_only
     @pytest.mark.parametrize(
