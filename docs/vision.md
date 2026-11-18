@@ -26,25 +26,25 @@ These audiences share one problem: *"here is a time-dependent signal, does it ma
 
 ## Six-layer abstraction
 
-The framework is structured around six layers. Each is a plug-in point; each has a typed contract.
+The framework is structured around six layers. Each is a plug-in point; each has a typed contract. This is the one drawing of them; `architecture.md` maps each layer to the code.
 
 ```
-  Source          — what holds the behavior to test (library, FMU, script, data file)
-    │
+  Source          → what holds the behavior to test
+    │               (Modelica library, FMU, Julia script, Simulink model, CSV / HDF5 data file)
     ▼
-  Discovery       — how tests are found from a Source (.mo scan, spec file, pytest-style, experiment registry)
-    │
+  Discovery       → how tests are found from a Source
+    │               (.mo UnitTests scan, test_spec.json, FMU directory scan, pytest-style, experiment registry)
     ▼
-  Backend         — how a test is executed (Dymola Python, FMPy, OMPython, JuliaCall, MATLAB engine, nothing-for-data-file)
-    │
+  Backend         → how a test is executed, with declared capabilities
+    │               (Dymola Python, FMPy, OMPython, JuliaCall, MATLAB engine, nothing for a data file)
     ▼
-  Dataset         — typed result (TimeSeries, Scalars, Events, Spectrum, Distribution; Field in future)
-    │
+  Dataset         → typed result
+    │               (TimeSeries, Scalars, Events, Spectrum, Distribution; Field in future)
     ▼
-  Metric          — a scoring function on a Dataset vs. baseline (NRMSE, tube, points, event-timing, spectral, Fréchet, KS)
-    │
+  Metric          → a scoring function on a Dataset vs. baseline
+    │               (NRMSE, tube, points, event-timing, spectral, Fréchet, KS, user-defined)
     ▼
-  MetricTree      — composition: AND / OR / weighted / K-of-N combinators over Metrics → overall pass/fail + diagnostics
+  MetricTree      → composition: AND / OR / weighted / K-of-N combinators over Metrics → overall pass/fail + diagnostics
 ```
 
 Most layers are explicit: Source selects via `source_type` (Modelica, FMU, Julia or Python today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola, OpenModelica, FMPy, Julia and Python, Dataset is still time-series only, Metric offers seven built-ins (NRMSE, tube, points, range, event-timing, dominant-frequency, scalar), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn / weighted combinators. What remains implicit: datasets beyond time-series, additional discovery strategies, more leaf types.
@@ -65,7 +65,7 @@ A recognizer declares:
 
 Discovery composes results from every registered recognizer, merging by model_id. A library can ship its own recognizer alongside the bundled default — both run; results combine.
 
-The contract is **richer than today's purely-declarative `UnitTests`**: an annotation can request *runtime behavior* (cross-backend verification, FMU export, increased timeout, …) so users keep test orchestration concerns in the model where the test logic lives, rather than splitting them across `.mo` and `test_spec.json`.
+The contract is **richer than the purely-declarative `UnitTests`**: an annotation can request *runtime behavior*, so users keep test orchestration concerns in the model where the test logic lives, rather than splitting them across `.mo` and `test_spec.json`. Today a JSON recognizer can set two such fields: `simulate_only`, and `requested_baselines`, which asks for a cross-backend chain's baseline (`dymola-via-fmpy`, below). A longer timeout or an FMU export of its own is not requestable yet.
 
 The same registry shape applies cross-source: an FMU recognizer could read vendor extensions from `modelDescription.xml`; a Julia recognizer could parse a `@unittest` macro. Each registers as a recognizer with its own capability profile; Discovery doesn't care which Source produced them.
 
@@ -105,13 +105,15 @@ Now implemented, and still marked EXPERIMENTAL: `backends/cross_backend.py` expo
 
 **Authoring is a Python-side tool**, driven by the same figure layer and the same registry the CLI scores with — so what the author sees is what the CLI will decide, with no second implementation to keep in step. It emits an **RFC 6902 JSON-Patch** against the test spec; `spec update` applies the patch via read-modify-write, preserving the `description` / `info` / `metadata` conventions for human notes (any other key nothing reads is a spec error that names it). Editing `test_spec.json` by hand stays supported.
 
-**Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). Forms are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) via `derive_schema`, which also emits the JSON-Schema handoff artifact. Tightening Config types to use `Literal[...]` for enum-like fields is what makes that export first-class.
+**Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). Forms are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) via `derive_schema`, which also emits the JSON-Schema handoff artifact. Enum-like fields are typed `Literal[...]` (`tube_width_mode`, `tube_interpolation`, `tolerance_mode`), which is what makes that export first-class.
 
 **Performance budget**: the page carries figures, not trajectories; full-resolution data lives in the `comparison_data.json` sidecar beside it, and a banner names every trace the page decimated.
 
 ---
 
 ## Rule-based recommender (Phase 7)
+
+**Status: not started.** Nothing of it is in the code yet; it stays on the roadmap.
 
 A lightweight heuristic layer that looks at a signal (and optional baseline) and **proposes a starter metric tree** for the user to inspect and tune. Never replaces authoring; seeds it.
 
@@ -181,7 +183,8 @@ The single question this tool answers: *"does this time-dependent signal match t
 - Experiment / calibration regression via composable instances (experiment data gets its own regression test suite; sim tests soft_check against those baselines).
 - Cross-backend verification as a composable feature on top of capabilities.
 - Acceptance-criteria authoring via a Python-side tool sharing the framework's figure layer and metric registry (D125). The report is read-only.
-- Rule-based recommender for starter criteria on new signals (Phase 7).
+- Rule-based recommender for starter criteria on new signals (Phase 7, not started).
+- Choosing which tests a change touches, so a run can be limited to them: `dstf uses` asks the simulator which tests' models use a class, and `dstf run --changed-since REV` runs the tests the files changed since a git revision touch.
 - Deterministic and stochastic (via `Distribution` dataset + KS-style metrics) — stochastic is a later phase, but the abstraction accommodates it.
 
 **Out of scope (explicit anti-goals — hard lines)**:
@@ -189,7 +192,7 @@ The single question this tool answers: *"does this time-dependent signal match t
 - **FMU generation as a framework feature**. If a backend supports FMU export as a capability we expose it; producing FMUs is the backend's job.
 - **Parameter estimation / model calibration**. We check whether a model matches data; we do not tune parameters to fit data. A downstream calibration tool can consume our comparison artifacts.
 - **Root-cause analysis of failures at the physics layer**. We emit pass/fail, scores, and diagnostics (observations about the comparison — max deviation, where, when). We do not emit hypotheses about causes.
-- **Design-of-experiments / test selection**. We do not propose which sweeps to run or which tests to author.
+- **Design-of-experiments**. We do not propose which sweeps to run or which tests to author. (Limiting a run to the tests a change touches is in scope, above: that answers "which existing tests could this change move?", not "what should be tested?")
 - **Property-based / fuzz testing**. We do not generate inputs to find edge cases.
 - **Static analysis / linting of model code**.
 - **Load / performance testing** (throughput, latency SLAs).
@@ -201,7 +204,7 @@ The single question this tool answers: *"does this time-dependent signal match t
 
 **Rejection criteria for new features**:
 - Does it answer "does this signal match expected?" → in
-- Does it require generating inputs or selecting which tests to run? → out
+- Does it require generating inputs, or deciding which tests should exist? → out
 - Does it require understanding *why* a test failed at the physics layer? → out
 - Does it compete with a general-purpose tool the user already has? → out
 
@@ -214,7 +217,7 @@ The single question this tool answers: *"does this time-dependent signal match t
 1. **The framework is the primitive; backends and metrics are plug-ins.** If we find ourselves writing backend-specific code in the framework core, we re-draw the line.
 2. **Capabilities over `isinstance`.** Feature availability is a backend-declared capability, not a type check.
 3. **The baseline is the contract.** Tolerances, metric choices, and per-variable overrides live *with* the baseline so they travel with it — no separate config drift. (Already a strength of the current tool; preserve it.)
-4. **Clean breaks during development.** No backwards-compatibility shims while we are pre-1.0. Rename, restructure, remove as needed.
+4. **Clean breaks, said out loud.** No backwards-compatibility shims, aliases or migration layers in the code. Rename, restructure, remove as needed; a breaking change gets a CHANGELOG line saying what changed.
 5. **Modelica is the first consumer, not the reference model.** Design decisions must hold up when the source is an FMU or a CSV, not only when it's a `.mo` file.
 6. **Regression is the identity (D66).** The tool is a regression testing framework. Primary = stored regression anchor. Companions are visual-only. Soft_checks are warn-only. V&V against experiment is a composed use of the tool on experimental data, not a separate test shape.
 7. **Economy of tools (D66).** We do one thing well and emit well-shaped handoff artifacts. Calibration, RCA, parameter estimation, ML-backed ranking — those belong to downstream tools that consume our outputs. We do not grow into them.

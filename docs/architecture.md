@@ -4,26 +4,10 @@
 
 ## Conceptual Model (Forward)
 
-The framework is a pipeline of six typed, plug-in layers:
-
-```
-  Source          → what holds the behavior to test
-    │               (Modelica library, FMU, Julia script, Simulink model, CSV / HDF5 data file)
-    ▼
-  Discovery       → how tests are produced from a Source
-    │               (.mo UnitTests scan, test_spec.json, FMU directory scan, experiment registry)
-    ▼
-  Backend         → how a test is executed, with declared capabilities
-    │               (Dymola Python / FMPy / OMPython / JuliaCall / MATLAB engine / data-file ingest)
-    ▼
-  Dataset         → typed result
-    │               (TimeSeries, Scalars, Events, Spectrum, Distribution; Field reserved)
-    ▼
-  Metric          → scoring function on Dataset vs. baseline
-    │               (NRMSE, tube, points, event-timing, spectral, Fréchet, KS, user-defined)
-    ▼
-  MetricTree      → composition: AND / OR / weighted / K-of-N → overall pass/fail + diagnostics
-```
+The framework is a pipeline of six typed, plug-in layers — Source → Discovery →
+Backend → Dataset → Metric → MetricTree — drawn once, with what each layer
+holds, in [vision.md](vision.md)'s "Six-layer abstraction". The table below
+maps each layer to today's code.
 
 **Backend capabilities** are declared on the backend contract, not inferred from type:
 - `capabilities: frozenset[Capability]` (`PERSISTENT_WORKERS`,
