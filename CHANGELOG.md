@@ -64,6 +64,9 @@ this file says when they do.
 
 ### Fixed
 
+- `dstf author`: the Suite page's queue panel no longer redraws every row
+  when no row changed, so a Remove or Cancel click lands on the row it was
+  aimed at.
 - When Dymola or OpenModelica crashes during a test on Linux, DSTF
   stops only the leftover processes started during that test in its folder;
   a shell you had open there is left alone.
