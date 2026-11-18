@@ -235,6 +235,45 @@ def test_nothing_stale_is_said_in_one_line(tmp_path, capsys):
     assert _listing(tmp_path) == after
 
 
+@pytest.mark.parametrize(
+    ("keys", "said"),
+    [
+        (
+            ["test_0005"],
+            "1 manifest entry this version cannot read (test_0005), left as "
+            "it is with its directories",
+        ),
+        (
+            ["test_0006", "test_0005"],
+            "2 manifest entries this version cannot read (test_0005, "
+            "test_0006), left as they are with their directories",
+        ),
+    ],
+    ids=["one", "two"],
+)
+def test_nothing_stale_beside_an_entry_left_as_it_is_does_not_claim_every_entry(
+    keys, said, tmp_path, capsys
+):
+    """An entry it cannot read is no test's that it knows of: the line that
+    says nothing is left to clean up names it as left, never "every entry
+    and directory belongs to a test" alone."""
+    config, argv = _project(tmp_path)
+    assert main([*argv, "--apply"]) == 0
+    capsys.readouterr()
+    path = config.work_dir / "batch_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    for key in keys:
+        manifest[key] = {"ref_id": None}
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    assert main(argv) == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        f"Nothing to clean up in {config.work_dir}: every entry and directory "
+        f"belongs to a test, except {said}."
+    ]
+
+
 def _refused(tmp_path, capsys, argv) -> str:
     before = _listing(tmp_path)
     rc = main([*argv, "--apply"])

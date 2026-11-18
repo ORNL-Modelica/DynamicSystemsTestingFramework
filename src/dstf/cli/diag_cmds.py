@@ -287,9 +287,25 @@ def cmd_manifest_cleanup(args: argparse.Namespace) -> int:
     )
 
     if not dirs and not orphans:
+        # An entry it cannot read was left, not found to be a test's: the
+        # line says so rather than claim every entry belongs to one.
+        unread = sorted(manifest.manifest.keys() - model_of.keys())
+        if not unread:
+            but = ""
+        elif len(unread) == 1:
+            but = (
+                f", except 1 manifest entry this version cannot read ({unread[0]}), "
+                "left as it is with its directories"
+            )
+        else:
+            but = (
+                f", except {len(unread)} manifest entries this version cannot "
+                f"read ({', '.join(unread)}), left as they are with their "
+                "directories"
+            )
         print(
             f"Nothing to clean up in {work}: every entry and directory "
-            "belongs to a test."
+            f"belongs to a test{but}."
         )
         return 0
     lines = [
