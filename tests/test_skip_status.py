@@ -201,8 +201,10 @@ def test_summary_lists_a_marked_test_apart_never_as_not_passing(tmp_path):
     markdown = as_markdown(summary)
     assert "<summary>Python/linux, new: 2 marked skip</summary>" in markdown
     assert (
-        'Marked skip, failing no run: <code title="Lib.B">B</code> (SKIPPED, '
-        'Python: r), <code title="Lib.C">C</code> (FAIL, Python: r).'
+        "Marked skip, failing no run:\n\n| Test | Status | main | Mark |\n"
+        "| --- | --- | --- | --- |\n"
+        '| <code title="Lib.B">B</code> | SKIPPED | not in main | Python: r |\n'
+        '| <code title="Lib.C">C</code> | FAIL | PASS | Python: r |\n'
     ) in markdown
 
 
