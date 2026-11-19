@@ -198,7 +198,8 @@ def test_a_list_row_names_the_test_its_status_the_base_s_and_what_failed():
 
 def test_the_marked_tests_are_a_table_of_their_own_with_the_base_s_status():
     """Under the failures, the tests marked skip — which fail no run — in a
-    table like theirs: the test, its status, the base's, and the mark."""
+    table like theirs: the test, its status, the base's, the mark, and what
+    failed — nothing for a test its mark kept from running."""
     marked = _cell(
         "branch",
         "Python/linux",
@@ -206,27 +207,36 @@ def test_the_marked_tests_are_a_table_of_their_own_with_the_base_s_status():
         not_new=0,
         marked=[
             Marked("Lib.pkg.Slow", "SKIPPED", "Python: too slow | for CI", "SKIPPED"),
-            Marked("Lib.pkg.Csv", "SIM_FAIL", "every backend: <csv> & co", "PASS"),
+            Marked(
+                "Lib.pkg.Csv",
+                "SIM_FAIL",
+                "every backend: <csv> & co",
+                "PASS",
+                "RuntimeError: a <b> | c",
+            ),
         ],
     )
     text = as_markdown(_summary([BASE, marked]))
     lines = text.splitlines()
-    assert lines[lines.index("| Test | Status | base | Mark |") - 2 :][:2] == [
+    header = "| Test | Status | base | Mark | What failed |"
+    assert lines[lines.index(header) - 2 :][:2] == [
         "Marked skip, failing no run:",
         "",
     ]
-    assert _table(text, "| Test | Status | base | Mark |")[2:] == [
+    assert _table(text, header)[2:] == [
         [
             '<code title="Lib.pkg.Slow">Slow</code>',
             "SKIPPED",
             "SKIPPED",
             "Python: too slow \\| for CI",
+            "",
         ],
         [
             '<code title="Lib.pkg.Csv">Csv</code>',
             "SIM_FAIL",
             "PASS",
             "every backend: &lt;csv&gt; &amp; co",
+            "RuntimeError: a &lt;b&gt; \\| c",
         ],
     ]
     data = json.loads(as_json(_summary([BASE, marked])))
@@ -235,6 +245,7 @@ def test_the_marked_tests_are_a_table_of_their_own_with_the_base_s_status():
         "status": "SIM_FAIL",
         "mark": "every backend: <csv> & co",
         "base": "PASS",
+        "reason": "RuntimeError: a <b> | c",
     }
 
 
@@ -250,7 +261,7 @@ def test_a_reason_over_several_lines_keeps_its_row_on_one():
     text = as_markdown(_summary([cell], base=None))
     assert '| <code title="Lib.A">A</code> | FAIL | y: one two |' in text
     assert (
-        '| <code title="Lib.B">B</code> | SKIPPED | Python: line one line \\| two |'
+        '| <code title="Lib.B">B</code> | SKIPPED | Python: line one line \\| two |  |'
         in text
     )
 

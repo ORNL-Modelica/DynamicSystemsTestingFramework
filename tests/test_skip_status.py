@@ -226,8 +226,18 @@ def test_summary_lists_a_marked_test_apart_never_as_not_passing(tmp_path):
         tmp_path / "new",
         [
             {"model_id": "Lib.A", "status": "PASS", "mark": None},
-            {"model_id": "Lib.B", "status": "SKIPPED", "mark": "Python: r"},
-            {"model_id": "Lib.C", "status": "FAIL", "mark": "Python: r"},
+            {
+                "model_id": "Lib.B",
+                "status": "SKIPPED",
+                "mark": "Python: r",
+                "message": "skipped on Python: r",
+            },
+            {
+                "model_id": "Lib.C",
+                "status": "FAIL",
+                "mark": "Python: r",
+                "message": "it fails",
+            },
         ],
         {"total": 2, "PASS": 1, "FAIL": 1, "SKIPPED": 1},
     )
@@ -244,10 +254,11 @@ def test_summary_lists_a_marked_test_apart_never_as_not_passing(tmp_path):
     markdown = as_markdown(summary)
     assert "<summary>Python/linux, new: 2 marked skip</summary>" in markdown
     assert (
-        "Marked skip, failing no run:\n\n| Test | Status | main | Mark |\n"
-        "| --- | --- | --- | --- |\n"
-        '| <code title="Lib.B">B</code> | SKIPPED | not in main | Python: r |\n'
-        '| <code title="Lib.C">C</code> | FAIL | PASS | Python: r |\n'
+        "Marked skip, failing no run:\n\n"
+        "| Test | Status | main | Mark | What failed |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        '| <code title="Lib.B">B</code> | SKIPPED | not in main | Python: r |  |\n'
+        '| <code title="Lib.C">C</code> | FAIL | PASS | Python: r | it fails |\n'
     ) in markdown
 
 

@@ -337,9 +337,12 @@ def test_a_marked_test_that_still_fails_fails_no_run_and_says_it_is_marked(
     assert "Python/linux, pr: 1 marked skip</summary>" in said
     assert "not passing" not in said
     assert (
-        "Marked skip, failing no run:\n\n| Test | Status | main | Mark |\n"
-        "| --- | --- | --- | --- |\n"
-        f'| <code title="{MARKED}">ConstantCsv</code> | FAIL | PASS | {SAID} |\n'
+        "Marked skip, failing no run:\n\n"
+        "| Test | Status | main | Mark | What failed |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        f'| <code title="{MARKED}">ConstantCsv</code> | FAIL | PASS | {SAID} | '
+        # its constant 1.0 against the range 2–3 the failing() override sets
+        "x: max violation 1.000e+00 → FAIL (requires 0) |\n"
     ) in said
 
 
@@ -484,9 +487,9 @@ def test_summary_spells_a_reason_s_markup_as_text(proj, capsys):
     assert main(["summary", f"pr={proj.work}"]) == 0
     said = capsys.readouterr().out
     assert (
-        "| Test | Status | Mark |\n| --- | --- | --- |\n"
+        "| Test | Status | Mark | What failed |\n| --- | --- | --- | --- |\n"
         f'| <code title="{MARKED}">ConstantCsv</code> | SKIPPED | '
-        'Python: say "no" &lt;now&gt; &amp; then |\n'
+        'Python: say "no" &lt;now&gt; &amp; then |  |\n'
     ) in said
 
 

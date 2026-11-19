@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .status import FAILURES, NO_REF, PASS
+from .status import FAILURES, NO_REF, PASS, SKIPPED
 from .verdicts import VERDICTS_FILE
 
 #: The longest reason a list row holds, in characters.
@@ -87,6 +87,9 @@ class Marked:
     #: with a base: the base cell's status word for it, or ``not in
     #: <base>``; None with no base, or no base run of this backend/os
     base: str | None = None
+    #: what failed, as a failing test's (:func:`reason`); "" for one its
+    #: mark kept from running (SKIPPED), which ran nothing to fail
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -383,7 +386,8 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
                 said = base_tests.get(model_id, f"not in {base}")
             mark = t.get("mark")
             if isinstance(mark, str) and mark:
-                marked.append(Marked(model_id, status, mark, said))
+                why = "" if status == SKIPPED else reason(t)
+                marked.append(Marked(model_id, status, mark, said, why))
                 continue
             if status == PASS:
                 continue

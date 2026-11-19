@@ -14,8 +14,8 @@ cell with tests that did not pass, its summary line ``<Backend>/<os>,
 <label>: N not passing, K also fail on <base>; M no baseline``. A list's
 table holds what failed; a test with no baseline is no failure, and is
 named on a line under it, and the tests marked skip (SKIPPED, or run
-anyway) in a table of their own like the failures', with the mark where
-the failures' says what failed: a marked test fails no run. A list is open when it holds a failure that is
+anyway) in a table of their own like the failures', the mark before what
+failed (nothing for a SKIPPED test): a marked test fails no run. A list is open when it holds a failure that is
 new (one the base did not fail and did not end the same way —
 ``NotPassing.not_new``), or there is no base to tell; folded otherwise; the
 base's own lists are folded. New ones are listed first.
@@ -152,7 +152,7 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
             lines.append("")
         # A table like the failures', headed apart: a marked test fails no
         # run, whatever its status says.
-        marked_header = [*header[:-1], "Mark"]
+        marked_header = [*header[:-1], "Mark", "What failed"]
         lines += [
             "Marked skip, failing no run:",
             "",
@@ -168,6 +168,7 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
                         html.escape(m.status),
                         *base,
                         html.escape(m.mark, quote=False),
+                        html.escape(m.reason, quote=False),
                     ]
                 )
             )
