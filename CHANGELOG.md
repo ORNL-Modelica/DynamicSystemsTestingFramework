@@ -49,7 +49,11 @@ this file says when they do.
 
 - A failed OpenModelica run's message keeps omc's Errors first, then its
   Warnings, then its Notifications: five Notifications about loaded
-  packages pushed out the Error that said why the model did not build.
+  packages pushed out the Error that said why the model did not build. An
+  error omc points at a file (`[Bad.mo:4:3-4:14:writable] Error: Variable y
+  not found in scope Bad.`) is kept, its path under the library; before,
+  only a line that started with its kind was, and a `--batch` run read none
+  of what omc said after its simulate() record — where that error is.
   `dstf summary` says the first part of a message that starts `Error`, and
   never a `Notification:` when the message says anything else.
 - `dstf manifest cleanup` no longer ends with "every entry and directory

@@ -55,7 +55,7 @@ from ..types import (
     timeout_message,
 )
 from .init_xml import with_system_size
-from .log_parser import ParsedOmcOutput, parse_omc_stdout
+from .log_parser import ParsedOmcOutput, notice_kind, parse_omc_stdout
 from .mos_generator import build_simulate_mos
 from .solvers import solver as om_solver
 
@@ -83,7 +83,7 @@ def timing(parsed: ParsedOmcOutput) -> tuple[float | None, float | None, dict | 
 #: How many of omc's notices a failed run's message keeps.
 NOTICES_KEPT = 5
 #: The kinds of notice omc says, the one that says why first.
-_NOTICE_KINDS = ("error", "warning")
+_NOTICE_KINDS = ("Error", "Warning")
 
 
 def kept_notices(notices: list[str]) -> list[str]:
@@ -94,10 +94,9 @@ def kept_notices(notices: list[str]) -> list[str]:
     message and the Error after them, the reason, was dropped."""
 
     def rank(notice: str) -> int:
-        lower = notice.lower()
-        return next(
-            (i for i, kind in enumerate(_NOTICE_KINDS) if lower.startswith(kind)),
-            len(_NOTICE_KINDS),
+        kind = notice_kind(notice)
+        return (
+            _NOTICE_KINDS.index(kind) if kind in _NOTICE_KINDS else len(_NOTICE_KINDS)
         )
 
     return sorted(notices, key=rank)[:NOTICES_KEPT]
@@ -144,7 +143,7 @@ def outcome(
             f"partial result refused"
         )
 
-    # Failure: both the notices before the record and the simulate()
+    # Failure: both the notices outside the record and the simulate()
     # record's `messages` field.
     err_parts: list[str] = []
     if exit_code:
@@ -413,7 +412,7 @@ class OpenModelicaBackend(Backend):
         (test_dir / self.STDOUT_FILENAME).write_text(stdout_text, encoding="utf-8")
 
         result = outcome(
-            parse_omc_stdout(stdout_text),
+            parse_omc_stdout(stdout_text, self.config.library_dir),
             test,
             test_key,
             elapsed,

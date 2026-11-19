@@ -347,6 +347,52 @@ class TestOpenModelicaBackendUnit:
             " | Failed to build model: Lib.Broken | no result file produced"
         )
 
+    def test_the_error_omc_points_at_a_file_is_the_message(self, tmp_path, monkeypatch):
+        """Its record says only "Failed to build model"; why is the located
+        Error the script's last getErrorString() echoes after the record."""
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            backend_name="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        backend = OpenModelicaBackend(cfg)
+        backend.om_config = dataclasses.replace(backend.om_config, omc_path="omc")
+        test = TestModel(
+            model_id="Lib.Bad",
+            source_file=None,
+            n_vars=0,
+            variable_patterns=[],
+            stop_time=1.0,
+            tolerance=1e-6,
+        )
+        stdout_synth = (
+            'true\n""\n'
+            "record SimulationResult\n"
+            '    resultFile = "",\n'
+            '    messages = "Failed to build model: Lib.Bad",\n'
+            "    timeTotal = 0.0\n"
+            "end SimulationResult;\n"
+            f'"[{tmp_path}/Bad.mo:4:3-4:14:writable] Error: Variable y not found '
+            'in scope Bad.\n"\n'
+        )
+
+        def fake_run(cmd, *, cwd, timeout):
+            return CompletedProcess(
+                args=cmd, returncode=0, stdout=stdout_synth, stderr=""
+            )
+
+        monkeypatch.setattr("dstf.backends.openmodelica.backend.run_killable", fake_run)
+
+        result = backend.run_single_test(test, test_key="test_0001", index=1, total=1)
+        assert result.error_message == (
+            "[Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad."
+            " | Failed to build model: Lib.Bad | no result file produced"
+        )
+
     def test_a_failure_whose_warning_repeats_keeps_its_last_line(
         self, tmp_path, monkeypatch
     ):

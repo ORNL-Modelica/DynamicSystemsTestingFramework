@@ -128,3 +128,34 @@ class TestParseMalformed:
         joined = "\n".join(p.error_notices)
         assert "thing1" in joined
         assert "thing3" in joined
+
+
+#: omc's own words for a model that does not translate: the error points at
+#: its file, line and column (what getErrorString() returned for a model
+#: using an undeclared variable).
+LOCATED = "[{}/Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad."
+
+
+class TestNoticesAsAScriptEchoesThem:
+    """A .mos echoes each getErrorString() as a quoted string — the one
+    after simulate() AFTER the record — and omc leads an error with where
+    it points."""
+
+    def test_a_located_error_after_the_record_is_kept_under_the_library(self, tmp_path):
+        lib = tmp_path / "MyLib"
+        text = (
+            '""\n'
+            + _synth_record(resultFile="", messages="Failed to build model: Bad")
+            + f'"{LOCATED.format(lib)}\n"\n'
+        )
+        p = parse_omc_stdout(text, lib)
+        assert p.error_notices == [
+            "[Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad."
+        ]
+
+    def test_a_located_notice_outside_the_library_keeps_its_whole_path(self, tmp_path):
+        other = "/opt/omlibrary/Modelica 4.0.0/Blocks/Sources.mo"
+        warning = f"[{other}:10:1-10:20:readonly] Warning: Parameter k has no value."
+        text = f'"{warning}\nNotification: loaded.\n"\n' + _synth_record()
+        p = parse_omc_stdout(text, tmp_path / "MyLib")
+        assert p.error_notices == [warning, "Notification: loaded."]

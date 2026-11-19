@@ -446,6 +446,18 @@ def test_an_error_is_said_before_anything_else_wherever_it_is(tmp_path):
     ]
 
 
+def test_an_error_omc_points_at_a_file_is_said_with_its_place(tmp_path):
+    located = (
+        "Notification: Automatically loaded package Modelica 4.1.0.; "
+        "[Bad.mo:2:3-2:9:writable] Warning: Parameter k has no value.; "
+        "[Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad. "
+        "| Failed to build model: Bad | no result file produced"
+    )
+    assert _reasons(tmp_path, located) == [
+        "[Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad."
+    ]
+
+
 def test_a_message_of_notifications_alone_is_said_as_it_was(tmp_path):
     only = "Notification: a. | Notification: b."
     assert _reasons(tmp_path, only) == [only]

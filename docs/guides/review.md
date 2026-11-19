@@ -477,7 +477,8 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   and what failed: the first failing criterion that is not advisory, else
   the message from its first OpenModelica error tag (`[translation:error:63]
   Internal error …`, not the call omc echoes before it), else its first part
-  (cut at ` | ` and `; `) that starts `Error`, else — when the message holds
+  (cut at ` | ` and `; `) that starts `Error` — after the place omc points it
+at, kept with it (`[Bad.mo:4:3-4:14:writable] Error: …`) — else — when the message holds
   omc's `Notification:` lines about the packages it loaded — its first part
   that is not one (`Failed to build model: …`), else the message's last
   line that is not a repeated warning (a failed simulation's message is

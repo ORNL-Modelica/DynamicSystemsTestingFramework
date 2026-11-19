@@ -267,10 +267,15 @@ _REPEATED = re.compile(r"\(repeated \d+ times\)$")
 _PARTS = re.compile(r" \| |; ")
 
 
+#: Where omc points a notice, before its kind: ``[Bad.mo:4:3-4:14:writable] ``.
+_LOCATED = re.compile(r"^\[[^\]]*\] ")
+
+
 def _message_reason(message: Any) -> str:
     """The piece of a failed run's message that says why: from its first
     OpenModelica error tag to that line's end; else its first part (a
-    line, cut at `` | `` and ``; ``) that starts ``Error``; else, when a
+    line, cut at `` | `` and ``; ``) that starts ``Error``, past the
+    place omc points it at, kept with it; else, when a
     part is a ``Notification:`` — omc's word for a package it loaded —
     the first part that is not one; else its last non-empty line that is
     not a repeated one (a traceback's first line says nothing), a repeated
@@ -286,7 +291,7 @@ def _message_reason(message: Any) -> str:
         for part in _PARTS.split(line)
         if part.strip()
     ]
-    error = next((p for p in parts if p.startswith("Error")), None)
+    error = next((p for p in parts if _LOCATED.sub("", p).startswith("Error")), None)
     if error is not None:
         return error
     if any(p.startswith("Notification:") for p in parts):

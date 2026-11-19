@@ -566,6 +566,27 @@ class TestWorkerRunTest:
             " | Failed to build model: Demo.Example.A | no result file produced"
         )
 
+    def test_the_error_omc_points_at_a_file_is_the_message(self, tmp_path):
+        """getErrorString() as omc returned it for a model using an
+        undeclared variable: one Error, led by where it points."""
+        test = _make_test()
+        responses = {
+            "simulate(": lambda expr: {
+                "resultFile": "",
+                "messages": "Failed to build model: Bad",
+                "timeTotal": 0.0,
+            },
+            "getErrorString": f"[{tmp_path}/Bad.mo:4:3-4:14:writable] Error: "
+            "Variable y not found in scope Bad.\n",
+        }
+        worker, _, _ = self._bootstrap_worker(tmp_path, responses=responses)
+        result = worker.run_test(test, "test_0001")
+
+        assert result.error_message == (
+            "[Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad."
+            " | Failed to build model: Bad | no result file produced"
+        )
+
     def test_a_failure_whose_warning_repeats_keeps_its_last_line(self, tmp_path):
         """A large library's run repeated one solver warning past the
         2,048 characters a message keeps: the line after it, the reason,
