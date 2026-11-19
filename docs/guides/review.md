@@ -489,10 +489,10 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
 - **A test marked skip fails no run.** A SKIPPED test, and a marked test run
   anyway that does not pass, is never among those not passing or new
   failures: the cell counts `1 SKIPPED` beside the other status words, its
-  summary line counts `1 marked skip`, and a line under the list names each
-  with its status and mark (`Marked skip, failing no run: … (SKIPPED,
-  Python: <reason>)`). A run of every test the marks let run is a full run:
-  its cell has no ` · N of M tests run`.
+  summary line counts `1 marked skip`, and a table of their own under
+  `Marked skip, failing no run:` lists each with its status, the base's
+  with `--base`, and its mark (`Python: <reason>`). A run of every test the
+  marks let run is a full run: its cell has no ` · N of M tests run`.
 
 A short example:
 

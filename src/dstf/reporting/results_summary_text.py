@@ -13,8 +13,9 @@ for such a compare (:attr:`Cell.compared`) — under it one key line, then one f
 cell with tests that did not pass, its summary line ``<Backend>/<os>,
 <label>: N not passing, K also fail on <base>; M no baseline``. A list's
 table holds what failed; a test with no baseline is no failure, and is
-named on a line under it, and a test marked skip (SKIPPED, or run anyway)
-on a line of its own: it fails no run. A list is open when it holds a failure that is
+named on a line under it, and the tests marked skip (SKIPPED, or run
+anyway) in a table of their own like the failures', with the mark where
+the failures' says what failed: a marked test fails no run. A list is open when it holds a failure that is
 new (one the base did not fail and did not end the same way —
 ``NotPassing.not_new``), or there is no base to tell; folded otherwise; the
 base's own lists are folded. New ones are listed first.
@@ -143,11 +144,27 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
     if cell.marked:
         if rows or cell.no_baseline:
             lines.append("")
-        named = ", ".join(
-            f"{_test(m.model_id)} ({html.escape(m.status)}, {html.escape(m.mark, quote=False)})"
-            for m in cell.marked
-        )
-        lines.append(f"Marked skip, failing no run: {named}.")
+        # A table like the failures', headed apart: a marked test fails no
+        # run, whatever its status says.
+        marked_header = [*header[:-1], "Mark"]
+        lines += [
+            "Marked skip, failing no run:",
+            "",
+            _row(marked_header),
+            _row(["---"] * len(marked_header)),
+        ]
+        for m in cell.marked:
+            base = [str(m.base)] if with_base else []
+            lines.append(
+                _row(
+                    [
+                        _test(m.model_id),
+                        html.escape(m.status),
+                        *base,
+                        html.escape(m.mark, quote=False),
+                    ]
+                )
+            )
     return [*lines, "", "</details>"]
 
 

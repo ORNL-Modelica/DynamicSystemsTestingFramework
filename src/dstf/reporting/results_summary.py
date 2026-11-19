@@ -83,6 +83,9 @@ class Marked:
     status: str
     #: the file's ``mark``: ``Python: <reason>``
     mark: str
+    #: with a base: the base cell's status word for it, or ``not in
+    #: <base>``; None with no base, or no base run of this backend/os
+    base: str | None = None
 
 
 @dataclass(frozen=True)
@@ -329,16 +332,16 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
         marked = []
         for t in _tests(data):
             status = str(t.get("status"))
-            mark = t.get("mark")
-            if isinstance(mark, str) and mark:
-                marked.append(Marked(str(t.get("model_id")), status, mark))
-                continue
-            if status == PASS:
-                continue
             model_id = str(t.get("model_id"))
             said = None
             if base_tests is not None:
                 said = base_tests.get(model_id, f"not in {base}")
+            mark = t.get("mark")
+            if isinstance(mark, str) and mark:
+                marked.append(Marked(model_id, status, mark, said))
+                continue
+            if status == PASS:
+                continue
             rows.append(NotPassing(model_id, status, reason(t), said))
         not_new = none_on_base = None
         note = ""
