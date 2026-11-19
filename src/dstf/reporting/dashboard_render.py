@@ -517,7 +517,11 @@ def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
     if merged:
         # Only those the work directory holds a last result of: a --merge
         # beside one earlier run of some tests scores those, no others.
-        others += ": their last results, where there are any, are scored"
+        others += (
+            ": its last result, if there is one, is scored"
+            if rest == 1
+            else ": their last results, where there are any, are scored"
+        )
     others += "."
 
     package, pattern, rerun = (

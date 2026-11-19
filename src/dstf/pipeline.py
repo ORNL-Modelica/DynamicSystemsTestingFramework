@@ -334,13 +334,18 @@ def write_unrun_status(
     that simulated nothing — every test it chose is marked skip for this
     backend and OS: no test row, this invocation's metadata and
     ``selection``. A later page then lists this run's tests, the ones it
-    scored, and never brings back the rows of the run before it."""
+    scored, and never brings back the rows of the run before it. The run
+    before's ``verdicts.json`` goes too, as a run's start removes it
+    (:func:`wipe_stale_state_for_scope`): a route that scores writes this
+    run's."""
     from .backends.progress import ProgressReporter
     from .reporting.dashboard_render import build_rerun_flags, run_given
+    from .reporting.verdicts import remove_verdicts
 
     work_dir = config.work_dir
     assert work_dir is not None  # resolved in Config.__post_init__
     work_dir.mkdir(parents=True, exist_ok=True)
+    remove_verdicts(work_dir)
     progress = ProgressReporter(
         work_dir,
         0,

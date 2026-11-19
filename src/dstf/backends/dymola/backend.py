@@ -483,8 +483,10 @@ class DymolaBackend(Backend):
                         test_key=test_key,
                         success=False,
                         elapsed=per_elapsed,
+                        # The batch's limit, its tests' added up: no one
+                        # key sets it.
                         error_message=timeout_message(
-                            f"Batch timed out after {total_timeout}s"
+                            f"Batch timed out after {total_timeout}s", None
                         ),
                         timed_out=True,
                     )

@@ -586,9 +586,9 @@ def test_a_partial_result_comes_after_the_queue_s_hold_and_pending_edits():
 # -- a failed run's own reason ---------------------------------------------------
 
 TIMEOUT = (
-    "Timed out after 12s (raise it per test with simulation.timeout in "
-    "test_spec.json, for one backend with backends.<Backend>.timeout there, "
-    "or globally with --timeout)"
+    "Timed out after 12s (the limit is the run's --timeout: raise it with "
+    "--timeout, per test with simulation.timeout in test_spec.json, or for "
+    "one backend with backends.<Backend>.timeout there)"
 )
 CRASH = (
     "Python execution failed: Traceback (most recent call last):\n"

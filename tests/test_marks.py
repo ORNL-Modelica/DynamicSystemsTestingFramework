@@ -116,6 +116,12 @@ def test_an_empty_reason_is_refused_on_the_entry():
             "backends.Python",
             'unknown field "skp" — did you mean "skip"?',
         ),
+        # A block that says nothing marks nothing.
+        (
+            {"Python": {}},
+            "backends.Python",
+            "says nothing: a block names skip or timeout",
+        ),
     ],
 )
 def test_a_backend_block_holds_a_reason_and_a_whole_number_of_seconds(
@@ -159,6 +165,7 @@ REFUSED = [
     {"backends": {"Python": {"skp": "slow"}}},
     {"backends": {"Python": {"skip": False}}},
     {"backends": {"Python": {"timeout": 1.5}}},
+    {"backends": {"Python": {}}},
 ]
 
 
@@ -329,4 +336,44 @@ def test_a_backend_time_limit_stops_a_run_its_entry_would_let_finish(tmp_path, c
     verdicts = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
     (entry,) = verdicts["tests"]
     assert entry["status"] == "SIM_FAIL"
-    assert entry["message"].startswith("Python execution exceeded 1.0s timeout (")
+    # the hint names the limit that fired: raising the others does nothing
+    assert entry["message"] == (
+        "Python execution exceeded 1.0s timeout (the limit is "
+        "backends.Python.timeout in test_spec.json: raise it there)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("keys", "hint"),
+    [
+        (
+            {
+                "simulation": {"timeout": 60},
+                "backends": {"Python/linux": {"timeout": 5}},
+            },
+            "the limit is backends.Python/linux.timeout in test_spec.json: raise "
+            "it there",
+        ),
+        (
+            {"simulation": {"timeout": 60}, "backends": {"Dymola": {"timeout": 5}}},
+            "the limit is simulation.timeout in test_spec.json: raise it there, "
+            "or for one backend with backends.<Backend>.timeout",
+        ),
+        (
+            {},
+            "the limit is the run's --timeout: raise it with --timeout, per test "
+            "with simulation.timeout in test_spec.json, or for one backend with "
+            "backends.<Backend>.timeout there",
+        ),
+    ],
+)
+def test_a_timeout_says_which_limit_stopped_it(config_of, keys, hint):
+    """Its first advice is the limit that applied: raising simulation.timeout
+    or --timeout does nothing for a test a backend's limit stops."""
+    from dstf.backends.types import timeout_message
+    from dstf.discovery.marks import limit_hint
+
+    said = limit_hint(_parse(_entry(**keys)), config_of("Python", "linux"))
+    assert timeout_message("Timed out after 5s", said) == (
+        f"Timed out after 5s ({hint})"
+    )

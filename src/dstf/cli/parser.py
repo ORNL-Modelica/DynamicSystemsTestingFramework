@@ -838,11 +838,13 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
             action="store_true",
             help="{what} the tests marked skip for this backend and OS (`skip` "
             "or `backends` in their test_spec.json entry) like any other, each "
-            "carrying its mark: a marked test still never changes the exit "
-            "code, and after the report one line each says whether its mark "
-            "can go. With --accept they are stored too. Default: a marked "
-            "test is not {not_what}, reads SKIPPED with its reason, and an "
-            "accept stores nothing of it.",
+            "carrying its mark: after the report one line each says whether "
+            "its mark can go. With --accept they are stored too; one whose "
+            "result cannot be stored (its simulation failed) is named under "
+            "Skipped. A marked test never changes the exit code, whether it "
+            "passes, fails or is not stored. Default: a marked test is not "
+            "{not_what}, reads SKIPPED with its reason, and an accept stores "
+            "nothing of it.",
         ),
     ),
     "package": (
@@ -1416,11 +1418,11 @@ def _add_run(tree: _Tree, top) -> None:
             to run: no test is in --rerun's categories, no test uses what
             changed since --changed-since's REV (then nothing is written,
             not even the file --output names), or every test chosen is
-            marked skip; 1 when a test
-            failed, failed to simulate or timed out, when nothing ran at
-            all, when an accept skipped a test, or when the simulator could
-            not be asked what the tests use; 2 for a config error, and for
-            --changed-since when git cannot answer.
+            marked skip; 1 when a test failed, failed to simulate or timed
+            out, when nothing ran at all, when an accept skipped a test not
+            marked skip, or when the simulator could not be asked what the
+            tests use; 2 for a config error, and for --changed-since when
+            git cannot answer.
             """,
         examples=(
             "dstf run --config testing.json",
@@ -1459,7 +1461,8 @@ def _add_run(tree: _Tree, top) -> None:
         action="store_true",
         help="Store this run's results as the new baselines in the reference "
         "root, and score nothing. A test whose simulation failed is skipped "
-        "and named, and the exit code is then 1. A test marked skip is not "
+        "and named, and the exit code is then 1 — unless it is marked skip "
+        "(run under --include-skipped). A test marked skip is not "
         "run and nothing of it is stored: a note names it, and the exit code "
         "stays 0 (--include-skipped runs and stores it). Not with -i.",
     )
@@ -1618,7 +1621,8 @@ def _add_compare(tree: _Tree, top) -> None:
         help="Store the last run's results as the new baselines in the "
         "reference root, without simulating again, and score nothing. A test "
         "the run recorded as failed or timed out is skipped and named, and "
-        "the exit code is then 1. Nothing is stored of a test marked skip: a "
+        "the exit code is then 1 — unless it is marked skip (scored under "
+        "--include-skipped). Nothing is stored of a test marked skip: a "
         "note names it, and the exit code stays 0 (--include-skipped stores "
         "it).",
     )

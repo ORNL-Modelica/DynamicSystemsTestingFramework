@@ -16,7 +16,7 @@ from dstf.authoring.builtin.accept import Accept
 from dstf.authoring.suite_rows import suite_row
 from dstf.cli import main
 from dstf.discovery.marks import SkipMark
-from dstf.reporting.status import PASS, SKIPPED, classify
+from dstf.reporting.status import NOT_RUN, PASS, RUNNING, SKIPPED, classify
 from test_accept_and_rerun import Tool, tool  # noqa: F401  (the fixture, re-used)
 
 MARKED = "PythonTestingLib.Examples.ConstantCsv"
@@ -111,3 +111,43 @@ def test_a_mark_taken_out_of_the_file_is_read_again_by_a_reload(
     comp = session.comparisons[MARKED]
     assert (classify(comp), comp.mark) == (PASS, None)
     assert session.project.results[MARKED].success
+
+
+def test_a_queued_marked_test_is_not_skipped_while_it_runs(
+    tmp_path,
+    capsys,
+    tool: Tool,  # noqa: F811
+):
+    """From the moment its run starts, a marked test the person queued is
+    that run's: it reads NOT RUN carrying its mark, as any running test,
+    never SKIPPED with "queue it to run it"."""
+    config, work = _marked_copy(tmp_path, capsys)
+    session = tool.open(config, work)
+    tool.queue(MARKED)
+    tool.until("started")
+    comp = session.comparisons[MARKED]
+    assert (classify(comp), comp.mark, comp.skipped) == (NOT_RUN, MARK, False)
+    row = suite_row(session, MARKED, edits={})
+    assert row.status == RUNNING and "skipped" not in (row.message or "")
+    tool.finished(MARKED)
+    assert classify(session.comparisons[MARKED]) == PASS
+
+
+def test_a_project_opened_again_reads_a_marked_test_skipped_again(
+    tmp_path,
+    capsys,
+    tool: Tool,  # noqa: F811
+):
+    """What this session's queue ran is its own until a project is opened:
+    opened again, the marked test reads SKIPPED, its result set aside."""
+    config, work = _marked_copy(tmp_path, capsys)
+    session = tool.open(config, work)
+    tool.queue(MARKED)
+    tool.finished(MARKED)
+    assert classify(session.comparisons[MARKED]) == PASS
+    session.stop_queue()
+    assert session.wait_background(30)
+    tool.open(config, work)
+    comp = session.comparisons[MARKED]
+    assert (classify(comp), comp.skipped) == (SKIPPED, True)
+    assert MARKED not in session.project.results

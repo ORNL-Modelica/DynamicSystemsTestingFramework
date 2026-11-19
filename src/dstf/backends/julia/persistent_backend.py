@@ -40,6 +40,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ...config import Config
+from ...discovery.marks import limit_hint
 from ...discovery.test_registry import TestModel
 from ..common.json_driver import resolve_source_file, source_not_found
 from ..persistent import STARTUP_TIMEOUT_HINT, PersistentBackendBase, Worker
@@ -261,7 +262,8 @@ class JuliaWorker(Worker):
                     elapsed=elapsed,
                     sim_wall=elapsed,
                     error_message=timeout_message(
-                        f"Julia simulation exceeded {timeout}s timeout"
+                        f"Julia simulation exceeded {timeout}s timeout",
+                        limit_hint(test, self.config),
                     ),
                     timed_out=True,
                     # We killed a *healthy* worker because the test was slow;

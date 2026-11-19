@@ -1536,11 +1536,13 @@ def test_timeout_message_names_the_per_test_override(tmp_path):
     tr = worker.run_test_with_timeout(_tm(), "test_0001", timeout=0.05)
 
     assert tr.timed_out is True
-    assert "Timed out after 0s" in (tr.error_message or "")
-    assert "simulation.timeout" in (tr.error_message or "")
-    assert "backends.<Backend>.timeout" in (tr.error_message or "")
-    assert "test_spec.json" in (tr.error_message or "")
-    assert "--timeout" in (tr.error_message or "")
+    # no limit of its own: the run's fired, and every key that would win
+    # over it is named after it
+    assert tr.error_message == (
+        "Timed out after 0s (the limit is the run's --timeout: raise it with "
+        "--timeout, per test with simulation.timeout in test_spec.json, or "
+        "for one backend with backends.<Backend>.timeout there)"
+    )
 
 
 def test_timeout_detail_is_not_truncated_past_the_hint(tmp_path, capsys):
@@ -1593,7 +1595,10 @@ def test_a_backend_time_limit_is_the_one_a_worker_is_held_to(tmp_path):
 
     assert time.monotonic() - started < 2.5
     assert result.timed_out is True
-    assert (result.error_message or "").startswith("Timed out after 1s (")
+    assert result.error_message == (
+        "Timed out after 1s (the limit is backends.Dymola.timeout in "
+        "test_spec.json: raise it there)"
+    )
 
 
 class _FlakyStartWorker(_GoodWorker):
@@ -1791,7 +1796,7 @@ def test_dashboard_detail_keeps_the_whole_timeout_hint(tmp_path):
 
     backend = _stub_backend(tmp_path)
     backend.progress = _Progress()
-    long_msg = timeout_message("Julia simulation exceeded 600.0s timeout")
+    long_msg = timeout_message("Julia simulation exceeded 600.0s timeout", None)
     assert len(long_msg) > 120, "the regression needs an over-120-char message"
 
     class _TimeoutWorker(_GoodWorker):

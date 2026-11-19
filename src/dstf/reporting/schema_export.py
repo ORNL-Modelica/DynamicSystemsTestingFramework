@@ -309,6 +309,8 @@ def _backend_marks() -> dict[str, Any]:
                     f"one operating system ({name}/linux)."
                 ),
                 "properties": schema_properties(spec_shape.BACKEND),
+                # A block that says nothing marks nothing: refused.
+                "minProperties": 1,
                 "additionalProperties": False,
             }
             for name in backend_names()

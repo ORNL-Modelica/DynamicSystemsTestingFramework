@@ -79,6 +79,9 @@ def test_changed_since_asks_only_unmarked_tests_and_running_all_of_them_is_full(
     assert _painted(proj.work / "dashboard.html") is None
     verdicts = _read(proj.work, "verdicts.json")
     assert {t["model_id"] for t in verdicts["tests"]} == set(WITH)
+    # and `dstf summary` reads the run full: no "10 of 14 tests run"
+    assert main(["summary", f"pr={proj.work}"]) == 0
+    assert "tests run" not in capsys.readouterr().out
 
 
 def test_uses_flags_a_marked_test_and_its_file_still_lists_it(env, capsys):  # noqa: F811
@@ -96,3 +99,42 @@ def test_uses_flags_a_marked_test_and_its_file_still_lists_it(env, capsys):  # n
     assert f"  {simple} (skipped on every backend: {REASON})" in lines
     assert f"  {WITH[0]}" in lines
     assert listed.read_text(encoding="utf-8").splitlines() == sorted(WITH)
+
+
+def test_a_change_whose_only_users_are_marked_says_they_were_not_asked(
+    proj,  # noqa: F811
+    capsys,
+):
+    """Every test that uses what changed is marked: the run says so, and
+    does not claim that no test uses it — the marked ones were not asked."""
+    _mark(proj, *WITH)
+    proj.asked.clear()
+    _touch(proj, "Components", "UnitTests.mo")
+    rc, out, err = _run(proj, capsys, "--changed-since", "HEAD")
+    assert rc == 0, out + err
+    assert proj.simulated == []
+    assert f"{len(WITH)} tests marked skip are not asked: they are not run on" in out
+    assert "No test uses what changed" not in out
+    assert "No test asked uses what changed: no test to run.\n" in out
+
+
+def test_a_change_with_every_test_the_filter_leaves_marked_asks_nothing(
+    proj,  # noqa: F811
+    capsys,
+):
+    """Nothing to ask: "No test to run.", exit 0, and the work directory as
+    it was (D168.3)."""
+    _mark(proj, *WITHOUT)
+    proj.asked.clear()
+    _touch(proj, "Components", "UnitTests.mo")
+    before = sorted(p.name for p in proj.work.iterdir()) if proj.work.exists() else None
+    rc, out, err = _run(
+        proj, capsys, "--changed-since", "HEAD", "--filter", ",".join(WITHOUT)
+    )
+    assert rc == 0, out + err
+    *_, note, last = out.splitlines()
+    assert note.startswith("4 tests marked skip are not asked: they are not run on")
+    assert last == "No test to run."
+    assert proj.asked == []
+    after = sorted(p.name for p in proj.work.iterdir()) if proj.work.exists() else None
+    assert after == before

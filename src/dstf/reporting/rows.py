@@ -28,6 +28,7 @@ from .status import (
     LIVE_STATES,
     SCORING,
     SCORING_CLASS,
+    SKIPPED,
     STATUS_CLASSES,
     STATUS_LABELS,
     STATUS_ORDER,
@@ -86,6 +87,12 @@ class TestRow:
     #: the tool's "not scored yet": no verdict, and no live run giving one —
     #: the Session has not scored this test (yet)
     waiting: bool = False
+
+    @property
+    def run_folder(self) -> str | None:
+        """The work directory's folder the Key cell links: the test's, but
+        for a SKIPPED row, whose folder holds only an earlier run's files."""
+        return None if self.status == SKIPPED else self.test_key
 
     @property
     def status_text(self) -> str:

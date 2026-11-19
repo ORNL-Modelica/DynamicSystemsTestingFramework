@@ -2291,6 +2291,10 @@ class Session:
         self.live_runs.started(item)
         project.results.pop(model_id, None)
         self._reads.pop(model_id, None)
+        # The person queued it: from its start, what this run shows and
+        # leaves is its, marked or not — its live samples drawn, never
+        # read SKIPPED while it runs.
+        self._ran_here.add(model_id)
         self._score_one(model_id)
         self._emit("queue", state="started", models={model_id})
 
@@ -2322,7 +2326,8 @@ class Session:
     def _take_result(self, item: QueueItem) -> None:
         project = self._require_project()
         model_id = item.model_id
-        # The person queued it: what its run left is its, marked or not.
+        # Its start says so first (`_item_started`); an end taken in before
+        # that start's post (a close) says it here.
         self._ran_here.add(model_id)
         self._reads.pop(model_id, None)
         if item.result is None:

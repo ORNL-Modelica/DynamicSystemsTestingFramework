@@ -89,7 +89,8 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
     And refuse a mark that marks nothing: a ``skip`` that is no reason
     (``""``, ``false``, ``null``), a ``backends`` key that names no backend
     (:func:`check_backend_key`), a key of its block nothing reads
-    (``spec_shape.BACKEND``), a ``timeout`` there that is no whole number.
+    (``spec_shape.BACKEND``), a block that says none of them (``{}``), a
+    ``timeout`` there that is no whole number.
 
     Raises :class:`EntryKeyError`.
     """
@@ -173,6 +174,10 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
         if not isinstance(mark, dict):
             raise EntryKeyError(where, f"must be an object, got {_as_json(mark)}")
         refuse(where, mark, spec_shape.BACKEND)
+        if not mark:
+            raise EntryKeyError(
+                where, f"says nothing: a block names {' or '.join(spec_shape.BACKEND)}"
+            )
         for name, value in mark.items():
             mark_value(f"{where}.{name}", spec_shape.BACKEND[name].schema, value)
 

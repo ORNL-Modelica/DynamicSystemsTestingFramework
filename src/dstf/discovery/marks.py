@@ -97,12 +97,55 @@ def every_skip_mark(test: TestModel) -> list[SkipMark]:
     return marks
 
 
+#: How to raise the limit when the one that fired is not known: a batch's
+#: limit, the sum of its tests' (Dymola's), names none of them.
+ANY_LIMIT_HINT = (
+    "raise it per test with simulation.timeout in test_spec.json, "
+    "for one backend with backends.<Backend>.timeout there, "
+    "or globally with --timeout"
+)
+
+#: The run's own limit: ``--timeout``, which every other key wins over.
+RUN_LIMIT = "--timeout"
+
+
+def _limit(test: TestModel, config: Config) -> tuple[str, int | None]:
+    """The key that sets ``test``'s time limit on ``config``'s backend and
+    OS — ``backends.<where>.timeout``, ``simulation.timeout`` or
+    :data:`RUN_LIMIT` — and its seconds (None for the run's, which only
+    ``config.timeout`` holds). THE one order of the time limits."""
+    found = _block(test, config, "timeout")
+    if found is not None:
+        where, seconds = found
+        return f"backends.{where}.timeout", seconds
+    if test.timeout is not None:
+        return "simulation.timeout", test.timeout
+    return RUN_LIMIT, None
+
+
 def timeout_for(test: TestModel, config: Config) -> int:
     """The seconds ``test`` may run on ``config``'s backend and OS: its
     block's ``timeout``, else its ``simulation.timeout``, else the run's."""
-    found = _block(test, config, "timeout")
-    if found is not None:
-        return found[1]
-    if test.timeout is not None:
-        return test.timeout
-    return config.timeout
+    seconds = _limit(test, config)[1]
+    return config.timeout if seconds is None else seconds
+
+
+def limit_hint(test: TestModel, config: Config) -> str:
+    """How to raise the time limit that stops ``test`` here, naming first
+    the key that set it: what a timed-out run's message says, so its first
+    advice is the limit that fired — raising ``simulation.timeout`` or
+    ``--timeout`` does nothing for a test its backend's block stops. Then
+    any key that would win over it once raised."""
+    key = _limit(test, config)[0]
+    if key == RUN_LIMIT:
+        return (
+            "the limit is the run's --timeout: raise it with --timeout, per "
+            "test with simulation.timeout in test_spec.json, or for one "
+            "backend with backends.<Backend>.timeout there"
+        )
+    if key == "simulation.timeout":
+        return (
+            "the limit is simulation.timeout in test_spec.json: raise it "
+            "there, or for one backend with backends.<Backend>.timeout"
+        )
+    return f"the limit is {key} in test_spec.json: raise it there"

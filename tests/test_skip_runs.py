@@ -103,6 +103,17 @@ class Project:
             for tr in re.findall(r"<tr\b.*?</tr>", body, flags=re.S)
         }
 
+    def row_html(self, model: str) -> str:
+        """The dashboard's row of ``model``, as the page spells it."""
+        page = (self.work / "dashboard.html").read_text(encoding="utf-8")
+        body = page.split('<tbody id="results-tbody">', 1)[1].split("</tbody>", 1)[0]
+        (row,) = [
+            tr
+            for tr in re.findall(r"<tr\b.*?</tr>", body, flags=re.S)
+            if f'data-model="{model}"' in tr
+        ]
+        return row
+
     def notice(self) -> str:
         """The dashboard's not-a-full-run notice, as text ('' for none)."""
         page = (self.work / "dashboard.html").read_text(encoding="utf-8")
@@ -242,7 +253,12 @@ def test_a_rerun_whose_only_failure_is_marked_has_nothing_to_rerun(proj, capsys)
     proj.mark()
     rc, out = proj.dstf(capsys, "--rerun")
     assert rc == 0, out
-    assert "Nothing to rerun (no tests in categories: failed)" in out
+    # the marked test, whose last run failed, is said to be left out
+    assert (
+        "Nothing to rerun among the tests not marked skip (no tests in "
+        "categories: failed)\n1 test marked skip is not run on Python/linux "
+        "(--include-skipped runs it).\n"
+    ) in out
     assert proj.runs() == before
     assert {m: v["status"] for m, v in proj.verdicts().items()} == {
         MARKED: "SKIPPED",
@@ -323,6 +339,145 @@ def test_a_marked_test_that_still_fails_fails_no_run_and_says_it_is_marked(
     assert (
         f'Marked skip, failing no run: <code title="{MARKED}">ConstantCsv</code> '
         f"(FAIL, {SAID})."
+    ) in said
+
+
+@pytest.mark.parametrize("include", [True, False])
+def test_an_accept_never_fails_a_run_over_a_marked_test(tmp_path, capsys, include):
+    """Design 4: a marked test never changes the exit code — also when
+    --include-skipped runs it, its simulation fails, and the accept cannot
+    store it: the refusal is printed, the exit code stays 0."""
+    proj = Project(tmp_path, baselines=False)
+    script = proj.config.parent.parent.parent / "Examples" / "ConstantCsv.py"
+    script.write_text(
+        "def simulate(stop_time, tolerance):\n    raise RuntimeError('broken')\n"
+    )
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--accept", *(["--include-skipped"] if include else []))
+    assert rc == 0, out
+    assert proj.stored() == {POINTS, RAMP}
+    if include:
+        assert f"Skipped 1 test(s):\n  {MARKED}: " in out
+        # and so does a compare's accept of that run's results
+        rc, out = proj.dstf(capsys, "--accept", "--include-skipped", command="compare")
+        assert rc == 0, out
+        assert f"Skipped 1 test(s):\n  {MARKED}: " in out
+    else:
+        assert f"not stored: {MARKED} is marked skip on Python ({REASON})" in out
+
+
+@pytest.mark.parametrize("argv", [[], ["-i"], ["--accept"]])
+def test_a_run_of_only_marked_tests_leaves_no_verdicts_of_the_run_before(
+    proj, capsys, monkeypatch, argv
+):
+    """Every test marked, no --merge: whatever the route, verdicts.json is
+    this invocation's (each test SKIPPED) or there is none — never the last
+    run's PASS rows beside this run's status.json — and the dashboard it
+    wrote is named on a View line."""
+    assert proj.dstf(capsys)[0] == 0
+    proj.mark(MARKED, POINTS, RAMP)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+    rc, out = proj.dstf(capsys, *argv)
+    assert rc == 0, out
+    assert proj.read("status.json")["tests"] == []
+    verdicts = proj.work / "verdicts.json"
+    if argv:
+        assert not verdicts.exists()
+    else:
+        assert {v["status"] for v in proj.verdicts().values()} == {"SKIPPED"}
+    view = f"View: {(proj.work / 'dashboard.html').resolve().as_uri()}"
+    assert view in out.splitlines()
+
+
+def test_a_merge_beside_a_marked_test_counts_it_apart_from_those_scored(proj, capsys):
+    """`--merge --filter <unmarked>` with a marked test among the others:
+    the marked one reads SKIPPED, so it is not among the tests "scored on
+    their last results"."""
+    assert proj.dstf(capsys)[0] == 0
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--merge", "--filter", RAMP)
+    assert rc == 0, out
+    assert proj.verdicts()[MARKED]["status"] == "SKIPPED"
+    assert proj.notice() == (
+        f"Not a full run. 1 of 3 tests was run: the one that --filter {RAMP} "
+        "matches, and 1 marked skip was not run. The other 1 was not run: its "
+        "last result, if there is one, is scored."
+    )
+    assert "(1 of 3 tests run, 1 marked skip; not a full run)" in out
+
+
+def test_a_skipped_row_links_no_folder_of_an_older_run(proj, capsys):
+    """Its Key names the test's folder, which holds an earlier run's files:
+    a SKIPPED row does not link it."""
+    assert proj.dstf(capsys)[0] == 0
+    proj.mark()
+    assert proj.dstf(capsys)[0] == 0
+    assert 'href="test_' not in proj.row_html(MARKED)
+    assert 'href="test_' in proj.row_html(RAMP)
+
+
+def test_a_skipped_row_reads_nothing_of_an_older_report(proj, capsys):
+    """`run --report`, then the mark, then a plain run: the sidecar the
+    report left for the marked test is not read into its row — no link to
+    that page, no timing, no source of a run."""
+    assert proj.dstf(capsys, "--report")[0] == 0
+    assert "interactive.html" in proj.row_html(MARKED)
+    proj.mark()
+    assert proj.dstf(capsys)[0] == 0
+    assert "interactive.html" not in proj.row_html(MARKED)
+    assert proj.rows()[MARKED] == (
+        f"test_0001 ref_f612690ea655 {MARKED} SKIPPED — — — — 0/0 0 — — — "
+        f"skipped on {SAID}"
+    )
+
+
+def _unreadable_override(proj: Project, model: str) -> None:
+    """``model``'s stored baseline given an override with a key nothing
+    reads: a route that scores it stops at it (exit 2)."""
+    (ref,) = [
+        p
+        for p in proj.refs.glob("ref_*.json")
+        if json.loads(p.read_text(encoding="utf-8"))["model_id"] == model
+    ]
+    doc = json.loads(ref.read_text(encoding="utf-8"))
+    overrides = doc.setdefault("comparison", {}).setdefault("variable_overrides", {})
+    overrides["x"] = {"mode": "nrmse", "bogus_key": 1}
+    ref.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_a_marked_test_s_unreadable_baseline_stops_no_run_or_compare(proj, capsys):
+    """A test the marks keep out is not scored, so its stored file is not
+    read either; an unmarked test's still stops the command."""
+    assert proj.dstf(capsys)[0] == 0
+    _unreadable_override(proj, MARKED)
+    proj.mark()
+    # a --merge scores every test's last result: still not the marked one
+    routes = [("run", []), ("run", ["--merge", "--filter", POINTS]), ("compare", [])]
+    for command, argv in routes:
+        rc, out = proj.dstf(capsys, *argv, command=command)
+        assert rc == 0, out
+        assert proj.verdicts()[MARKED]["status"] == "SKIPPED"
+    _unreadable_override(proj, RAMP)
+    for command, argv in routes:
+        rc, out = proj.dstf(capsys, *argv, command=command)
+        assert rc == 2, out
+        assert (
+            'comparison.variable_overrides[x]: nrmse · x: unknown field "bogus_key"'
+            in out
+        )
+        assert "ref_9bbf24e6f8aa.json" in out
+
+
+def test_summary_spells_a_reason_s_markup_as_text(proj, capsys):
+    """A reason holding a quote, a bracket and an ampersand is said as
+    written in `dstf summary`'s Markdown, never as markup."""
+    proj.edit(MARKED, backends={"Python": {"skip": 'say "no" <now> & then'}})
+    assert proj.dstf(capsys)[0] == 0
+    assert main(["summary", f"pr={proj.work}"]) == 0
+    said = capsys.readouterr().out
+    assert (
+        f'Marked skip, failing no run: <code title="{MARKED}">ConstantCsv</code> '
+        '(SKIPPED, Python: say "no" &lt;now&gt; &amp; then).'
     ) in said
 
 
@@ -439,30 +594,20 @@ def test_discover_lists_every_mark_and_which_keep_a_test_from_running_here(
     ]
 
 
-def test_a_skipped_test_s_report_page_draws_nothing_of_its_last_run(proj, capsys):
-    """`compare --report` after a run before the mark: the marked test's
-    page holds no trajectory, statistic or time of that run."""
+@pytest.mark.parametrize("command", ["run", "compare"])
+def test_a_skipped_test_gets_no_report_page(proj, capsys, command):
+    """`--report` after a run before the mark: no page is written for the
+    marked test (one said "Simulation failed" and not its reason), the
+    count leaves it out, and its dashboard row links none."""
     assert proj.dstf(capsys)[0] == 0
     proj.mark()
-    rc, out = proj.dstf(capsys, "--report", command="compare")
+    rc, out = proj.dstf(capsys, "--report", command=command)
     assert rc == 0, out
-    key = next(k for k, m in _keys(proj).items() if m == MARKED)
-    page = json.loads(
-        (proj.work / "reports" / key / "comparison_data.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert page["trajectories"] == page["nobaseline_trajectories"] == []
-    assert page["last_run_at"] is None
-    (wall,) = [
-        row
-        for section in page["statistics_sections"]
-        for row in section["rows"]
-        if row["label"] == "Wall time"
-    ]
-    assert wall["current"] == ""
-
-
-def _keys(proj: Project) -> dict[str, str]:
-    manifest = json.loads((proj.work / "batch_manifest.json").read_text("utf-8"))
-    return {k: e["model_id"] for k, e in manifest.items()}
+    assert "Generating 2 reports" in out
+    written = {
+        json.loads(p.read_text(encoding="utf-8"))["model_id"]
+        for p in (proj.work / "reports").glob("*/comparison_data.json")
+    }
+    assert written == {POINTS, RAMP}
+    assert "interactive.html" not in proj.row_html(MARKED)
+    assert "interactive.html" in proj.row_html(RAMP)

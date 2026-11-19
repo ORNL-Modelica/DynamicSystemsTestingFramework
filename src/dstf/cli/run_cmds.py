@@ -107,9 +107,15 @@ def _report_accept(
     skipped: list[tuple[str, str]],
     warnings: list[str],
     notes: list[str],
+    *,
+    marked: Collection[str] = (),
 ) -> int:
-    """Print the accept outcome; nonzero when anything was skipped (a
-    partial accept is a failure CI must see). A
+    """Print the accept outcome; nonzero when a test was skipped (a
+    partial accept is a failure CI must see) — but not a test marked skip
+    for this backend and OS (``marked``, the run's marks whether it applied
+    them or not): one run anyway under --include-skipped whose result
+    cannot be stored is named with the others, and, as every marked test,
+    never changes the exit code. A
     warning — a large baseline file, which IS stored — changes no exit code,
     and neither does a note: the simulate-only tests, which have no baseline
     to store, are named, where `Accepted 0 test baselines` said nothing of
@@ -123,8 +129,7 @@ def _report_accept(
         print(f"Skipped {len(skipped)} test(s):")
         for model_id, reason in skipped:
             print(f"  {model_id}: {reason}")
-        return 1
-    return 0
+    return 1 if any(model_id not in marked for model_id, _ in skipped) else 0
 
 
 def _browser(args: argparse.Namespace) -> bool:
@@ -321,8 +326,11 @@ def _select_changed(args: argparse.Namespace, config, tests: list, marked: list)
         return 0
     elif not selected:
         if unasked_note:
+            # The marked tests were not asked: one of them may use it.
             print(unasked_note)
-        print("No test uses what changed: no test to run.")
+            print("No test asked uses what changed: no test to run.")
+        else:
+            print("No test uses what changed: no test to run.")
         return 0
     else:
         print(_selected_line(len(selected), of, len(unasked)))
@@ -379,11 +387,17 @@ def _narrowed(
 
     ``skipped`` counts ``marked``: the tests the flags chose that a mark
     keeps from running (under ``--changed-since``, every one the filter
-    left: they were not asked). A run is full when those and the tests it
-    simulates are the project's: a run of every test its marks let run is
-    a full run. ``applied`` are the tests the run's marks keep out of it,
-    of the whole project: SKIPPED, never scored on a last result."""
-    selected, skipped, of = len(tests), len(marked), len(all_tests)
+    left: they were not asked) — and, where the run scores last results,
+    the recorded tests the marks keep out (``applied``, of the whole
+    project): each reads SKIPPED, never scored on a last result, so it is
+    no "other" whose last result is scored. A run is full when those and
+    the tests it simulates are the project's: a run of every test its
+    marks let run is a full run."""
+    merging = getattr(args, "merge", False) and not args.accept
+    skips = {t.model_id for t in marked}
+    if merging:
+        skips |= recorded & set(applied)
+    selected, skipped, of = len(tests), len(skips), len(all_tests)
     if changed is None and selected + skipped >= of:
         return None
     block = {**(changed or {}), "selected": selected, "skipped": skipped, "of": of}
@@ -392,11 +406,7 @@ def _narrowed(
         if value is not None:
             block[key] = value
     beside = recorded - {t.model_id for t in tests} - set(applied)
-    if (
-        getattr(args, "merge", False)
-        and not args.accept
-        and any(t.model_id in beside for t in all_tests)
-    ):
+    if merging and any(t.model_id in beside for t in all_tests):
         block["merged"] = True
     return block
 
@@ -514,7 +524,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             # not fail CI), unlike an empty user --filter below. Still refresh
             # the merged report so the dashboard reflects the (unchanged)
             # full-suite state.
-            print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
+            if marked:
+                # A marked test is never chosen: it may be one that failed.
+                print(
+                    "Nothing to rerun among the tests not marked skip (no "
+                    f"tests in categories: {rerun_filter})"
+                )
+                print(_not_run_note(marked, config))
+            else:
+                print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
             # This invocation's block — 0 of the project's tests run, the
             # rest scored on their last results — not the last run's, which
             # status.json keeps: it records that run's simulations (D170).
@@ -630,6 +648,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 *accept_run_results(
                     store, [*tests, *marked], results, config.work_dir, marks=applied
                 ),
+                marked=marks,
             )
         elif args.interactive is not None:
             from ..comparison.comparator import compare_all
@@ -729,30 +748,50 @@ def _run_none(args, config, store, backend, all_tests, marked, marks) -> int:
     nothing is simulated, and the run is never started. With --merge every
     test is scored on its last results, as a --rerun with nothing to rerun
     is — status.json, the last run's record, is kept. Without it this
-    invocation is the run: its status.json records no test simulated, so
-    the dashboard brings back no row of the run before, and its marked
-    tests read SKIPPED. An accept stores nothing and names them. Exit 0:
-    a marked test never fails a run."""
+    invocation is the run, whatever its route: its status.json records no
+    test simulated, so the dashboard brings back no row of the run before,
+    and the last run's verdicts.json goes (`write_unrun_status`); a scoring
+    route writes this run's, its marked tests SKIPPED. An accept stores
+    nothing and names them, and `-i` writes no verdicts.json, as their
+    runs of tests that ran do. Exit 0: a marked test never fails a run."""
     from ..comparison.comparator import compare_all
+    from ..reporting.dashboard_render import build_rerun_flags, render_final
+    from ..reporting.report_suite import open_in_browser
 
     selection = _narrowed(args, None, [], all_tests, _recorded(config), marked, marks)
     print(_not_run_note(marked, config))
+    merge = getattr(args, "merge", False)
+    config.write_default_file()
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    if not merge:
+        write_unrun_status(config, backend=backend, selection=selection)
     if args.accept:
         from ..storage.accept import accept_run_results
 
-        return _report_accept(
+        code = _report_accept(
             config,
             *accept_run_results(store, marked, {}, config.work_dir, marks=marks),
+            marked=marks,
         )
-    config.write_default_file()
-    config.work_dir.mkdir(parents=True, exist_ok=True)
-    if getattr(args, "merge", False):
+        if not merge:
+            # An accept scores nothing: the page lists this run's tests
+            # that ran — none — as `run --accept`'s lists them SIMULATED.
+            render_final(
+                config.work_dir,
+                rerun_flags=build_rerun_flags(config),
+                theme=config.theme,
+                comparisons=(),
+                results={},
+                selection=selection,
+            )
+            open_in_browser(config.work_dir / "dashboard.html", launch=_browser(args))
+        return code
+    if merge:
         results = backend.read_last_results(all_tests)
         scope_tests = _in_order(
             all_tests, [t for t in all_tests if t.model_id in results], marked
         )
     else:
-        write_unrun_status(config, backend=backend, selection=selection)
         results, scope_tests = {}, list(marked)
     comparisons = compare_all(
         scope_tests,
@@ -764,8 +803,6 @@ def _run_none(args, config, store, backend, all_tests, marked, marks) -> int:
         marks=marks,
     )
     if args.interactive is not None:
-        from ..reporting.dashboard_render import build_rerun_flags, render_final
-
         render_final(
             config.work_dir,
             rerun_flags=build_rerun_flags(config),
@@ -774,6 +811,7 @@ def _run_none(args, config, store, backend, all_tests, marked, marks) -> int:
             results=results,
             selection=selection,
         )
+        open_in_browser(config.work_dir / "dashboard.html", launch=_browser(args))
         return _interactive_review(
             scope_tests,
             results,
@@ -792,10 +830,11 @@ def _run_none(args, config, store, backend, all_tests, marked, marks) -> int:
 def _show_last_results(
     comparisons, results, scope_tests, store, config, args, selection
 ) -> None:
-    """The final dashboard and the reports of a run that simulated
-    nothing: ``comparisons`` of the last results (and SKIPPED rows), under
-    this invocation's ``selection``."""
+    """The final dashboard, named on a View line, and the reports of a run
+    that simulated nothing: ``comparisons`` of the last results (and
+    SKIPPED rows), under this invocation's ``selection``."""
     from ..reporting.dashboard_render import build_rerun_flags, render_final
+    from ..reporting.report_suite import open_in_browser
 
     render_final(
         config.work_dir,
@@ -805,6 +844,7 @@ def _show_last_results(
         results=results,
         selection=selection,
     )
+    open_in_browser(config.work_dir / "dashboard.html", launch=_browser(args))
     _show_reports(
         comparisons,
         results,
@@ -916,6 +956,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         return _report_accept(
             config,
             *accept_run_results(store, tests, results, config.work_dir, marks=applied),
+            marked=marks,
         )
 
     comparisons = compare_all(

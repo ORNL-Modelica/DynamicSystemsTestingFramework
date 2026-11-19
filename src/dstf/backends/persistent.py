@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from ..config import Config
 from ..config_shape import default
 from ..discovery.library_state import LibraryChanges, LibraryState
-from ..discovery.marks import timeout_for
+from ..discovery.marks import limit_hint, timeout_for
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import BatchManifest
 from .base import (
@@ -1039,7 +1039,9 @@ class Worker(ABC):
                 test_key=test_key,
                 success=False,
                 elapsed=elapsed,
-                error_message=timeout_message(f"Timed out after {timeout:.0f}s"),
+                error_message=timeout_message(
+                    f"Timed out after {timeout:.0f}s", limit_hint(test, self.config)
+                ),
                 timed_out=True,
                 worker_killed=True,
             )

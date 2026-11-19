@@ -233,7 +233,7 @@ body.has-selection { padding-bottom: 5em; }
 {% endfor %}    data-started-wall="{{ t.started_wall or '' }}">
   <td class="sel-col"><input type="checkbox" class="row-sel" onchange="onRowToggle(this)"></td>
 {% for c in columns %}{% set text = c.text(t) %}
-{%- if c.key == 'test' %}  <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
+{%- if c.key == 'test' %}  <td>{% if t.run_folder %}<a href="{{ t.run_folder }}/">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'ref' %}  <td>{% if t.ref_file %}<a href="{{ t.ref_file }}" title="Open reference JSON">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'model' %}  <td class="model-cell" title="{{ t.model_id }}">{% if t.report_page %}<a href="reports/{{ t.report_page }}/interactive.html">{{ text }}</a>{% else %}{{ text }}{% endif %}</td>
 {% elif c.key == 'status' %}  <td><span class="status-badge {{ t.status_class }}">{{ text }}</span></td>
