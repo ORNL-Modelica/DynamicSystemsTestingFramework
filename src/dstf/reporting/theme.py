@@ -125,11 +125,12 @@ def _from_fill(fill: str) -> Mapping[str, str]:
     )
 
 
-#: SKIPPED: a test marked not to run on this backend and OS. A neutral of
-#: its own — a warm stone grey beside NOT RUN's plain one, so the two read
-#: apart. The owner's call: this one fill sets every part, under both
-#: themes (a dark theme dims it as every status, `status_colours`).
-SKIPPED_FILL = "#8d7b68"
+#: SKIPPED: a test marked not to run on this backend and OS. Teal, a
+#: colour of its own: the owner chose it from a rendered sheet of four, a
+#: stone grey having read too close to NOT RUN's plain one. This one fill
+#: sets every part, under both themes (a dark theme dims it as every
+#: status, `status_colours`).
+SKIPPED_FILL = "#00897B"
 
 #: The neutral grey: a live row still queued, a test with no result (NOT
 #: RUN, D145) and a row the tool has not scored yet (SCORING) — one token

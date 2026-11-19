@@ -89,7 +89,7 @@ text colour, and a **tint** row background.
 | warnings / advisory | `#ffc107` | `#8a6d00` | `#fff3cd` | `#ffc107` |
 | timed-out | `#9C27B0` | `#6A1B9A` | `#f3e5f5` | `#e1bee7` |
 | queued / not-run / scoring | `#888888` | `#555555` | `#f5f5f5` | `#dddddd` |
-| skipped | `#8d7b68` | `#5c5044` | `#f4f2f0` (rows) / `#efedea` (pill) | `#d1cac3` |
+| skipped | `#00897B` | `#005950` | `#e6f3f2` (rows) / `#dbeeed` (pill) | `#99d0ca` |
 | running | `#2196F3` | `#1976D2` | `#e3f2fd` | `#90caf9` |
 | pending / info | `#607D8B` | `#607D8B` | `#eceff1` | `#b0bec5` |
 
@@ -97,9 +97,11 @@ The tinted pill's border is the fill's Material 200 shade; the dashboard
 ships only pass and fail, the rest are derived the same way. These are the
 `default` values; on `dark` the fill column is the same and the other three
 are dimmed as "Themes" says (pass: tint `#243225`, pill `#29412a`, text
-`#a5d6a7`). Skipped (a test marked not to run on this backend and OS) is a
-warm stone grey, a neutral that reads apart from not-run's: its other parts
-are derived from its fill alone (`theme.SKIPPED_FILL`, one value).
+`#a5d6a7`). Skipped (a test marked not to run on this backend and OS) is
+teal, a colour of its own — a stone grey read too close to not-run's grey,
+and the owner chose teal from a rendered sheet of four: its other parts are
+derived from its fill alone (`theme.SKIPPED_FILL`, one value; on `dark`:
+tint `#1a2d2b`, pill `#173834`, text `#99d0ca`).
 
 Baseline roles (chips in the overlay picker): soft_check `#e8d8f3` on
 `#5e3a80`, border `#c4a8df`; companion `#d8f3e4` on `#2b6b48`, border

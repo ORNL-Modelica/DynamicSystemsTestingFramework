@@ -160,7 +160,6 @@ def test_a_skipped_test_has_its_pill_its_badge_and_its_reason(
     from dstf.comparison.comparator import skipped
     from dstf.comparison.types import TestComparison
     from dstf.discovery.marks import SkipMark
-    from dstf.reporting.theme import SKIPPED_FILL
 
     reason = 'broken on "linux" <see #12> & co'
     (tmp_path / "status.json").write_text(
@@ -187,8 +186,7 @@ def test_a_skipped_test_has_its_pill_its_badge_and_its_reason(
     fill = row.locator(".status-badge").evaluate(
         "e => getComputedStyle(e).backgroundColor"
     )
-    channels = tuple(int(SKIPPED_FILL[i : i + 2], 16) for i in (1, 3, 5))
-    assert fill == "rgb({}, {}, {})".format(*channels)
+    assert fill == "rgb(0, 137, 123)"  # #00897B: the owner's teal
     assert row.locator(".detail-cell").inner_text() == f"skipped on Python: {reason}"
     page.close()
 

@@ -372,11 +372,6 @@ def test_a_skipped_row_says_its_reason_and_keeps_no_timing_of_an_older_run(
     assert "it fails (marked skip on Python)" in rows["Lib.C"]
 
 
-def test_the_dashboard_has_a_skipped_pill():
-    assert st.SKIPPED in st.PILL_STATUSES
-    assert st.STATUS_CLASSES[st.SKIPPED] == "skipped"
-
-
 # -- the tool -----------------------------------------------------------------
 
 
@@ -396,13 +391,13 @@ def test_the_test_pages_strip_says_why_a_test_was_skipped():
     )
 
 
-def test_skipped_wears_a_neutral_of_its_own_in_both_themes():
+def test_skipped_wears_the_owner_s_teal_in_both_themes():
+    """The owner chose teal from a rendered sheet (a stone grey read too
+    close to NOT RUN's)."""
     from dstf.reporting import theme
 
     for name in ("default", "dark"):
         colours = theme.status_colours(name)
-        assert colours["skipped"]["fill"] == theme.SKIPPED_FILL
+        assert colours["skipped"]["fill"] == "#00897B"
         assert colours["skipped"] != colours["not-run"]
-        assert f"--dstf-skipped-fill: {theme.SKIPPED_FILL};" in theme.css_variables(
-            name
-        )
+        assert "--dstf-skipped-fill: #00897B;" in theme.css_variables(name)
