@@ -273,6 +273,14 @@ def marked_words(mark: SkipMark) -> str:
     return f"marked skip on {mark.where}"
 
 
+def marked_with_reason(mark: SkipMark) -> str:
+    """A mark named beside a test it did not keep from being looked at —
+    ``marked skip on Python (<reason>)``: an accept's note of a test it
+    stored nothing of, JUnit's message for a marked test that still
+    fails."""
+    return f"{marked_words(mark)} ({mark.reason})"
+
+
 def mark_line(comp: TestComparison) -> str | None:
     """The line said for a marked test that ran anyway, after the report:
     a PASS asks for the mark to go, anything else says the mark still

@@ -8,6 +8,7 @@ from pathlib import Path
 from ..comparison.types import TestComparison
 from .status import (
     FAIL,
+    FAILURES,
     NO_REF,
     NOT_RUN,
     PASS,
@@ -17,9 +18,10 @@ from .status import (
     advisory_failures,
     advisory_text,
     classify,
+    counts_against,
     failed_criteria,
     group_failures,
-    marked_words,
+    marked_with_reason,
     refusal,
     skipped_words,
 )
@@ -60,7 +62,10 @@ def _kind(comp: TestComparison) -> str:
     state = classify(comp)
     if state == PASS:
         return "passed"
-    if comp.mark is not None or state in (SKIPPED, NO_REF, NOT_RUN):
+    # What does not count against the run (`status.counts_against`) is no
+    # failure here either: SKIPPED, NO_REF, NOT RUN, and a marked test that
+    # still fails.
+    if not counts_against(comp):
         return "skipped"
     return "error" if state == SIM_FAIL else "failure"
 
@@ -74,7 +79,7 @@ def _mark_message(comp: TestComparison) -> str:
     if comp.skipped:
         return skipped_words(comp.mark)
     state = STATUS_LABELS[classify(comp)]
-    return f"{marked_words(comp.mark)} ({comp.mark.reason}); still fails: {state}"
+    return f"{marked_with_reason(comp.mark)}; still fails: {state}"
 
 
 def generate_junit_report(
@@ -130,7 +135,7 @@ def generate_junit_report(
             )
 
             state = classify(comp)
-            if comp.mark is not None and state in (SKIPPED, FAIL, SIM_FAIL):
+            if state == SKIPPED or (state in FAILURES and not counts_against(comp)):
                 ET.SubElement(tc, "skipped", {"message": _mark_message(comp)})
             elif state == NOT_RUN:
                 # No result: the test was never run, or its run never

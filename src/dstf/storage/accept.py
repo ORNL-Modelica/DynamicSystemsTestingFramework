@@ -19,7 +19,7 @@ from ..comparison.comparator import (
 from ..config import Config
 from ..discovery.marks import SkipMark
 from ..discovery.test_registry import TestModel, diagnostic_names
-from ..reporting.status import marked_words
+from ..reporting.status import marked_with_reason
 from .baseline import ReferenceFile
 from .batch_manifest import BatchManifest, unfinished_run_models
 from .reference_store import ReferenceStore
@@ -84,7 +84,7 @@ def not_stored_note(model_id: str, mark: SkipMark) -> str:
     test an accept passed over because its mark kept it from running here.
     A note, worded apart from the skips (``Skipped N test(s):``): no
     refusal of a result, and no exit code."""
-    return f"not stored: {model_id} is {marked_words(mark)} ({mark.reason})"
+    return f"not stored: {model_id} is {marked_with_reason(mark)}"
 
 
 def _variable_names(reference: ReferenceFile | None) -> list[str]:
