@@ -31,9 +31,16 @@ NOTICES = (
     "Error: Failed to load package SomeMedia (default) using MODELICAPATH.",
     "Error: Error occurred while flattening model Lib.Broken",
 )
-#: The five notices a failure keeps of them: the Errors, then the Warning,
-#: then the first Notifications, each kind in the order said.
-KEPT = "; ".join([NOTICES[7], NOTICES[8], NOTICES[5], NOTICES[0], NOTICES[1]])
+#: What a failure says of them, around the record's messages (``{}``):
+#: the Errors first, then — after the simulator's own words — the Warning
+#: and the first Notifications, five notices in all, each kind in the order
+#: said.
+KEPT = (
+    "; ".join(NOTICES[7:9])
+    + " | {} | "
+    + "; ".join([NOTICES[5], NOTICES[0], NOTICES[1]])
+    + " | no result file produced"
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "results_openmodelica"
 
@@ -343,8 +350,64 @@ class TestOpenModelicaBackendUnit:
         monkeypatch.setattr("dstf.backends.openmodelica.backend.run_killable", fake_run)
 
         result = backend.run_single_test(test, test_key="test_0001", index=1, total=1)
-        assert result.error_message == KEPT + (
-            " | Failed to build model: Lib.Broken | no result file produced"
+        assert result.error_message == KEPT.format("Failed to build model: Lib.Broken")
+
+    def test_a_run_that_stopped_says_so_before_the_translation_s_warnings(
+        self, tmp_path, monkeypatch
+    ):
+        """No Error among omc's notices: the simulation's own words, the
+        record's messages, come before a Warning about the package file."""
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            backend_name="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        backend = OpenModelicaBackend(cfg)
+        backend.om_config = dataclasses.replace(backend.om_config, omc_path="omc")
+        test = TestModel(
+            model_id="Lib.Fail",
+            source_file=None,
+            n_vars=0,
+            variable_patterns=[],
+            stop_time=1.0,
+            tolerance=1e-6,
+        )
+        warning = (
+            "Warning: Elements in the package.mo-file need to be listed in "
+            "the package.order."
+        )
+        stopped = (
+            "Simulation execution failed for model: Lib.Fail\n"
+            "LOG_ASSERT        | error   | The following assertion has been "
+            "violated during initialization"
+        )
+        stdout_synth = (
+            f'"[{tmp_path}/package.mo:54:15-58:35:writable] {warning}\n"\n'
+            "record SimulationResult\n"
+            '    resultFile = "",\n'
+            f'    messages = "{stopped}",\n'
+            "    timeTotal = 0.0\n"
+            "end SimulationResult;\n"
+            '""\n'
+        )
+
+        def fake_run(cmd, *, cwd, timeout):
+            return CompletedProcess(
+                args=cmd, returncode=0, stdout=stdout_synth, stderr=""
+            )
+
+        monkeypatch.setattr("dstf.backends.openmodelica.backend.run_killable", fake_run)
+
+        result = backend.run_single_test(test, test_key="test_0001", index=1, total=1)
+        assert result.error_message == (
+            "Simulation execution failed for model: Lib.Fail\nLOG_ASSERT        "
+            "| error   | The following assertion has been violated during "
+            f"initialization | [package.mo:54:15-58:35:writable] {warning} | "
+            "no result file produced"
         )
 
     def test_the_error_omc_points_at_a_file_is_the_message(self, tmp_path, monkeypatch):

@@ -562,8 +562,8 @@ class TestWorkerRunTest:
         worker, _, _ = self._bootstrap_worker(tmp_path, responses=responses)
         result = worker.run_test(test, "test_0001")
 
-        assert result.error_message == KEPT + (
-            " | Failed to build model: Demo.Example.A | no result file produced"
+        assert result.error_message == KEPT.format(
+            "Failed to build model: Demo.Example.A"
         )
 
     def test_the_error_omc_points_at_a_file_is_the_message(self, tmp_path):
@@ -730,11 +730,11 @@ class TestWorkerRunTest:
                 "total": 1.11,
             }
         }
-        message = result.error_message or ""
-        assert message.startswith("Warning: The step size became small.; ")
-        assert "result_res.mat reaches t=1.0 of stop_time=2.0" in message
-        assert message.endswith(
-            "partial result refused | The simulation finished successfully."
+        # The refusal first, as an Error would be: it is why the run failed.
+        assert result.error_message == (
+            "simulate() reported success but result_res.mat reaches t=1.0 of "
+            "stop_time=2.0 — partial result refused | The simulation finished "
+            "successfully. | Warning: The step size became small."
         )
 
 

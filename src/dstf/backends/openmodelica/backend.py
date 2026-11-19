@@ -80,26 +80,22 @@ def timing(parsed: ParsedOmcOutput) -> tuple[float | None, float | None, dict | 
     return translation, t.get("simulation"), {"timing": dict(t)}
 
 
-#: How many of omc's notices a failed run's message keeps.
+#: How many of omc's notices a failed run's message keeps: its Errors
+#: all, and its other notices up to this many in all.
 NOTICES_KEPT = 5
-#: The kinds of notice omc says, the one that says why first.
-_NOTICE_KINDS = ("Error", "Warning")
 
 
-def kept_notices(notices: list[str]) -> list[str]:
-    """The :data:`NOTICES_KEPT` of omc's ``notices`` a failed run's
-    message says: its Errors first, then its Warnings, then the rest (its
-    Notifications), each kind in the order omc said them. Kept in omc's
-    order, five Notifications about the packages it loaded filled the
-    message and the Error after them, the reason, was dropped."""
-
-    def rank(notice: str) -> int:
-        kind = notice_kind(notice)
-        return (
-            _NOTICE_KINDS.index(kind) if kind in _NOTICE_KINDS else len(_NOTICE_KINDS)
-        )
-
-    return sorted(notices, key=rank)[:NOTICES_KEPT]
+def kept_notices(notices: list[str]) -> tuple[list[str], list[str]]:
+    """What a failed run's message says of omc's ``notices``: its Errors,
+    every one, and its Warnings then its Notifications, while the Errors
+    leave room under :data:`NOTICES_KEPT` — each kind in the order omc
+    said them. Kept in omc's order, five Notifications about the packages
+    it loaded filled the message and the Error after them, the reason, was
+    dropped."""
+    errors = [n for n in notices if notice_kind(n) == "Error"]
+    others = [n for n in notices if notice_kind(n) == "Warning"]
+    others += [n for n in notices if notice_kind(n) not in ("Error", "Warning")]
+    return errors, others[: max(0, NOTICES_KEPT - len(errors))]
 
 
 def outcome(
@@ -116,10 +112,10 @@ def outcome(
     worker (``parsed`` from the record and getErrorString): either reports
     a result with the same times, statistics and message. A success whose
     result file ``mat_path`` stops before the stop time is refused, said
-    among omc's notices: a partial .mat blessed by --accept poisons the
+    among omc's Errors: a partial .mat blessed by --accept poisons the
     baseline (D93 precedent, D99)."""
     translation_wall, sim_wall, statistics = timing(parsed)
-    notices = kept_notices(parsed.error_notices)
+    errors, others = kept_notices(parsed.error_notices)
     if parsed.success and mat_path.exists():
         # Empirically (D99, omc 1.27) mid-run aborts return an EMPTY
         # resultFile and never take this branch — this guards against a
@@ -136,22 +132,24 @@ def outcome(
                 sim_wall=sim_wall,
                 statistics=statistics,
             )
-        # After omc's notices and never cut by their cap: it is the reason.
-        notices.append(
+        # Among the Errors, never cut by the cap: it is the reason.
+        errors.append(
             f"simulate() reported success but {mat_path.name} "
             f"reaches t={last_time!r} of stop_time={test.stop_time} — "
             f"partial result refused"
         )
 
-    # Failure: both the notices outside the record and the simulate()
-    # record's `messages` field.
+    # Failure: omc's Errors, then the simulate() record's `messages` — the
+    # simulation's own words, why a run that translated stopped — and only
+    # then omc's other notices, about the translation: a Warning about the
+    # package file led a failed initialization's message.
     err_parts: list[str] = []
     if exit_code:
         err_parts.append(f"omc exit code {exit_code}")
-    if notices:
-        err_parts.append("; ".join(notices))
+    err_parts.append("; ".join(errors))
     if parsed.messages:
         err_parts.append(parsed.messages.strip())
+    err_parts.append("; ".join(others))
     if not parsed.result_file:
         err_parts.append("no result file produced")
     msg = failure_message(" | ".join(p for p in err_parts if p)) or (
