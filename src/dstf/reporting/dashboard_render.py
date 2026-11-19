@@ -48,6 +48,7 @@ from .rows import (
     enrich_row,
     row_from_status,
     summary_fields,
+    verdict_message,
 )
 from .status import (
     CANCELLED,
@@ -340,7 +341,10 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     whatever it had.
 
     The Message is the run's (status.json's ``detail``) — but for a test
-    the comparison refused, whose reason is the one thing to read of it.
+    the comparison refused, whose reason is the one thing to read of it,
+    and a marked one (``rows.verdict_message``). A SKIPPED row keeps
+    nothing of a run: no walls, no live fields — the caller reads no
+    sidecar or kept file for it either.
 
     The status is the verdict as a row reads it (``scored_status``): a row
     whose run was stopped keeps CANCELLED over the NOT RUN it scores.
@@ -355,6 +359,19 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
         # a name check kept a link to the other backend's file.
         if Path(comp.baseline_path).as_uri() != row.ref_file:
             ref_file = None
+    if comp.skipped:
+        # Nothing of an earlier run is this row's: it was not run.
+        row = replace(
+            row,
+            worker_id=None,
+            elapsed=None,
+            started_wall=None,
+            translation_wall=None,
+            sim_wall=None,
+            sim_cpu=None,
+            total_wall=None,
+            report_page=None,
+        )
     return replace(
         row,
         status=scored_status(summary["status"], cancelled=row.status == CANCELLED),
@@ -365,7 +382,7 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
         n_warnings=summary["n_warnings"],
         ref_id=ref_id,
         ref_file=ref_file,
-        message=refusal(comp) or row.message,
+        message=verdict_message(comp, refusal(comp) or row.message),
     )
 
 
@@ -651,7 +668,10 @@ def build_dashboard_context(
             else None
         )
         places = dict.fromkeys(d for d in (compared, row.report_dir, row.test_key) if d)
-        for place in places if mode == "final" else ():
+        # A SKIPPED test was not run: no page, no walls and no CPU time of
+        # an earlier run are its (`_with_verdict` clears the live row's).
+        skipped = comp is not None and comp.skipped
+        for place in places if mode == "final" and not skipped else ():
             sidecar = _read_comparison_sidecar(work_dir, place)
             if not sidecar:
                 continue
@@ -673,11 +693,15 @@ def build_dashboard_context(
         # sidecar. With no fresh sidecar (a run without --report, or a stale
         # one), the walls are the ones the run kept beside the result
         # (storage.run_stats).
-        if mode == "final" and row is before and row.test_key:
+        if mode == "final" and row is before and row.test_key and not skipped:
             row = _with_kept_timing(work_dir, row)
         if comp is not None:
             row = _with_verdict(row, comp)
-        result = (results or {}).get(row.model_id) if mode == "final" else None
+        result = (
+            (results or {}).get(row.model_id)
+            if mode == "final" and not skipped
+            else None
+        )
         cpu = cpu_time(result.diagnostics or []) if result is not None else None
         if cpu is not None:
             row = replace(row, sim_cpu=cpu)

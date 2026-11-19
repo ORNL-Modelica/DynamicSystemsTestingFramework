@@ -33,6 +33,7 @@ from ..backends.types import (
     is_glob_pattern,
     variable_name,
 )
+from ..discovery.marks import SkipMark
 from ..discovery.test_registry import TestModel
 from ..discovery.unit_tests import unit_test_variables
 from ..storage.baseline import (
@@ -1304,6 +1305,26 @@ def _compared(
     return comp
 
 
+def skipped(test: TestModel, mark: SkipMark) -> TestComparison:
+    """The comparison of a test its ``mark`` keeps from running on this
+    backend and OS: SKIPPED (``reporting.status``), with the mark's words
+    as its message. Nothing is read — a result an earlier run left on disk
+    is not this test's verdict. THE one place a SKIPPED comparison is
+    built: ``compare_all`` builds it for every marked test unless asked to
+    score them."""
+    from ..reporting.status import skipped_words
+
+    return TestComparison(
+        model_id=test.model_id,
+        passed=False,
+        sim_success=False,
+        ran=False,
+        error_message=skipped_words(mark),
+        mark=mark,
+        skipped=True,
+    )
+
+
 def compare_all(
     tests: list[TestModel],
     results: dict[str, TestResult],
@@ -1311,18 +1332,31 @@ def compare_all(
     default_tolerance: float = DEFAULT_TOLERANCE,
     default_points: bool = False,
     dataset_kind: DatasetType = DatasetType.TIME_SERIES,
+    marks: Mapping[str, SkipMark] | None = None,
+    include_skipped: bool = False,
 ) -> list[TestComparison]:
     """Compare all test results against stored references.
 
     ``dataset_kind`` is what the backend that produced *results* declares it
     emits (see :func:`dstf.backends.dataset_kind_for`); it is forwarded to every
     :func:`compare_test`.
+
+    ``marks``: the tests marked skip for this backend and OS, by model id
+    (``discovery.marks.skip_reason``). A marked test is :func:`skipped`,
+    whatever *results* holds of it; with ``include_skipped`` it is compared
+    like any other and carries its mark, which keeps it from failing the
+    run (``reporting.status.counts_against``).
     """
     import sys as _sys
 
     print(f"Comparing {len(tests)} tests against references...", file=_sys.stderr)
-    return [
-        compare_one(
+    out = []
+    for test in tests:
+        mark = (marks or {}).get(test.model_id)
+        if mark is not None and not include_skipped:
+            out.append(skipped(test, mark))
+            continue
+        comp = compare_one(
             test,
             results.get(test.model_id),
             store,
@@ -1330,5 +1364,6 @@ def compare_all(
             default_points=default_points,
             dataset_kind=dataset_kind,
         )
-        for test in tests
-    ]
+        comp.mark = mark
+        out.append(comp)
+    return out

@@ -246,6 +246,34 @@ def test_every_header_counts_the_tests_under_review(monkeypatch, tmp_path, capsy
     ]
 
 
+def test_a_review_over_a_marked_failure_and_a_skipped_test_exits_0(
+    monkeypatch, tmp_path, capsys
+):
+    """A test marked skip for this backend counts against nothing: passed
+    over, its FAIL leaves the review unresolved by nothing, and the test
+    the mark kept from running says why it is passed over."""
+    from dstf.discovery.marks import SkipMark
+
+    mark = SkipMark("Python", "r")
+    comps = [
+        TestComparison("Lib.A", passed=False, mark=mark),
+        TestComparison(
+            "Lib.B",
+            passed=False,
+            sim_success=False,
+            ran=False,
+            skipped=True,
+            mark=mark,
+            error_message="skipped on Python: r",
+        ),
+    ]
+    config, store = _review_env(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "s")
+    assert _interactive_review([], {}, comps, store, config) == 0
+    out = re.sub(r"\x1b\[\d+m", "", capsys.readouterr().out)
+    assert "  Status: SKIPPED\n  Skipping (skipped on Python: r)\n" in out
+
+
 def test_a_header_starts_with_the_model_id(monkeypatch, tmp_path, capsys):
     """No `[<code>]` before a test with a baseline, no `[new]` before one
     without: the model id is the name a person reads (owner, 2026-11-10)."""
@@ -1621,6 +1649,10 @@ class _FakeComp:
     # refused test.
     simulate_only: bool = False
     evaluated: bool = False
+    # A mark for this backend and OS, and whether it kept the test from
+    # running: what `reporting.status.counts_against` reads.
+    mark: object = None
+    skipped: bool = False
 
 
 def _review_env(tmp_path, statuses=None):

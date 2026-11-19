@@ -17,8 +17,11 @@ RUN scored nothing, so a failure over it is new; one the base cell does not
 hold is ``not in <base>``; and a backend/os the base label has no run of
 has no such count, said in the cell. A test with no baseline (NO_REF) is
 no failure, new or not: it is counted apart, with how many of those the
-base has none of either. Nothing is judged and nothing is recomputed: every
-word is the file's.
+base has none of either. A test the file says is marked skip (its
+``mark``: SKIPPED, or run anyway whatever it said) is never a test not
+passing, nor a new failure: it is listed apart, with its status and its
+mark. Nothing is judged and nothing is recomputed: every word is the
+file's.
 """
 
 from __future__ import annotations
@@ -72,6 +75,17 @@ class NotPassing:
 
 
 @dataclass(frozen=True)
+class Marked:
+    """A test of a cell marked skip for its backend/os: it fails no run."""
+
+    model_id: str
+    #: the file's status word: SKIPPED, or the status of a run anyway
+    status: str
+    #: the file's ``mark``: ``Python: <reason>``
+    mark: str
+
+
+@dataclass(frozen=True)
 class Cell:
     """One run: a label's verdicts in one backend/os."""
 
@@ -82,8 +96,10 @@ class Cell:
     total: int
     #: the file's totals as it gives them, by status word
     totals: dict[str, int]
-    #: its tests that did not pass, in the file's order
+    #: its tests that did not pass, in the file's order; none marked
     not_passing: list[NotPassing] = field(default_factory=list)
+    #: its tests marked skip, in the file's order: SKIPPED, or run anyway
+    marked: list[Marked] = field(default_factory=list)
     #: of those, the ones that are not new (:attr:`NotPassing.not_new`);
     #: None with no base, in the base's own cell, or with no base run of this backend/os
     not_new: int | None = None
@@ -302,8 +318,13 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
             statuses.get((base, folder)) if base is not None and label != base else None
         )
         rows = []
+        marked = []
         for t in _tests(data):
             status = str(t.get("status"))
+            mark = t.get("mark")
+            if isinstance(mark, str) and mark:
+                marked.append(Marked(str(t.get("model_id")), status, mark))
+                continue
             if status == PASS:
                 continue
             model_id = str(t.get("model_id"))
@@ -326,6 +347,7 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
             total=_count(totals.get("total")),
             totals={str(k): _count(v) for k, v in totals.items()},
             not_passing=rows,
+            marked=marked,
             not_new=not_new,
             none_on_base=none_on_base,
             base_note=note,

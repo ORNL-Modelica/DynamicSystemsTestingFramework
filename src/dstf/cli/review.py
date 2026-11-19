@@ -7,12 +7,16 @@ from ..reporting.status import (
     NO_REF,
     PASS,
     SIM_FAIL,
+    SKIPPED,
     STATUS_LABELS,
     advisory_text,
     classify,
+    counts_against,
     failed_criteria,
+    marked_words,
     nothing_ran,
     refusal,
+    skipped_words,
 )
 from ..storage.accept import accept_run_results
 from .common import _exit_code, _parse_review_filter, _should_review
@@ -71,11 +75,10 @@ def _interactive_review(
     # reviewed nor skipped, so they don't count. A review in which nothing ran
     # exits 1, as `run` does (D145 §5); it can only complete, since only a test
     # that ran is offered a prompt to quit at.
+    # What "still failing" is: the one rule of what counts against a run
+    # (`counts_against`) — a test NOT RUN has no result and fails nothing
+    # (D145), and a test marked skip for this backend fails nothing either.
     n_unresolved = 0
-
-    def _still_failing(c) -> bool:
-        # A test NOT RUN has no result: it fails nothing (D145).
-        return c.ran and ((not c.sim_success) or not c.passed)
 
     n_total = len(comparisons)
 
@@ -85,9 +88,16 @@ def _interactive_review(
     GREEN = "\033[92m"
     RED = "\033[91m"
     YELLOW = "\033[93m"
+    GREY = "\033[90m"
     BOLD = "\033[1m"
     RESET = "\033[0m"
-    status_colors = {PASS: GREEN, FAIL: RED, SIM_FAIL: RED, NO_REF: YELLOW}
+    status_colors = {
+        PASS: GREEN,
+        FAIL: RED,
+        SIM_FAIL: RED,
+        NO_REF: YELLOW,
+        SKIPPED: GREY,
+    }
 
     filter_desc = f" (filter: {review_filter})" if "all" not in filters else ""
     print(f"\nInteractive review: {n_total} tests{filter_desc}\n")
@@ -95,7 +105,7 @@ def _interactive_review(
     for idx, comp in enumerate(comparisons, 1):
         if not _should_review(comp, filters):
             n_auto_skipped += 1
-            if _still_failing(comp):
+            if counts_against(comp):
                 n_unresolved += 1
             continue
         model_id = comp.model_id
@@ -107,6 +117,9 @@ def _interactive_review(
         status = "NO BASELINE" if state == NO_REF else STATUS_LABELS[state]
         if state in status_colors:
             status = f"{status_colors[state]}{status}{RESET}"
+        if comp.mark is not None and not comp.skipped:
+            # It ran anyway: whatever it says, it fails no run.
+            status += f" ({marked_words(comp.mark)})"
 
         warn = ""
         if comp.warnings:
@@ -118,7 +131,12 @@ def _interactive_review(
         # A refused test's reason is its whole finding: there is no failing
         # variable below to say it, and accepting it is refused.
         refused = refusal(comp)
-        if comp.error_message and (not comp.sim_success or refused):
+        # A SKIPPED test's message is why: its Skipping line below says it.
+        if (
+            comp.error_message
+            and (not comp.sim_success or refused)
+            and not comp.skipped
+        ):
             print(f"  Error: {comp.error_message}")
 
         # Its criteria in brief — `comp.variables` holds one comparison per
@@ -153,9 +171,13 @@ def _interactive_review(
 
         # Can't accept if simulation failed, or never ran
         if not comp.sim_success:
-            print(f"  Skipping ({'simulation failed' if comp.ran else 'not run'})\n")
+            if comp.skipped:
+                why = skipped_words(comp.mark)
+            else:
+                why = "simulation failed" if comp.ran else "not run"
+            print(f"  Skipping ({why})\n")
             n_skipped += 1
-            n_unresolved += _still_failing(comp)
+            n_unresolved += counts_against(comp)
             continue
 
         # Prompt
@@ -224,7 +246,7 @@ def _interactive_review(
                             print(f"  {line}")
                         print()
                     n_skipped += 1
-                    if _still_failing(comp):
+                    if counts_against(comp):
                         n_unresolved += 1
                 break
 
@@ -267,7 +289,7 @@ def _interactive_review(
             elif choice == "s":
                 print("  Skipped.\n")
                 n_skipped += 1
-                if _still_failing(comp):
+                if counts_against(comp):
                     n_unresolved += 1
                 break
 

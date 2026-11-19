@@ -138,6 +138,7 @@ class Accept:
         Situation.NEW_VARIABLES: Emphasis.MENU,
         Situation.SIM_FAIL: Emphasis.MENU,
         Situation.NO_RESULT: Emphasis.MENU,
+        Situation.SKIPPED: Emphasis.MENU,
         Situation.QUEUED: Emphasis.MENU,
         Situation.RUNNING: Emphasis.MENU,
         Situation.CANCELLED: Emphasis.MENU,

@@ -12,7 +12,8 @@ for such a compare (:attr:`Cell.compared`) — under it one key line, then one f
 cell with tests that did not pass, its summary line ``<Backend>/<os>,
 <label>: N not passing, K also fail on <base>; M no baseline``. A list's
 table holds what failed; a test with no baseline is no failure, and is
-named on a line under it. A list is open when it holds a failure that is
+named on a line under it, and a test marked skip (SKIPPED, or run anyway)
+on a line of its own: it fails no run. A list is open when it holds a failure that is
 new (one the base did not fail and did not end the same way —
 ``NotPassing.not_new``), or there is no base to tell; folded otherwise; the
 base's own lists are folded. New ones are listed first.
@@ -29,6 +30,9 @@ from .status import NO_REF, PASS
 
 #: What a cell and a list call NO_REF: no failure, nothing to score against.
 NO_BASELINE = "no baseline"
+
+#: What a list calls the tests marked skip for its backend/os.
+MARKED = "marked skip"
 
 #: A cell of a label that has no run of that backend/os.
 _DASH = "–"
@@ -89,6 +93,8 @@ def _summary_line(summary: Summary, cell: Cell) -> str:
         if cell.none_on_base:
             none += f", {_also_none(cell.none_on_base, summary.base)}"
         said.append(none)
+    if cell.marked:
+        said.append(f"{len(cell.marked)} {MARKED}")
     if cell.not_new is None and cell.base_note:
         said.append(cell.base_note)
     return f"{cell.folder}, {cell.label}: " + "; ".join(said)
@@ -131,6 +137,14 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
             for r in cell.no_baseline
         )
         lines.append(f"No baseline, nothing scored: {named}.")
+    if cell.marked:
+        if rows or cell.no_baseline:
+            lines.append("")
+        named = ", ".join(
+            f"{_test(m.model_id)} ({html.escape(m.status)}, {html.escape(m.mark, quote=False)})"
+            for m in cell.marked
+        )
+        lines.append(f"Marked skip, failing no run: {named}.")
     return [*lines, "", "</details>"]
 
 
@@ -164,6 +178,12 @@ def as_markdown(summary: Summary) -> str:
             f' "{NO_BASELINE}" = NO_REF: nothing stored to score against, so not '
             "a failure."
         )
+    if any(cell.marked for cell in summary.cells.values()):
+        key += (
+            ' "SKIPPED" = marked skip for that backend/os and not run. A test '
+            "marked skip fails no run, whatever it says: each list names them "
+            "apart."
+        )
     if any(cell.selected and not cell.compared for cell in summary.cells.values()):
         key += (
             ' "N of M tests run" = the run simulated N of the project\'s M tests '
@@ -183,7 +203,7 @@ def as_markdown(summary: Summary) -> str:
     for folder in summary.folders:
         for label in summary.labels:
             cell = summary.cells.get((label, folder))
-            if cell is not None and cell.not_passing:
+            if cell is not None and (cell.not_passing or cell.marked):
                 lines += [*_list(summary, cell), ""]
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -213,6 +233,7 @@ def as_json(summary: Summary) -> str:
                     "base_note": cell.base_note,
                     "selection": cell.selection,
                     "not_passing": [asdict(r) for r in cell.not_passing],
+                    "marked": [asdict(m) for m in cell.marked],
                 }
             )
     data = {

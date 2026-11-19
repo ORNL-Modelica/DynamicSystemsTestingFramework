@@ -29,6 +29,7 @@ from ...reporting.status import (
     RUNNING,
     SCORING_CLASS,
     SIM_FAIL,
+    SKIPPED,
     STATUS_CLASSES,
 )
 from ..needle import matcher
@@ -182,10 +183,11 @@ PILL_WORDS = {key: word for key, word, _ in PILLS}
 EDITED = PILL_WORDS["edited"]
 #: "Status, failures first", by a row's class: FAIL, SIM_FAIL (a scoring
 #: failure is one, as in the Suite), NO_REF, PASS, NOT RUN (no result,
-#: D145, or a cancelled run), then the queue's RUNNING and QUEUED and no
-#: verdict yet — NOT `STATUS_ORDER`, which lists PASS first.
+#: D145, or a cancelled run), SKIPPED (marked not to run here), then the
+#: queue's RUNNING and QUEUED and no verdict yet — NOT `STATUS_ORDER`,
+#: which lists PASS first.
 FAILURES_FIRST = (
-    *(STATUS_CLASSES[s] for s in (FAIL, SIM_FAIL, NO_REF, PASS, NOT_RUN)),
+    *(STATUS_CLASSES[s] for s in (FAIL, SIM_FAIL, NO_REF, PASS, NOT_RUN, SKIPPED)),
     STATUS_CLASSES[RUNNING],
     STATUS_CLASSES[QUEUED],
     SCORING_CLASS,

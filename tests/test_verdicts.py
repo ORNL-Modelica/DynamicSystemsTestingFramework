@@ -85,6 +85,7 @@ def test_a_plain_run_writes_every_tests_verdict_and_the_totals(ran):
         "SIM_FAIL": 0,
         "NO_REF": 0,
         "NOT RUN": 0,
+        "SKIPPED": 0,
     }
     assert doc["exit_code"] == 0
     assert [t["model_id"] for t in doc["tests"]] == [t.model_id for t in tests]

@@ -55,13 +55,14 @@ class EnqueueTests:
     #: drawn as this icon where a bar draws icons (the Suite toolbar)
     icon = "playlist_add"
     #: the Test page's strip: the next action when there is no result to
-    #: read, a criterion names a variable the last run did not record, or
+    #: read (none yet, or a mark kept the test from running), a criterion names a variable the last run did not record, or
     #: its last run was cancelled or could not start; in the ⋮ while edits
     #: are pending (their next action is Save) and while the queue holds
     #: the test (the strip's own Remove or Cancel is the action then)
     emphasis = {
         Situation.SIM_FAIL: Emphasis.NEXT,
         Situation.NO_RESULT: Emphasis.NEXT,
+        Situation.SKIPPED: Emphasis.NEXT,
         Situation.CANCELLED: Emphasis.NEXT,
         Situation.START_FAILED: Emphasis.NEXT,
         Situation.EDITS: Emphasis.MENU,

@@ -100,6 +100,37 @@ def is_dark(name: str) -> bool:
     return name in DARK_THEMES
 
 
+def _channels(colour: str) -> tuple[int, int, int]:
+    return int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16)
+
+
+def _mix(top: str, under: str, alpha: float) -> str:
+    """``top`` laid at ``alpha`` over ``under``, both ``#rrggbb``."""
+    pairs = zip(_channels(top), _channels(under))
+    return "#" + "".join(f"{round(a * alpha + b * (1 - alpha)):02x}" for a, b in pairs)
+
+
+def _from_fill(fill: str) -> Mapping[str, str]:
+    """A status's parts from its fill alone, as the light table's are: the
+    text on a tint the fill darkened, the tint and the pill the fill laid
+    thin over white, the pill's border a little less thin."""
+    return MappingProxyType(
+        {
+            "fill": fill,
+            "dark": _mix(fill, "#000000", 0.65),
+            "tint": _mix(fill, "#ffffff", 0.1),
+            "pill": _mix(fill, "#ffffff", 0.14),
+            "border": _mix(fill, "#ffffff", 0.4),
+        }
+    )
+
+
+#: SKIPPED: a test marked not to run on this backend and OS. A neutral of
+#: its own — a warm stone grey beside NOT RUN's plain one, so the two read
+#: apart. The owner's call: this one fill sets every part, under both
+#: themes (a dark theme dims it as every status, `status_colours`).
+SKIPPED_FILL = "#8d7b68"
+
 #: The neutral grey: a live row still queued, a test with no result (NOT
 #: RUN, D145) and a row the tool has not scored yet (SCORING) — one token
 #: under three classes, so a pill and a filter can still tell them apart.
@@ -173,6 +204,7 @@ STATUS: Mapping[str, Mapping[str, str]] = MappingProxyType(
         ),
         "queued": _NEUTRAL,
         "not-run": _NEUTRAL,
+        "skipped": _from_fill(SKIPPED_FILL),
         "scoring": _NEUTRAL,
         "running": MappingProxyType(
             {
@@ -240,16 +272,6 @@ _PASTELS: Mapping[str, str] = MappingProxyType(
         "warn": "#ffd54f",
     }
 )
-
-
-def _channels(colour: str) -> tuple[int, int, int]:
-    return int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16)
-
-
-def _mix(top: str, under: str, alpha: float) -> str:
-    """``top`` laid at ``alpha`` over ``under``, both ``#rrggbb``."""
-    pairs = zip(_channels(top), _channels(under))
-    return "#" + "".join(f"{round(a * alpha + b * (1 - alpha)):02x}" for a, b in pairs)
 
 
 def status_colours(name: str = "default") -> Mapping[str, Mapping[str, str]]:

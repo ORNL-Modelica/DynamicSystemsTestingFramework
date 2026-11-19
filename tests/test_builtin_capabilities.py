@@ -2465,6 +2465,7 @@ def test_accept_is_the_next_action_where_the_result_differs_or_has_no_baseline()
         S.NEW_VARIABLES: Emphasis.MENU,
         S.SIM_FAIL: Emphasis.MENU,
         S.NO_RESULT: Emphasis.MENU,
+        S.SKIPPED: Emphasis.MENU,
         # the queue holds it, or its last run there left no result
         S.QUEUED: Emphasis.MENU,
         S.RUNNING: Emphasis.MENU,
@@ -2483,6 +2484,7 @@ def test_queue_is_the_next_action_where_there_is_no_result_to_read():
     assert EnqueueTests.emphasis == {
         S.SIM_FAIL: Emphasis.NEXT,
         S.NO_RESULT: Emphasis.NEXT,
+        S.SKIPPED: Emphasis.NEXT,
         # its last run in the queue was cancelled, or could not start
         S.CANCELLED: Emphasis.NEXT,
         S.START_FAILED: Emphasis.NEXT,

@@ -197,9 +197,10 @@ def _exit_code(comparisons: Iterable[TestComparison]) -> int:
     if not comps:
         print("Nothing ran: no test in scope.", file=sys.stderr)
     elif nothing_ran(comps):
+        # The tests counted are the ones a mark does not keep out of it.
+        n = sum(c.mark is None for c in comps)
         print(
-            f"Nothing ran: no test in scope has a result ({len(comps)} "
-            f"{NOT_RUN}) — exit 1.",
+            f"Nothing ran: no test in scope has a result ({n} {NOT_RUN}) — exit 1.",
             file=sys.stderr,
         )
     return exit_code(comps)
@@ -226,7 +227,8 @@ def _parse_review_filter(filter_str: str) -> set[str]:
 def _should_review(comp, filters: set[str]) -> bool:
     """Check if a comparison matches the active review filters (`-i` and
     `--rerun`). A category selects by the ONE classifier's status
-    (``reporting.status.classify``), the status every surface shows."""
+    (``reporting.status.classify``), the status every surface shows: a
+    SKIPPED test is in none but ``all``."""
     if "all" in filters:
         return True
     status = classify(comp)

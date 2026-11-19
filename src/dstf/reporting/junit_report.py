@@ -10,14 +10,18 @@ from .status import (
     FAIL,
     NO_REF,
     NOT_RUN,
+    PASS,
     SIM_FAIL,
+    SKIPPED,
+    STATUS_LABELS,
     advisory_failures,
     advisory_text,
     classify,
-    count_by_status,
     failed_criteria,
     group_failures,
+    marked_words,
     refusal,
+    skipped_words,
 )
 
 #: Every character XML 1.0 cannot carry (its ``Char`` production): a control
@@ -50,6 +54,29 @@ def _failure_message(failed: list[str], groups: list[str], advisory: list[str]) 
     return text
 
 
+def _kind(comp: TestComparison) -> str:
+    """What ``comp``'s testcase holds: ``skipped``, ``error`` (a failed
+    simulation), ``failure`` or ``passed``."""
+    state = classify(comp)
+    if state == PASS:
+        return "passed"
+    if comp.mark is not None or state in (SKIPPED, NO_REF, NOT_RUN):
+        return "skipped"
+    return "error" if state == SIM_FAIL else "failure"
+
+
+def _mark_message(comp: TestComparison) -> str:
+    """A marked test's <skipped> message: why it was skipped, or — run
+    anyway and failing — ``marked skip on Python (<reason>); still fails:
+    FAIL``. (A marked NO_REF or NOT RUN is a <skipped> with its own
+    message: it does not fail.)"""
+    assert comp.mark is not None
+    if comp.skipped:
+        return skipped_words(comp.mark)
+    state = STATUS_LABELS[classify(comp)]
+    return f"{marked_words(comp.mark)} ({comp.mark.reason}); still fails: {state}"
+
+
 def generate_junit_report(
     comparisons: list[TestComparison],
     output_path: Path,
@@ -69,13 +96,16 @@ def generate_junit_report(
     for suite_name in sorted(suites.keys()):
         suite_comps = suites[suite_name]
         n_tests = len(suite_comps)
-        # Buckets are the shared ones from reporting.status, so the JUnit
-        # counters can't drift from the console's — a separate count would
-        # emit failing baseline-free tests as <skipped> with failures="0".
-        counts = count_by_status(suite_comps)
-        n_failures = counts[FAIL]
-        n_errors = counts[SIM_FAIL]
-        n_skipped = counts[NO_REF] + counts[NOT_RUN]
+        # The kind each testcase is written as, from the shared classifier
+        # (reporting.status), so the JUnit counters can't drift from the
+        # console's — a separate count would emit failing baseline-free
+        # tests as <skipped> with failures="0". A marked test that ran and
+        # did not pass is a <skipped>: it fails no run, and a CI gate that
+        # reads this file agrees with the exit code.
+        kinds = [_kind(comp) for comp in suite_comps]
+        n_failures = kinds.count("failure")
+        n_errors = kinds.count("error")
+        n_skipped = kinds.count("skipped")
 
         suite_elem = ET.SubElement(
             root,
@@ -100,7 +130,9 @@ def generate_junit_report(
             )
 
             state = classify(comp)
-            if state == NOT_RUN:
+            if comp.mark is not None and state in (SKIPPED, FAIL, SIM_FAIL):
+                ET.SubElement(tc, "skipped", {"message": _mark_message(comp)})
+            elif state == NOT_RUN:
                 # No result: the test was never run, or its run never
                 # finished it. Not a failure and not an error (D145).
                 ET.SubElement(tc, "skipped", {"message": "not run"})

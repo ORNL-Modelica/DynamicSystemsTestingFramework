@@ -18,6 +18,7 @@ _PILLS = "".join(
         "sim-fail",
         "no-ref",
         "not-run",
+        "skipped",
         "warn",
         "queued",
         "running",

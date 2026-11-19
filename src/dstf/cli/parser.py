@@ -1388,6 +1388,10 @@ def _add_run(tree: _Tree, top) -> None:
             run: on the console, the dashboard, in status.json and
             verdicts.json (`selection`), and in `dstf summary`.
 
+            A test marked skip for this backend and OS (`skip` or
+            `backends` in its test_spec.json entry) reads SKIPPED with its
+            reason; a test that carries a mark never changes the exit code.
+
             Exit code: 0 when every test that ran passed, and with nothing
             to run: no test is in --rerun's categories, or no test uses
             what changed since --changed-since's REV (then nothing is
@@ -1593,7 +1597,8 @@ def _add_summary(tree: _Tree, top) -> None:
         description="""
             Print a matrix of several runs' results, to paste into a pull
             request: a row per <Backend>/<os>, a column per LABEL, each cell
-            the tests that passed over the tests run (NOT RUN included),
+            the tests that passed over the tests run (NOT RUN included,
+            SKIPPED not),
             read from the verdicts.json a scoring `dstf run` or `dstf
             compare` writes in its work dir. Then, per cell, a folded list
             of the tests that did not pass, each with its status and what
@@ -1602,7 +1607,9 @@ def _add_summary(tree: _Tree, top) -> None:
             ([translation:error:63]), else the message's last line that is
             not a repeated warning. A test with no baseline (NO_REF) is no
             failure: a cell counts it as "no baseline", and its list names
-            it on a line of its own.
+            it on a line of its own. A test marked skip (SKIPPED, or run
+            anyway whatever it said) is never one that did not pass, nor
+            one that also fails: its list names it apart.
 
             Each DIR is searched for verdicts.json files (not under
             reports/), each one cell; its backend and os are the file's.
