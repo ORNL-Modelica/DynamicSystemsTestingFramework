@@ -238,6 +238,23 @@ def test_the_marked_tests_are_a_table_of_their_own_with_the_base_s_status():
     }
 
 
+def test_a_reason_over_several_lines_keeps_its_row_on_one():
+    """A skip reason, or what failed, written over two lines: a Markdown
+    row ends at its line's end."""
+    cell = _cell(
+        "head",
+        "Python/linux",
+        [NotPassing("Lib.A", "FAIL", "y: one\ntwo")],
+        marked=[Marked("Lib.B", "SKIPPED", "Python: line one\nline | two")],
+    )
+    text = as_markdown(_summary([cell], base=None))
+    assert '| <code title="Lib.A">A</code> | FAIL | y: one two |' in text
+    assert (
+        '| <code title="Lib.B">B</code> | SKIPPED | Python: line one line \\| two |'
+        in text
+    )
+
+
 def test_with_no_base_run_for_the_backend_os_the_line_says_why():
     alone = _cell(
         "branch",

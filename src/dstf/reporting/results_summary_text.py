@@ -41,8 +41,14 @@ _DASH = "–"
 
 
 def _row(cells: list[str]) -> str:
-    """A table row; a ``|`` in a cell is escaped, so it keeps the columns."""
-    return "| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |"
+    """A table row: a ``|`` in a cell is escaped, so it keeps the columns,
+    and each line break is a space, so the row ends where it should (a
+    skip reason written over two lines ended its row at the first)."""
+    return (
+        "| "
+        + " | ".join(" ".join(c.replace("|", "\\|").splitlines()) for c in cells)
+        + " |"
+    )
 
 
 def _also_fail(n: int, base: str | None) -> str:
