@@ -266,6 +266,142 @@ class TestRunSummary:
         )
 
 
+def _ended(test, test_key, slow: set[str]) -> TestRunResult:
+    """How the faked simulator ends ``test``: stopped at its time limit
+    when it is one of ``slow``, else passed."""
+    out = test.model_id in slow
+    return TestRunResult(
+        model_id=test.model_id,
+        test_key=test_key,
+        success=not out,
+        timed_out=out,
+        elapsed=0.5,
+    )
+
+
+def _slow_backend(site: str, cfg: Config, slow: set[str], monkeypatch) -> Backend:
+    """A backend of ``site`` whose simulator times out each test of ``slow``."""
+    if site == "batch":
+
+        class _Batch(_FakeBatchBackend):
+            def run_single_test(self, test, test_key, index, total):
+                return _ended(test, test_key, slow)
+
+        return _Batch(cfg)
+    if site == "persistent":
+
+        class _Worker(_FakeWorker):
+            def run_test(self, test, test_key, progress=None):
+                return _ended(test, test_key, slow)
+
+        class _Persistent(_FakePersistentBackend):
+            worker_cls = _Worker
+
+        return _Persistent(cfg)
+    from dstf.backends.dymola.backend import DymolaBackend
+
+    backend = _dymola_backend(cfg, monkeypatch)
+    monkeypatch.setattr(
+        DymolaBackend,
+        "_run_batch",
+        lambda self, batch, *a, **k: [_ended(t, key, slow) for t, key in batch],
+    )
+    return backend
+
+
+class TestMostTimedOutWarning:
+    """A run in which most tests hit their time limit says so once, at its
+    end: a library read from a slow disk timed out most of a suite, and
+    only the counts line said it."""
+
+    WARNING = (
+        "Warning: 3 of 4 tests timed out. If most should finish in time, "
+        "check that the library and work dir are on a fast disk (under WSL, "
+        "not /mnt/<drive>) and that the time limits suit this machine."
+    )
+    TESTS = ("Lib.A", "Lib.B", "Lib.C", "Lib.D")
+
+    @pytest.mark.parametrize("site", ["batch", "persistent", "dymola-batch"])
+    def test_more_than_half_timed_out_is_said_after_the_counts(
+        self, site, tmp_path, monkeypatch, capsys
+    ):
+        slow = {"Lib.A", "Lib.B", "Lib.C"}
+        backend = _slow_backend(site, _config(tmp_path, parallel=1), slow, monkeypatch)
+
+        backend.run_tests([_tm(m) for m in self.TESTS])
+
+        lines = capsys.readouterr().err.splitlines()
+        (counts,) = [
+            i for i, line in enumerate(lines) if "1 ok, 0 failed, 3 timed out" in line
+        ]
+        assert lines[counts + 1] == self.WARNING
+
+    @pytest.mark.parametrize(
+        ("slow", "tests"),
+        [
+            ({"Lib.A", "Lib.B"}, TESTS),  # half: not most
+            ({"Lib.A"}, ("Lib.A",)),  # one of one: a single slow test
+        ],
+    )
+    def test_half_or_a_single_one_is_not_warned_of(
+        self, slow, tests, tmp_path, monkeypatch, capsys
+    ):
+        backend = _slow_backend("batch", _config(tmp_path), slow, monkeypatch)
+
+        backend.run_tests([_tm(m) for m in tests])
+
+        err = capsys.readouterr().err
+        assert f"{len(slow)} timed out" in err
+        assert "Warning" not in err
+
+    @pytest.mark.parametrize("site", ["batch", "persistent", "dymola-batch"])
+    def test_tests_marked_skip_here_are_not_counted(
+        self, site, tmp_path, monkeypatch, capsys
+    ):
+        """A run of marked tests (--only-skipped, --include-skipped) expects
+        them to time out: of the tests no mark applies to, one of two timed
+        out, which is not most."""
+        slow = {"Lib.A", "Lib.B", "Lib.C"}
+        backend = _slow_backend(site, _config(tmp_path, parallel=1), slow, monkeypatch)
+        marked = {"Dymola": {"skip": "times out here"}}
+        tests = [_tm("Lib.A"), _tm("Lib.D")] + [
+            make_test_model(m, variable_patterns=["x"], backend_marks=marked)
+            for m in ("Lib.B", "Lib.C")
+        ]
+
+        backend.run_tests(tests)
+
+        err = capsys.readouterr().err
+        assert "1 ok, 0 failed, 3 timed out" in err
+        assert "Warning" not in err
+
+    def test_of_the_tests_with_no_mark_most_timed_out(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        slow = {"Lib.A", "Lib.B", "Lib.C"}
+        backend = _slow_backend("batch", _config(tmp_path), slow, monkeypatch)
+        marked = {"Dymola": {"skip": "times out here"}}
+        tests = [_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.D")] + [
+            make_test_model("Lib.C", variable_patterns=["x"], backend_marks=marked)
+        ]
+
+        backend.run_tests(tests)
+
+        assert (
+            "Warning: 2 of 3 tests not marked skip timed out. If most should "
+            "finish in time"
+        ) in capsys.readouterr().err
+
+    def test_a_quiet_run_says_nothing(self, tmp_path, monkeypatch, capsys):
+        slow = {"Lib.A", "Lib.B", "Lib.C"}
+        backend = _slow_backend("batch", _config(tmp_path), slow, monkeypatch)
+        backend.quiet = True
+
+        backend.run_tests([_tm(m) for m in self.TESTS])
+
+        assert "timed out" not in capsys.readouterr().err
+
+
 # =========================================================================
 # Review K1 — the prologue stamps this run's scope pending.
 #

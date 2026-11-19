@@ -452,9 +452,9 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
     says "None of the M tests was run: there is none that …".
 
     The tests run are "the ones" the narrowing flags leave, each flag a
-    clause: ``in --package P``, then ``that --filter F matches``, ``that
-    the last run left in C (--rerun)``, ``that use what changed since REV
-    (N files)``; a merged run's others "were not run: their last results,
+    clause: ``in --package P``, then ``that --filter F matches``, ``that a
+    mark keeps from running here (--only-skipped)``, ``that the last run
+    left in C (--rerun)``, ``that use what changed since REV (N files)``; a merged run's others "were not run: their last results,
     where there are any, are scored". A changed file no class could be
     asked for (``every_test``) ran each test the other flags left: after
     them, "1 file that no class stores changed since REV, so each of them
@@ -531,6 +531,8 @@ def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
     clauses = []
     if pattern:
         clauses.append([text("--filter "), code(pattern), text(" matches")])
+    if selection.get("only_skipped") is True:
+        clauses.append([text("a mark keeps from running here (--only-skipped)")])
     if rerun:
         clauses.append([text("the last run left in "), code(rerun), text(" (--rerun)")])
     if n == 0 and rev is None:

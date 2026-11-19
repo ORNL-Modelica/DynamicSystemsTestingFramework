@@ -363,7 +363,7 @@ class DymolaBackend(Backend):
                 for future in as_completed(futures):
                     _land(future.result())
 
-        self._print_run_summary(all_results, total, time.monotonic() - wall_start)
+        self._print_run_summary(all_results, tests, time.monotonic() - wall_start)
 
         manifest.results = all_results
         setup.progress.finalize()

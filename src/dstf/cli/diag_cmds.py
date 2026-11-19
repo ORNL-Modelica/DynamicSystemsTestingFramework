@@ -101,32 +101,69 @@ def cmd_discover(args: argparse.Namespace) -> int:
     for model_id, sentence in refused:
         print(f"{model_id} will not be scored: {sentence}")
 
-    _print_marks(tests, config)
+    _print_marks(tests, config, named=args.backend is not None)
     return 0
 
 
-def _print_marks(tests: list, config) -> None:
+def _print_marks(tests: list, config, *, named: bool) -> None:
     """Every skip mark of ``tests``, on every backend, one line each in
     the words a run says it in; the ones that keep their test from
-    running on this backend and OS end ``— not run here``."""
+    running on this backend and OS end ``— not run here``. The header
+    counts the marks, by where each is, and then how many of them apply
+    here: a count of the ones here alone read as "0 marks" above a list
+    of marks for another backend. It says whose backend that is: the one
+    --backend names (``named``), else testing.json's. Then every
+    backend's time limit."""
     from ..discovery.marks import every_skip_mark, skip_reason
     from ..reporting.status import skipped_words
 
-    lines, here = [], 0
+    lines: list[str] = []
+    where: dict[str, int] = {}
+    here = 0
     for t in tests:
         applies = skip_reason(t, config)
         here += applies is not None
         for mark in every_skip_mark(t):
+            where[mark.where] = where.get(mark.where, 0) + 1
             tail = " — not run here" if mark == applies else ""
             lines.append(f"  {t.model_id}: {skipped_words(mark)}{tail}")
-    if not lines:
-        return
-    tests_word = "test" if here == 1 else "tests"
-    print(
-        f"\nMarked skip ({here} {tests_word} not run on {config.backend}/{config.os_name}):"
-    )
-    for line in lines:
-        print(line)
+    if lines:
+        n = len(lines)
+        by_where = ", ".join(f"{k} on {w}" for w, k in where.items())
+        if here == 0:
+            applied = "none keeps"
+        else:
+            applied = f"{here} {'keeps' if here == 1 else 'keep'}"
+        print(
+            f"\nMarked skip: {n} {'mark' if n == 1 else 'marks'} ({by_where}); "
+            f"{applied} a test from running on {config.backend}/{config.os_name}, "
+            + (
+                "the backend --backend names:"
+                if named
+                else "testing.json's backend (--backend picks another):"
+            )
+        )
+        for line in lines:
+            print(line)
+    _print_time_limits(tests, config)
+
+
+def _print_time_limits(tests: list, config) -> None:
+    """Every ``backends.<key>.timeout`` of ``tests``, one line each; the
+    one that sets its test's limit on this backend and OS ends ``—
+    applies here``."""
+    from ..discovery.marks import every_time_limit, time_limit_here
+
+    lines = []
+    for t in tests:
+        here = time_limit_here(t, config)
+        for limit in every_time_limit(t):
+            tail = " — applies here" if limit == here else ""
+            lines.append(f"  {t.model_id}: {limit.seconds} s on {limit.where}{tail}")
+    if lines:
+        print("\nTime limits per backend:")
+        for line in lines:
+            print(line)
 
 
 #: `baseline export --format`: each format and the file it is written to

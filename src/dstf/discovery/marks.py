@@ -97,6 +97,33 @@ def every_skip_mark(test: TestModel) -> list[SkipMark]:
     return marks
 
 
+@dataclass(frozen=True)
+class TimeLimit:
+    """A ``backends`` block's time limit: the block's key (``where``, as
+    :class:`SkipMark`'s) and its seconds."""
+
+    where: str
+    seconds: int
+
+
+def every_time_limit(test: TestModel) -> list[TimeLimit]:
+    """Every ``backends`` block of ``test`` that says ``timeout``, in the
+    file's order — what ``dstf discover`` lists."""
+    return [
+        TimeLimit(where, block["timeout"])
+        for where, block in (test.backend_marks or {}).items()
+        if block.get("timeout") is not None
+    ]
+
+
+def time_limit_here(test: TestModel, config: Config) -> TimeLimit | None:
+    """The ``backends`` block's time limit that applies to ``test`` on
+    ``config``'s backend and OS (the most specific one), or None when no
+    block's does."""
+    found = _block(test, config, "timeout")
+    return None if found is None else TimeLimit(*found)
+
+
 #: How to raise the limit when the one that fired is not known: a batch's
 #: limit, the sum of its tests' (Dymola's), names none of them.
 ANY_LIMIT_HINT = (
@@ -114,10 +141,9 @@ def _limit(test: TestModel, config: Config) -> tuple[str, int | None]:
     OS — ``backends.<where>.timeout``, ``simulation.timeout`` or
     :data:`RUN_LIMIT` — and its seconds (None for the run's, which only
     ``config.timeout`` holds). THE one order of the time limits."""
-    found = _block(test, config, "timeout")
-    if found is not None:
-        where, seconds = found
-        return f"backends.{where}.timeout", seconds
+    here = time_limit_here(test, config)
+    if here is not None:
+        return f"backends.{here.where}.timeout", here.seconds
     if test.timeout is not None:
         return "simulation.timeout", test.timeout
     return RUN_LIMIT, None
@@ -130,22 +156,68 @@ def timeout_for(test: TestModel, config: Config) -> int:
     return config.timeout if seconds is None else seconds
 
 
+#: What a timed-out run's hint says before the limit that fired.
+_LIMIT_IS = "the limit is "
+#: The limit each key is named as, and how a hint advises raising it.
+_RUN_NAMED = "the run's --timeout"
+_RUN_ADVICE = (
+    "raise it with --timeout, per test with simulation.timeout in "
+    "test_spec.json, or for one backend with backends.<Backend>.timeout there"
+)
+_SPEC_NAMED = "simulation.timeout in test_spec.json"
+_SPEC_ADVICE = "raise it there, or for one backend with backends.<Backend>.timeout"
+_BLOCK_ADVICE = "raise it there"
+#: What a batch's limit, which no one key sets, is named as.
+_ANY_NAMED = "the batch's time limit"
+
+
 def limit_hint(test: TestModel, config: Config) -> str:
     """How to raise the time limit that stops ``test`` here, naming first
     the key that set it: what a timed-out run's message says, so its first
     advice is the limit that fired — raising ``simulation.timeout`` or
     ``--timeout`` does nothing for a test its backend's block stops. Then
-    any key that would win over it once raised."""
+    any key that would win over it once raised. :func:`timed_out` reads
+    it back."""
     key = _limit(test, config)[0]
     if key == RUN_LIMIT:
-        return (
-            "the limit is the run's --timeout: raise it with --timeout, per "
-            "test with simulation.timeout in test_spec.json, or for one "
-            "backend with backends.<Backend>.timeout there"
-        )
+        return f"{_LIMIT_IS}{_RUN_NAMED}: {_RUN_ADVICE}"
     if key == "simulation.timeout":
-        return (
-            "the limit is simulation.timeout in test_spec.json: raise it "
-            "there, or for one backend with backends.<Backend>.timeout"
-        )
-    return f"the limit is {key} in test_spec.json: raise it there"
+        return f"{_LIMIT_IS}{_SPEC_NAMED}: {_SPEC_ADVICE}"
+    return f"{_LIMIT_IS}{key} in test_spec.json: {_BLOCK_ADVICE}"
+
+
+@dataclass(frozen=True)
+class TimedOut:
+    """A timed-out run's message as ``backends.types.timeout_message``
+    wrote it, read back: what stopped (``omc exceeded 60.0s timeout``),
+    the limit that fired, as its hint names it (``the run's --timeout``),
+    and the whole hint (:func:`limit_hint`, or :data:`ANY_LIMIT_HINT`)."""
+
+    head: str
+    limit: str
+    hint: str
+
+    @property
+    def short(self) -> str:
+        """``omc exceeded 60.0s timeout (the run's --timeout)``: the
+        message without its advice."""
+        return f"{self.head} ({self.limit})"
+
+
+def timed_out(message: str) -> TimedOut | None:
+    """``message``'s parts when it is a timed-out run's, as
+    ``timeout_message`` wrote it with a hint of :func:`limit_hint` (or
+    :data:`ANY_LIMIT_HINT`); None for any other message. Read by the
+    words those two write, so the two cannot drift apart unseen: a test
+    builds a message with them and reads it back."""
+    text = message.strip()
+    if text.endswith(f" ({ANY_LIMIT_HINT})"):
+        return TimedOut(text[: -len(ANY_LIMIT_HINT) - 3], _ANY_NAMED, ANY_LIMIT_HINT)
+    for advice in (_RUN_ADVICE, _SPEC_ADVICE, _BLOCK_ADVICE):
+        tail = f": {advice})"
+        start = text.rfind(f" ({_LIMIT_IS}")
+        if text.endswith(tail) and start >= 0:
+            hint = text[start + 2 : -1]
+            limit = hint[len(_LIMIT_IS) : -len(tail) + 1]
+            return TimedOut(text[:start], limit, hint)
+    return None

@@ -355,6 +355,24 @@ def _select_changed(args: argparse.Namespace, config, tests: list, marked: list)
     return selected, block
 
 
+def _only_marked(args: argparse.Namespace, config, tests: list, marks) -> list:
+    """``--only-skipped``: the tests of ``tests`` — those --filter and
+    --package chose — that a mark keeps from running on this backend and
+    OS. When there is none it says so, and the caller exits 0 with
+    nothing written: nothing to run fails nothing. (A filter that chose no
+    test at all is not this: the caller's "No tests matched the filter.")"""
+    chosen = [t for t in tests if t.model_id in marks]
+    if not chosen:
+        flags = [
+            name
+            for name, given in (("--filter", args.filter), ("--package", args.package))
+            if given is not None
+        ]
+        among = f" among the tests {' and '.join(flags)} chose" if flags else ""
+        print(f"No test is marked skip on {config.backend}/{config.os_name}{among}.")
+    return chosen
+
+
 def _narrowed(
     args: argparse.Namespace,
     changed: dict | None,
@@ -370,8 +388,9 @@ def _narrowed(
     (``selected``, of ``tests``), of the tests discovered for the
     project (``of``, of ``all_tests``), and what narrowed them —
     ``--changed-since``'s keys (``changed``), the values of ``--filter``,
-    ``--package`` and ``--rerun`` as given, and ``merged`` where tests it
-    does not simulate are scored on their last results. None for a run of
+    ``--package`` and ``--rerun`` as given, ``only_skipped`` for
+    ``--only-skipped``, and ``merged`` where tests it does not simulate
+    are scored on their last results. None for a run of
     every discovered test; a ``--changed-since`` run writes its block also
     then.
 
@@ -405,6 +424,8 @@ def _narrowed(
         value = getattr(args, key, None)
         if value is not None:
             block[key] = value
+    if getattr(args, "only_skipped", False):
+        block["only_skipped"] = True
     beside = recorded - {t.model_id for t in tests} - set(applied)
     if merging and any(t.model_id in beside for t in all_tests):
         block["merged"] = True
@@ -445,8 +466,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     # --include-skipped runs them. ``applied`` are the marks the run
     # applies: none under --include-skipped, and then a marked test is run,
     # scored and accepted like any other, carrying its mark.
-    include = args.include_skipped
+    include = args.include_skipped or args.only_skipped
     marks = marks_of(all_tests, config)
+    if args.only_skipped and tests:
+        # Before --rerun and --changed-since choose: they choose among the
+        # marked tests.
+        tests = _only_marked(args, config, tests, marks)
+        if not tests:
+            return 0
     applied = {} if include else marks
     tests, marked = split_marked(tests, applied)
     changed = None
@@ -893,8 +920,12 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # A test marked skip here reads SKIPPED whatever its last result, as a
     # run leaves it; --include-skipped scores (and accepts) it like any
     # other, carrying its mark.
-    include = args.include_skipped
+    include = args.include_skipped or args.only_skipped
     marks = marks_of(all_tests, config)
+    if args.only_skipped and tests:
+        tests = _only_marked(args, config, tests, marks)
+        if not tests:
+            return 0
     applied = {} if include else marks
     scored, marked = split_marked(tests, applied)
     # What it scores, when its own --filter / --package leave fewer than

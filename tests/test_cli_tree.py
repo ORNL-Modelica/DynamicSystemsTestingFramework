@@ -718,8 +718,9 @@ _AFTER_ONLY = {"--backend", "--backend-path", "--work-dir"}
 #: read back from the parser: the flags that locate the project, the backend
 #: (the simulator, or the reference partition it names) and the work dir.
 READS: dict[str, set[str]] = {
-    # the library and the spec; no reference partition, no work dir
-    "discover": _PROJECT,
+    # the library and the spec, and the backend its marks are read for; no
+    # reference partition, no work dir
+    "discover": _PROJECT | {"--backend"},
     # the library, the spec and the simulator that is asked; no work dir
     "uses": _PROJECT | {"--backend", "--backend-path"},
     "run": _PROJECT | _AFTER_ONLY,

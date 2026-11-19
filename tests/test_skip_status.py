@@ -122,6 +122,49 @@ def test_the_console_says_a_marked_test_that_ran_and_one_line_per_mark(capsys):
     ]
 
 
+def test_the_results_line_says_how_many_that_ran_are_marked(capsys):
+    """0/2 passed, exit 0: the line says why it is no failed run."""
+    code = print_report(
+        [_marked_fail("Lib.C"), _marked_fail("Lib.D")],
+        note="2 of 3 tests run; not a full run",
+    )
+    lines = _plain(capsys.readouterr().out)
+    assert code == 0
+    assert (
+        "Results: 0/2 passed (2 marked skip, failing no run; 2 of 3 tests run; "
+        "not a full run)"
+    ) in lines
+
+
+def test_a_marked_test_run_anyway_with_no_baseline_is_said_to_need_one(capsys):
+    """It ran: what it lacks is a baseline to score against, not a pass."""
+    comp = TestComparison(
+        model_id="Lib.B", passed=True, has_reference=False, mark=ON_PYTHON
+    )
+    assert st.classify(comp) == "NO_REF"
+
+    print_report([_passing(), comp])
+
+    assert _plain(capsys.readouterr().out)[-1] == (
+        "Lib.B: marked skip on Python, runs now but has no baseline to score "
+        "against — accept one, then remove the mark"
+    )
+
+
+def test_a_marked_test_with_no_result_to_score_is_told_how_to_get_one(capsys):
+    """`compare --only-skipped` over a run that left the marked tests out:
+    they have no result, which is no failing mark."""
+    comp = TestComparison(model_id="Lib.B", passed=False, ran=False, mark=ON_PYTHON)
+    assert st.classify(comp) == "NOT RUN"
+
+    print_report([_passing(), comp])
+
+    assert _plain(capsys.readouterr().out)[-1] == (
+        "Lib.B: marked skip on Python, has no result to score — run it with "
+        "run --only-skipped"
+    )
+
+
 # -- R3c: JUnit ---------------------------------------------------------------
 
 
@@ -183,8 +226,18 @@ def test_summary_lists_a_marked_test_apart_never_as_not_passing(tmp_path):
         tmp_path / "new",
         [
             {"model_id": "Lib.A", "status": "PASS", "mark": None},
-            {"model_id": "Lib.B", "status": "SKIPPED", "mark": "Python: r"},
-            {"model_id": "Lib.C", "status": "FAIL", "mark": "Python: r"},
+            {
+                "model_id": "Lib.B",
+                "status": "SKIPPED",
+                "mark": "Python: r",
+                "message": "skipped on Python: r",
+            },
+            {
+                "model_id": "Lib.C",
+                "status": "FAIL",
+                "mark": "Python: r",
+                "message": "it fails",
+            },
         ],
         {"total": 2, "PASS": 1, "FAIL": 1, "SKIPPED": 1},
     )
@@ -201,8 +254,11 @@ def test_summary_lists_a_marked_test_apart_never_as_not_passing(tmp_path):
     markdown = as_markdown(summary)
     assert "<summary>Python/linux, new: 2 marked skip</summary>" in markdown
     assert (
-        'Marked skip, failing no run: <code title="Lib.B">B</code> (SKIPPED, '
-        'Python: r), <code title="Lib.C">C</code> (FAIL, Python: r).'
+        "Marked skip, failing no run:\n\n"
+        "| Test | Status | main | Mark | What failed |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        '| <code title="Lib.B">B</code> | SKIPPED | not in main | Python: r |  |\n'
+        '| <code title="Lib.C">C</code> | FAIL | PASS | Python: r | it fails |\n'
     ) in markdown
 
 

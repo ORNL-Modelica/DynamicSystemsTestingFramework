@@ -27,9 +27,47 @@ this file says when they do.
 - `dstf discover` lists every mark; `dstf uses` flags a marked test;
   `--rerun` and `--changed-since` leave marked tests out; an accept stores
   nothing of a marked test it did not run.
+- `--only-skipped` on `run` and `compare` runs and scores only the tests
+  marked skip for this backend and OS — a check of the marks without the
+  rest of the suite. `--rerun` and `--changed-since` choose among them;
+  unless every test is marked here the run is not a full one and says so;
+  with none of the tests chosen marked here it says so and exits 0.
+- `dstf discover`'s header counts the marks by where each is, then how many
+  apply where the config runs (`Marked skip: 25 marks (25 on OpenModelica);
+  none keeps a test from running on Dymola/linux, …`), and a list of every
+  backend's time limit follows, the one that applies here said so.
+  `--backend` reads them for another backend than the config's.
+- A run in which more than half of the tests timed out (at least two) ends
+  with a warning to check that the library and the work dir are on a fast
+  disk and that the time limits suit the machine. A test marked skip here
+  and run anyway is not counted.
+- `dstf summary` lists the marked tests in a table like the failures one,
+  with the base's status and what failed beside each; the JSON gives each
+  its `base` and `reason`. A reason written over several lines keeps its
+  table row on one. A timed-out test's reason in either table names only
+  the limit that fired, and how to raise it is said once under the table
+  (the JSON's `hint`).
+- When tests that ran carry a mark, the Results line says how many, and
+  that they fail no run: `Results: 0/25 passed (25 marked skip, failing no
+  run; 25 of 342 tests run; not a full run)`.
+- A marked test run anyway that has no baseline closes the report with
+  `runs now but has no baseline to score against — accept one, then remove
+  the mark`, not `still does not pass (NO_REF)`; one a compare has no result
+  of, with `has no result to score — run it with run --only-skipped`.
 
 ### Fixed
 
+- A failed OpenModelica run's message keeps omc's Errors first, then the
+  simulation's own words, then omc's Warnings and Notifications: five
+  Notifications about loaded packages pushed out the Error that said why
+  the model did not build. An
+  error omc points at a file (`[Bad.mo:4:3-4:14:writable] Error: Variable y
+  not found in scope Bad.`) is kept, its path under the library; before,
+  only a line that started with its kind was, and a `--batch` run read none
+  of what omc said after its simulate() record — where that error is.
+  `dstf summary` says omc's first `Error` as what failed, else the last line
+  of what is left past omc's Warnings and Notifications, which are about the
+  translation and seldom why a run stopped.
 - `dstf manifest cleanup` no longer ends with "every entry and directory
   belongs to a test" when it left a manifest entry it cannot read: the line
   names that entry as left as it is.

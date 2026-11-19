@@ -1734,7 +1734,7 @@ class PersistentBackendBase(Backend):
             w.close()
 
         wall = time.monotonic() - start_all
-        self._print_run_summary(results, total, wall)
+        self._print_run_summary(results, tests, wall)
 
         manifest.results = results
         setup.progress.finalize()

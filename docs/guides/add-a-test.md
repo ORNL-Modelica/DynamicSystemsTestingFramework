@@ -150,16 +150,55 @@ one simulator goes in the same place:
   machine where that plug-in is not installed.
 
 `dstf discover` lists every mark, on every backend, and ends the ones that
-keep a test from running here with `— not run here`. A run on a backend and
+keep a test from running here with `— not run here`. Its header counts the
+marks by where each is, then how many apply here: `Marked skip: 25 marks (25
+on OpenModelica); none keeps a test from running on Dymola/linux,
+testing.json's backend (--backend picks another):`; under `--backend
+OpenModelica` it ends `on OpenModelica/linux, the backend --backend names:`. After the marks it lists every `backends` block's `timeout`,
+and ends the one that sets a test's limit here with `— applies here`:
+
+```text
+Time limits per backend:
+  MyLib.Examples.PipeTest: 600 s on Dymola — applies here
+```
+
+`--backend` reads them for another backend than the config's own, on this
+machine's OS: which marks keep a test from running there, and which limit
+applies.
+
+```bash
+dstf discover --config testing.json --backend OpenModelica
+```
+
+A run on a backend and
 OS a mark applies to does not simulate the test: its start says how many
 tests it leaves out (`1 test marked skip is not run on OpenModelica/linux`),
 and the test reads `SKIPPED` with its reason. A marked test never changes the
 exit code, and a run of every test the marks let run is a full run.
 `--include-skipped` (on `run` and `compare`) runs and scores the marked tests
 like any other, each still carrying its mark, and after the report one line
-each says `passes now — remove the mark` or `still does not pass`. An accept
+each says `passes now — remove the mark`, `runs now but has no baseline to
+score against — accept one, then remove the mark`, `has no result to score —
+run it with run --only-skipped` (a compare of marked tests a run left out), or
+`still does not pass`. An accept
 stores nothing of a marked test it did not run (`not stored: … is marked skip
 on OpenModelica (…)`); under `--include-skipped` it is accepted like any other.
+
+`--only-skipped` (on `run` and `compare`) runs and scores the marked tests
+and no other: a check of whether each mark can go, without running the
+whole suite again. It chooses the marked tests first, so `--rerun` and
+`--changed-since` then choose among them, and `--filter` and `--package`
+narrow them as usual. Unless every test of the project is marked here, the
+run is not a full one and says so, like a `--filter` run. When none of the
+tests chosen is marked skip for this backend and OS, it says so (`No test is
+marked skip on OpenModelica/linux.`, and `… among the tests --filter chose.`
+beside a filter) and exits 0, writing nothing. Its Results line counts the
+marked tests apart, since they fail no run: `Results: 0/25 passed (25 marked
+skip, failing no run; 25 of 342 tests run; not a full run)`.
+
+```bash
+dstf run --config testing.json --only-skipped
+```
 
 A run whose every chosen test is marked simulates nothing. Without
 `--merge` it is still this run: `status.json` records no test simulated and

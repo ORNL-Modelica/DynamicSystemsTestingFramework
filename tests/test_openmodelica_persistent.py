@@ -544,6 +544,49 @@ class TestWorkerRunTest:
         low = result.error_message.lower()
         assert "not found" in low or "does not exist" in low
 
+    def test_an_error_after_five_notifications_is_kept_first(self, tmp_path):
+        """getErrorString as omc said it for a translation it could not
+        finish: five Notifications before the Error, which the message
+        dropped. The worker's message keeps it as the batch run's does."""
+        from test_openmodelica_backend import KEPT, NOTICES
+
+        test = _make_test()
+        responses = {
+            "simulate(": lambda expr: {
+                "resultFile": "",
+                "messages": "Failed to build model: Demo.Example.A",
+                "timeTotal": 0.0,
+            },
+            "getErrorString": "\n".join(NOTICES) + "\n",
+        }
+        worker, _, _ = self._bootstrap_worker(tmp_path, responses=responses)
+        result = worker.run_test(test, "test_0001")
+
+        assert result.error_message == KEPT.format(
+            "Failed to build model: Demo.Example.A"
+        )
+
+    def test_the_error_omc_points_at_a_file_is_the_message(self, tmp_path):
+        """getErrorString() as omc returned it for a model using an
+        undeclared variable: one Error, led by where it points."""
+        test = _make_test()
+        responses = {
+            "simulate(": lambda expr: {
+                "resultFile": "",
+                "messages": "Failed to build model: Bad",
+                "timeTotal": 0.0,
+            },
+            "getErrorString": f"[{tmp_path}/Bad.mo:4:3-4:14:writable] Error: "
+            "Variable y not found in scope Bad.\n",
+        }
+        worker, _, _ = self._bootstrap_worker(tmp_path, responses=responses)
+        result = worker.run_test(test, "test_0001")
+
+        assert result.error_message == (
+            "[Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad."
+            " | Failed to build model: Bad | no result file produced"
+        )
+
     def test_a_failure_whose_warning_repeats_keeps_its_last_line(self, tmp_path):
         """A large library's run repeated one solver warning past the
         2,048 characters a message keeps: the line after it, the reason,
@@ -687,11 +730,11 @@ class TestWorkerRunTest:
                 "total": 1.11,
             }
         }
-        message = result.error_message or ""
-        assert message.startswith("Warning: The step size became small.; ")
-        assert "result_res.mat reaches t=1.0 of stop_time=2.0" in message
-        assert message.endswith(
-            "partial result refused | The simulation finished successfully."
+        # The refusal first, as an Error would be: it is why the run failed.
+        assert result.error_message == (
+            "simulate() reported success but result_res.mat reaches t=1.0 of "
+            "stop_time=2.0 — partial result refused | The simulation finished "
+            "successfully. | Warning: The step size became small."
         )
 
 

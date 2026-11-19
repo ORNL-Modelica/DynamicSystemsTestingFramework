@@ -44,7 +44,13 @@ from ..common.total_model import QUESTION_BOUND
 from ..persistent import LibraryReloadError, PersistentBackendBase, Worker
 from ..types import Capability, TestRunResult
 from .backend import OpenModelicaBackend, OpenModelicaConfig, outcome, timing
-from .log_parser import _TIMING_KEYS, ParsedOmcOutput, parse_omc_stdout
+from .log_parser import (
+    _TIMING_KEYS,
+    ParsedOmcOutput,
+    notices,
+    parse_omc_stdout,
+    shown_path,
+)
 from .mos_generator import build_simulate_args, classify_dependency
 from .session_loader import load_omc_session
 
@@ -151,13 +157,8 @@ def _place(where: tuple[str, int] | None, root: Path | None) -> str:
     ``""`` without a place."""
     if where is None:
         return ""
-    file, line = Path(where[0]), where[1]
-    try:
-        if root is None:
-            raise ValueError
-        shown = file.resolve().relative_to(root.resolve()).as_posix()
-    except (OSError, ValueError):
-        shown = str(file)
+    file, line = where
+    shown = shown_path(file, root)
     return f"{shown}:{line}: " if line else f"{shown}: "
 
 
@@ -336,15 +337,6 @@ def _last_log_line(log: str) -> str:
         if line and not line.startswith(_OMC_STARTUP_LINES):
             return line[-300:]
     return ""
-
-
-def _is_notice_line(line: str) -> bool:
-    lower = line.lower()
-    return (
-        lower.startswith("error")
-        or lower.startswith("warning")
-        or lower.startswith("notification")
-    )
 
 
 class OpenModelicaWorker(Worker):
@@ -792,11 +784,7 @@ class OpenModelicaWorker(Worker):
             )
 
         error_string = _raw_get_error_string(session)
-        error_notices = [
-            line.strip()
-            for line in error_string.splitlines()
-            if line.strip() and _is_notice_line(line.strip())
-        ]
+        error_notices = notices(error_string, self.config.library_dir)
         parsed = _parsed_from_record(record_dict, error_notices)
 
         if progress is not None:

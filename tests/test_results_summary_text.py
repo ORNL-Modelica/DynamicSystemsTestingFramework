@@ -4,14 +4,23 @@ and the lists as Markdown for a pull request, and the same facts as JSON."""
 import json
 from pathlib import Path
 
-from dstf.reporting.results_summary import Cell, NotPassing, Summary
+from dstf.reporting.results_summary import Cell, Marked, NotPassing, Summary
 from dstf.reporting.results_summary_text import as_json, as_markdown
 
 TOTALS = {"total": 3, "PASS": 1, "FAIL": 1, "SIM_FAIL": 1, "NO_REF": 0, "NOT RUN": 0}
 
 
 def _cell(
-    label, folder, rows, *, passed=1, total=3, not_new=None, note="", totals=None
+    label,
+    folder,
+    rows,
+    *,
+    passed=1,
+    total=3,
+    not_new=None,
+    note="",
+    totals=None,
+    marked=(),
 ):
     return Cell(
         label=label,
@@ -21,6 +30,7 @@ def _cell(
         total=total,
         totals=totals or TOTALS,
         not_passing=rows,
+        marked=list(marked),
         not_new=not_new,
         base_note=note,
     )
@@ -186,6 +196,77 @@ def test_a_list_row_names_the_test_its_status_the_base_s_and_what_failed():
     ]
 
 
+def test_the_marked_tests_are_a_table_of_their_own_with_the_base_s_status():
+    """Under the failures, the tests marked skip — which fail no run — in a
+    table like theirs: the test, its status, the base's, the mark, and what
+    failed — nothing for a test its mark kept from running."""
+    marked = _cell(
+        "branch",
+        "Python/linux",
+        [NotPassing("Lib.pkg.Ramp", "FAIL", "x: → FAIL", "PASS")],
+        not_new=0,
+        marked=[
+            Marked("Lib.pkg.Slow", "SKIPPED", "Python: too slow | for CI", "SKIPPED"),
+            Marked(
+                "Lib.pkg.Csv",
+                "SIM_FAIL",
+                "every backend: <csv> & co",
+                "PASS",
+                "RuntimeError: a <b> | c",
+            ),
+        ],
+    )
+    text = as_markdown(_summary([BASE, marked]))
+    lines = text.splitlines()
+    header = "| Test | Status | base | Mark | What failed |"
+    assert lines[lines.index(header) - 2 :][:2] == [
+        "Marked skip, failing no run:",
+        "",
+    ]
+    assert _table(text, header)[2:] == [
+        [
+            '<code title="Lib.pkg.Slow">Slow</code>',
+            "SKIPPED",
+            "SKIPPED",
+            "Python: too slow \\| for CI",
+            "",
+        ],
+        [
+            '<code title="Lib.pkg.Csv">Csv</code>',
+            "SIM_FAIL",
+            "PASS",
+            "every backend: &lt;csv&gt; &amp; co",
+            "RuntimeError: a &lt;b&gt; \\| c",
+        ],
+    ]
+    data = json.loads(as_json(_summary([BASE, marked])))
+    assert data["cells"][1]["marked"][1] == {
+        "model_id": "Lib.pkg.Csv",
+        "status": "SIM_FAIL",
+        "mark": "every backend: <csv> & co",
+        "base": "PASS",
+        "reason": "RuntimeError: a <b> | c",
+        "hint": "",
+    }
+
+
+def test_a_reason_over_several_lines_keeps_its_row_on_one():
+    """A skip reason, or what failed, written over two lines: a Markdown
+    row ends at its line's end."""
+    cell = _cell(
+        "head",
+        "Python/linux",
+        [NotPassing("Lib.A", "FAIL", "y: one\ntwo")],
+        marked=[Marked("Lib.B", "SKIPPED", "Python: line one\nline | two")],
+    )
+    text = as_markdown(_summary([cell], base=None))
+    assert '| <code title="Lib.A">A</code> | FAIL | y: one two |' in text
+    assert (
+        '| <code title="Lib.B">B</code> | SKIPPED | Python: line one line \\| two |  |'
+        in text
+    )
+
+
 def test_with_no_base_run_for_the_backend_os_the_line_says_why():
     alone = _cell(
         "branch",
@@ -289,5 +370,6 @@ def test_json_holds_every_cell_and_row():
         "status": "FAIL",
         "reason": "x: NRMSE 0.058 vs 0.01 → FAIL",
         "base": "PASS",
+        "hint": "",
     }
     assert cells[("base", "Python/linux")]["not_new"] is None

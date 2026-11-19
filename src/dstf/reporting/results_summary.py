@@ -32,7 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .status import FAILURES, NO_REF, PASS
+from ..discovery.marks import timed_out
+from .status import FAILURES, NO_REF, PASS, SKIPPED
 from .verdicts import VERDICTS_FILE
 
 #: The longest reason a list row holds, in characters.
@@ -51,11 +52,14 @@ class NotPassing:
     #: the file's status word: FAIL, SIM_FAIL, NO_REF, NOT RUN
     status: str
     #: what failed: the first failing criterion that is not advisory, else
-    #: the message's last non-empty line; "" when the file says neither
+    #: what the message says of why (``reason``); "" when the file says
+    #: neither
     reason: str
     #: with a base: the base cell's status word for it, or ``not in
     #: <base>``; None with no base, or no base run of this backend/os
     base: str | None = None
+    #: a timed-out run's advice, cut from ``reason`` (``_row_reason``); ""
+    hint: str = ""
 
     @property
     def no_baseline(self) -> bool:
@@ -83,6 +87,14 @@ class Marked:
     status: str
     #: the file's ``mark``: ``Python: <reason>``
     mark: str
+    #: with a base: the base cell's status word for it, or ``not in
+    #: <base>``; None with no base, or no base run of this backend/os
+    base: str | None = None
+    #: what failed, as a failing test's (``_row_reason``); "" for one its
+    #: mark kept from running (SKIPPED), which ran nothing to fail
+    reason: str = ""
+    #: a timed-out run's advice, cut from ``reason``; ""
+    hint: str = ""
 
 
 @dataclass(frozen=True)
@@ -257,29 +269,92 @@ _ERROR_TAG = re.compile(r"\[\w+:error:\d+\]")
 _REPEATED = re.compile(r"\(repeated \d+ times\)$")
 
 
-def _message_reason(message: Any) -> str:
-    """The piece of a failed run's message that says why: from its first
-    OpenModelica error tag to that line's end; else its last non-empty
-    line that is not a repeated one (a traceback's first line says
-    nothing), a repeated line only when nothing else is."""
-    if not isinstance(message, str):
-        return ""
-    tag = _ERROR_TAG.search(message)
-    if tag:
-        return message[tag.start() :].splitlines()[0].strip()
+#: One of omc's notices, led by where omc points it when it does
+#: (``[Bad.mo:4:3-4:14:writable] Error: …``): its kind past that place.
+_NOTICE = r"(?:\[[^\]]*\] )?(?:Error|Warning|Notification)\b"
+_NOTICE_PART = re.compile(r"(?:\[[^\]]*\] )?(?P<kind>Error|Warning|Notification)\b")
+#: Where a message's line is cut into parts, each separator kept: at
+#: `` | `` (OpenModelica's message joins its pieces so), and at ``; ``
+#: where a notice follows (it joins its notices so) — never inside one:
+#: ``Error: Too many equations; over-determined system`` is one part.
+_PARTS = re.compile(rf"( \| |; (?={_NOTICE}))")
+
+
+def _parts(line: str) -> list[tuple[str, str]]:
+    """``line``'s parts, each with the separator before it (``""`` for
+    the first)."""
+    pieces = _PARTS.split(line)
+    return [("", pieces[0])] + list(zip(pieces[1::2], pieces[2::2], strict=True))
+
+
+def _kind(part: str) -> str | None:
+    """The kind of a part that is one of omc's notices, else None."""
+    found = _NOTICE_PART.match(part.strip())
+    return found["kind"] if found else None
+
+
+def _last_line(message: str) -> str:
+    """``message``'s last non-empty line that is not a repeated one (a
+    traceback's first line says nothing), a repeated line only when
+    nothing else is."""
     lines = [line.strip() for line in message.splitlines() if line.strip()]
     said = [line for line in lines if not _REPEATED.search(line)] or lines
     return said[-1] if said else ""
 
 
-def reason(test: dict) -> str:
-    """What a list row says failed, at most :data:`REASON_LENGTH`
-    characters from its start: the first failing criterion; else what the
-    message says of why (:func:`_message_reason`)."""
-    text = failing_criterion(test.get("tree")) or _message_reason(test.get("message"))
+def _message_reason(message: Any) -> str:
+    """The piece of a failed run's message that says why: from its first
+    OpenModelica error tag to that line's end; else its first part (a
+    line cut at `` | ``, and at ``; `` before a notice) that is an
+    ``Error``, kept with the place omc points it at; else the last line
+    (:func:`_last_line`) of what is left once omc's Warnings and
+    Notifications are taken out — they are about the translation, seldom
+    why a run stopped; else the whole message's last line."""
+    if not isinstance(message, str):
+        return ""
+    tag = _ERROR_TAG.search(message)
+    if tag:
+        return message[tag.start() :].splitlines()[0].strip()
+    lines = [_parts(line) for line in message.splitlines()]
+    for parts in lines:
+        for _, part in parts:
+            if _kind(part) == "Error":
+                return part.strip()
+    left = []
+    for parts in lines:
+        kept = [(sep, part) for sep, part in parts if _kind(part) is None]
+        if kept:
+            left.append(kept[0][1] + "".join(sep + part for sep, part in kept[1:]))
+    return _last_line("\n".join(left)) or _last_line(message)
+
+
+def _cut(text: str) -> str:
+    """``text``, at most :data:`REASON_LENGTH` characters from its start."""
     if len(text) > REASON_LENGTH:
         text = text[: REASON_LENGTH - 1] + "…"
     return text
+
+
+def reason(test: dict) -> str:
+    """What failed, at most :data:`REASON_LENGTH` characters from its
+    start: the first failing criterion; else what the message says of why
+    (:func:`_message_reason`)."""
+    return _cut(
+        failing_criterion(test.get("tree")) or _message_reason(test.get("message"))
+    )
+
+
+def _row_reason(test: dict) -> tuple[str, str]:
+    """What a list row says failed (:func:`reason`), and the advice it
+    leaves out: a timed-out run's message is cut to the limit that fired
+    (``omc exceeded 60.0s timeout (the run's --timeout)``), its advice —
+    the same for every test that limit stopped, and wider than the table
+    — said once under it. ``""`` for no advice."""
+    text = failing_criterion(test.get("tree")) or _message_reason(test.get("message"))
+    said = timed_out(text)
+    if said is None:
+        return _cut(text), ""
+    return _cut(said.short), said.hint
 
 
 def _folder_key(folder: str) -> tuple[str, ...]:
@@ -329,17 +404,19 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
         marked = []
         for t in _tests(data):
             status = str(t.get("status"))
-            mark = t.get("mark")
-            if isinstance(mark, str) and mark:
-                marked.append(Marked(str(t.get("model_id")), status, mark))
-                continue
-            if status == PASS:
-                continue
             model_id = str(t.get("model_id"))
             said = None
             if base_tests is not None:
                 said = base_tests.get(model_id, f"not in {base}")
-            rows.append(NotPassing(model_id, status, reason(t), said))
+            mark = t.get("mark")
+            if isinstance(mark, str) and mark:
+                why, hint = ("", "") if status == SKIPPED else _row_reason(t)
+                marked.append(Marked(model_id, status, mark, said, why, hint))
+                continue
+            if status == PASS:
+                continue
+            why, hint = _row_reason(t)
+            rows.append(NotPassing(model_id, status, why, said, hint))
         not_new = none_on_base = None
         note = ""
         if base_tests is not None:

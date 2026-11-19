@@ -14,7 +14,9 @@ it REPL-echoes the returned record to stdout:
     end SimulationResult;
 
 This module extracts that block, classifies success/failure, and surfaces any
-Error/Warning/Notification lines that appeared BEFORE it. The return shape is
+Error/Warning/Notification line outside it (:func:`notices`): the script's
+``getErrorString()`` calls echo their strings before the record and after
+it, and the one after ``simulate()`` holds why a model did not build. The return shape is
 a small ``ParsedOmcOutput`` dataclass the backend consumes to populate
 ``TestRunResult``.
 
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -70,18 +73,66 @@ _TIMING_KEYS = {
     "timeTotal": "total",
 }
 
-# Lines like 'Error: ...' / 'Warning: ...' / 'Notification: ...'
-_NOTICE_RE = re.compile(
-    r"^\s*(?:Error|Warning|Notification)\b[: ].*$",
-    re.MULTILINE,
+# A notice: 'Error: ...' / 'Warning: ...' / 'Notification: ...', led by
+# where omc points it when it does — '[<file>:4:3-4:14:writable] Error: ...'.
+# A file's path may hold a colon (a Windows drive), so it ends at the
+# position, not at the first colon.
+_NOTICE = re.compile(
+    r"(?:\[(?P<file>[^\]\n]+?):(?P<pos>\d+:\d+-\d+:\d+:(?:writable|readonly))\] )?"
+    r"(?P<kind>Error|Warning|Notification)\b[: ]"
 )
 
 
-def parse_omc_stdout(text: str) -> ParsedOmcOutput:
-    """Parse captured omc stdout into a ``ParsedOmcOutput``."""
+def shown_path(file: str | Path, root: Path | None) -> str:
+    """``file`` as an OpenModelica message shows it: its path under the
+    library's ``root``, whole for one outside it (an MSL file) or with no
+    root."""
+    try:
+        if root is None:
+            raise ValueError
+        return Path(file).resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return str(file)
+
+
+def notice(line: str, root: Path | None = None) -> str | None:
+    """``line`` as a failed run's message keeps it when it is one of omc's
+    notices, else None. THE one reading of a notice, for the batch run's
+    stdout and a live worker's ``getErrorString()``: a line that starts
+    with its kind, or with the place omc points it at — the line a model
+    that does not translate is refused with, ``[<file>:4:3-4:14:writable]
+    Error: Variable y not found in scope Bad.`` — kept with that place,
+    its file under ``root`` (:func:`shown_path`). A script echoes each
+    ``getErrorString()`` as a quoted string, so the first line of one
+    starts with its quote: that is not part of the notice."""
+    text = line.strip().removeprefix('"')
+    found = _NOTICE.match(text)
+    if found is None:
+        return None
+    if found["file"] is None:
+        return text
+    rest = text[found.start("kind") :]
+    return f"[{shown_path(found['file'], root)}:{found['pos']}] {rest}"
+
+
+def notices(text: str, root: Path | None = None) -> list[str]:
+    """Every notice of ``text``, in its order (:func:`notice`)."""
+    return [n for line in text.splitlines() if (n := notice(line, root)) is not None]
+
+
+def notice_kind(text: str) -> str:
+    """A kept notice's kind, past its place: ``Error``, ``Warning`` or
+    ``Notification``; ``""`` for a line that is none."""
+    found = _NOTICE.match(text)
+    return found["kind"] if found else ""
+
+
+def parse_omc_stdout(text: str, root: Path | None = None) -> ParsedOmcOutput:
+    """Parse captured omc stdout into a ``ParsedOmcOutput``: its record,
+    and the notices outside it, each place under the library's ``root``."""
     m = _RECORD_RE.search(text)
-    preamble = text if not m else text[: m.start()]
-    error_notices = [mo.group(0).strip() for mo in _NOTICE_RE.finditer(preamble)]
+    outside = text if not m else text[: m.start()] + text[m.end() :]
+    error_notices = notices(outside, root)
 
     if not m:
         return ParsedOmcOutput(success=False, error_notices=error_notices)

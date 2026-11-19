@@ -377,3 +377,38 @@ def test_a_timeout_says_which_limit_stopped_it(config_of, keys, hint):
     assert timeout_message("Timed out after 5s", said) == (
         f"Timed out after 5s ({hint})"
     )
+
+
+@pytest.mark.parametrize(
+    ("keys", "short"),
+    [
+        (
+            {"backends": {"Python/linux": {"timeout": 5}}},
+            "Timed out after 5s (backends.Python/linux.timeout in test_spec.json)",
+        ),
+        (
+            {"simulation": {"timeout": 60}},
+            "Timed out after 5s (simulation.timeout in test_spec.json)",
+        ),
+        ({}, "Timed out after 5s (the run's --timeout)"),
+        (None, "Timed out after 5s (the batch's time limit)"),
+    ],
+)
+def test_a_timed_out_message_reads_back_short_with_its_whole_hint(
+    config_of, keys, short
+):
+    """What `dstf summary` shows of a timeout: the limit that fired, read
+    from the message the backend wrote, and the advice apart."""
+    from dstf.backends.types import timeout_message
+    from dstf.discovery.marks import limit_hint, timed_out
+
+    hint = (
+        None
+        if keys is None
+        else limit_hint(_parse(_entry(**keys)), config_of("Python", "linux"))
+    )
+    said = timed_out(timeout_message("Timed out after 5s", hint))
+    assert said is not None
+    assert said.short == short
+    assert timeout_message("Timed out after 5s", hint).endswith(f" ({said.hint})")
+    assert timed_out("Timed out after 5s, for no reason given") is None

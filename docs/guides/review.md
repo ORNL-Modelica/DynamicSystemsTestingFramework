@@ -476,9 +476,17 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
 - **A folded list per cell** names each test that did not pass, its status,
   and what failed: the first failing criterion that is not advisory, else
   the message from its first OpenModelica error tag (`[translation:error:63]
-  Internal error …`, not the call omc echoes before it), else the message's
-  last line that is not a repeated warning (a failed simulation's message is
-  often a traceback, and its reason comes last).
+  Internal error …`, not the call omc echoes before it), else its first
+  `Error` from omc, with the place it points at
+  (`[Bad.mo:4:3-4:14:writable] Error: …`), else the last line that is not
+  a repeated warning of what is left once omc's Warnings and Notifications
+  are taken out — they are about the translation, seldom why a run stopped
+  (`Failed to build model: …`, or a simulation's `LOG_ASSERT … | error |
+  …` line), else the whole message's last line (a failed simulation's
+  message is often a traceback, and its reason comes last). A timed-out
+  test's reason names only the limit that fired (`omc exceeded 60.0s timeout
+  (the run's --timeout)`), and how to raise it is said once under the table
+  (`Timed out: the limit is the run's --timeout: raise it with --timeout, …`).
   With `--base` the base's status is beside it, or `not in main`. Its summary
   line reads `Python/linux, branch: 2 not passing, 1 also fails on main`, and
   `; 1 no baseline` after it where a test has none: those are named on a
@@ -489,10 +497,11 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
 - **A test marked skip fails no run.** A SKIPPED test, and a marked test run
   anyway that does not pass, is never among those not passing or new
   failures: the cell counts `1 SKIPPED` beside the other status words, its
-  summary line counts `1 marked skip`, and a line under the list names each
-  with its status and mark (`Marked skip, failing no run: … (SKIPPED,
-  Python: <reason>)`). A run of every test the marks let run is a full run:
-  its cell has no ` · N of M tests run`.
+  summary line counts `1 marked skip`, and a table of their own under
+  `Marked skip, failing no run:` lists each with its status, the base's
+  with `--base`, its mark (`Python: <reason>`) and what failed, read as for
+  a failure (nothing for a SKIPPED test, which never ran). A run of every test the
+  marks let run is a full run: its cell has no ` · N of M tests run`.
 
 A short example:
 

@@ -13,8 +13,9 @@ for such a compare (:attr:`Cell.compared`) — under it one key line, then one f
 cell with tests that did not pass, its summary line ``<Backend>/<os>,
 <label>: N not passing, K also fail on <base>; M no baseline``. A list's
 table holds what failed; a test with no baseline is no failure, and is
-named on a line under it, and a test marked skip (SKIPPED, or run anyway)
-on a line of its own: it fails no run. A list is open when it holds a failure that is
+named on a line under it, and the tests marked skip (SKIPPED, or run
+anyway) in a table of their own like the failures', the mark before what
+failed (nothing for a SKIPPED test): a marked test fails no run. A list is open when it holds a failure that is
 new (one the base did not fail and did not end the same way —
 ``NotPassing.not_new``), or there is no base to tell; folded otherwise; the
 base's own lists are folded. New ones are listed first.
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Iterable
 from dataclasses import asdict
 
 from .results_summary import Cell, Summary
@@ -40,8 +42,14 @@ _DASH = "–"
 
 
 def _row(cells: list[str]) -> str:
-    """A table row; a ``|`` in a cell is escaped, so it keeps the columns."""
-    return "| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |"
+    """A table row: a ``|`` in a cell is escaped, so it keeps the columns,
+    and each line break is a space, so the row ends where it should (a
+    skip reason written over two lines ended its row at the first)."""
+    return (
+        "| "
+        + " | ".join(" ".join(c.replace("|", "\\|").splitlines()) for c in cells)
+        + " |"
+    )
 
 
 def _also_fail(n: int, base: str | None) -> str:
@@ -131,6 +139,7 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
                 [_test(r.model_id), r.status, *base, html.escape(r.reason, quote=False)]
             )
         )
+    lines += _advice(r.hint for r in rows)
     if cell.no_baseline:
         if rows:
             lines.append("")
@@ -143,12 +152,39 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
     if cell.marked:
         if rows or cell.no_baseline:
             lines.append("")
-        named = ", ".join(
-            f"{_test(m.model_id)} ({html.escape(m.status)}, {html.escape(m.mark, quote=False)})"
-            for m in cell.marked
-        )
-        lines.append(f"Marked skip, failing no run: {named}.")
+        # A table like the failures', headed apart: a marked test fails no
+        # run, whatever its status says.
+        marked_header = [*header[:-1], "Mark", "What failed"]
+        lines += [
+            "Marked skip, failing no run:",
+            "",
+            _row(marked_header),
+            _row(["---"] * len(marked_header)),
+        ]
+        for m in cell.marked:
+            base = [str(m.base)] if with_base else []
+            lines.append(
+                _row(
+                    [
+                        _test(m.model_id),
+                        html.escape(m.status),
+                        *base,
+                        html.escape(m.mark, quote=False),
+                        html.escape(m.reason, quote=False),
+                    ]
+                )
+            )
+        lines += _advice(m.hint for m in cell.marked)
     return [*lines, "", "</details>"]
+
+
+def _advice(hints: Iterable[str]) -> list[str]:
+    """The lines under a table that hold a timed-out row: each limit's
+    advice once, as the run's message gave it, in the order met."""
+    said = [h for h in dict.fromkeys(hints) if h]
+    if not said:
+        return []
+    return ["", *(f"Timed out: {html.escape(h, quote=False)}." for h in said)]
 
 
 def _base_said(summary: Summary, base: str | None) -> str:
@@ -190,7 +226,8 @@ def as_markdown(summary: Summary) -> str:
     if any(cell.selected and not cell.compared for cell in summary.cells.values()):
         key += (
             ' "N of M tests run" = the run simulated N of the project\'s M tests '
-            "(--filter, --package, --rerun or --changed-since): not a full run."
+            "(--filter, --package, --rerun, --changed-since or --only-skipped): "
+            "not a full run."
         )
         if any(cell.selected and cell.merged for cell in summary.cells.values()):
             key += (
@@ -200,7 +237,8 @@ def as_markdown(summary: Summary) -> str:
     if any(cell.selected and cell.compared for cell in summary.cells.values()):
         key += (
             ' "N of M tests scored" = a compare scored N of the project\'s M tests '
-            "(--filter or --package), the others not: not a full compare."
+            "(--filter, --package or --only-skipped), the others not: not a "
+            "full compare."
         )
     lines += ["", key, ""]
     for folder in summary.folders:

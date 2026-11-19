@@ -337,8 +337,12 @@ def test_a_marked_test_that_still_fails_fails_no_run_and_says_it_is_marked(
     assert "Python/linux, pr: 1 marked skip</summary>" in said
     assert "not passing" not in said
     assert (
-        f'Marked skip, failing no run: <code title="{MARKED}">ConstantCsv</code> '
-        f"(FAIL, {SAID})."
+        "Marked skip, failing no run:\n\n"
+        "| Test | Status | main | Mark | What failed |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        f'| <code title="{MARKED}">ConstantCsv</code> | FAIL | PASS | {SAID} | '
+        # its constant 1.0 against the range 2–3 the failing() override sets
+        "x: max violation 1.000e+00 → FAIL (requires 0) |\n"
     ) in said
 
 
@@ -483,8 +487,9 @@ def test_summary_spells_a_reason_s_markup_as_text(proj, capsys):
     assert main(["summary", f"pr={proj.work}"]) == 0
     said = capsys.readouterr().out
     assert (
-        f'Marked skip, failing no run: <code title="{MARKED}">ConstantCsv</code> '
-        '(SKIPPED, Python: say "no" &lt;now&gt; &amp; then).'
+        "| Test | Status | Mark | What failed |\n| --- | --- | --- | --- |\n"
+        f'| <code title="{MARKED}">ConstantCsv</code> | SKIPPED | '
+        'Python: say "no" &lt;now&gt; &amp; then |  |\n'
     ) in said
 
 
@@ -572,6 +577,173 @@ def test_a_compare_of_marked_tests_none_of_which_has_a_result_exits_0(proj, caps
     assert "Nothing ran" not in out
 
 
+# -- --only-skipped -------------------------------------------------------------
+
+#: The selection block of a run, or a compare, of the one marked test.
+ONLY = {"selected": 1, "skipped": 0, "of": 3, "only_skipped": True}
+
+
+def test_only_skipped_runs_just_the_marked_tests_and_says_it_is_no_full_run(
+    proj, capsys
+):
+    assert proj.dstf(capsys)[0] == 0
+    before = proj.runs()
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped")
+    assert rc == 0, out
+    after = proj.runs()
+    assert after[MARKED] != before[MARKED]
+    assert {m: after[m] for m in (POINTS, RAMP)} == {
+        m: before[m] for m in (POINTS, RAMP)
+    }
+    assert set(proj.verdicts()) == {MARKED}
+    assert (proj.verdicts()[MARKED]["status"], proj.verdicts()[MARKED]["mark"]) == (
+        "PASS",
+        SAID,
+    )
+    assert proj.read("status.json")["selection"] == ONLY
+    assert proj.read("verdicts.json")["selection"] == ONLY
+    assert "(1 marked skip, failing no run; 1 of 3 tests run; not a full run)" in out
+    assert f"{MARKED}: marked skip on Python, passes now — remove the mark" in out
+    assert proj.notice() == (
+        "Not a full run. 1 of 3 tests was run: the one that a mark keeps from "
+        "running here (--only-skipped). The other 2 were not run."
+    )
+
+
+def test_only_skipped_with_merge_scores_the_others_on_their_last_results(proj, capsys):
+    assert proj.dstf(capsys)[0] == 0
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", "--merge")
+    assert rc == 0, out
+    assert {m: v["status"] for m, v in proj.verdicts().items()} == dict.fromkeys(
+        EVERY, "PASS"
+    )
+    assert proj.read("status.json")["selection"] == {**ONLY, "merged": True}
+
+
+@pytest.mark.parametrize("command", ["run", "compare"])
+def test_only_skipped_with_no_test_marked_here_does_nothing_and_exits_0(
+    proj, capsys, command
+):
+    """A mark for another backend is no mark here: nothing to run, and
+    nothing written."""
+    proj.edit(POINTS, backends={"OpenModelica": {"skip": "its solver differs"}})
+    rc, out = proj.dstf(capsys, "--only-skipped", command=command)
+    assert rc == 0, out
+    assert out.splitlines()[-1] == "No test is marked skip on Python/linux."
+    assert not proj.work.exists()
+
+
+def test_only_skipped_compare_scores_just_the_marked_tests(proj, capsys):
+    assert proj.dstf(capsys)[0] == 0
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", command="compare")
+    assert rc == 0, out
+    assert set(proj.verdicts()) == {MARKED}
+    assert proj.verdicts()[MARKED]["status"] == "PASS"
+    assert proj.read("verdicts.json")["selection"] == {**ONLY, "compare": True}
+    assert (
+        "(1 marked skip, failing no run; 1 of 3 tests scored; not a full compare)"
+        in out
+    )
+
+
+def test_only_skipped_narrows_before_rerun_chooses(proj, capsys):
+    """--rerun chooses among the marked tests: a failing test that is not
+    marked is not run again."""
+    proj.failing()
+    proj.edit(
+        RAMP,
+        comparison={
+            "variable_overrides": {
+                "x": {"mode": "range", "min_value": 50.0, "max_value": 60.0}
+            }
+        },
+    )
+    assert proj.dstf(capsys)[0] == 1
+    before = proj.runs()
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", "--rerun")
+    # RAMP's last result, scored beside the rerun, still fails the run
+    assert rc == 1, out
+    after = proj.runs()
+    assert after[MARKED] != before[MARKED]
+    assert after[RAMP] == before[RAMP]
+    assert proj.read("status.json")["selection"] == {
+        **ONLY,
+        "rerun": "failed",
+        "merged": True,
+    }
+
+
+def test_only_skipped_accept_stores_the_marked_tests_only(tmp_path, capsys):
+    proj = Project(tmp_path, baselines=False)
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", "--accept")
+    assert rc == 0, out
+    assert proj.stored() == {MARKED}
+
+
+@pytest.mark.parametrize("command", ["run", "compare"])
+@pytest.mark.parametrize("flag", ["--filter", "--package"])
+def test_only_skipped_takes_the_marked_tests_the_selection_flags_chose(
+    proj, capsys, command, flag
+):
+    """Two tests marked; --filter or --package names one of them: only that
+    one is run, or scored."""
+    proj.mark(MARKED, RAMP)
+    assert proj.dstf(capsys, "--include-skipped")[0] == 0
+    before = proj.runs()
+    rc, out = proj.dstf(capsys, "--only-skipped", flag, MARKED, command=command)
+    assert rc == 0, out
+    assert set(proj.verdicts()) == {MARKED}
+    changed = {m for m, at in proj.runs().items() if at != before[m]}
+    assert changed == ({MARKED} if command == "run" else set())
+    key = "filter" if flag == "--filter" else "package"
+    block = {**ONLY, key: MARKED, **({"compare": True} if command == "compare" else {})}
+    assert proj.read("verdicts.json")["selection"] == block
+
+
+@pytest.mark.parametrize("command", ["run", "compare"])
+def test_only_skipped_beside_a_filter_of_unmarked_tests_does_nothing_and_exits_0(
+    proj, capsys, command
+):
+    """The filter chose tests, none of them marked here: nothing to run is
+    no failure, and the last run's files stay as they are."""
+    proj.mark()
+    assert proj.dstf(capsys)[0] == 0
+    files = {
+        name: (proj.work / name).read_bytes()
+        for name in ("verdicts.json", "status.json", "dashboard.html")
+    }
+    rc, out = proj.dstf(capsys, "--only-skipped", "--filter", RAMP, command=command)
+    assert rc == 0, out
+    assert out.splitlines()[-1] == (
+        "No test is marked skip on Python/linux among the tests --filter chose."
+    )
+    assert {name: (proj.work / name).read_bytes() for name in files} == files
+
+
+def test_only_skipped_beside_a_filter_that_matches_nothing_fails(proj, capsys):
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", "--filter", "Nothing.*")
+    assert rc == 1, out
+    assert out.splitlines()[-1] == "No tests matched the filter."
+
+
+def test_an_include_skipped_run_s_selection_says_no_only_skipped(proj, capsys):
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--include-skipped", "--filter", f"{MARKED},{RAMP}")
+    assert rc == 0, out
+    assert proj.read("status.json")["selection"] == {
+        "selected": 2,
+        "skipped": 0,
+        "of": 3,
+        "filter": f"{MARKED},{RAMP}",
+    }
+
+
 # -- discover -------------------------------------------------------------------
 
 
@@ -579,8 +751,16 @@ def test_discover_lists_every_mark_and_which_keep_a_test_from_running_here(
     proj, capsys
 ):
     """R4f: every mark, on every backend, the ones this backend and OS
-    apply said so."""
-    proj.mark()
+    apply said so; the header counts the marks, by where each is, apart
+    from the ones that apply here. Then every backend's time limit, the
+    one that sets a test's limit here said so."""
+    proj.edit(
+        MARKED,
+        backends={
+            "Python": {"skip": REASON, "timeout": 100},
+            "Python/linux": {"timeout": 50},
+        },
+    )
     proj.edit(RAMP, skip="slow everywhere")
     proj.edit(
         POINTS,
@@ -594,10 +774,57 @@ def test_discover_lists_every_mark_and_which_keep_a_test_from_running_here(
     assert rc == 0
     block = out.split("\nMarked skip", 1)[1].strip().splitlines()
     assert block == [
-        "(2 tests not run on Python/linux):",
+        ": 3 marks (1 on Python, 1 on OpenModelica/windows, 1 on every backend); "
+        "2 keep a test from running on Python/linux, testing.json's backend "
+        "(--backend picks another):",
         f"  {MARKED}: skipped on {SAID} — not run here",
         f"  {POINTS}: skipped on OpenModelica/windows: its solver differs",
         f"  {RAMP}: skipped on every backend: slow everywhere — not run here",
+        "",
+        "Time limits per backend:",
+        f"  {MARKED}: 100 s on Python",
+        f"  {MARKED}: 50 s on Python/linux — applies here",
+        f"  {POINTS}: 30 s on Dymola",
+    ]
+
+
+def test_discover_says_when_no_mark_keeps_a_test_from_running_here(proj, capsys):
+    """Marks only for another backend: the header says there are some, and
+    that none of them applies on this backend and OS — not "0 tests"
+    above a list of marks."""
+    proj.edit(POINTS, backends={"OpenModelica": {"skip": "its solver differs"}})
+    proj.edit(RAMP, backends={"OpenModelica": {"skip": "slow", "timeout": 240}})
+    rc = main(["discover", "--config", str(proj.config)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    block = out.split("\nMarked skip", 1)[1].strip().splitlines()
+    assert block == [
+        ": 2 marks (2 on OpenModelica); none keeps a test from running on "
+        "Python/linux, testing.json's backend (--backend picks another):",
+        f"  {POINTS}: skipped on OpenModelica: its solver differs",
+        f"  {RAMP}: skipped on OpenModelica: slow",
+        "",
+        "Time limits per backend:",
+        f"  {RAMP}: 240 s on OpenModelica",
+    ]
+
+
+def test_discover_reads_the_marks_for_the_backend_given(proj, capsys):
+    """One testing.json, read for another backend than its own: the marks
+    and the time limits that apply there are said so."""
+    proj.edit(POINTS, backends={"OpenModelica": {"skip": "its solver differs"}})
+    proj.edit(RAMP, backends={"OpenModelica": {"timeout": 240}})
+    rc = main(["discover", "--config", str(proj.config), "--backend", "OpenModelica"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    block = out.split("\nMarked skip", 1)[1].strip().splitlines()
+    assert block == [
+        ": 1 mark (1 on OpenModelica); 1 keeps a test from running on "
+        "OpenModelica/linux, the backend --backend names:",
+        f"  {POINTS}: skipped on OpenModelica: its solver differs — not run here",
+        "",
+        "Time limits per backend:",
+        f"  {RAMP}: 240 s on OpenModelica — applies here",
     ]
 
 

@@ -411,6 +411,156 @@ def test_a_repeated_warning_gives_way_to_the_line_that_says_why(tmp_path):
     assert _reasons(tmp_path, kept) == [reason_line]
 
 
+#: A failed translation's message as a large library's run recorded it:
+#: omc's notices, the record's messages, and that no result was written.
+BUILD = (
+    "Notification: ModelicaServices 4.1.0 is used instead of the requested "
+    "4.0.0.; Notification: Automatically loaded package Complex 4.1.0 due to "
+    "uses annotation from Modelica.; Notification: Automatically loaded "
+    "package Modelica 4.1.0 due to uses annotation from MyLib.; "
+    "Notification: You can install the requested package using "
+    "installPackage.; Notification: Skipped loading package SomeMedia using "
+    "MODELICAPATH. | Failed to build model: MyLib.Examples.PipeTest | no "
+    "result file produced"
+)
+
+
+def test_a_failed_build_is_said_by_what_is_left_past_the_notifications(
+    tmp_path,
+):
+    assert _reasons(tmp_path, BUILD) == [
+        "Failed to build model: MyLib.Examples.PipeTest | no result file produced"
+    ]
+
+
+#: A run that stopped at an assert, as an OpenModelica --batch run kept it:
+#: omc's notices of the translation first, the simulation's log after them.
+RUNTIME = (
+    "Warning: The initial conditions are not fully specified. For more "
+    "information set -d=initialization.; Notification: MyLib requested package "
+    "Modelica of version 4.0.0. Modelica 4.1.0 is used instead. | Simulation "
+    "execution failed for model: MyLib.Fail\n"
+    "LOG_SUCCESS       | info    | The initialization finished successfully.\n"
+    "LOG_ASSERT        | info    | [/home/user/MyLib/Fail.mo:8:3-8:39:writable]\n"
+    "|                 | |       | The following assertion has been violated "
+    "at time 0.500000\n"
+    "LOG_ASSERT        | error   | No event found, but assert was triggered. "
+    "Throwing now! | no result file produced"
+)
+
+
+def test_a_run_that_stopped_is_said_by_its_last_line_not_a_warning(tmp_path):
+    """omc's Warning and Notification about the translation are not why the
+    simulation stopped: past them, the message's last line is."""
+    assert _reasons(tmp_path, RUNTIME) == [
+        "LOG_ASSERT        | error   | No event found, but assert was triggered. "
+        "Throwing now! | no result file produced"
+    ]
+
+
+def test_a_notification_omc_points_at_a_file_is_a_notification(tmp_path):
+    located = (
+        "[Bad.mo:1:1-1:9:writable] Notification: loaded. | Failed to build "
+        "model: Bad | no result file produced"
+    )
+    assert _reasons(tmp_path, located) == [
+        "Failed to build model: Bad | no result file produced"
+    ]
+
+
+def test_an_error_that_holds_a_semicolon_is_said_whole(tmp_path):
+    said = (
+        "Notification: loaded.; Error: Too many equations; over-determined "
+        "system. | Failed to build model: Bad | no result file produced"
+    )
+    assert _reasons(tmp_path, said) == [
+        "Error: Too many equations; over-determined system."
+    ]
+
+
+def test_an_error_is_said_before_anything_else_wherever_it_is(tmp_path):
+    """An Error after the notices, and one after a Warning, is the reason:
+    not the Notification before it, nor the record's messages after it."""
+    after = BUILD.replace(
+        " | Failed", "; Error: Failed to load package SomeMedia. | Failed", 1
+    )
+    late = "Warning: p has no value.\nError: Class MyLib.X not found.\nstopped"
+    assert _reasons(tmp_path, after, late) == [
+        "Error: Failed to load package SomeMedia.",
+        "Error: Class MyLib.X not found.",
+    ]
+
+
+def test_an_error_omc_points_at_a_file_is_said_with_its_place(tmp_path):
+    located = (
+        "Notification: Automatically loaded package Modelica 4.1.0.; "
+        "[Bad.mo:2:3-2:9:writable] Warning: Parameter k has no value.; "
+        "[Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad. "
+        "| Failed to build model: Bad | no result file produced"
+    )
+    assert _reasons(tmp_path, located) == [
+        "[Bad.mo:4:3-4:14:writable] Error: Variable y not found in scope Bad."
+    ]
+
+
+def test_a_message_of_notifications_alone_is_said_as_it_was(tmp_path):
+    only = "Notification: a. | Notification: b."
+    assert _reasons(tmp_path, only) == [only]
+
+
+#: The advice a timed-out run's message ends with when the run's --timeout
+#: stopped it, and when a backends block's did.
+RUN_LIMIT = (
+    "the limit is the run's --timeout: raise it with --timeout, per test with "
+    "simulation.timeout in test_spec.json, or for one backend with "
+    "backends.<Backend>.timeout there"
+)
+BLOCK_LIMIT = (
+    "the limit is backends.OpenModelica.timeout in test_spec.json: raise it there"
+)
+
+
+def test_a_timeout_is_said_short_and_its_advice_once_under_its_table(tmp_path):
+    """Each timed-out row repeated the whole advice: the reason keeps the
+    limit that fired, and the advice is said once under the table."""
+    from dstf.reporting.results_summary_text import as_markdown
+
+    test = _test("Lib.C", "SIM_FAIL", message=f"Timed out after 30s ({BLOCK_LIMIT})")
+    test["mark"] = "OpenModelica: slow here"
+    _write(
+        tmp_path / "wd",
+        [
+            _test(
+                "Lib.A", "SIM_FAIL", message=f"omc exceeded 60.0s timeout ({RUN_LIMIT})"
+            ),
+            _test(
+                "Lib.B", "SIM_FAIL", message=f"omc exceeded 60.0s timeout ({RUN_LIMIT})"
+            ),
+            test,
+        ],
+    )
+    text = as_markdown(read_summary([("head", tmp_path / "wd")]))
+    lines = text.splitlines()
+    assert [line for line in lines if "timeout (" in line or "30s (" in line] == [
+        '| <code title="Lib.A">A</code> | SIM_FAIL | omc exceeded 60.0s timeout '
+        "(the run's --timeout) |",
+        '| <code title="Lib.B">B</code> | SIM_FAIL | omc exceeded 60.0s timeout '
+        "(the run's --timeout) |",
+        '| <code title="Lib.C">C</code> | SIM_FAIL | OpenModelica: slow here | '
+        "Timed out after 30s (backends.OpenModelica.timeout in test_spec.json) |",
+    ]
+    # as every reason is, its markup spelled as text
+    run_said = RUN_LIMIT.replace("<Backend>", "&lt;Backend&gt;")
+    assert [line for line in lines if line.startswith("Timed out:")] == [
+        f"Timed out: {run_said}.",
+        f"Timed out: {BLOCK_LIMIT}.",
+    ]
+    # each under its own table
+    assert lines.index(f"Timed out: {run_said}.") < lines.index(
+        "Marked skip, failing no run:"
+    )
+
+
 def test_a_repeated_line_is_said_when_nothing_else_is(tmp_path):
     assert _reasons(tmp_path, "w (repeated 3 times)\n") == ["w (repeated 3 times)"]
 
