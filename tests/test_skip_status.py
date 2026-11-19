@@ -137,6 +137,20 @@ def test_a_marked_test_run_anyway_with_no_baseline_is_said_to_need_one(capsys):
     )
 
 
+def test_a_marked_test_with_no_result_to_score_is_told_how_to_get_one(capsys):
+    """`compare --only-skipped` over a run that left the marked tests out:
+    they have no result, which is no failing mark."""
+    comp = TestComparison(model_id="Lib.B", passed=False, ran=False, mark=ON_PYTHON)
+    assert st.classify(comp) == "NOT RUN"
+
+    print_report([_passing(), comp])
+
+    assert _plain(capsys.readouterr().out)[-1] == (
+        "Lib.B: marked skip on Python, has no result to score — run it with "
+        "run --only-skipped"
+    )
+
+
 # -- R3c: JUnit ---------------------------------------------------------------
 
 

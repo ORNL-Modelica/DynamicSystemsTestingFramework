@@ -51,7 +51,9 @@ A marked test run anyway (`--include-skipped`) keeps its real status and says
 `(marked skip on Python)` beside it, and after the report a line says what to
 do with the mark: `…: marked skip on Python, passes now — remove the mark`;
 `…: marked skip on Python, runs now but has no baseline to score against —
-accept one, then remove the mark` for one with no baseline (NO_REF); or
+accept one, then remove the mark` for one with no baseline (NO_REF);
+`…: marked skip on Python, has no result to score — run it with run
+--only-skipped` for one a compare finds no result of (NOT RUN); or
 `…: marked skip on Python, still does not pass (FAIL)`. Its failure is counted
 under `Failed:`, and fails no run.
 
