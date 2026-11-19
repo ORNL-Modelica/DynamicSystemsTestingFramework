@@ -47,6 +47,7 @@ from ..discovery.library_state import (
     source_stamps,
     stamp,
 )
+from ..discovery.marks import skip_reason
 from ..discovery.mo_parser import LocatedClass, find_class
 from ..discovery.patch_apply import PatchError
 from ..discovery.plots import (
@@ -541,6 +542,12 @@ class Session:
         #: it (the tool stopping must leave no worker behind).
         self._queue_epoch = 0
         self.comparisons: dict[str, TestComparison] = {}
+        #: The models this session's queue ran (a run that started, its
+        #: result read or its partial kept): a test marked skip for the
+        #: project's backend and OS is scored on what its run here left,
+        #: and read SKIPPED, nothing of an earlier run read, until then.
+        #: Kept across `reload`; a project opened starts it empty.
+        self._ran_here: set[str] = set()
         self.notices: list[str] = []
         self._post = post or (lambda fn: fn())
         #: Whether there is a UI loop to keep free: a Queue click's read of
@@ -625,6 +632,7 @@ class Session:
             )
             self.spec = spec
             self.comparisons = {}
+            self._ran_here = set()
             self._reads = {}
             # A notice is project-scoped text ("stored 2 baselines for LibA.X"); a
             # reopen calls open, never close, and must not carry one into the
@@ -749,6 +757,7 @@ class Session:
         self.notices = []
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
+        self._ran_here = set()
         self._reads = {}
         self._emit_spec(set())
 
@@ -797,7 +806,11 @@ class Session:
         project = self._require_project()
         if project.test(model_id) is None:
             raise KeyError(model_id)
-        shown = self.live_runs.series(model_id, variable)
+        shown = (
+            None
+            if self._skipped(model_id)
+            else self.live_runs.series(model_id, variable)
+        )
         if shown is not None:
             return self._unfinished_view(model_id, variable, *shown)
         comp = self.comparisons.get(model_id)
@@ -933,9 +946,14 @@ class Session:
         return reads
 
     def _test_dir(self, model_id: str) -> Path | None:
+        """The directory of ``model_id``'s last run, None when it has none
+        — or when its mark keeps it from running here: what an earlier run
+        left there is not its (`_skipped`)."""
         from ..backends.base import last_test_keys
 
         project = self._require_project()
+        if self._skipped(model_id):
+            return None
         work_dir = project.config.work_dir
         key = last_test_keys(work_dir).get(model_id) if work_dir is not None else None
         return work_dir / key if key is not None and work_dir is not None else None
@@ -1053,7 +1071,7 @@ class Session:
             if live is not None:
                 reads.names, reads.names_read = live, True
             return reads.names or ()
-        if self.live_runs.partial(model_id) is not None:
+        if self.partial(model_id) is not None:
             # What its last run left, through the one parse its plots are
             # read through (`LiveRuns.names`): the same file, not listed a
             # second time.
@@ -1392,8 +1410,19 @@ class Session:
     def partial(self, model_id: str) -> Partial | None:
         """What ``model_id``'s last run left when it did not finish — how
         it ended and the time its file reached — or None. Shown on its
-        page; never scored, never a baseline."""
+        page; never scored, never a baseline. None for a test its mark
+        keeps from running (`_skipped`)."""
+        if self._skipped(model_id):
+            return None
         return self.live_runs.partial(model_id)
+
+    def _skipped(self, model_id: str) -> bool:
+        """Whether ``model_id`` reads SKIPPED: a mark keeps it from running
+        on the project's backend and OS, and this session's queue has not
+        run it. Nothing of a run before is then its: no result, no partial
+        result, no file of its last run's directory."""
+        comp = self.comparisons.get(model_id)
+        return comp is not None and comp.skipped
 
     def statistics(self, model_id: str) -> list[StatRow]:
         """The test's Statistics rows (:func:`~dstf.reporting.stats_rows.
@@ -2293,6 +2322,8 @@ class Session:
     def _take_result(self, item: QueueItem) -> None:
         project = self._require_project()
         model_id = item.model_id
+        # The person queued it: what its run left is its, marked or not.
+        self._ran_here.add(model_id)
         self._reads.pop(model_id, None)
         if item.result is None:
             # Cancelled, or its run raised: what it left on disk is no result.
@@ -2424,6 +2455,15 @@ class Session:
         )
         current = {t.model_id for t in tests}
         reread = models & current if again else set()
+        # A test read SKIPPED whose mark is gone now: the result set aside
+        # while the mark held (`_score`) is read back.
+        reread |= {
+            t.model_id
+            for t in tests
+            if t.model_id in models
+            and self._skipped(t.model_id)
+            and skip_reason(t, project.config) is None
+        }
         fresh = self._read_again(reread, tests) if reread else {}
         project.scanned, project.locate, project.tests = scan, locate, tests
         self._update_waiting()
@@ -2484,10 +2524,18 @@ class Session:
             raise KeyError(model_id)
         comp = self._compare(test)
         self.comparisons[model_id] = comp
+        if comp.skipped:
+            # THE one place a result an earlier run left is set aside for
+            # a test its mark keeps from running: every read of a result
+            # (a plot, the Statistics, Accept) finds none.
+            project.results.pop(model_id, None)
+            self._reads.pop(model_id, None)
         return comp
 
     def _compare(self, test: TestModel) -> TestComparison:
-        """Score ``test`` against the last results; stores nothing."""
+        """Score ``test`` against the last results; stores nothing. A test
+        a mark keeps from running here is SKIPPED until this session's
+        queue runs it; then it is scored and carries its mark."""
         project = self._require_project()
         tolerance = project.config.tolerance
         return compare_one(
@@ -2497,6 +2545,8 @@ class Session:
             float(tolerance) if tolerance is not None else DEFAULT_TOLERANCE,
             project.config.default_points,
             dataset_kind=project.dataset_kind,
+            mark=skip_reason(test, project.config),
+            include_skipped=test.model_id in self._ran_here,
         )
 
     def _score_all(self, models: Iterable[str]) -> None:
