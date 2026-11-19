@@ -283,14 +283,20 @@ def marked_with_reason(mark: SkipMark) -> str:
 
 def mark_line(comp: TestComparison) -> str | None:
     """The line said for a marked test that ran anyway, after the report:
-    a PASS asks for the mark to go, anything else says the mark still
-    holds. None for a test that carries no mark or was skipped by it."""
+    a PASS asks for the mark to go; a NO_REF ran, and asks for a baseline
+    before the mark goes; anything else says the mark still holds. None
+    for a test that carries no mark or was skipped by it."""
     if comp.mark is None or comp.skipped:
         return None
     state = classify(comp)
     said = marked_words(comp.mark)
     if state == PASS:
         return f"{comp.model_id}: {said}, passes now — remove the mark"
+    if state == NO_REF:
+        return (
+            f"{comp.model_id}: {said}, runs now but has no baseline to score "
+            "against — accept one, then remove the mark"
+        )
     return f"{comp.model_id}: {said}, still does not pass ({STATUS_LABELS[state]})"
 
 

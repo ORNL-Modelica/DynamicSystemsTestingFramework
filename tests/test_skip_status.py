@@ -122,6 +122,21 @@ def test_the_console_says_a_marked_test_that_ran_and_one_line_per_mark(capsys):
     ]
 
 
+def test_a_marked_test_run_anyway_with_no_baseline_is_said_to_need_one(capsys):
+    """It ran: what it lacks is a baseline to score against, not a pass."""
+    comp = TestComparison(
+        model_id="Lib.B", passed=True, has_reference=False, mark=ON_PYTHON
+    )
+    assert st.classify(comp) == "NO_REF"
+
+    print_report([_passing(), comp])
+
+    assert _plain(capsys.readouterr().out)[-1] == (
+        "Lib.B: marked skip on Python, runs now but has no baseline to score "
+        "against — accept one, then remove the mark"
+    )
+
+
 # -- R3c: JUnit ---------------------------------------------------------------
 
 

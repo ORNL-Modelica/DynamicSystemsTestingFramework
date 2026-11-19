@@ -157,7 +157,8 @@ and the test reads `SKIPPED` with its reason. A marked test never changes the
 exit code, and a run of every test the marks let run is a full run.
 `--include-skipped` (on `run` and `compare`) runs and scores the marked tests
 like any other, each still carrying its mark, and after the report one line
-each says `passes now — remove the mark` or `still does not pass`. An accept
+each says `passes now — remove the mark`, `runs now but has no baseline to
+score against — accept one, then remove the mark`, or `still does not pass`. An accept
 stores nothing of a marked test it did not run (`not stored: … is marked skip
 on OpenModelica (…)`); under `--include-skipped` it is accepted like any other.
 
