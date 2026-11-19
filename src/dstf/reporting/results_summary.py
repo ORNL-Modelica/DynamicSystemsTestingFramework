@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..discovery.marks import timed_out
 from .status import FAILURES, NO_REF, PASS, SKIPPED
 from .verdicts import VERDICTS_FILE
 
@@ -57,6 +58,8 @@ class NotPassing:
     #: with a base: the base cell's status word for it, or ``not in
     #: <base>``; None with no base, or no base run of this backend/os
     base: str | None = None
+    #: a timed-out run's advice, cut from ``reason`` (``_row_reason``); ""
+    hint: str = ""
 
     @property
     def no_baseline(self) -> bool:
@@ -87,9 +90,11 @@ class Marked:
     #: with a base: the base cell's status word for it, or ``not in
     #: <base>``; None with no base, or no base run of this backend/os
     base: str | None = None
-    #: what failed, as a failing test's (:func:`reason`); "" for one its
+    #: what failed, as a failing test's (``_row_reason``); "" for one its
     #: mark kept from running (SKIPPED), which ran nothing to fail
     reason: str = ""
+    #: a timed-out run's advice, cut from ``reason``; ""
+    hint: str = ""
 
 
 @dataclass(frozen=True)
@@ -323,14 +328,33 @@ def _message_reason(message: Any) -> str:
     return _last_line("\n".join(left)) or _last_line(message)
 
 
-def reason(test: dict) -> str:
-    """What a list row says failed, at most :data:`REASON_LENGTH`
-    characters from its start: the first failing criterion; else what the
-    message says of why (:func:`_message_reason`)."""
-    text = failing_criterion(test.get("tree")) or _message_reason(test.get("message"))
+def _cut(text: str) -> str:
+    """``text``, at most :data:`REASON_LENGTH` characters from its start."""
     if len(text) > REASON_LENGTH:
         text = text[: REASON_LENGTH - 1] + "…"
     return text
+
+
+def reason(test: dict) -> str:
+    """What failed, at most :data:`REASON_LENGTH` characters from its
+    start: the first failing criterion; else what the message says of why
+    (:func:`_message_reason`)."""
+    return _cut(
+        failing_criterion(test.get("tree")) or _message_reason(test.get("message"))
+    )
+
+
+def _row_reason(test: dict) -> tuple[str, str]:
+    """What a list row says failed (:func:`reason`), and the advice it
+    leaves out: a timed-out run's message is cut to the limit that fired
+    (``omc exceeded 60.0s timeout (the run's --timeout)``), its advice —
+    the same for every test that limit stopped, and wider than the table
+    — said once under it. ``""`` for no advice."""
+    text = failing_criterion(test.get("tree")) or _message_reason(test.get("message"))
+    said = timed_out(text)
+    if said is None:
+        return _cut(text), ""
+    return _cut(said.short), said.hint
 
 
 def _folder_key(folder: str) -> tuple[str, ...]:
@@ -386,12 +410,13 @@ def read_summary(runs: list[tuple[str, Path]], base: str | None = None) -> Summa
                 said = base_tests.get(model_id, f"not in {base}")
             mark = t.get("mark")
             if isinstance(mark, str) and mark:
-                why = "" if status == SKIPPED else reason(t)
-                marked.append(Marked(model_id, status, mark, said, why))
+                why, hint = ("", "") if status == SKIPPED else _row_reason(t)
+                marked.append(Marked(model_id, status, mark, said, why, hint))
                 continue
             if status == PASS:
                 continue
-            rows.append(NotPassing(model_id, status, reason(t), said))
+            why, hint = _row_reason(t)
+            rows.append(NotPassing(model_id, status, why, said, hint))
         not_new = none_on_base = None
         note = ""
         if base_tests is not None:

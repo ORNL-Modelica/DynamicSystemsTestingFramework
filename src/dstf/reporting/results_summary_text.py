@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Iterable
 from dataclasses import asdict
 
 from .results_summary import Cell, Summary
@@ -138,6 +139,7 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
                 [_test(r.model_id), r.status, *base, html.escape(r.reason, quote=False)]
             )
         )
+    lines += _advice(r.hint for r in rows)
     if cell.no_baseline:
         if rows:
             lines.append("")
@@ -172,7 +174,17 @@ def _list(summary: Summary, cell: Cell) -> list[str]:
                     ]
                 )
             )
+        lines += _advice(m.hint for m in cell.marked)
     return [*lines, "", "</details>"]
+
+
+def _advice(hints: Iterable[str]) -> list[str]:
+    """The lines under a table that hold a timed-out row: each limit's
+    advice once, as the run's message gave it, in the order met."""
+    said = [h for h in dict.fromkeys(hints) if h]
+    if not said:
+        return []
+    return ["", *(f"Timed out: {html.escape(h, quote=False)}." for h in said)]
 
 
 def _base_said(summary: Summary, base: str | None) -> str:

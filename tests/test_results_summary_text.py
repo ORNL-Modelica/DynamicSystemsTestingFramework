@@ -246,6 +246,7 @@ def test_the_marked_tests_are_a_table_of_their_own_with_the_base_s_status():
         "mark": "every backend: <csv> & co",
         "base": "PASS",
         "reason": "RuntimeError: a <b> | c",
+        "hint": "",
     }
 
 
@@ -369,5 +370,6 @@ def test_json_holds_every_cell_and_row():
         "status": "FAIL",
         "reason": "x: NRMSE 0.058 vs 0.01 → FAIL",
         "base": "PASS",
+        "hint": "",
     }
     assert cells[("base", "Python/linux")]["not_new"] is None

@@ -508,6 +508,59 @@ def test_a_message_of_notifications_alone_is_said_as_it_was(tmp_path):
     assert _reasons(tmp_path, only) == [only]
 
 
+#: The advice a timed-out run's message ends with when the run's --timeout
+#: stopped it, and when a backends block's did.
+RUN_LIMIT = (
+    "the limit is the run's --timeout: raise it with --timeout, per test with "
+    "simulation.timeout in test_spec.json, or for one backend with "
+    "backends.<Backend>.timeout there"
+)
+BLOCK_LIMIT = (
+    "the limit is backends.OpenModelica.timeout in test_spec.json: raise it there"
+)
+
+
+def test_a_timeout_is_said_short_and_its_advice_once_under_its_table(tmp_path):
+    """Each timed-out row repeated the whole advice: the reason keeps the
+    limit that fired, and the advice is said once under the table."""
+    from dstf.reporting.results_summary_text import as_markdown
+
+    test = _test("Lib.C", "SIM_FAIL", message=f"Timed out after 30s ({BLOCK_LIMIT})")
+    test["mark"] = "OpenModelica: slow here"
+    _write(
+        tmp_path / "wd",
+        [
+            _test(
+                "Lib.A", "SIM_FAIL", message=f"omc exceeded 60.0s timeout ({RUN_LIMIT})"
+            ),
+            _test(
+                "Lib.B", "SIM_FAIL", message=f"omc exceeded 60.0s timeout ({RUN_LIMIT})"
+            ),
+            test,
+        ],
+    )
+    text = as_markdown(read_summary([("head", tmp_path / "wd")]))
+    lines = text.splitlines()
+    assert [line for line in lines if "timeout (" in line or "30s (" in line] == [
+        '| <code title="Lib.A">A</code> | SIM_FAIL | omc exceeded 60.0s timeout '
+        "(the run's --timeout) |",
+        '| <code title="Lib.B">B</code> | SIM_FAIL | omc exceeded 60.0s timeout '
+        "(the run's --timeout) |",
+        '| <code title="Lib.C">C</code> | SIM_FAIL | OpenModelica: slow here | '
+        "Timed out after 30s (backends.OpenModelica.timeout in test_spec.json) |",
+    ]
+    # as every reason is, its markup spelled as text
+    run_said = RUN_LIMIT.replace("<Backend>", "&lt;Backend&gt;")
+    assert [line for line in lines if line.startswith("Timed out:")] == [
+        f"Timed out: {run_said}.",
+        f"Timed out: {BLOCK_LIMIT}.",
+    ]
+    # each under its own table
+    assert lines.index(f"Timed out: {run_said}.") < lines.index(
+        "Marked skip, failing no run:"
+    )
+
+
 def test_a_repeated_line_is_said_when_nothing_else_is(tmp_path):
     assert _reasons(tmp_path, "w (repeated 3 times)\n") == ["w (repeated 3 times)"]
 

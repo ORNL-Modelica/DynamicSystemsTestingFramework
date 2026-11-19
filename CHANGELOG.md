@@ -44,7 +44,9 @@ this file says when they do.
 - `dstf summary` lists the marked tests in a table like the failures one,
   with the base's status and what failed beside each; the JSON gives each
   its `base` and `reason`. A reason written over several lines keeps its
-  table row on one.
+  table row on one. A timed-out test's reason in either table names only
+  the limit that fired, and how to raise it is said once under the table
+  (the JSON's `hint`).
 - When tests that ran carry a mark, the Results line says how many, and
   that they fail no run: `Results: 0/25 passed (25 marked skip, failing no
   run; 25 of 342 tests run; not a full run)`.

@@ -483,7 +483,10 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   are taken out — they are about the translation, seldom why a run stopped
   (`Failed to build model: …`, or a simulation's `LOG_ASSERT … | error |
   …` line), else the whole message's last line (a failed simulation's
-  message is often a traceback, and its reason comes last).
+  message is often a traceback, and its reason comes last). A timed-out
+  test's reason names only the limit that fired (`omc exceeded 60.0s timeout
+  (the run's --timeout)`), and how to raise it is said once under the table
+  (`Timed out: the limit is the run's --timeout: raise it with --timeout, …`).
   With `--base` the base's status is beside it, or `not in main`. Its summary
   line reads `Python/linux, branch: 2 not passing, 1 also fails on main`, and
   `; 1 no baseline` after it where a test has none: those are named on a
