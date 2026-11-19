@@ -101,17 +101,19 @@ def cmd_discover(args: argparse.Namespace) -> int:
     for model_id, sentence in refused:
         print(f"{model_id} will not be scored: {sentence}")
 
-    _print_marks(tests, config)
+    _print_marks(tests, config, named=args.backend is not None)
     return 0
 
 
-def _print_marks(tests: list, config) -> None:
+def _print_marks(tests: list, config, *, named: bool) -> None:
     """Every skip mark of ``tests``, on every backend, one line each in
     the words a run says it in; the ones that keep their test from
     running on this backend and OS end ``— not run here``. The header
     counts the marks, by where each is, and then how many of them apply
     here: a count of the ones here alone read as "0 marks" above a list
-    of marks for another backend. Then every backend's time limit."""
+    of marks for another backend. It says whose backend that is: the one
+    --backend names (``named``), else testing.json's. Then every
+    backend's time limit."""
     from ..discovery.marks import every_skip_mark, skip_reason
     from ..reporting.status import skipped_words
 
@@ -134,8 +136,12 @@ def _print_marks(tests: list, config) -> None:
             applied = f"{here} {'keeps' if here == 1 else 'keep'}"
         print(
             f"\nMarked skip: {n} {'mark' if n == 1 else 'marks'} ({by_where}); "
-            f"{applied} a test from running on {config.backend}/{config.os_name} "
-            "(--backend reads another):"
+            f"{applied} a test from running on {config.backend}/{config.os_name}, "
+            + (
+                "the backend --backend names:"
+                if named
+                else "testing.json's backend (--backend picks another):"
+            )
         )
         for line in lines:
             print(line)

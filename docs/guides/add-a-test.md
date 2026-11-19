@@ -152,8 +152,9 @@ one simulator goes in the same place:
 `dstf discover` lists every mark, on every backend, and ends the ones that
 keep a test from running here with `— not run here`. Its header counts the
 marks by where each is, then how many apply here: `Marked skip: 25 marks (25
-on OpenModelica); none keeps a test from running on Dymola/linux (--backend
-reads another):`. After the marks it lists every `backends` block's `timeout`,
+on OpenModelica); none keeps a test from running on Dymola/linux,
+testing.json's backend (--backend picks another):`; under `--backend
+OpenModelica` it ends `on OpenModelica/linux, the backend --backend names:`. After the marks it lists every `backends` block's `timeout`,
 and ends the one that sets a test's limit here with `— applies here`:
 
 ```text

@@ -775,7 +775,8 @@ def test_discover_lists_every_mark_and_which_keep_a_test_from_running_here(
     block = out.split("\nMarked skip", 1)[1].strip().splitlines()
     assert block == [
         ": 3 marks (1 on Python, 1 on OpenModelica/windows, 1 on every backend); "
-        "2 keep a test from running on Python/linux (--backend reads another):",
+        "2 keep a test from running on Python/linux, testing.json's backend "
+        "(--backend picks another):",
         f"  {MARKED}: skipped on {SAID} — not run here",
         f"  {POINTS}: skipped on OpenModelica/windows: its solver differs",
         f"  {RAMP}: skipped on every backend: slow everywhere — not run here",
@@ -799,7 +800,7 @@ def test_discover_says_when_no_mark_keeps_a_test_from_running_here(proj, capsys)
     block = out.split("\nMarked skip", 1)[1].strip().splitlines()
     assert block == [
         ": 2 marks (2 on OpenModelica); none keeps a test from running on "
-        "Python/linux (--backend reads another):",
+        "Python/linux, testing.json's backend (--backend picks another):",
         f"  {POINTS}: skipped on OpenModelica: its solver differs",
         f"  {RAMP}: skipped on OpenModelica: slow",
         "",
@@ -819,7 +820,7 @@ def test_discover_reads_the_marks_for_the_backend_given(proj, capsys):
     block = out.split("\nMarked skip", 1)[1].strip().splitlines()
     assert block == [
         ": 1 mark (1 on OpenModelica); 1 keeps a test from running on "
-        "OpenModelica/linux (--backend reads another):",
+        "OpenModelica/linux, the backend --backend names:",
         f"  {POINTS}: skipped on OpenModelica: its solver differs — not run here",
         "",
         "Time limits per backend:",
