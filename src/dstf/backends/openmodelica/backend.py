@@ -80,6 +80,29 @@ def timing(parsed: ParsedOmcOutput) -> tuple[float | None, float | None, dict | 
     return translation, t.get("simulation"), {"timing": dict(t)}
 
 
+#: How many of omc's notices a failed run's message keeps.
+NOTICES_KEPT = 5
+#: The kinds of notice omc says, the one that says why first.
+_NOTICE_KINDS = ("error", "warning")
+
+
+def kept_notices(notices: list[str]) -> list[str]:
+    """The :data:`NOTICES_KEPT` of omc's ``notices`` a failed run's
+    message says: its Errors first, then its Warnings, then the rest (its
+    Notifications), each kind in the order omc said them. Kept in omc's
+    order, five Notifications about the packages it loaded filled the
+    message and the Error after them, the reason, was dropped."""
+
+    def rank(notice: str) -> int:
+        lower = notice.lower()
+        return next(
+            (i for i, kind in enumerate(_NOTICE_KINDS) if lower.startswith(kind)),
+            len(_NOTICE_KINDS),
+        )
+
+    return sorted(notices, key=rank)[:NOTICES_KEPT]
+
+
 def outcome(
     parsed: ParsedOmcOutput,
     test: TestModel,
@@ -97,7 +120,7 @@ def outcome(
     among omc's notices: a partial .mat blessed by --accept poisons the
     baseline (D93 precedent, D99)."""
     translation_wall, sim_wall, statistics = timing(parsed)
-    notices = list(parsed.error_notices)
+    notices = kept_notices(parsed.error_notices)
     if parsed.success and mat_path.exists():
         # Empirically (D99, omc 1.27) mid-run aborts return an EMPTY
         # resultFile and never take this branch — this guards against a
@@ -114,6 +137,7 @@ def outcome(
                 sim_wall=sim_wall,
                 statistics=statistics,
             )
+        # After omc's notices and never cut by their cap: it is the reason.
         notices.append(
             f"simulate() reported success but {mat_path.name} "
             f"reaches t={last_time!r} of stop_time={test.stop_time} — "
@@ -126,7 +150,7 @@ def outcome(
     if exit_code:
         err_parts.append(f"omc exit code {exit_code}")
     if notices:
-        err_parts.append("; ".join(notices[:5]))
+        err_parts.append("; ".join(notices))
     if parsed.messages:
         err_parts.append(parsed.messages.strip())
     if not parsed.result_file:
@@ -135,7 +159,7 @@ def outcome(
         "omc simulation failed"
     )
     # If MSL wasn't installed, surface a clear hint.
-    if any("Failed to load package Modelica" in n for n in notices):
+    if any("Failed to load package Modelica" in n for n in parsed.error_notices):
         msg = (
             "MSL not installed. Run: omc -e "
             "'updatePackageIndex(); installPackage(Modelica); "

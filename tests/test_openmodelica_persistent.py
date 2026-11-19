@@ -544,6 +544,28 @@ class TestWorkerRunTest:
         low = result.error_message.lower()
         assert "not found" in low or "does not exist" in low
 
+    def test_an_error_after_five_notifications_is_kept_first(self, tmp_path):
+        """getErrorString as omc said it for a translation it could not
+        finish: five Notifications before the Error, which the message
+        dropped. The worker's message keeps it as the batch run's does."""
+        from test_openmodelica_backend import KEPT, NOTICES
+
+        test = _make_test()
+        responses = {
+            "simulate(": lambda expr: {
+                "resultFile": "",
+                "messages": "Failed to build model: Demo.Example.A",
+                "timeTotal": 0.0,
+            },
+            "getErrorString": "\n".join(NOTICES) + "\n",
+        }
+        worker, _, _ = self._bootstrap_worker(tmp_path, responses=responses)
+        result = worker.run_test(test, "test_0001")
+
+        assert result.error_message == KEPT + (
+            " | Failed to build model: Demo.Example.A | no result file produced"
+        )
+
     def test_a_failure_whose_warning_repeats_keeps_its_last_line(self, tmp_path):
         """A large library's run repeated one solver warning past the
         2,048 characters a message keeps: the line after it, the reason,

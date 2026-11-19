@@ -411,6 +411,46 @@ def test_a_repeated_warning_gives_way_to_the_line_that_says_why(tmp_path):
     assert _reasons(tmp_path, kept) == [reason_line]
 
 
+#: A failed translation's message as a large library's run recorded it:
+#: omc's notices, the record's messages, and that no result was written.
+BUILD = (
+    "Notification: ModelicaServices 4.1.0 is used instead of the requested "
+    "4.0.0.; Notification: Automatically loaded package Complex 4.1.0 due to "
+    "uses annotation from Modelica.; Notification: Automatically loaded "
+    "package Modelica 4.1.0 due to uses annotation from MyLib.; "
+    "Notification: You can install the requested package using "
+    "installPackage.; Notification: Skipped loading package SomeMedia using "
+    "MODELICAPATH. | Failed to build model: MyLib.Examples.PipeTest | no "
+    "result file produced"
+)
+
+
+def test_a_failed_build_is_said_by_its_first_part_that_is_no_notification(
+    tmp_path,
+):
+    assert _reasons(tmp_path, BUILD) == [
+        "Failed to build model: MyLib.Examples.PipeTest"
+    ]
+
+
+def test_an_error_is_said_before_anything_else_wherever_it_is(tmp_path):
+    """An Error after the notices, and one after a Warning, is the reason:
+    not the Notification before it, nor the record's messages after it."""
+    after = BUILD.replace(
+        " | Failed", "; Error: Failed to load package SomeMedia. | Failed", 1
+    )
+    late = "Warning: p has no value.\nError: Class MyLib.X not found.\nstopped"
+    assert _reasons(tmp_path, after, late) == [
+        "Error: Failed to load package SomeMedia.",
+        "Error: Class MyLib.X not found.",
+    ]
+
+
+def test_a_message_of_notifications_alone_is_said_as_it_was(tmp_path):
+    only = "Notification: a. | Notification: b."
+    assert _reasons(tmp_path, only) == [only]
+
+
 def test_a_repeated_line_is_said_when_nothing_else_is(tmp_path):
     assert _reasons(tmp_path, "w (repeated 3 times)\n") == ["w (repeated 3 times)"]
 

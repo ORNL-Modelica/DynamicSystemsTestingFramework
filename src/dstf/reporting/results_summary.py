@@ -51,7 +51,8 @@ class NotPassing:
     #: the file's status word: FAIL, SIM_FAIL, NO_REF, NOT RUN
     status: str
     #: what failed: the first failing criterion that is not advisory, else
-    #: the message's last non-empty line; "" when the file says neither
+    #: what the message says of why (``reason``); "" when the file says
+    #: neither
     reason: str
     #: with a base: the base cell's status word for it, or ``not in
     #: <base>``; None with no base, or no base run of this backend/os
@@ -260,16 +261,38 @@ _ERROR_TAG = re.compile(r"\[\w+:error:\d+\]")
 _REPEATED = re.compile(r"\(repeated \d+ times\)$")
 
 
+#: The separators of a message's parts: OpenModelica's message joins its
+#: notices with ``; `` and them, the record's messages and the rest with
+#: `` | `` (``backends.openmodelica.backend.outcome``).
+_PARTS = re.compile(r" \| |; ")
+
+
 def _message_reason(message: Any) -> str:
     """The piece of a failed run's message that says why: from its first
-    OpenModelica error tag to that line's end; else its last non-empty
-    line that is not a repeated one (a traceback's first line says
-    nothing), a repeated line only when nothing else is."""
+    OpenModelica error tag to that line's end; else its first part (a
+    line, cut at `` | `` and ``; ``) that starts ``Error``; else, when a
+    part is a ``Notification:`` — omc's word for a package it loaded —
+    the first part that is not one; else its last non-empty line that is
+    not a repeated one (a traceback's first line says nothing), a repeated
+    line only when nothing else is."""
     if not isinstance(message, str):
         return ""
     tag = _ERROR_TAG.search(message)
     if tag:
         return message[tag.start() :].splitlines()[0].strip()
+    parts = [
+        part.strip()
+        for line in message.splitlines()
+        for part in _PARTS.split(line)
+        if part.strip()
+    ]
+    error = next((p for p in parts if p.startswith("Error")), None)
+    if error is not None:
+        return error
+    if any(p.startswith("Notification:") for p in parts):
+        said = next((p for p in parts if not p.startswith("Notification:")), None)
+        if said is not None:
+            return said
     lines = [line.strip() for line in message.splitlines() if line.strip()]
     said = [line for line in lines if not _REPEATED.search(line)] or lines
     return said[-1] if said else ""
