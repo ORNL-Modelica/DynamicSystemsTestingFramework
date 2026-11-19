@@ -808,6 +808,25 @@ def test_discover_says_when_no_mark_keeps_a_test_from_running_here(proj, capsys)
     ]
 
 
+def test_discover_reads_the_marks_for_the_backend_given(proj, capsys):
+    """One testing.json, read for another backend than its own: the marks
+    and the time limits that apply there are said so."""
+    proj.edit(POINTS, backends={"OpenModelica": {"skip": "its solver differs"}})
+    proj.edit(RAMP, backends={"OpenModelica": {"timeout": 240}})
+    rc = main(["discover", "--config", str(proj.config), "--backend", "OpenModelica"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    block = out.split("\nMarked skip", 1)[1].strip().splitlines()
+    assert block == [
+        ": 1 mark (1 on OpenModelica); 1 keeps a test from running on "
+        "OpenModelica/linux, where this config runs:",
+        f"  {POINTS}: skipped on OpenModelica: its solver differs — not run here",
+        "",
+        "Time limits per backend:",
+        f"  {RAMP}: 240 s on OpenModelica — applies here",
+    ]
+
+
 @pytest.mark.parametrize("command", ["run", "compare"])
 def test_a_skipped_test_gets_no_report_page(proj, capsys, command):
     """`--report` after a run before the mark: no page is written for the

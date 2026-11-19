@@ -1087,7 +1087,7 @@ _REPORTS = ("report_format", "output", "report", "no_browser")
 #: this table does not name, or names one it does not offer. That its
 #: handler reads each one is ``tests/test_cli_tree.py``'s to prove.
 READS: dict[str, tuple[str, ...]] = {
-    "discover": (*_ALL, *_SELECT),
+    "discover": (*_ALL, *_SELECT, "backend"),
     "uses": (*_ALL, *_SELECT, "backend", "backend_path", "output", "since"),
     "run": (
         *_ALL,
@@ -1295,9 +1295,17 @@ def _add_discover(tree: _Tree, top) -> None:
             "dstf discover --config testing.json",
             "dstf discover --config testing.json --filter 'MyLib.Examples.*'",
             "dstf discover --source-path MyLib --test-spec refs/test_spec.json",
+            "dstf discover --config testing.json --backend OpenModelica",
         ),
     )
     _offer_selection(node)
+    _offer(
+        node,
+        "backend",
+        help=f"{_BACKEND} The skip marks and time limits are read for it, on "
+        f"this machine's OS: which keep a test from running there, and which "
+        f"limit applies. {_BACKEND_DEFAULT}",
+    )
 
 
 def _add_uses(tree: _Tree, top) -> None:
