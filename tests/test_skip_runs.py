@@ -600,7 +600,7 @@ def test_only_skipped_runs_just_the_marked_tests_and_says_it_is_no_full_run(
     )
     assert proj.read("status.json")["selection"] == ONLY
     assert proj.read("verdicts.json")["selection"] == ONLY
-    assert "(1 of 3 tests run; not a full run)" in out
+    assert "(1 marked skip, failing no run; 1 of 3 tests run; not a full run)" in out
     assert f"{MARKED}: marked skip on Python, passes now — remove the mark" in out
     assert proj.notice() == (
         "Not a full run. 1 of 3 tests was run: the one that a mark keeps from "
@@ -640,7 +640,10 @@ def test_only_skipped_compare_scores_just_the_marked_tests(proj, capsys):
     assert set(proj.verdicts()) == {MARKED}
     assert proj.verdicts()[MARKED]["status"] == "PASS"
     assert proj.read("verdicts.json")["selection"] == {**ONLY, "compare": True}
-    assert "(1 of 3 tests scored; not a full compare)" in out
+    assert (
+        "(1 marked skip, failing no run; 1 of 3 tests scored; not a full compare)"
+        in out
+    )
 
 
 def test_only_skipped_narrows_before_rerun_chooses(proj, capsys):

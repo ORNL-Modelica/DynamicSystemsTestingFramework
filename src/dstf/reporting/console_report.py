@@ -42,7 +42,8 @@ def print_report(comparisons: list[TestComparison], note: str | None = None) -> 
     """Print a console report and return exit code (0 when nothing FAILED or
     failed to simulate — NOT RUN, NO_REF, SKIPPED and a marked test do not
     fail it — and something ran, else 1: ``exit_code``). ``note`` is said
-    in brackets after the Results line's counts. A test marked skip that
+    in brackets after the Results line's counts, after how many of the
+    tests that ran carry a mark. A test marked skip that
     ran anyway is said once more after the report (``mark_line``): whether
     its mark can go."""
     if not comparisons:
@@ -112,7 +113,12 @@ def print_report(comparisons: list[TestComparison], note: str | None = None) -> 
     total = len(comparisons) - n_skipped
     print()
     skipped = f" · {n_skipped} skipped" if n_skipped else ""
-    said = f" ({note})" if note else ""
+    # The tests that ran carrying a mark fail no run, whatever they say:
+    # "0/25 passed" over 25 of them, exit 0, read as a disaster.
+    n_marked = sum(1 for c in comparisons if c.mark is not None and not c.skipped)
+    marked_note = f"{n_marked} marked skip, failing no run" if n_marked else None
+    clauses = [c for c in (marked_note, note) if c]
+    said = f" ({'; '.join(clauses)})" if clauses else ""
     print(_color(f"Results: {n_passed}/{total} passed{skipped}{said}", _BOLD))
     if n_failed:
         print(_color(f"  Failed: {n_failed}", _RED))

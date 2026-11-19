@@ -122,6 +122,20 @@ def test_the_console_says_a_marked_test_that_ran_and_one_line_per_mark(capsys):
     ]
 
 
+def test_the_results_line_says_how_many_that_ran_are_marked(capsys):
+    """0/2 passed, exit 0: the line says why it is no failed run."""
+    code = print_report(
+        [_marked_fail("Lib.C"), _marked_fail("Lib.D")],
+        note="2 of 3 tests run; not a full run",
+    )
+    lines = _plain(capsys.readouterr().out)
+    assert code == 0
+    assert (
+        "Results: 0/2 passed (2 marked skip, failing no run; 2 of 3 tests run; "
+        "not a full run)"
+    ) in lines
+
+
 def test_a_marked_test_run_anyway_with_no_baseline_is_said_to_need_one(capsys):
     """It ran: what it lacks is a baseline to score against, not a pass."""
     comp = TestComparison(
