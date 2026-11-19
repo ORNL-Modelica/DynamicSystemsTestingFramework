@@ -161,6 +161,14 @@ Time limits per backend:
   MyLib.Examples.PipeTest: 600 s on Dymola — applies here
 ```
 
+`--backend` reads them for another backend than the config's own, on this
+machine's OS: which marks keep a test from running there, and which limit
+applies.
+
+```bash
+dstf discover --config testing.json --backend OpenModelica
+```
+
 A run on a backend and
 OS a mark applies to does not simulate the test: its start says how many
 tests it leaves out (`1 test marked skip is not run on OpenModelica/linux`),
@@ -183,7 +191,9 @@ narrow them as usual. Unless every test of the project is marked here, the
 run is not a full one and says so, like a `--filter` run. When none of the
 tests chosen is marked skip for this backend and OS, it says so (`No test is
 marked skip on OpenModelica/linux.`, and `… among the tests --filter chose.`
-beside a filter) and exits 0, writing nothing.
+beside a filter) and exits 0, writing nothing. Its Results line counts the
+marked tests apart, since they fail no run: `Results: 0/25 passed (25 marked
+skip, failing no run; 25 of 342 tests run; not a full run)`.
 
 ```bash
 dstf run --config testing.json --only-skipped

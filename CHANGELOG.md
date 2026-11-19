@@ -36,12 +36,18 @@ this file says when they do.
   apply where the config runs (`Marked skip: 25 marks (25 on OpenModelica);
   none keeps a test from running on Dymola/linux, …`), and a list of every
   backend's time limit follows, the one that applies here said so.
+  `--backend` reads them for another backend than the config's.
 - A run in which more than half of the tests timed out (at least two) ends
   with a warning to check that the library and the work dir are on a fast
-  disk and that the time limits suit the machine.
+  disk and that the time limits suit the machine. A test marked skip here
+  and run anyway is not counted.
 - `dstf summary` lists the marked tests in a table like the failures one,
-  with the base's status beside each; the JSON gives each its `base`. A
-  reason written over several lines keeps its table row on one.
+  with the base's status and what failed beside each; the JSON gives each
+  its `base` and `reason`. A reason written over several lines keeps its
+  table row on one.
+- When tests that ran carry a mark, the Results line says how many, and
+  that they fail no run: `Results: 0/25 passed (25 marked skip, failing no
+  run; 25 of 342 tests run; not a full run)`.
 - A marked test run anyway that has no baseline closes the report with
   `runs now but has no baseline to score against — accept one, then remove
   the mark`, not `still does not pass (NO_REF)`; one a compare has no result
@@ -49,9 +55,10 @@ this file says when they do.
 
 ### Fixed
 
-- A failed OpenModelica run's message keeps omc's Errors first, then its
-  Warnings, then its Notifications: five Notifications about loaded
-  packages pushed out the Error that said why the model did not build. An
+- A failed OpenModelica run's message keeps omc's Errors first, then the
+  simulation's own words, then omc's Warnings and Notifications: five
+  Notifications about loaded packages pushed out the Error that said why
+  the model did not build. An
   error omc points at a file (`[Bad.mo:4:3-4:14:writable] Error: Variable y
   not found in scope Bad.`) is kept, its path under the library; before,
   only a line that started with its kind was, and a `--batch` run read none

@@ -77,6 +77,8 @@ jobs:
 - **When most tests time out**, the run ends with a warning under its
   counts (`Warning: 256 of 317 tests timed out. …`): check that the library
   and the work dir are on a fast disk and that the limits suit the runner.
+  A test marked `skip` here and run anyway is not counted: it may be marked
+  because it times out.
 
 ## A pull request runs only what it touches
 
