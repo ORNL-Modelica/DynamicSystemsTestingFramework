@@ -486,6 +486,13 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
   list holding a failure that is new is open; the others, and the base's own
   lists, are folded. Where the base has no run of that backend/os, the line
   says so, nothing is counted and the list is open.
+- **A test marked skip fails no run.** A SKIPPED test, and a marked test run
+  anyway that does not pass, is never among those not passing or new
+  failures: the cell counts `1 SKIPPED` beside the other status words, its
+  summary line counts `1 marked skip`, and a line under the list names each
+  with its status and mark (`Marked skip, failing no run: … (SKIPPED,
+  Python: <reason>)`). A run of every test the marks let run is a full run:
+  its cell has no ` · N of M tests run`.
 
 A short example:
 
@@ -533,6 +540,11 @@ class the model does not use (it keeps an emptied `Icons` package of the
 library in every test's file); it has not been seen to miss one. Dymola
 saves what a model uses of non-encrypted libraries only, so a class of an
 encrypted library is not seen.
+
+A test marked `skip` for the project's backend and OS is listed as any
+other, flagged on its line (`  MyLib.Examples.PipeTest (skipped on
+OpenModelica: <reason>)`), and `-o` still writes it: `dstf run` is what
+leaves it out.
 
 A test the simulator could not answer for is listed apart with its reason,
 under `Could not be asked (counted as using it)`, and counts as using every
@@ -683,6 +695,12 @@ Selected 2 of 14 tests: the ones that use what changed. Not a full run.
 Results: 2/2 passed (2 of 14 tests run; not a full run)
 ```
 
+A test marked `skip` for this backend and OS is not asked what it uses and
+gets no row: a line counts them (`2 tests marked skip are not asked: they
+are not run on OpenModelica/linux.`), and `--include-skipped` asks them too.
+They count as left out by their marks, so a run that simulates every test a
+full run would reads full.
+
 The tests are chosen from those `--filter` and `--package` leave; the
 `Selected` line counts those, and `2 of 14 tests run` the project's. A
 test the simulator could not be asked about is run, and named under
@@ -704,7 +722,9 @@ Any run of fewer than the project's tests says the same — by `--filter`,
 does not say it: it is a plain suite of the tests that ran.
 
 When nothing changed, it prints `No test to run.`; when no test uses what
-changed, `No test uses what changed: no test to run.` Both exit 0 and write
+changed, `No test uses what changed: no test to run.` — or `No test asked
+uses what changed: no test to run.` after the line that counts the marked
+tests, which were not asked. Each exits 0 and writes
 nothing: no work directory, no dashboard, no browser tab, and no report
 file, even when `--output` names one. An earlier run's files stay as they
 are.

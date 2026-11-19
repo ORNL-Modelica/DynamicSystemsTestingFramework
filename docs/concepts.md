@@ -31,6 +31,7 @@ word:
 | `SIM_FAIL` | The simulation failed or timed out: there is nothing to score. |
 | `NO_REF` | The test has no baseline yet, and nothing it declares can be scored without one. |
 | `NOT RUN` | The test has no result: it was not run, or its run did not finish. |
+| `SKIPPED` | The test is marked `skip` for this backend and OS in `test_spec.json`, and was not run: its reason is beside it. It never fails a run. |
 
 `dstf compare` scores the last run's results again without simulating.
 

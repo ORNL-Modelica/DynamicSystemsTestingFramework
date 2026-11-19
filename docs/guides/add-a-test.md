@@ -105,6 +105,70 @@ read: its entry names the file it runs with `source`, relative to
 }
 ```
 
+## A test that does not run on one simulator
+
+A test known not to work on one simulator yet — it times out there, or waits
+on a fix — can be marked `skip` with a reason, so that it is not run there
+and still shows on every surface with that reason. A longer time limit for
+one simulator goes in the same place:
+
+<!-- snippet: test_spec -->
+```json
+{
+  "tests": [
+    {
+      "model": "MyLib.Examples.PipeTest",
+      "variables": ["pipe.T[1]", "tank.level"],
+      "simulation": {"timeout": 120},
+      "backends": {
+        "OpenModelica": {"skip": "times out in the pipe's initialization"},
+        "OpenModelica/windows": {"skip": "no C compiler on the Windows runner"},
+        "Dymola": {"timeout": 600}
+      }
+    },
+    {
+      "model": "MyLib.Examples.Unfinished",
+      "skip": "waits on the new heat exchanger"
+    }
+  ]
+}
+```
+
+- **`skip` on the entry** marks the test on every backend. **`backends`**
+  holds a block per backend, keyed by the backend's name as the reference
+  folders spell it (`Dymola`, `OpenModelica`, `FMPy`, `Julia`, `Python` —
+  not a `testing.json` entry's name like `"Dymola 2025"`), or by that name
+  and an operating system (`OpenModelica/windows`). A block holds `skip`, a
+  reason, and `timeout`, whole seconds; a block that holds neither is
+  refused.
+- **The most specific wins**: the backend and OS's block, then the
+  backend's, then the entry's own `skip` and `simulation.timeout`, then the
+  run's `--timeout`. A block that says only `timeout` leaves the entry's
+  `skip` to apply. There is no `false` that clears a mark: take the key out.
+- **A name that is no backend or operating system is refused**, naming the
+  ones there are. A key that names a plug-in backend is refused on a
+  machine where that plug-in is not installed.
+
+`dstf discover` lists every mark, on every backend, and ends the ones that
+keep a test from running here with `— not run here`. A run on a backend and
+OS a mark applies to does not simulate the test: its start says how many
+tests it leaves out (`1 test marked skip is not run on OpenModelica/linux`),
+and the test reads `SKIPPED` with its reason. A marked test never changes the
+exit code, and a run of every test the marks let run is a full run.
+`--include-skipped` (on `run` and `compare`) runs and scores the marked tests
+like any other, each still carrying its mark, and after the report one line
+each says `passes now — remove the mark` or `still does not pass`. An accept
+stores nothing of a marked test it did not run (`not stored: … is marked skip
+on OpenModelica (…)`); under `--include-skipped` it is accepted like any other.
+
+A run whose every chosen test is marked simulates nothing. Without
+`--merge` it is still this run: `status.json` records no test simulated, the
+dashboard shows no row of the run before, `verdicts.json` holds the SKIPPED
+tests — and after `--accept`, which stores nothing, or `-i`, there is no
+`verdicts.json` and the dashboard has no rows. With `--merge` the last run's
+`status.json` is kept and every test is scored on its last result, the
+marked ones SKIPPED.
+
 ## With dstf spec add
 
 `dstf spec add` writes an entry for you, creating `test_spec.json` if it is
