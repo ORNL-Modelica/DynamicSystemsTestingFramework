@@ -179,6 +179,22 @@ def solver_fallbacks(label: str, solvers: Iterable[Solver]) -> list[str]:
     ]
 
 
+def most_timed_out(n_timeout: int, total: int) -> str | None:
+    """The warning a run ends with when more than half of its ``total``
+    tests, and at least two, hit their time limit; None otherwise. So many
+    limits firing at once is seldom the tests' fault: a library read from a
+    slow disk (a Windows drive under WSL) timed out most of a suite while
+    only the counts line said so."""
+    if n_timeout < 2 or 2 * n_timeout <= total:
+        return None
+    return (
+        f"Warning: {n_timeout} of {total} tests timed out. If most should "
+        "finish in time, check that the library and work dir are on a fast "
+        "disk (under WSL, not /mnt/<drive>) and that the time limits suit "
+        "this machine."
+    )
+
+
 def _print_progress(
     index: int,
     total: int,
@@ -1196,6 +1212,9 @@ class Backend(ABC):
             f"{speedup:.1f}x parallel speedup)",
             file=sys.stderr,
         )
+        warning = most_timed_out(n_timeout, total)
+        if warning:
+            print(warning, file=sys.stderr)
 
     def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
         """Run every test, and record how each went in the work directory.
