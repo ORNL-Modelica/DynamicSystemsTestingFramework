@@ -854,7 +854,7 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
             help="{what} only the tests marked skip for this backend and OS, "
             "as --include-skipped does, and none of the others: a check of "
             "whether each mark can go.{choose} --filter and --package narrow "
-            "them as usual, and the run is not a full one. With --accept they "
+            "them as usual, and the {whole} is not a full one. With --accept they "
             "are stored. When no test is marked here it says so and exits 0.",
         ),
     ),
@@ -1458,6 +1458,7 @@ def _add_run(tree: _Tree, top) -> None:
         fill={
             "what": "Run and score",
             "choose": " --rerun and --changed-since choose among them.",
+            "whole": "run",
         },
     )
     _offer_scoring(node)
@@ -1606,7 +1607,9 @@ def _add_compare(tree: _Tree, top) -> None:
     )
     _offer_selection(node)
     _offer(node, "include_skipped", fill={"what": "Score", "not_what": "scored"})
-    _offer(node, "only_skipped", fill={"what": "Score", "choose": ""})
+    _offer(
+        node, "only_skipped", fill={"what": "Score", "choose": "", "whole": "compare"}
+    )
     _offer_scoring(node)
     _offer_reports(node)
     _offer(
