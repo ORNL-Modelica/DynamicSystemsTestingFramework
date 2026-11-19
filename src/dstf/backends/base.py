@@ -24,6 +24,7 @@ import numpy as np
 
 from ..config import Config
 from ..config_shape import EXECUTABLES, Setting, defaults
+from ..discovery.marks import marks_of
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import (
     CANCELLED_RUN_STATUS,
@@ -179,16 +180,25 @@ def solver_fallbacks(label: str, solvers: Iterable[Solver]) -> list[str]:
     ]
 
 
-def most_timed_out(n_timeout: int, total: int) -> str | None:
-    """The warning a run ends with when more than half of its ``total``
-    tests, and at least two, hit their time limit; None otherwise. So many
+def most_timed_out(
+    results: Iterable[TestRunResult], tests: Iterable[TestModel], config: Config
+) -> str | None:
+    """The warning a run of ``tests`` ends with when more than half of
+    them, and at least two, hit their time limit; None otherwise. So many
     limits firing at once is seldom the tests' fault: a library read from a
     slow disk (a Windows drive under WSL) timed out most of a suite while
-    only the counts line said so."""
+    only the counts line said so. A test a mark keeps from running here
+    (run anyway: --include-skipped, --only-skipped) is not counted: it may
+    be marked because it times out, and 13 of 25 marked tests timing out
+    said "check the disk"."""
+    marked = marks_of(tests, config)
+    total = sum(1 for t in tests if t.model_id not in marked)
+    n_timeout = sum(1 for r in results if r.timed_out and r.model_id not in marked)
     if n_timeout < 2 or 2 * n_timeout <= total:
         return None
+    which = " not marked skip" if marked else ""
     return (
-        f"Warning: {n_timeout} of {total} tests timed out. If most should "
+        f"Warning: {n_timeout} of {total} tests{which} timed out. If most should "
         "finish in time, check that the library and work dir are on a fast "
         "disk (under WSL, not /mnt/<drive>) and that the time limits suit "
         "this machine."
@@ -1193,17 +1203,18 @@ class Backend(ABC):
     def _print_run_summary(
         self,
         results: list[TestRunResult],
-        total: int,
+        tests: list[TestModel],
         wall: float,
     ) -> None:
-        """End-of-run counts + timing, identical in shape for every backend."""
+        """End-of-run counts + timing, identical in shape for every backend,
+        of the run of ``tests``."""
         if self.quiet:
             return
         total_work = sum(r.elapsed for r in results)
         speedup = (total_work / wall) if wall > 0 else 0.0
         n_ok = sum(1 for r in results if r.success)
         n_timeout = sum(1 for r in results if r.timed_out)
-        n_fail = total - n_ok - n_timeout
+        n_fail = len(tests) - n_ok - n_timeout
         print(file=sys.stderr)
         print(
             f"{self.run_summary_phrase}: "
@@ -1212,7 +1223,7 @@ class Backend(ABC):
             f"{speedup:.1f}x parallel speedup)",
             file=sys.stderr,
         )
-        warning = most_timed_out(n_timeout, total)
+        warning = most_timed_out(results, tests, self.config)
         if warning:
             print(warning, file=sys.stderr)
 
@@ -1317,7 +1328,7 @@ class Backend(ABC):
                         quiet=self.quiet,
                     )
 
-        self._print_run_summary(run_results, total, time.monotonic() - wall_start)
+        self._print_run_summary(run_results, tests, time.monotonic() - wall_start)
 
         manifest.results = run_results
         setup.progress.finalize()
