@@ -291,6 +291,32 @@ def _combinator_kind_rules() -> list[dict]:
     ]
 
 
+def _backend_marks() -> dict[str, Any]:
+    """What a key of an entry's ``backends`` may be — a registered
+    backend's name, alone or with one of testing.json's ``os`` choices
+    after a ``/`` — and its block (``spec_shape.BACKEND``): what
+    ``spec_parser.check_backend_key`` and the entry check hold it to."""
+    from ..backends import backend_names
+
+    systems = "|".join(re.escape(s) for s in TESTING_JSON["os"].schema["enum"])
+    return {
+        "patternProperties": {
+            f"^{re.escape(name)}(/({systems}))?$": {
+                "type": "object",
+                "title": f"On {name}",
+                "description": (
+                    f"What holds for this test on {name}, or on {name} and "
+                    f"one operating system ({name}/linux)."
+                ),
+                "properties": schema_properties(spec_shape.BACKEND),
+                "additionalProperties": False,
+            }
+            for name in backend_names()
+        },
+        "additionalProperties": False,
+    }
+
+
 def build_schema() -> dict:
     """Build the top-level JSON-Schema document."""
     modes = _modes()
@@ -339,12 +365,14 @@ def build_schema() -> dict:
         "allOf": _combinator_kind_rules(),
     }
 
+    entry_properties = schema_properties(spec_shape.ENTRY)
+    entry_properties["backends"].update(_backend_marks())
     test_entry = {
         "type": "object",
         "required": ["model"],
         # The entry's keys, and its simulation and comparison blocks': the
         # one table the spec parser checks an entry against.
-        "properties": schema_properties(spec_shape.ENTRY),
+        "properties": entry_properties,
         "additionalProperties": False,
     }
 

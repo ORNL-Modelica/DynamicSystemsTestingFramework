@@ -37,11 +37,14 @@ class TestModel:
         method: The solver.
         number_of_intervals: Output intervals, or None for the simulator's own.
         output_interval: Seconds between output points, or None.
-        timeout: Seconds the test may run, or None for the run's limit.
+        timeout: The entry's ``simulation.timeout``, or None. The limit a
+            run applies is ``marks.timeout_for``'s.
         variable_patterns: The entry's ``variables``: names and patterns.
         diagnostic_variables: The entry's own ``diagnostic_variables``,
             listed after the project's: names whose final, min and max its
             baseline stores.
+        skip: The entry's ``skip`` reason, or None.
+        backend_marks: The entry's ``backends`` blocks, by their key.
     """
 
     model_id: str
@@ -99,6 +102,14 @@ class TestModel:
     # The entry's own ``diagnostic_variables``: names whose summary this
     # test's runs record beside the project's (`diagnostic_names`).
     diagnostic_variables: list[str] = field(default_factory=list)
+
+    # The entry's marks, as written: ``skip`` (the reason it is not run on
+    # any backend) and ``backends`` (``{"OpenModelica": {"skip": ...,
+    # "timeout": 600}, "OpenModelica/windows": {...}}``). Nothing but
+    # ``discovery.marks`` reads them: which one applies depends on the
+    # run's backend and OS, and that is decided there, once.
+    skip: str | None = None
+    backend_marks: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Fields a recognizer can set. Their defaults leave a test as it would
     # be without them.
@@ -451,6 +462,9 @@ def merge_tests(
             if spec_test.baseline_points is not None:
                 existing.baseline_points = spec_test.baseline_points
             existing.diagnostic_variables = spec_test.diagnostic_variables
+            # Marks come from the spec alone: a recognizer sets none.
+            existing.skip = spec_test.skip
+            existing.backend_marks = spec_test.backend_marks
         else:
             # Provenance for spec-set fields was stamped by parse_test_spec;
             # unset fields get "default" in finalize_defaults (a blanket

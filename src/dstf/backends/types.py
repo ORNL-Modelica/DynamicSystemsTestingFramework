@@ -303,10 +303,12 @@ class TestResult:
 #: Appended to every timed-out result's ``error_message``, so the escape hatch
 #: travels with the failure to wherever it is read — the dispatcher's progress
 #: line, the console report, the dashboard detail. ``--timeout`` only moves the
-#: global default; one genuinely slow model wants the per-test override, and a
-#: user who has just hit a timeout is exactly who needs to be told that.
+#: global default; one genuinely slow model wants the per-test override (or
+#: the per-backend one, which wins over it), and a user who has just hit a
+#: timeout is exactly who needs to be told that.
 TIMEOUT_OVERRIDE_HINT = (
     "raise it per test with simulation.timeout in test_spec.json, "
+    "for one backend with backends.<Backend>.timeout there, "
     "or globally with --timeout"
 )
 

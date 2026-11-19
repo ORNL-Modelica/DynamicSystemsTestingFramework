@@ -34,6 +34,7 @@ SPEC_TABLES = {
     "root": spec_shape.ROOT,
     "entry": spec_shape.ENTRY,
     "simulation": spec_shape.SIMULATION,
+    "backends block": spec_shape.BACKEND,
     "comparison": spec_shape.COMPARISON,
     "override": spec_shape.OVERRIDE,
     "every leaf and override": spec_shape.EVERY_METRIC,

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from ..config import Config
 from ..config_shape import default
 from ..discovery.library_state import LibraryChanges, LibraryState
+from ..discovery.marks import timeout_for
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import BatchManifest
 from .base import (
@@ -1280,9 +1281,7 @@ class WorkerRunner(ItemRunner):
             self.library = library
         if backend.progress is not None:
             backend.progress.on_start(test_key, worker_id=w.worker_id)
-        timeout = float(
-            test.timeout if test.timeout is not None else backend.config.timeout
-        )
+        timeout = float(timeout_for(test, backend.config))
         try:
             tr = w.run_test_with_timeout(
                 test,

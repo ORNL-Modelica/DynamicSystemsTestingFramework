@@ -614,6 +614,39 @@ class TestTimeoutExpiredBytesHandling:
         assert "omc partial" in stdout_txt
         assert "[TimeoutExpired]" in stdout_txt
 
+    def test_openmodelica_is_given_the_backend_and_os_time_limit(
+        self, tmp_path, monkeypatch
+    ):
+        """``simulation.timeout`` 60 and ``backends["OpenModelica/windows"]
+        .timeout`` 7, run on OpenModelica/windows: omc is given 7 s."""
+        from dstf.backends.openmodelica.backend import OpenModelicaBackend
+        from dstf.config import Config
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        omc = tmp_path / "omc"
+        omc.write_text("#!/bin/sh\n")
+        omc.chmod(0o755)
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            backend_name="OpenModelica",
+            backend_path=str(omc),
+            os_name="windows",
+            work_dir=tmp_path / "work",
+            timeout=30,
+        )
+        backend = OpenModelicaBackend(cfg)
+
+        def fake_run(*a, timeout, **kw):
+            raise subprocess.TimeoutExpired(cmd=["omc"], timeout=timeout)
+
+        monkeypatch.setattr("dstf.backends.openmodelica.backend.run_killable", fake_run)
+        test = _tm("Lib.A", variable_patterns=["x"], timeout=60)
+        test.backend_marks = {"OpenModelica/windows": {"timeout": 7}}
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        assert rr.timed_out is True
+        assert "omc exceeded 7.0s timeout" in (rr.error_message or "")
+
 
 # ---------------------------------------------------------------------------
 # Finding 75 — whitespace-only stderr tail must not IndexError
@@ -892,6 +925,50 @@ class TestDymolaBatchTimeout:
 
         assert fake.killed is True  # by the tree kill
         assert fake.kill_calls == 0  # poll() reads dead, so no second kill
+
+    def test_a_batch_s_limit_adds_each_test_s_backend_time_limit(
+        self, tmp_path, monkeypatch
+    ):
+        """A's ``simulation.timeout`` 60 under ``backends.Dymola.timeout`` 7,
+        B's ``simulation.timeout`` 11: the batch is given 7 + 11 s and the
+        120 s its library loading takes."""
+        from dstf.backends.dymola import backend as dr
+
+        wd = tmp_path / "work"
+        wd.mkdir()
+        cfg = SimpleNamespace(
+            backend_setup=[],
+            diagnostic_variables=["CPUtime"],
+            work_dir=wd,
+            backend_path="dymola-fake",
+            timeout=1,
+            parallel=1,
+            backend="Dymola",
+            os_name="linux",
+        )
+        backend = dr.DymolaBackend(cfg)
+        test_a = _tm("Lib.A", stop_time=1.0, timeout=60)
+        test_a.backend_marks = {"Dymola": {"timeout": 7}}
+        test_b = _tm("Lib.B", stop_time=1.0, timeout=11)
+        items = [(test_a, "test_0001"), (test_b, "test_0002")]
+        for _, key in items:
+            (wd / key).mkdir()
+
+        fake = _FakeDymolaProc()
+        monkeypatch.setattr(dr.subprocess, "Popen", lambda *a, **kw: fake)
+        monkeypatch.setattr(
+            dr,
+            "kill_process_tree",
+            lambda pid, name_hint=None: setattr(fake, "killed", True),
+        )
+        startup = wd / "startup.mos"
+        shutdown = wd / "shutdown.mos"
+        startup.write_text("// stub")
+        shutdown.write_text("// stub")
+
+        backend._run_batch(items, startup, shutdown, 0, 2)
+
+        assert fake.communicate_calls[0] == 138
 
 
 # =========================================================================

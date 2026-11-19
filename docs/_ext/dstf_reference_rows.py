@@ -31,6 +31,7 @@ def tables() -> dict[str, Mapping[str, Any]]:
         "spec-root": spec_shape.ROOT,
         "spec-entry": spec_shape.ENTRY,
         "spec-simulation": spec_shape.SIMULATION,
+        "spec-backend": spec_shape.BACKEND,
         "spec-comparison": spec_shape.COMPARISON,
         "spec-override": spec_shape.OVERRIDE,
         "spec-every-criterion": spec_shape.EVERY_METRIC,

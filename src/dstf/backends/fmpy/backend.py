@@ -50,6 +50,7 @@ import numpy as np
 
 from ...config import Config
 from ...config_shape import Setting
+from ...discovery.marks import timeout_for
 from ...discovery.test_registry import TestModel, diagnostic_names
 from ...discovery.unit_tests import unit_test_variables
 from .. import register
@@ -264,9 +265,7 @@ class FmpyBackend(Backend):
         if self.progress:
             self.progress.on_start(test_key)
 
-        timeout = float(
-            test.timeout if test.timeout is not None else self.config.timeout
-        )
+        timeout = float(timeout_for(test, self.config))
 
         wall_start = time.monotonic()
         try:

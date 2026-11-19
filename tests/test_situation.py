@@ -587,7 +587,8 @@ def test_a_partial_result_comes_after_the_queue_s_hold_and_pending_edits():
 
 TIMEOUT = (
     "Timed out after 12s (raise it per test with simulation.timeout in "
-    "test_spec.json, or globally with --timeout)"
+    "test_spec.json, for one backend with backends.<Backend>.timeout there, "
+    "or globally with --timeout)"
 )
 CRASH = (
     "Python execution failed: Traceback (most recent call last):\n"

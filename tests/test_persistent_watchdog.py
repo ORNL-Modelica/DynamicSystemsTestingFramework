@@ -1538,6 +1538,7 @@ def test_timeout_message_names_the_per_test_override(tmp_path):
     assert tr.timed_out is True
     assert "Timed out after 0s" in (tr.error_message or "")
     assert "simulation.timeout" in (tr.error_message or "")
+    assert "backends.<Backend>.timeout" in (tr.error_message or "")
     assert "test_spec.json" in (tr.error_message or "")
     assert "--timeout" in (tr.error_message or "")
 
@@ -1559,6 +1560,40 @@ def test_timeout_detail_is_not_truncated_past_the_hint(tmp_path, capsys):
     )
 
     assert "simulation.timeout" in capsys.readouterr().err
+
+
+class _ThreeSecondWorker(_AlwaysTimeoutWorker):
+    """A test that takes 3 s: what a time limit of 1 s stops."""
+
+    def run_test(self, test, test_key, progress=None):
+        time.sleep(3)
+        return TestRunResult(model_id=test.model_id, test_key=test_key, success=True)
+
+
+def test_a_backend_time_limit_is_the_one_a_worker_is_held_to(tmp_path):
+    """``simulation.timeout`` 60 and ``backends.Dymola.timeout`` 1, run on
+    Dymola: the worker's watchdog stops the test after 1 s."""
+    cfg = SimpleNamespace(
+        timeout=60, parallel=1, work_dir=tmp_path, backend="Dymola", os_name="linux"
+    )
+    backend = _StubBackend(cfg)
+    test = _tm("Lib.A")
+    test.timeout = 60
+    test.backend_marks = {"Dymola": {"timeout": 1}}
+    items = [(test, "test_0001")]
+
+    started = time.monotonic()
+    (result,) = backend._dispatch_with_restart(
+        [_ThreeSecondWorker(0, cfg)],
+        items,
+        total=1,
+        manifest=_scratch_manifest(tmp_path, items),
+        progress=_RunProgress(),
+    )
+
+    assert time.monotonic() - started < 2.5
+    assert result.timed_out is True
+    assert (result.error_message or "").startswith("Timed out after 1s (")
 
 
 class _FlakyStartWorker(_GoodWorker):
