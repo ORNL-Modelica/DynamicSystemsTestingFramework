@@ -1621,7 +1621,7 @@ def _add_compare(tree: _Tree, top) -> None:
         help="Store the last run's results as the new baselines in the "
         "reference root, without simulating again, and score nothing. A test "
         "the run recorded as failed or timed out is skipped and named, and "
-        "the exit code is then 1 — unless it is marked skip (scored under "
+        "the exit code is then 1 — unless it is marked skip (taken in under "
         "--include-skipped). Nothing is stored of a test marked skip: a "
         "note names it, and the exit code stays 0 (--include-skipped stores "
         "it).",

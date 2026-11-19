@@ -752,11 +752,13 @@ def _run_none(args, config, store, backend, all_tests, marked, marks) -> int:
     test simulated, so the dashboard brings back no row of the run before,
     and the last run's verdicts.json goes (`write_unrun_status`); a scoring
     route writes this run's, its marked tests SKIPPED. An accept stores
-    nothing and names them, and `-i` writes no verdicts.json, as their
-    runs of tests that ran do. Exit 0: a marked test never fails a run."""
+    nothing and names them, and `-i` leaves no verdicts.json, with or
+    without --merge, as their runs of tests that ran do. Exit 0: a marked
+    test never fails a run."""
     from ..comparison.comparator import compare_all
     from ..reporting.dashboard_render import build_rerun_flags, render_final
     from ..reporting.report_suite import open_in_browser
+    from ..reporting.verdicts import remove_verdicts
 
     selection = _narrowed(args, None, [], all_tests, _recorded(config), marked, marks)
     print(_not_run_note(marked, config))
@@ -803,6 +805,10 @@ def _run_none(args, config, store, backend, all_tests, marked, marks) -> int:
         marks=marks,
     )
     if args.interactive is not None:
+        # `-i` writes no verdicts.json, so the last run's goes also under
+        # --merge (as a run's start removes it): its rows would read PASS
+        # tests this page reads SKIPPED.
+        remove_verdicts(config.work_dir)
         render_final(
             config.work_dir,
             rerun_flags=build_rerun_flags(config),

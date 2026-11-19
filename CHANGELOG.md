@@ -17,7 +17,7 @@ this file says when they do.
   `verdicts.json`, `dstf summary` and `dstf author`.
 - A per-backend time limit: `timeout` in a `backends` block wins over
   `simulation.timeout` and `--timeout`. A timed-out test's message names the
-  limit that stopped it.
+  limit that stopped it (under `--batch` Dymola's, the batch's: every key).
 - A marked test never changes the exit code. `--include-skipped` on `run`
   and `compare` runs and scores the marked tests anyway, and says of each
   whether its mark can go.

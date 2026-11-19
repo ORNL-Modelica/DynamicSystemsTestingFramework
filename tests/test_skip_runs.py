@@ -366,20 +366,27 @@ def test_an_accept_never_fails_a_run_over_a_marked_test(tmp_path, capsys, includ
         assert f"not stored: {MARKED} is marked skip on Python ({REASON})" in out
 
 
-@pytest.mark.parametrize("argv", [[], ["-i"], ["--accept"]])
+@pytest.mark.parametrize(
+    "argv", [[], ["-i"], ["--accept"], ["--merge", "-i", "--filter", RAMP]]
+)
 def test_a_run_of_only_marked_tests_leaves_no_verdicts_of_the_run_before(
     proj, capsys, monkeypatch, argv
 ):
-    """Every test marked, no --merge: whatever the route, verdicts.json is
-    this invocation's (each test SKIPPED) or there is none — never the last
-    run's PASS rows beside this run's status.json — and the dashboard it
-    wrote is named on a View line."""
+    """Every test marked: whatever the route, verdicts.json is this
+    invocation's (each test SKIPPED) or there is none — never the last
+    run's PASS rows beside a dashboard that reads them SKIPPED — and the
+    dashboard it wrote is named on a View line. Without --merge,
+    status.json is this invocation's; with it, the last run's."""
     assert proj.dstf(capsys)[0] == 0
+    status = proj.read("status.json")
     proj.mark(MARKED, POINTS, RAMP)
     monkeypatch.setattr("builtins.input", lambda prompt="": "s")
     rc, out = proj.dstf(capsys, *argv)
     assert rc == 0, out
-    assert proj.read("status.json")["tests"] == []
+    if "--merge" in argv:
+        assert proj.read("status.json") == status
+    else:
+        assert proj.read("status.json")["tests"] == []
     verdicts = proj.work / "verdicts.json"
     if argv:
         assert not verdicts.exists()

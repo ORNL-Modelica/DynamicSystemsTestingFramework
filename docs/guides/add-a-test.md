@@ -162,12 +162,14 @@ stores nothing of a marked test it did not run (`not stored: … is marked skip
 on OpenModelica (…)`); under `--include-skipped` it is accepted like any other.
 
 A run whose every chosen test is marked simulates nothing. Without
-`--merge` it is still this run: `status.json` records no test simulated, the
-dashboard shows no row of the run before, `verdicts.json` holds the SKIPPED
-tests — and after `--accept`, which stores nothing, or `-i`, there is no
-`verdicts.json` and the dashboard has no rows. With `--merge` the last run's
-`status.json` is kept and every test is scored on its last result, the
-marked ones SKIPPED.
+`--merge` it is still this run: `status.json` records no test simulated and
+the dashboard shows no row of the run before. A plain run writes
+`verdicts.json` with the tests SKIPPED, and the dashboard lists them
+SKIPPED; `-i` lists them SKIPPED too but leaves no `verdicts.json`; after
+`--accept`, which stores nothing, there is no `verdicts.json` and the
+dashboard has no rows. With `--merge` the last run's `status.json` is kept
+and every test is scored on its last result, the marked ones SKIPPED; under
+`-i` there is then no `verdicts.json` either.
 
 ## With dstf spec add
 

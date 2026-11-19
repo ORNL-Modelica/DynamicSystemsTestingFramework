@@ -1529,7 +1529,7 @@ class _AlwaysTimeoutWorker(Worker):
         time.sleep(30)  # abandoned by the watchdog
 
 
-def test_timeout_message_names_the_per_test_override(tmp_path):
+def test_a_timeout_under_the_run_s_limit_names_it_and_every_key_that_wins(tmp_path):
     """Item 5: the message the dispatcher, the console report and the
     dashboard all read must say how to raise the limit for THIS test."""
     worker = _AlwaysTimeoutWorker(0, SimpleNamespace(work_dir=tmp_path))

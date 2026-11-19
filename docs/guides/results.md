@@ -120,7 +120,11 @@ Two files in the work directory are written for programs:
   tool version, OS), and `selection`: null for a run of every test the
   project has; for a run of fewer, how many tests were run (`selected`) of
   how many the project has (`of`), how many of those the flags chose a mark
-  kept from running (`skipped`), and what chose them — `filter`,
+  kept from running (`skipped`; under `--merge` or `--rerun` also each test
+  an earlier run in the work directory recorded that a mark keeps out,
+  chosen or not: it reads SKIPPED instead of being scored on its last
+  result, so `--merge --filter A,B` with C marked reads as a full run), and
+  what chose them — `filter`,
   `package` and `rerun` as given, `merged: true` where tests not run
   were scored on their last results (`--merge` or `--rerun` over a work
   directory that holds a result of at least one of them), and for

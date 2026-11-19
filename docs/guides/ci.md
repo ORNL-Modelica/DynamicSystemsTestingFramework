@@ -63,7 +63,9 @@ jobs:
   specific wins: the backend and OS's block, the backend's, the entry's
   `simulation.timeout`, then `--timeout`. A test that timed out says which
   of them stopped it (`the limit is backends.OpenModelica.timeout in
-  test_spec.json: raise it there`): raising another does nothing.
+  test_spec.json: raise it there`): raising another does nothing. Under
+  `--batch` Dymola's tests share one limit (their own added up, plus time
+  to load the libraries), so its message names every key instead.
 - **A test known to fail on the runner's simulator** can be marked `skip`
   there, with its reason: it is not run, reads `SKIPPED`, and fails no job.
   The JUnit file has it as a skipped test case with that reason.

@@ -9938,15 +9938,19 @@ backend, and the tests most worth skipping often have no baseline.
    or OS, an empty reason, an empty block and a `false` are refused, naming
    what is accepted; there is no value that clears a mark. One resolver
    reads them (`discovery/marks.py`); a timed-out run's message names the
-   key that set its limit (`marks.limit_hint`).
+   key that set its limit (`marks.limit_hint`) — but a Dymola `--batch`
+   run's, whose limit is its tests' added up (and a startup allowance),
+   set by no one key: it names every key (`marks.ANY_LIMIT_HINT`).
 2. *A marked test is not simulated.* It reads `SKIPPED` with its reason on
    every surface — the console, the dashboard (its own pill and colour, no
    report page, no time or link of an earlier run), `verdicts.json`
    (`mark` per test, a `SKIPPED` total, `total` without them), JUnit
    (`<skipped>`), `dstf summary`, `-i` review and `dstf author`.
-3. *A marked test never changes the exit code* (`status.counts_against`,
-   the one rule): skipped, or run anyway and still failing, or refused by
-   an accept. A run of every test the marks let run is a full run; the
+3. *A marked test never changes the exit code*: skipped, or run anyway
+   and still failing (`status.counts_against`, the one rule every verdict
+   is counted by), or refused by an accept (the accept's report is given
+   the run's marks: `cli/run_cmds.py`'s `_report_accept`). A run of every
+   test the marks let run is a full run; the
    selection block counts the marked tests apart (`skipped`).
 4. *`--include-skipped`* (run and compare) runs and scores marked tests like
    any other, each carrying its mark, and after the report one line each
