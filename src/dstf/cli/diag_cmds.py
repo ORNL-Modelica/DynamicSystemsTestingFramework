@@ -134,8 +134,8 @@ def _print_marks(tests: list, config) -> None:
             applied = f"{here} {'keeps' if here == 1 else 'keep'}"
         print(
             f"\nMarked skip: {n} {'mark' if n == 1 else 'marks'} ({by_where}); "
-            f"{applied} a test from running on {config.backend}/{config.os_name}, "
-            "where this config runs:"
+            f"{applied} a test from running on {config.backend}/{config.os_name} "
+            "(--backend reads another):"
         )
         for line in lines:
             print(line)
