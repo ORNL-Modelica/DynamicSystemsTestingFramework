@@ -169,7 +169,9 @@ exit code, and a run of every test the marks let run is a full run.
 `--include-skipped` (on `run` and `compare`) runs and scores the marked tests
 like any other, each still carrying its mark, and after the report one line
 each says `passes now — remove the mark`, `runs now but has no baseline to
-score against — accept one, then remove the mark`, or `still does not pass`. An accept
+score against — accept one, then remove the mark`, `has no result to score —
+run it with run --only-skipped` (a compare of marked tests a run left out), or
+`still does not pass`. An accept
 stores nothing of a marked test it did not run (`not stored: … is marked skip
 on OpenModelica (…)`); under `--include-skipped` it is accepted like any other.
 
@@ -177,10 +179,11 @@ on OpenModelica (…)`); under `--include-skipped` it is accepted like any other
 and no other: a check of whether each mark can go, without running the
 whole suite again. It chooses the marked tests first, so `--rerun` and
 `--changed-since` then choose among them, and `--filter` and `--package`
-narrow them as usual. The run is not a full one and says so, like a
-`--filter` run. When no test is marked skip for this backend and OS, it
-says `No test is marked skip on OpenModelica/linux.` and exits 0, writing
-nothing.
+narrow them as usual. Unless every test of the project is marked here, the
+run is not a full one and says so, like a `--filter` run. When none of the
+tests chosen is marked skip for this backend and OS, it says so (`No test is
+marked skip on OpenModelica/linux.`, and `… among the tests --filter chose.`
+beside a filter) and exits 0, writing nothing.
 
 ```bash
 dstf run --config testing.json --only-skipped

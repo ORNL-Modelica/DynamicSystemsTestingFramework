@@ -854,8 +854,10 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
             help="{what} only the tests marked skip for this backend and OS, "
             "as --include-skipped does, and none of the others: a check of "
             "whether each mark can go.{choose} --filter and --package narrow "
-            "them as usual, and the {whole} is not a full one. With --accept they "
-            "are stored. When no test is marked here it says so and exits 0.",
+            "them as usual. Unless every test of the project is marked here, "
+            "the {whole} is not a full one, and says so. With --accept they "
+            "are stored. When none of the tests chosen is marked here it says "
+            "so, writes nothing and exits 0.",
         ),
     ),
     "package": (
@@ -1429,11 +1431,12 @@ def _add_run(tree: _Tree, top) -> None:
             code.
 
             Exit code: 0 when every test that ran passed, and with nothing
-            to run: no test is in --rerun's categories, no test uses what
-            changed since --changed-since's REV, or no test is marked skip
-            here for --only-skipped (then nothing is written, not even the
-            file --output names), or every test chosen is marked skip; 1 when a test failed, failed to simulate or timed
-            out, when nothing ran at all, when an accept skipped a test not
+            to run: no test is in --rerun's categories or every test chosen
+            is marked skip; or no test uses what changed since
+            --changed-since's REV, or none of the tests chosen is marked
+            skip here for --only-skipped, and then nothing is written, not
+            even the file --output names; 1 when a test failed, failed to
+            simulate or timed out, when nothing ran at all, when an accept skipped a test not
             marked skip, or when the simulator could not be asked what the
             tests use; 2 for a config error, and for --changed-since when
             git cannot answer.

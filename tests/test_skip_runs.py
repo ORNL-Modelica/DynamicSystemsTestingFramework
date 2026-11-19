@@ -679,6 +679,65 @@ def test_only_skipped_accept_stores_the_marked_tests_only(tmp_path, capsys):
     assert proj.stored() == {MARKED}
 
 
+@pytest.mark.parametrize("command", ["run", "compare"])
+@pytest.mark.parametrize("flag", ["--filter", "--package"])
+def test_only_skipped_takes_the_marked_tests_the_selection_flags_chose(
+    proj, capsys, command, flag
+):
+    """Two tests marked; --filter or --package names one of them: only that
+    one is run, or scored."""
+    proj.mark(MARKED, RAMP)
+    assert proj.dstf(capsys, "--include-skipped")[0] == 0
+    before = proj.runs()
+    rc, out = proj.dstf(capsys, "--only-skipped", flag, MARKED, command=command)
+    assert rc == 0, out
+    assert set(proj.verdicts()) == {MARKED}
+    changed = {m for m, at in proj.runs().items() if at != before[m]}
+    assert changed == ({MARKED} if command == "run" else set())
+    key = "filter" if flag == "--filter" else "package"
+    block = {**ONLY, key: MARKED, **({"compare": True} if command == "compare" else {})}
+    assert proj.read("verdicts.json")["selection"] == block
+
+
+@pytest.mark.parametrize("command", ["run", "compare"])
+def test_only_skipped_beside_a_filter_of_unmarked_tests_does_nothing_and_exits_0(
+    proj, capsys, command
+):
+    """The filter chose tests, none of them marked here: nothing to run is
+    no failure, and the last run's files stay as they are."""
+    proj.mark()
+    assert proj.dstf(capsys)[0] == 0
+    files = {
+        name: (proj.work / name).read_bytes()
+        for name in ("verdicts.json", "status.json", "dashboard.html")
+    }
+    rc, out = proj.dstf(capsys, "--only-skipped", "--filter", RAMP, command=command)
+    assert rc == 0, out
+    assert out.splitlines()[-1] == (
+        "No test is marked skip on Python/linux among the tests --filter chose."
+    )
+    assert {name: (proj.work / name).read_bytes() for name in files} == files
+
+
+def test_only_skipped_beside_a_filter_that_matches_nothing_fails(proj, capsys):
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", "--filter", "Nothing.*")
+    assert rc == 1, out
+    assert out.splitlines()[-1] == "No tests matched the filter."
+
+
+def test_an_include_skipped_run_s_selection_says_no_only_skipped(proj, capsys):
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--include-skipped", "--filter", f"{MARKED},{RAMP}")
+    assert rc == 0, out
+    assert proj.read("status.json")["selection"] == {
+        "selected": 2,
+        "skipped": 0,
+        "of": 3,
+        "filter": f"{MARKED},{RAMP}",
+    }
+
+
 # -- discover -------------------------------------------------------------------
 
 

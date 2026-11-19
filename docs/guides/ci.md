@@ -146,7 +146,7 @@ jobs:
 
 | Code | When |
 |---|---|
-| 0 | Every test that ran passed. A test with no baseline yet (`NO_REF`), a test that did not run beside tests that did, and a test marked `skip` for the run's backend and OS — `SKIPPED`, or run anyway under `--include-skipped` and still failing — do not fail the run. Also a run with nothing to run: `--changed-since` found no test a change touches, `--rerun` no test in its categories, `--only-skipped` no test marked `skip` for the run's backend and OS, or every test chosen is marked `skip`. |
+| 0 | Every test that ran passed. A test with no baseline yet (`NO_REF`), a test that did not run beside tests that did, and a test marked `skip` for the run's backend and OS — `SKIPPED`, or run anyway under `--include-skipped` and still failing — do not fail the run. Also a run with nothing to run: `--changed-since` found no test a change touches, `--rerun` no test in its categories, `--only-skipped` none of the tests chosen marked `skip` for the run's backend and OS, or every test chosen is marked `skip`. |
 | 1 | A test failed, failed to simulate or timed out; or no test ran at all; or an accept skipped a test not marked `skip`; or, with `--changed-since`, the simulator could not be asked what the tests use. |
 | 2 | The command line, `testing.json` or `test_spec.json` is wrong: the message names what. With `--changed-since`, also when git cannot answer, the project is not Modelica, or the backend cannot say what a test uses. |
 
