@@ -476,13 +476,14 @@ dirs in two places, and `branch=out/linux branch=winout` makes one column.
 - **A folded list per cell** names each test that did not pass, its status,
   and what failed: the first failing criterion that is not advisory, else
   the message from its first OpenModelica error tag (`[translation:error:63]
-  Internal error …`, not the call omc echoes before it), else its first part
-  (cut at ` | ` and `; `) that starts `Error` — after the place omc points it
-at, kept with it (`[Bad.mo:4:3-4:14:writable] Error: …`) — else — when the message holds
-  omc's `Notification:` lines about the packages it loaded — its first part
-  that is not one (`Failed to build model: …`), else the message's last
-  line that is not a repeated warning (a failed simulation's message is
-  often a traceback, and its reason comes last).
+  Internal error …`, not the call omc echoes before it), else its first
+  `Error` from omc, with the place it points at
+  (`[Bad.mo:4:3-4:14:writable] Error: …`), else the last line that is not
+  a repeated warning of what is left once omc's Warnings and Notifications
+  are taken out — they are about the translation, seldom why a run stopped
+  (`Failed to build model: …`, or a simulation's `LOG_ASSERT … | error |
+  …` line), else the whole message's last line (a failed simulation's
+  message is often a traceback, and its reason comes last).
   With `--base` the base's status is beside it, or `not in main`. Its summary
   line reads `Python/linux, branch: 2 not passing, 1 also fails on main`, and
   `; 1 no baseline` after it where a test has none: those are named on a

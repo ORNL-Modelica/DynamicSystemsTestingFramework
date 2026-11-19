@@ -261,46 +261,63 @@ _ERROR_TAG = re.compile(r"\[\w+:error:\d+\]")
 _REPEATED = re.compile(r"\(repeated \d+ times\)$")
 
 
-#: The separators of a message's parts: OpenModelica's message joins its
-#: notices with ``; `` and them, the record's messages and the rest with
-#: `` | `` (``backends.openmodelica.backend.outcome``).
-_PARTS = re.compile(r" \| |; ")
+#: One of omc's notices, led by where omc points it when it does
+#: (``[Bad.mo:4:3-4:14:writable] Error: …``): its kind past that place.
+_NOTICE = r"(?:\[[^\]]*\] )?(?:Error|Warning|Notification)\b"
+_NOTICE_PART = re.compile(r"(?:\[[^\]]*\] )?(?P<kind>Error|Warning|Notification)\b")
+#: Where a message's line is cut into parts, each separator kept: at
+#: `` | `` (OpenModelica's message joins its pieces so), and at ``; ``
+#: where a notice follows (it joins its notices so) — never inside one:
+#: ``Error: Too many equations; over-determined system`` is one part.
+_PARTS = re.compile(rf"( \| |; (?={_NOTICE}))")
 
 
-#: Where omc points a notice, before its kind: ``[Bad.mo:4:3-4:14:writable] ``.
-_LOCATED = re.compile(r"^\[[^\]]*\] ")
+def _parts(line: str) -> list[tuple[str, str]]:
+    """``line``'s parts, each with the separator before it (``""`` for
+    the first)."""
+    pieces = _PARTS.split(line)
+    return [("", pieces[0])] + list(zip(pieces[1::2], pieces[2::2], strict=True))
+
+
+def _kind(part: str) -> str | None:
+    """The kind of a part that is one of omc's notices, else None."""
+    found = _NOTICE_PART.match(part.strip())
+    return found["kind"] if found else None
+
+
+def _last_line(message: str) -> str:
+    """``message``'s last non-empty line that is not a repeated one (a
+    traceback's first line says nothing), a repeated line only when
+    nothing else is."""
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    said = [line for line in lines if not _REPEATED.search(line)] or lines
+    return said[-1] if said else ""
 
 
 def _message_reason(message: Any) -> str:
     """The piece of a failed run's message that says why: from its first
     OpenModelica error tag to that line's end; else its first part (a
-    line, cut at `` | `` and ``; ``) that starts ``Error``, past the
-    place omc points it at, kept with it; else, when a
-    part is a ``Notification:`` — omc's word for a package it loaded —
-    the first part that is not one; else its last non-empty line that is
-    not a repeated one (a traceback's first line says nothing), a repeated
-    line only when nothing else is."""
+    line cut at `` | ``, and at ``; `` before a notice) that is an
+    ``Error``, kept with the place omc points it at; else the last line
+    (:func:`_last_line`) of what is left once omc's Warnings and
+    Notifications are taken out — they are about the translation, seldom
+    why a run stopped; else the whole message's last line."""
     if not isinstance(message, str):
         return ""
     tag = _ERROR_TAG.search(message)
     if tag:
         return message[tag.start() :].splitlines()[0].strip()
-    parts = [
-        part.strip()
-        for line in message.splitlines()
-        for part in _PARTS.split(line)
-        if part.strip()
-    ]
-    error = next((p for p in parts if _LOCATED.sub("", p).startswith("Error")), None)
-    if error is not None:
-        return error
-    if any(p.startswith("Notification:") for p in parts):
-        said = next((p for p in parts if not p.startswith("Notification:")), None)
-        if said is not None:
-            return said
-    lines = [line.strip() for line in message.splitlines() if line.strip()]
-    said = [line for line in lines if not _REPEATED.search(line)] or lines
-    return said[-1] if said else ""
+    lines = [_parts(line) for line in message.splitlines()]
+    for parts in lines:
+        for _, part in parts:
+            if _kind(part) == "Error":
+                return part.strip()
+    left = []
+    for parts in lines:
+        kept = [(sep, part) for sep, part in parts if _kind(part) is None]
+        if kept:
+            left.append(kept[0][1] + "".join(sep + part for sep, part in kept[1:]))
+    return _last_line("\n".join(left)) or _last_line(message)
 
 
 def reason(test: dict) -> str:

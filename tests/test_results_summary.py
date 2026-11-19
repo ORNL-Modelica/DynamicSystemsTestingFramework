@@ -425,11 +425,56 @@ BUILD = (
 )
 
 
-def test_a_failed_build_is_said_by_its_first_part_that_is_no_notification(
+def test_a_failed_build_is_said_by_what_is_left_past_the_notifications(
     tmp_path,
 ):
     assert _reasons(tmp_path, BUILD) == [
-        "Failed to build model: MyLib.Examples.PipeTest"
+        "Failed to build model: MyLib.Examples.PipeTest | no result file produced"
+    ]
+
+
+#: A run that stopped at an assert, as an OpenModelica --batch run kept it:
+#: omc's notices of the translation first, the simulation's log after them.
+RUNTIME = (
+    "Warning: The initial conditions are not fully specified. For more "
+    "information set -d=initialization.; Notification: MyLib requested package "
+    "Modelica of version 4.0.0. Modelica 4.1.0 is used instead. | Simulation "
+    "execution failed for model: MyLib.Fail\n"
+    "LOG_SUCCESS       | info    | The initialization finished successfully.\n"
+    "LOG_ASSERT        | info    | [/home/user/MyLib/Fail.mo:8:3-8:39:writable]\n"
+    "|                 | |       | The following assertion has been violated "
+    "at time 0.500000\n"
+    "LOG_ASSERT        | error   | No event found, but assert was triggered. "
+    "Throwing now! | no result file produced"
+)
+
+
+def test_a_run_that_stopped_is_said_by_its_last_line_not_a_warning(tmp_path):
+    """omc's Warning and Notification about the translation are not why the
+    simulation stopped: past them, the message's last line is."""
+    assert _reasons(tmp_path, RUNTIME) == [
+        "LOG_ASSERT        | error   | No event found, but assert was triggered. "
+        "Throwing now! | no result file produced"
+    ]
+
+
+def test_a_notification_omc_points_at_a_file_is_a_notification(tmp_path):
+    located = (
+        "[Bad.mo:1:1-1:9:writable] Notification: loaded. | Failed to build "
+        "model: Bad | no result file produced"
+    )
+    assert _reasons(tmp_path, located) == [
+        "Failed to build model: Bad | no result file produced"
+    ]
+
+
+def test_an_error_that_holds_a_semicolon_is_said_whole(tmp_path):
+    said = (
+        "Notification: loaded.; Error: Too many equations; over-determined "
+        "system. | Failed to build model: Bad | no result file produced"
+    )
+    assert _reasons(tmp_path, said) == [
+        "Error: Too many equations; over-determined system."
     ]
 
 
