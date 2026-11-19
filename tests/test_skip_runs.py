@@ -579,8 +579,16 @@ def test_discover_lists_every_mark_and_which_keep_a_test_from_running_here(
     proj, capsys
 ):
     """R4f: every mark, on every backend, the ones this backend and OS
-    apply said so."""
-    proj.mark()
+    apply said so; the header counts the marks, by where each is, apart
+    from the ones that apply here. Then every backend's time limit, the
+    one that sets a test's limit here said so."""
+    proj.edit(
+        MARKED,
+        backends={
+            "Python": {"skip": REASON, "timeout": 100},
+            "Python/linux": {"timeout": 50},
+        },
+    )
     proj.edit(RAMP, skip="slow everywhere")
     proj.edit(
         POINTS,
@@ -594,10 +602,37 @@ def test_discover_lists_every_mark_and_which_keep_a_test_from_running_here(
     assert rc == 0
     block = out.split("\nMarked skip", 1)[1].strip().splitlines()
     assert block == [
-        "(2 tests not run on Python/linux):",
+        ": 3 marks (1 on Python, 1 on OpenModelica/windows, 1 on every backend); "
+        "2 keep a test from running on Python/linux, where this config runs:",
         f"  {MARKED}: skipped on {SAID} — not run here",
         f"  {POINTS}: skipped on OpenModelica/windows: its solver differs",
         f"  {RAMP}: skipped on every backend: slow everywhere — not run here",
+        "",
+        "Time limits per backend:",
+        f"  {MARKED}: 100 s on Python",
+        f"  {MARKED}: 50 s on Python/linux — applies here",
+        f"  {POINTS}: 30 s on Dymola",
+    ]
+
+
+def test_discover_says_when_no_mark_keeps_a_test_from_running_here(proj, capsys):
+    """Marks only for another backend: the header says there are some, and
+    that none of them applies where this config runs — not "0 tests"
+    above a list of marks."""
+    proj.edit(POINTS, backends={"OpenModelica": {"skip": "its solver differs"}})
+    proj.edit(RAMP, backends={"OpenModelica": {"skip": "slow", "timeout": 240}})
+    rc = main(["discover", "--config", str(proj.config)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    block = out.split("\nMarked skip", 1)[1].strip().splitlines()
+    assert block == [
+        ": 2 marks (2 on OpenModelica); none keeps a test from running on "
+        "Python/linux, where this config runs:",
+        f"  {POINTS}: skipped on OpenModelica: its solver differs",
+        f"  {RAMP}: skipped on OpenModelica: slow",
+        "",
+        "Time limits per backend:",
+        f"  {RAMP}: 240 s on OpenModelica",
     ]
 
 

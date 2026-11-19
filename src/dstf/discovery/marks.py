@@ -97,6 +97,33 @@ def every_skip_mark(test: TestModel) -> list[SkipMark]:
     return marks
 
 
+@dataclass(frozen=True)
+class TimeLimit:
+    """A ``backends`` block's time limit: the block's key (``where``, as
+    :class:`SkipMark`'s) and its seconds."""
+
+    where: str
+    seconds: int
+
+
+def every_time_limit(test: TestModel) -> list[TimeLimit]:
+    """Every ``backends`` block of ``test`` that says ``timeout``, in the
+    file's order — what ``dstf discover`` lists."""
+    return [
+        TimeLimit(where, block["timeout"])
+        for where, block in (test.backend_marks or {}).items()
+        if block.get("timeout") is not None
+    ]
+
+
+def time_limit_here(test: TestModel, config: Config) -> TimeLimit | None:
+    """The ``backends`` block's time limit that applies to ``test`` on
+    ``config``'s backend and OS (the most specific one), or None when no
+    block's does."""
+    found = _block(test, config, "timeout")
+    return None if found is None else TimeLimit(*found)
+
+
 #: How to raise the limit when the one that fired is not known: a batch's
 #: limit, the sum of its tests' (Dymola's), names none of them.
 ANY_LIMIT_HINT = (
@@ -114,10 +141,9 @@ def _limit(test: TestModel, config: Config) -> tuple[str, int | None]:
     OS — ``backends.<where>.timeout``, ``simulation.timeout`` or
     :data:`RUN_LIMIT` — and its seconds (None for the run's, which only
     ``config.timeout`` holds). THE one order of the time limits."""
-    found = _block(test, config, "timeout")
-    if found is not None:
-        where, seconds = found
-        return f"backends.{where}.timeout", seconds
+    here = time_limit_here(test, config)
+    if here is not None:
+        return f"backends.{here.where}.timeout", here.seconds
     if test.timeout is not None:
         return "simulation.timeout", test.timeout
     return RUN_LIMIT, None
