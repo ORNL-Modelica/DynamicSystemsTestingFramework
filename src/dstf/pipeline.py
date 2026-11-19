@@ -216,6 +216,12 @@ def run_pipeline(
     not score: the commands that score (``dstf run``, ``dstf compare``) write
     each test's verdict to ``verdicts.json`` in the work directory.
 
+    It simulates every test it is given: a test marked skip for this
+    backend and OS (``test_spec.json``'s ``skip`` / ``backends``) is run
+    like any other. ``dstf run`` leaves those out before it calls this
+    (``dstf.discovery.marks.split_marked``); a caller that does not
+    want them run does the same.
+
     Args:
         config: The project's configuration.
         tests: The tests to run, as discovery returns them.
@@ -319,6 +325,34 @@ def run_pipeline(
         notices=notices,
         report_pages_removed=pages_removed,
     )
+
+
+def write_unrun_status(
+    config: Config, *, backend: Backend, selection: dict | None = None
+) -> None:
+    """Write ``status.json`` (and the live ``dashboard.html``) of a run
+    that simulated nothing — every test it chose is marked skip for this
+    backend and OS: no test row, this invocation's metadata and
+    ``selection``. A later page then lists this run's tests, the ones it
+    scored, and never brings back the rows of the run before it."""
+    from .backends.progress import ProgressReporter
+    from .reporting.dashboard_render import build_rerun_flags, run_given
+
+    work_dir = config.work_dir
+    assert work_dir is not None  # resolved in Config.__post_init__
+    work_dir.mkdir(parents=True, exist_ok=True)
+    progress = ProgressReporter(
+        work_dir,
+        0,
+        rerun_flags=build_rerun_flags(config),
+        metadata=backend._build_run_metadata(**backend.run_versions()),
+        theme=config.theme,
+        run_given=run_given(config),
+        selection=selection,
+    )
+    now = time.time()
+    progress.load([], started_wall=now, ended_wall=now)
+    progress.finalize()
 
 
 class ItemRun:

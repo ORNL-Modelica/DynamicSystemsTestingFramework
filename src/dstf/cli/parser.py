@@ -832,6 +832,19 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
             "case-sensitive. Default: every test.",
         ),
     ),
+    "include_skipped": (
+        ("--include-skipped",),
+        dict(
+            action="store_true",
+            help="{what} the tests marked skip for this backend and OS (`skip` "
+            "or `backends` in their test_spec.json entry) like any other, each "
+            "carrying its mark: a marked test still never changes the exit "
+            "code, and after the report one line each says whether its mark "
+            "can go. With --accept they are stored too. Default: a marked "
+            "test is not {not_what}, reads SKIPPED with its reason, and an "
+            "accept stores nothing of it.",
+        ),
+    ),
     "package": (
         ("--package",),
         dict(
@@ -1078,10 +1091,12 @@ READS: dict[str, tuple[str, ...]] = {
         "merge",
         "rerun",
         "changed_since",
+        "include_skipped",
     ),
     "compare": (
         *_ALL,
         *_SELECT,
+        "include_skipped",
         "tolerance",
         "default_points",
         *_REPORTS,
@@ -1389,13 +1404,19 @@ def _add_run(tree: _Tree, top) -> None:
             verdicts.json (`selection`), and in `dstf summary`.
 
             A test marked skip for this backend and OS (`skip` or
-            `backends` in its test_spec.json entry) reads SKIPPED with its
-            reason; a test that carries a mark never changes the exit code.
+            `backends` in its test_spec.json entry) is not simulated: it
+            reads SKIPPED with its reason, --rerun never chooses it,
+            --changed-since does not ask what it uses, and --accept stores
+            nothing of it. The run's start says how many tests it leaves
+            out; a run of every test their marks let run is a full run.
+            --include-skipped runs them. A test that carries a mark never
+            changes the exit code.
 
             Exit code: 0 when every test that ran passed, and with nothing
-            to run: no test is in --rerun's categories, or no test uses
-            what changed since --changed-since's REV (then nothing is
-            written, not even the file --output names); 1 when a test
+            to run: no test is in --rerun's categories, no test uses what
+            changed since --changed-since's REV (then nothing is written,
+            not even the file --output names), or every test chosen is
+            marked skip; 1 when a test
             failed, failed to simulate or timed out, when nothing ran at
             all, when an accept skipped a test, or when the simulator could
             not be asked what the tests use; 2 for a config error, and for
@@ -1413,6 +1434,7 @@ def _add_run(tree: _Tree, top) -> None:
         creates=True,
     )
     _offer_selection(node)
+    _offer(node, "include_skipped", fill={"what": "Run and score", "not_what": "run"})
     _offer_scoring(node)
     _offer_reports(node)
     # Review-then-accept (-i) and accept-everything (--accept) are mutually
@@ -1437,7 +1459,9 @@ def _add_run(tree: _Tree, top) -> None:
         action="store_true",
         help="Store this run's results as the new baselines in the reference "
         "root, and score nothing. A test whose simulation failed is skipped "
-        "and named, and the exit code is then 1. Not with -i.",
+        "and named, and the exit code is then 1. A test marked skip is not "
+        "run and nothing of it is stored: a note names it, and the exit code "
+        "stays 0 (--include-skipped runs and stores it). Not with -i.",
     )
     _offer(
         node,
@@ -1496,8 +1520,10 @@ def _add_run(tree: _Tree, top) -> None:
         type=_review_filter_arg,  # a parse-time check
         help="Simulate again only the tests the last run left in these "
         f"categories — ONE comma-separated argument of: {_CATEGORIES} — and "
-        "report the whole suite (it implies --merge). Default, with no "
-        "value: failed. Exit 0 when no test is in them.",
+        "report the whole suite (it implies --merge). A test marked skip is "
+        "never chosen, whatever its last result (--include-skipped chooses "
+        "it as any other). Default, with no value: failed. Exit 0 when no "
+        "test is in them.",
     )
     node.add_argument(
         "--changed-since",
@@ -1507,9 +1533,11 @@ def _add_run(tree: _Tree, top) -> None:
         "files that differ between the git revision REV (a branch, a tag, a "
         "commit: main, v1.3.0, HEAD~1) and the files on disk, uncommitted "
         "edits included: the tests `dstf uses --since REV` lists, of those "
-        "--filter and --package leave. Not a full run, and it says so. Exit "
-        "0, with nothing written, when no test uses what changed. Default: "
-        "every test.",
+        "--filter and --package leave. A test marked skip is not asked and "
+        "gets no row; it is counted on a line of its own (--include-skipped "
+        "asks it as any other). Not a full run, and it says so, unless it "
+        "runs every test the marks let run. Exit 0, with nothing written, "
+        "when no test uses what changed. Default: every test.",
     )
 
 
@@ -1535,6 +1563,10 @@ def _add_compare(tree: _Tree, top) -> None:
             (`selection`, marked `compare`), and in `dstf summary`. Without
             them it says what the last run said.
 
+            A test marked skip for this backend and OS reads SKIPPED with
+            its reason, whatever its last result, and --accept stores
+            nothing of it; --include-skipped scores it.
+
             Exit code: as `dstf run`.
             """,
         examples=(
@@ -1546,6 +1578,7 @@ def _add_compare(tree: _Tree, top) -> None:
         creates=True,
     )
     _offer_selection(node)
+    _offer(node, "include_skipped", fill={"what": "Score", "not_what": "scored"})
     _offer_scoring(node)
     _offer_reports(node)
     _offer(
@@ -1585,7 +1618,9 @@ def _add_compare(tree: _Tree, top) -> None:
         help="Store the last run's results as the new baselines in the "
         "reference root, without simulating again, and score nothing. A test "
         "the run recorded as failed or timed out is skipped and named, and "
-        "the exit code is then 1.",
+        "the exit code is then 1. Nothing is stored of a test marked skip: a "
+        "note names it, and the exit code stays 0 (--include-skipped stores "
+        "it).",
     )
 
 

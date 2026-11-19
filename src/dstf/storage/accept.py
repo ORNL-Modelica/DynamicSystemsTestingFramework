@@ -4,6 +4,7 @@ call."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,7 +17,9 @@ from ..comparison.comparator import (
     refused_base_tolerance,
 )
 from ..config import Config
+from ..discovery.marks import SkipMark
 from ..discovery.test_registry import TestModel, diagnostic_names
+from ..reporting.status import marked_words
 from .baseline import ReferenceFile
 from .batch_manifest import BatchManifest, unfinished_run_models
 from .reference_store import ReferenceStore
@@ -74,6 +77,14 @@ def simulate_only_note(model_ids: list[str]) -> str | None:
     if not model_ids:
         return None
     return f"Simulate-only, nothing to store: {_named(model_ids)}"
+
+
+def not_stored_note(model_id: str, mark: SkipMark) -> str:
+    """``not stored: MyLib.Tank is marked skip on Python (<reason>)`` for a
+    test an accept passed over because its mark kept it from running here.
+    A note, worded apart from the skips (``Skipped N test(s):``): no
+    refusal of a result, and no exit code."""
+    return f"not stored: {model_id} is {marked_words(mark)} ({mark.reason})"
 
 
 def _variable_names(reference: ReferenceFile | None) -> list[str]:
@@ -209,9 +220,16 @@ def accept_run_results(
     tests: list[TestModel],
     results: dict[str, TestResult],
     work_dir: Path,
+    marks: Mapping[str, SkipMark] | None = None,
 ) -> tuple[int, list[tuple[str, str]], list[str], list[str]]:
     """:meth:`ReferenceStore.accept_results` plus two refusals, two warnings
-    and a note.
+    and two notes.
+
+    A test in ``marks`` — marked skip for this backend and OS, and not run
+    by this invocation — is not stored, whatever result is in the work
+    directory: a note says so (:func:`not_stored_note`). A command that ran
+    the marked tests (``--include-skipped``) passes no marks, and they are
+    accepted like any other.
 
     A test the batch manifest in ``work_dir`` still records as pending was
     in flight when a run was aborted: it has no recorded verdict, and its
@@ -241,8 +259,16 @@ def accept_run_results(
     written; ``accept_results``'s skips with the refusals appended — the
     refused tests in the order given, then the unfinished ones in model
     order; the warnings in the order written: per test, what it lost, then
-    its size; and the lines that are neither — the simulate-only tests'.
+    its size; and the lines that are neither — the marked tests', then the
+    simulate-only tests'.
     """
+    marks = marks or {}
+    passed_over = [
+        not_stored_note(t.model_id, marks[t.model_id])
+        for t in tests
+        if t.model_id in marks
+    ]
+    tests = [t for t in tests if t.model_id not in marks]
     unfinished = unfinished_run_models(work_dir) & {t.model_id for t in tests}
     refused = {
         t.model_id: reason
@@ -288,5 +314,5 @@ def accept_run_results(
             )
             if warning is not None
         ],
-        [note] if note is not None else [],
+        [*passed_over, *([note] if note is not None else [])],
     )

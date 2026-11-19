@@ -101,7 +101,32 @@ def cmd_discover(args: argparse.Namespace) -> int:
     for model_id, sentence in refused:
         print(f"{model_id} will not be scored: {sentence}")
 
+    _print_marks(tests, config)
     return 0
+
+
+def _print_marks(tests: list, config) -> None:
+    """Every skip mark of ``tests``, on every backend, one line each in
+    the words a run says it in; the ones that keep their test from
+    running on this backend and OS end ``— not run here``."""
+    from ..discovery.marks import every_skip_mark, skip_reason
+    from ..reporting.status import skipped_words
+
+    lines, here = [], 0
+    for t in tests:
+        applies = skip_reason(t, config)
+        here += applies is not None
+        for mark in every_skip_mark(t):
+            tail = " — not run here" if mark == applies else ""
+            lines.append(f"  {t.model_id}: {skipped_words(mark)}{tail}")
+    if not lines:
+        return
+    tests_word = "test" if here == 1 else "tests"
+    print(
+        f"\nMarked skip ({here} {tests_word} not run on {config.backend}/{config.os_name}):"
+    )
+    for line in lines:
+        print(line)
 
 
 #: `baseline export --format`: each format and the file it is written to

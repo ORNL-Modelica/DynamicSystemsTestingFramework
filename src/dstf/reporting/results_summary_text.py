@@ -7,7 +7,8 @@ cell PASS over the run's total, then in one parenthesis the other status
 words' counts (NO_REF's as ``no baseline``) and, with a base, ``K also fail
 on <base>`` of a cell's failures and ``J also have none on <base>`` of its
 tests with no baseline, and last ``· N of M tests run`` for a run of fewer
-than the project's tests (:attr:`Cell.selected`), ``· N of M tests scored``
+than the project's tests (:attr:`Cell.selected`; ``, K marked skip`` after it
+for the tests chosen that a mark kept from running), ``· N of M tests scored``
 for such a compare (:attr:`Cell.compared`) — under it one key line, then one folded list per
 cell with tests that did not pass, its summary line ``<Backend>/<os>,
 <label>: N not passing, K also fail on <base>; M no baseline``. A list's
@@ -72,6 +73,8 @@ def _matrix_cell(summary: Summary, cell: Cell | None) -> str:
     if cell.selected:
         n, of = cell.selected
         text += f" · {n} of {of} tests {'scored' if cell.compared else 'run'}"
+        if cell.skipped:
+            text += f", {cell.skipped} {MARKED}"
     return text
 
 

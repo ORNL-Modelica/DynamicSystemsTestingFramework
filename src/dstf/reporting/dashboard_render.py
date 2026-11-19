@@ -458,7 +458,13 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
     where there are any, are scored". A changed file no class could be
     asked for (``every_test``) ran each test the other flags left: after
     them, "1 file that no class stores changed since REV, so each of them
-    was run"."""
+    was run".
+
+    The tests the flags chose that a mark kept from running (``skipped``)
+    are counted apart — "…, and 1 marked skip was not run" — and a run of
+    every test its marks let run is full: no notice. A run whose every
+    chosen test is marked says so: "None of the 3 tests was run: the one
+    that --filter F matches is marked skip"."""
     if not isinstance(selection, Mapping):
         return None
     parts = _notice_body(selection, mode)
@@ -471,7 +477,12 @@ def run_notice(selection: object, mode: str) -> list[dict] | None:
 def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
     """:func:`run_notice`'s sentence after its head."""
     n, of = selection.get("selected"), selection.get("of")
-    if not (_whole(n) and _whole(of) and n < of):
+    # The tests a mark kept from running, counted apart (a block written
+    # before the key existed has none): a run of every test its marks let
+    # run is a full run.
+    k = selection.get("skipped", 0)
+    k = k if _whole(k) else 0
+    if not (_whole(n) and _whole(of) and n + k < of):
         return None
     rev = selection.get("changed_since")
     files = selection.get("files")
@@ -488,14 +499,20 @@ def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
 
     # A compare scores the tests it names and simulates none.
     did = "scored" if selection.get("compare") is True else "run"
-    rest = of - n
+    rest = of - n - k
     if mode == "live":
         ran = f"is being {did}" if n <= 1 else f"are being {did}"
         left = f"is not {did}" if rest == 1 else f"are not {did}"
+        marked_left = f"is not {did}" if k == 1 else f"are not {did}"
+        are_marked = "is marked skip" if k == 1 else "are marked skip"
     else:
         ran = f"was {did}" if n <= 1 else f"were {did}"
         left = f"was not {did}" if rest == 1 else f"were not {did}"
+        marked_left = f"was not {did}" if k == 1 else f"were not {did}"
+        are_marked = "is marked skip" if k == 1 else "are marked skip"
     merged = selection.get("merged") is True
+    # The tests the flags chose that a mark kept from running.
+    marked = f", and {k} marked skip {marked_left}" if k else ""
     others = f". The other {rest} {left}"
     if merged:
         # Only those the work directory holds a last result of: a --merge
@@ -516,8 +533,16 @@ def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
         # None ran (a --rerun with nothing to rerun): no "ones" to name,
         # and every test is among the others.
         parts = [text(f"None of the {of} tests {ran}")]
+        if k and (within or clauses) and not rerun:
+            # Every test the flags chose is marked skip.
+            parts += [text(": the one" if k == 1 else f": the {k}"), *within]
+            parts += [*_that(clauses, text), text(f" {are_marked}")]
+            return [*parts, text(others)]
         if within or clauses:
             parts += [text(": there is none"), *within, *_that(clauses, text)]
+        if k:
+            parts.append(text(f"; {k} marked skip {marked_left}"))
+            return [*parts, text(others)]
         last = " Their last results, where there are any, are scored." if merged else ""
         return [*parts, text("." + last)]
     changed = f"{files} file{'' if files == 1 else 's'}"
@@ -540,7 +565,7 @@ def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
         else:
             parts += [text(f"{changed} changed since "), code(str(rev))]
             parts.append(text(f", among them one {what}, so {each} {one_ran}"))
-        parts.append(text(others))
+        parts.append(text(marked + others))
         return parts
     if rev is not None and unasked == n:
         # None of the tests run could be asked: none is said to use it.
@@ -555,7 +580,7 @@ def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
                 f"the simulator could not say what {they}, and {changed} changed since "
             ),
             code(str(rev)),
-            text(others),
+            text(marked + others),
         ]
         return parts
     head = n - unasked
@@ -565,14 +590,14 @@ def _notice_body(selection: Mapping, mode: str) -> list[dict] | None:
             [text(f"{uses} what changed since "), code(str(rev)), text(f" ({changed})")]
         )
     if not (within or clauses):
-        return [text(f"{n} of {of} tests {ran}{others}")]
+        return [text(f"{n} of {of} tests {ran}{marked}{others}")]
     parts = [text(f"{n} of {of} tests {ran}: ")]
     parts += [text("the one" if head == 1 else "the ones"), *within]
     parts += _that(clauses, text)
     if unasked:
         they = "it uses" if unasked == 1 else "they use"
         parts.append(text(f", and {unasked} that could not be asked what {they}"))
-    parts.append(text(others))
+    parts.append(text(marked + others))
     return parts
 
 

@@ -1146,12 +1146,38 @@ def compare_one(
     default_tolerance: float = DEFAULT_TOLERANCE,
     default_points: bool = False,
     dataset_kind: DatasetType = DatasetType.TIME_SERIES,
+    *,
+    mark: SkipMark | None = None,
+    include_skipped: bool = False,
 ) -> TestComparison:
     """One test's comparison, short-circuits included: no result is NOT RUN
     (``ran=False``, D145) and a failed simulation SIM_FAIL; no baseline is
     NO_REF unless the test is simulate-only or every leaf scores without a
     reference. ``compare_all`` is this per test; the authoring Session's
-    rescore is this for one."""
+    rescore is this for one.
+
+    ``mark``: the mark that keeps the test from running on this backend
+    and OS (``discovery.marks.skip_reason``), or None. A marked test is
+    :func:`skipped`, whatever ``result`` is; with ``include_skipped`` — the
+    test was run anyway — it is scored like any other and carries its
+    mark, which keeps it from failing a run
+    (``reporting.status.counts_against``)."""
+    if mark is not None and not include_skipped:
+        return skipped(test, mark)
+    comp = _scored(test, result, store, default_tolerance, default_points, dataset_kind)
+    comp.mark = mark
+    return comp
+
+
+def _scored(
+    test: TestModel,
+    result: TestResult | None,
+    store: ReferenceStore,
+    default_tolerance: float,
+    default_points: bool,
+    dataset_kind: DatasetType,
+) -> TestComparison:
+    """:func:`compare_one` of a test no mark keeps from running."""
     if result is None:
         # No result exists: the reader hands back none for a test with no
         # manifest entry or one its last run never finished
@@ -1310,8 +1336,8 @@ def skipped(test: TestModel, mark: SkipMark) -> TestComparison:
     backend and OS: SKIPPED (``reporting.status``), with the mark's words
     as its message. Nothing is read — a result an earlier run left on disk
     is not this test's verdict. THE one place a SKIPPED comparison is
-    built: ``compare_all`` builds it for every marked test unless asked to
-    score them."""
+    built: :func:`compare_one` builds it for a marked test unless it was
+    run anyway."""
     from ..reporting.status import skipped_words
 
     return TestComparison(
@@ -1342,28 +1368,23 @@ def compare_all(
     :func:`compare_test`.
 
     ``marks``: the tests marked skip for this backend and OS, by model id
-    (``discovery.marks.skip_reason``). A marked test is :func:`skipped`,
-    whatever *results* holds of it; with ``include_skipped`` it is compared
-    like any other and carries its mark, which keeps it from failing the
-    run (``reporting.status.counts_against``).
+    (``discovery.marks.marks_of``), each handed to :func:`compare_one`
+    with ``include_skipped``: a marked test is :func:`skipped`, whatever
+    *results* holds of it, unless the command ran it anyway.
     """
     import sys as _sys
 
     print(f"Comparing {len(tests)} tests against references...", file=_sys.stderr)
-    out = []
-    for test in tests:
-        mark = (marks or {}).get(test.model_id)
-        if mark is not None and not include_skipped:
-            out.append(skipped(test, mark))
-            continue
-        comp = compare_one(
+    return [
+        compare_one(
             test,
             results.get(test.model_id),
             store,
             default_tolerance=default_tolerance,
             default_points=default_points,
             dataset_kind=dataset_kind,
+            mark=(marks or {}).get(test.model_id),
+            include_skipped=include_skipped,
         )
-        comp.mark = mark
-        out.append(comp)
-    return out
+        for test in tests
+    ]

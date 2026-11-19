@@ -181,6 +181,7 @@ def test_the_run_s_files_say_what_it_was_selected_by(proj, capsys):
         "commits": [proj.short],
         "files": 1,
         "selected": 1,
+        "skipped": 0,
         "of": 14,
         "could_not_be_asked": 0,
     }
@@ -209,7 +210,7 @@ def test_the_run_s_files_say_what_it_was_selected_by(proj, capsys):
     # a later run without the flag: its own block, nothing of the revision
     rc, out, err = _run(proj, capsys, "--filter", SIMPLE)
     assert rc == 0, out + err
-    block = {"filter": SIMPLE, "selected": 1, "of": 14}
+    block = {"filter": SIMPLE, "selected": 1, "skipped": 0, "of": 14}
     assert _read(proj.work, "status.json")["selection"] == block
     assert _read(proj.work, "verdicts.json")["selection"] == block
     assert _painted(proj.work / "dashboard.html") == (
@@ -234,6 +235,7 @@ def test_the_filter_narrows_first_and_the_block_counts_the_project_s_tests(
         "commits": [proj.short],
         "files": 1,
         "selected": 1,
+        "skipped": 0,
         "of": 14,
         "could_not_be_asked": 0,
         "filter": SIMPLE,
@@ -600,6 +602,7 @@ def test_one_backend_run_twice_records_null_the_second_time(proj):
         "commits": ["abc1234"],
         "files": 1,
         "selected": 1,
+        "skipped": 0,
         "of": 14,
         "could_not_be_asked": 0,
     }

@@ -15,6 +15,7 @@ OS ``config.os_name``: the two parts of ``<reference_root>/<Backend>/<os>/``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -60,6 +61,40 @@ def skip_reason(test: TestModel, config: Config) -> SkipMark | None:
     if test.skip is not None:
         return SkipMark(EVERY_BACKEND, test.skip)
     return None
+
+
+def marks_of(tests: Iterable[TestModel], config: Config) -> dict[str, SkipMark]:
+    """The tests of ``tests`` a mark keeps from running on ``config``'s
+    backend and OS, by model id, each with its mark (:func:`skip_reason`):
+    what a command hands ``compare_all`` and an accept."""
+    return {
+        t.model_id: mark for t in tests if (mark := skip_reason(t, config)) is not None
+    }
+
+
+def split_marked(
+    tests: Iterable[TestModel], marks: Mapping[str, SkipMark]
+) -> tuple[list[TestModel], list[TestModel]]:
+    """``tests`` split, in their order, into those to run and those
+    ``marks`` keeps from running: what ``dstf run`` does before anything
+    asks the simulator or chooses a rerun. ``run_pipeline`` simulates the
+    tests it is given, marks not applied: a caller of it splits here."""
+    to_run: list[TestModel] = []
+    marked: list[TestModel] = []
+    for test in tests:
+        (marked if test.model_id in marks else to_run).append(test)
+    return to_run, marked
+
+
+def every_skip_mark(test: TestModel) -> list[SkipMark]:
+    """Every skip mark ``test`` carries, on any backend: the entry's own,
+    then each ``backends`` block's that says ``skip``, in the file's order
+    — what ``dstf discover`` lists."""
+    marks = [SkipMark(EVERY_BACKEND, test.skip)] if test.skip is not None else []
+    for where, block in (test.backend_marks or {}).items():
+        if block.get("skip") is not None:
+            marks.append(SkipMark(where, block["skip"]))
+    return marks
 
 
 def timeout_for(test: TestModel, config: Config) -> int:

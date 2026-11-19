@@ -118,12 +118,20 @@ class Cell:
     @property
     def selected(self) -> tuple[int, int] | None:
         """``(N, M)`` when the run simulated N of M tests, or the compare
-        scored N of them, N < M: not a full run (:attr:`compared` says
-        which). None otherwise."""
+        scored N of them, and those with the K a mark kept from running
+        (:attr:`skipped`) are fewer than M: not a full run (:attr:`compared`
+        says which). None otherwise."""
         sel = self.selection or {}
         n, of = sel.get("selected"), sel.get("of")
         whole = all(isinstance(v, int) and not isinstance(v, bool) for v in (n, of))
-        return (n, of) if whole and 0 <= n < of else None
+        return (n, of) if whole and n >= 0 and n + self.skipped < of else None
+
+    @property
+    def skipped(self) -> int:
+        """K: the tests the run's flags chose that a mark kept from running
+        (the block's ``skipped``; 0 in a file written before the key)."""
+        k = (self.selection or {}).get("skipped", 0)
+        return k if isinstance(k, int) and not isinstance(k, bool) and k > 0 else 0
 
     @property
     def compared(self) -> bool:

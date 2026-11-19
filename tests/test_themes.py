@@ -655,11 +655,12 @@ class TestTheThemeIsHandedDown:
         `theme=` is said but wrong — a literal `"default"`. Those are held
         by the tests that render under the dark theme and read the page."""
         calls = _render_calls()
-        # The eight of `cli/run_cmds.py`, the tool's two, the pipeline's,
+        # The nine of `cli/run_cmds.py`, the tool's two, the pipeline's
+        # page and the reporter it builds for a run that simulated nothing,
         # the reporter's own and its construction, the suite's and the
         # review's page, and every figure built: the report's two, the
         # Session's, the plot card's.
-        assert len(calls) == 23, [(p, n) for p, n, _ in calls]
+        assert len(calls) == 25, [(p, n) for p, n, _ in calls]
         silent = [
             (path, line)
             for path, line, call in calls

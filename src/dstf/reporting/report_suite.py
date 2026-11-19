@@ -800,12 +800,15 @@ def _build_per_test_args(
     from .overlay_loader import load_overlays
 
     model_id = comp.model_id
-    result = results.get(model_id)
     test = test_lookup.get(model_id)
     ref_data = store.get_reference(model_id)
     meta = manifest_meta_by_model.get(model_id, {})
     test_key = meta.get("test_key")
-    last_run_at = meta.get("last_run_at")
+    # A SKIPPED test's mark kept it from running: nothing an earlier run of
+    # it left — its result, its files, when it ran — is drawn on its page.
+    skipped = comp.skipped
+    result = None if skipped else results.get(model_id)
+    last_run_at = None if skipped else meta.get("last_run_at")
     # Load every registered overlay for this model (soft_checks +
     # companions). Failures are absorbed into Overlay.status so the
     # report never breaks on a moved/renamed companion file.
@@ -813,7 +816,7 @@ def _build_per_test_args(
     # sibling-backend companions (visual-only pre-accept cross-check).
     overlays = load_overlays(store, model_id, config=config)
 
-    test_dir = config.work_dir / test_key if test_key else None
+    test_dir = config.work_dir / test_key if test_key and not skipped else None
 
     # The page's plots, through the one helper (it derives them from the
     # tree itself, so this path and cli/review.py cannot drift).
