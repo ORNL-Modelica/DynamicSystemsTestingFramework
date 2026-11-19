@@ -13,7 +13,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from ..backends.pool import ItemState
-from ..reporting.rows import TestRow, summary_fields
+from ..reporting.rows import TestRow, summary_fields, verdict_message
 from ..reporting.status import (
     QUEUED,
     RUNNING,
@@ -80,7 +80,7 @@ def suite_row(
             sim_wall=s["sim_wall"],
             sim_cpu=s["sim_cpu"],
             total_wall=s["total_wall"],
-            message=comp.error_message,
+            message=verdict_message(comp, comp.error_message),
         )
     if model_id in failed:
         return replace(row, status=SIM_FAIL, message=f"{SCORING_FAILED} (see the log)")

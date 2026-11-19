@@ -208,7 +208,9 @@ def select_since(
 
 def cmd_uses(args: argparse.Namespace) -> int:
     """List, for each class named or changed since ``--since``, the tests
-    whose model uses it."""
+    whose model uses it. A test marked skip for this backend and OS is
+    flagged on its line (``run`` would not run it); ``--output`` lists it
+    as any other."""
     from ..discovery.uses import is_class, users
 
     config = _build_config(args)
@@ -270,6 +272,17 @@ def cmd_uses(args: argparse.Namespace) -> int:
     # holds nothing when the simulator could not be asked.
     for line in block:
         print(line)
+    # A test marked skip for this backend and OS is said so on its line:
+    # `run` would not run it. --output still lists it.
+    from ..discovery.marks import marks_of
+    from ..reporting.status import skipped_words
+
+    marks = marks_of(tests, config)
+
+    def flagged(model_id: str) -> str:
+        mark = marks.get(model_id)
+        return model_id if mark is None else f"{model_id} ({skipped_words(mark)})"
+
     total = len(tests)
     union: set[str] = set()
     unasked: list[str] = []
@@ -287,12 +300,12 @@ def cmd_uses(args: argparse.Namespace) -> int:
             continue
         print(f"{name} is used by {_among(n, total)}:")
         for test in using:
-            print(f"  {test}")
+            print(f"  {flagged(test)}")
     if unasked:
         each = "it" if len(classes) == 1 else "each"
         print(f"Could not be asked (counted as using {each}):")
         for test in unasked:
-            print(f"  {test} — {answers[test]}")
+            print(f"  {flagged(test)} — {answers[test]}")
     if len(classes) > 1:
         k = len(union)
         if k == 0:

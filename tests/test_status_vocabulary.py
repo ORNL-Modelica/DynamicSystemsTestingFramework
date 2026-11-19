@@ -1,4 +1,4 @@
-"""One status vocabulary: the verdicts, NOT RUN and the three live states.
+"""One status vocabulary: the verdicts, NOT RUN, SKIPPED and the live states.
 
 Every surface that names a test's state — the dashboard's rows and pills,
 the per-test report header, the tool's Suite table — reads its word and
@@ -19,6 +19,7 @@ def test_every_status_has_one_word_and_one_class():
         "RUNNING": "running",
         "TIMED_OUT": "timed-out",
         "NOT RUN": "not-run",
+        "SKIPPED": "skipped",
         # D150: a cancelled run left no result, and is counted as NOT RUN
         "CANCELLED": "not-run",
     }
@@ -72,6 +73,7 @@ def test_the_order_pills_and_sorting_use():
         "NO_REF",
         "TIMED_OUT",
         "NOT RUN",
+        "SKIPPED",
         "CANCELLED",
     )
 
@@ -102,7 +104,8 @@ def test_a_cancelled_row_keeps_its_word_over_not_run_and_no_other_verdict():
 
 
 def test_the_statuses_that_fail_a_run():
-    """D145: what the exit code counts. NOT RUN is not in it."""
+    """D145: what the exit code counts. NOT RUN and SKIPPED are not in it
+    (and a marked test in it counts against nothing: `counts_against`)."""
     assert st.FAILURES == frozenset({"FAIL", "SIM_FAIL"})
 
 

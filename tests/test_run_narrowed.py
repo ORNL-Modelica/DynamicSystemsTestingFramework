@@ -77,7 +77,7 @@ def test_a_run_narrowed_by_filter_says_how_many_of_the_project_s_tests_ran(
     proj, capsys
 ):
     out = _run(proj, capsys, "--filter", "*Constant*")
-    block = {"filter": "*Constant*", "selected": 1, "of": 3}
+    block = {"filter": "*Constant*", "selected": 1, "skipped": 0, "of": 3}
     assert _read(proj, "status.json")["selection"] == block
     assert _read(proj, "verdicts.json")["selection"] == block
     assert "\nResults: 1/1 passed (1 of 3 tests run; not a full run)\n" in out
@@ -100,6 +100,7 @@ def test_a_run_narrowed_by_package_says_so(proj, capsys):
     assert _read(proj, "status.json")["selection"] == {
         "package": SIMPLE_RAMP,
         "selected": 1,
+        "skipped": 0,
         "of": 3,
     }
     assert _notice(proj) == (
@@ -123,6 +124,7 @@ def test_filter_and_package_together_are_both_recorded(proj, capsys):
         "filter": f"{SIMPLE_RAMP},{CONSTANT_CSV}",
         "package": "PythonTestingLib.Examples",
         "selected": 2,
+        "skipped": 0,
         "of": 3,
     }
     assert _notice(proj) == (
@@ -156,7 +158,7 @@ def test_a_rerun_says_so_and_that_the_others_were_scored_on_their_last_results(
     )
     out = capsys.readouterr().out
     assert rc == 1, out
-    block = {"rerun": "failed", "merged": True, "selected": 1, "of": 3}
+    block = {"rerun": "failed", "merged": True, "selected": 1, "skipped": 0, "of": 3}
     assert _read(proj, "status.json")["selection"] == block
     verdicts = _read(proj, "verdicts.json")
     assert verdicts["selection"] == block
@@ -187,6 +189,7 @@ def test_a_merged_filter_run_records_the_merge(proj, capsys):
         "filter": SIMPLE_RAMP,
         "merged": True,
         "selected": 1,
+        "skipped": 0,
         "of": 3,
     }
     assert _read(proj, "verdicts.json")["totals"]["total"] == 3
@@ -197,7 +200,7 @@ def test_a_merge_with_no_earlier_results_claims_none_were_scored(proj, capsys):
     """A fresh work directory holds no last result: the run scores only
     the test it ran, and nothing says the others were scored."""
     out = _run(proj, capsys, "--filter", SIMPLE_RAMP, "--merge")
-    block = {"filter": SIMPLE_RAMP, "selected": 1, "of": 3}
+    block = {"filter": SIMPLE_RAMP, "selected": 1, "skipped": 0, "of": 3}
     assert _read(proj, "status.json")["selection"] == block
     verdicts = _read(proj, "verdicts.json")
     assert (verdicts["selection"], verdicts["totals"]["total"]) == (block, 1)
@@ -222,6 +225,7 @@ def test_a_merge_over_some_earlier_results_says_only_those_are_scored(proj, caps
         "filter": SIMPLE_RAMP,
         "merged": True,
         "selected": 1,
+        "skipped": 0,
         "of": 3,
     }
     assert _read(proj, "verdicts.json")["totals"]["total"] == 2
@@ -250,6 +254,7 @@ def test_a_rerun_that_accepts_scores_nothing_and_claims_no_merge(proj, capsys):
     assert _read(proj, "status.json")["selection"] == {
         "rerun": "failed",
         "selected": 1,
+        "skipped": 0,
         "of": 3,
     }
     assert _notice(proj) == (
@@ -302,7 +307,13 @@ def test_a_compare_narrowed_by_filter_says_how_many_it_scored(proj, capsys):
     and a later compare without a filter reads that again: a full run."""
     _run(proj, capsys)
     out = _compare(proj, capsys, "--filter", "*Constant*")
-    block = {"filter": "*Constant*", "selected": 1, "of": 3, "compare": True}
+    block = {
+        "filter": "*Constant*",
+        "selected": 1,
+        "skipped": 0,
+        "of": 3,
+        "compare": True,
+    }
     verdicts = _read(proj, "verdicts.json")
     assert (verdicts["selection"], verdicts["totals"]["total"]) == (block, 1)
     assert "\nResults: 1/1 passed (1 of 3 tests scored; not a full compare)\n" in out
@@ -330,7 +341,7 @@ def test_a_compare_of_another_filter_than_the_run_s_names_what_it_scored(proj, c
     not."""
     _run(proj, capsys, "--filter", "*Constant*")
     out = _compare(proj, capsys, "--filter", "*Ramp*", rc=1)
-    block = {"filter": "*Ramp*", "selected": 1, "of": 3, "compare": True}
+    block = {"filter": "*Ramp*", "selected": 1, "skipped": 0, "of": 3, "compare": True}
     verdicts = _read(proj, "verdicts.json")
     assert verdicts["selection"] == block
     assert [(t["model_id"], t["status"]) for t in verdicts["tests"]] == [
@@ -349,6 +360,7 @@ def test_a_compare_of_another_filter_than_the_run_s_names_what_it_scored(proj, c
     assert _read(proj, "status.json")["selection"] == {
         "filter": "*Constant*",
         "selected": 1,
+        "skipped": 0,
         "of": 3,
     }
 
@@ -373,7 +385,13 @@ def test_a_compare_narrowed_by_package_says_so_in_its_html_file(proj, capsys, tm
         "-o",
         str(page),
     )
-    block = {"package": SIMPLE_RAMP, "selected": 1, "of": 3, "compare": True}
+    block = {
+        "package": SIMPLE_RAMP,
+        "selected": 1,
+        "skipped": 0,
+        "of": 3,
+        "compare": True,
+    }
     assert _read(proj, "verdicts.json")["selection"] == block
     found = _NOTICE.search(page.read_text(encoding="utf-8"))
     assert found is not None
@@ -400,7 +418,7 @@ def test_a_rerun_with_nothing_to_rerun_says_what_this_invocation_ran(proj, capsy
     _run(proj, capsys, "--filter", SIMPLE_RAMP)
     out = _run(proj, capsys, "--rerun")
     assert "Nothing to rerun (no tests in categories: failed)" in out
-    block = {"rerun": "failed", "merged": True, "selected": 0, "of": 3}
+    block = {"rerun": "failed", "merged": True, "selected": 0, "skipped": 0, "of": 3}
     assert _read(proj, "verdicts.json")["selection"] == block
     assert "(0 of 3 tests run; not a full run)\n" in out
     assert _notice(proj) == (
@@ -415,5 +433,6 @@ def test_a_rerun_with_nothing_to_rerun_says_what_this_invocation_ran(proj, capsy
     assert _read(proj, "status.json")["selection"] == {
         "filter": SIMPLE_RAMP,
         "selected": 1,
+        "skipped": 0,
         "of": 3,
     }

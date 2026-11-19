@@ -50,6 +50,7 @@ import numpy as np
 
 from ...config import Config
 from ...config_shape import Setting
+from ...discovery.marks import limit_hint, timeout_for
 from ...discovery.test_registry import TestModel, diagnostic_names
 from ...discovery.unit_tests import unit_test_variables
 from .. import register
@@ -264,9 +265,7 @@ class FmpyBackend(Backend):
         if self.progress:
             self.progress.on_start(test_key)
 
-        timeout = float(
-            test.timeout if test.timeout is not None else self.config.timeout
-        )
+        timeout = float(timeout_for(test, self.config))
 
         wall_start = time.monotonic()
         try:
@@ -342,7 +341,8 @@ class FmpyBackend(Backend):
                 msg = timeout_message(
                     f"FMPy simulation exceeded {timeout}s timeout; the worker "
                     f"thread continues until the FMU returns and can't be "
-                    f"force-killed in-process"
+                    f"force-killed in-process",
+                    limit_hint(test, self.config),
                 )
                 logger.warning("Test %s: %s", test.model_id, msg)
                 if self.progress:

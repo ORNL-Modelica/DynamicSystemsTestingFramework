@@ -300,20 +300,17 @@ class TestResult:
     run_reason: bool = False
 
 
-#: Appended to every timed-out result's ``error_message``, so the escape hatch
-#: travels with the failure to wherever it is read — the dispatcher's progress
-#: line, the console report, the dashboard detail. ``--timeout`` only moves the
-#: global default; one genuinely slow model wants the per-test override, and a
-#: user who has just hit a timeout is exactly who needs to be told that.
-TIMEOUT_OVERRIDE_HINT = (
-    "raise it per test with simulation.timeout in test_spec.json, "
-    "or globally with --timeout"
-)
+def timeout_message(what: str, hint: str | None) -> str:
+    """``"<what> (<hint>)"`` — the one phrasing for a timeout failure. The
+    hint travels with the failure to wherever it is read — the dispatcher's
+    progress line, the console report, the dashboard detail — and names the
+    limit that fired (``discovery.marks.limit_hint``): a user who has just
+    hit a timeout is exactly who needs to be told which key to raise. None
+    for a limit no one key sets (a batch's, its tests' added up): the hint
+    names every key (``marks.ANY_LIMIT_HINT``)."""
+    from ..discovery.marks import ANY_LIMIT_HINT
 
-
-def timeout_message(what: str) -> str:
-    """``"<what> (<hint>)"`` — the one phrasing for a timeout failure."""
-    return f"{what} ({TIMEOUT_OVERRIDE_HINT})"
+    return f"{what} ({hint if hint is not None else ANY_LIMIT_HINT})"
 
 
 @dataclass

@@ -8,6 +8,26 @@ this file says when they do.
 
 ## [Unreleased]
 
+### Added
+
+- A test can be marked `skip` with a reason in its `test_spec.json` entry, on
+  every backend or, under the new `backends` key, on one backend or one
+  backend and OS (`"OpenModelica/windows"`): it is not simulated there and
+  reads `SKIPPED` with its reason on the console, the dashboard, JUnit,
+  `verdicts.json`, `dstf summary` and `dstf author`.
+- A per-backend time limit: `timeout` in a `backends` block wins over
+  `simulation.timeout` and `--timeout`. A timed-out test's message names the
+  limit that stopped it (under `--batch` Dymola's, the batch's: every key).
+- A marked test never changes the exit code. `--include-skipped` on `run`
+  and `compare` runs and scores the marked tests anyway, and says of each
+  whether its mark can go.
+- `verdicts.json` gives each test its `mark` and a `SKIPPED` total, and its
+  `selection` block counts the marked tests apart (`skipped`); `total`
+  leaves SKIPPED tests out.
+- `dstf discover` lists every mark; `dstf uses` flags a marked test;
+  `--rerun` and `--changed-since` leave marked tests out; an accept stores
+  nothing of a marked test it did not run.
+
 ### Fixed
 
 - `dstf manifest cleanup` no longer ends with "every entry and directory

@@ -310,6 +310,24 @@ class TestFmpyBackendFixes:
             rr.timed_out is True
         )  # finding 73: was False → dashboard/console disagreed
 
+    def test_a_backend_time_limit_wins_over_the_test_s(self, tmp_path, monkeypatch):
+        """``simulation.timeout`` 60 and ``backends.FMPy.timeout`` 1: the
+        simulation is given 1 s."""
+
+        def slow_sim(**kw):
+            time.sleep(1.5)
+            return None
+
+        backend = self._make_backend(tmp_path, monkeypatch, slow_sim)
+        backend.config.backend, backend.config.os_name = "FMPy", "linux"
+        test = self._make_fmu_test(tmp_path, timeout=60)
+        test.backend_marks = {"FMPy": {"timeout": 1}}
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
+        assert rr.timed_out is True
+        assert (rr.error_message or "").startswith(
+            "FMPy simulation exceeded 1.0s timeout"
+        )
+
     def test_save_oserror_fails_single_test_not_run(self, tmp_path, monkeypatch):
         backend = self._make_backend(tmp_path, monkeypatch, lambda **kw: object())
         monkeypatch.setattr(

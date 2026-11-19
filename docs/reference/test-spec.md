@@ -18,6 +18,14 @@ tables is an error that names it.
 ```{dstf-keys} spec-simulation
 ```
 
+### On one backend
+
+What holds for a test on one backend, or on one backend and operating
+system. The most specific block wins.
+
+```{dstf-keys} spec-backend
+```
+
 ### How it is compared
 
 ```{dstf-keys} spec-comparison

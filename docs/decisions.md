@@ -9910,3 +9910,57 @@ ConstantCsv as not run (its row: SIMULATED).
 This closes D169's "Not in this decision" item for `compare`.
 
 **Not in this decision.** The authoring tool's queue.
+
+## D171 — A test marked skip per backend, and a time limit per backend (2026-11-18)
+
+**Context.** A large library's suite, run on several backends, carries
+failures known on one of them: one session counted 29 known failures on one
+backend. Measured on that backend's lane, 17 of them timed out on every run
+and took about 1900 of its 3939 test-seconds, nearly half; four of those
+passed when run alone and only needed a longer limit than the 60 s default.
+A run that always shows the same failures hides a new one, and spends its
+time on them. DSTF had a per-test `simulation.timeout`, applied on every
+backend, and `--timeout` for a whole run, but no way to say "this test does
+not run on this backend". An earlier `skip` was a baseline status that
+nothing read but `manifest show`'s count — a "skipped" baseline was compared
+all the same — and #31 deleted it, so that a skip could be added back
+carefully. A mark belongs to the test, not its baseline: it is usually per
+backend, and the tests most worth skipping often have no baseline.
+
+**Decision.**
+
+1. *Two keys on a test_spec.json entry.* `skip`, a non-empty reason, marks
+   the test on every backend. `backends` holds a block per backend name as
+   the reference folders spell it (`OpenModelica`), or name and operating
+   system (`OpenModelica/windows`), each with `skip` and `timeout` (whole
+   seconds). The most specific wins: backend and OS, backend, the entry
+   (`skip`, `simulation.timeout`), the run (`--timeout`). An unknown backend
+   or OS, an empty reason, an empty block and a `false` are refused, naming
+   what is accepted; there is no value that clears a mark. One resolver
+   reads them (`discovery/marks.py`); a timed-out run's message names the
+   key that set its limit (`marks.limit_hint`) — but a Dymola `--batch`
+   run's, whose limit is its tests' added up (and a startup allowance),
+   set by no one key: it names every key (`marks.ANY_LIMIT_HINT`).
+2. *A marked test is not simulated.* It reads `SKIPPED` with its reason on
+   every surface — the console, the dashboard (its own pill and colour, no
+   report page, no time or link of an earlier run), `verdicts.json`
+   (`mark` per test, a `SKIPPED` total, `total` without them), JUnit
+   (`<skipped>`), `dstf summary`, `-i` review and `dstf author`.
+3. *A marked test never changes the exit code*: skipped, or run anyway
+   and still failing (`status.counts_against`, the one rule every verdict
+   is counted by), or refused by an accept (the accept's report is given
+   the run's marks: `cli/run_cmds.py`'s `_report_accept`). A run of every
+   test the marks let run is a full run; the
+   selection block counts the marked tests apart (`skipped`).
+4. *`--include-skipped`* (run and compare) runs and scores marked tests like
+   any other, each carrying its mark, and after the report one line each
+   says whether the mark can go. `--rerun` never chooses a marked test,
+   `--changed-since` does not ask what one uses, and an accept stores
+   nothing of a marked test it did not run; `dstf discover` lists every
+   mark and `dstf uses` flags one. The tool's queue runs a marked test when
+   the person picks it.
+
+**Not in this decision.** A live SKIPPED state while a run is in progress
+(a marked test is not registered with the live page); a control in the tool
+to set or clear a mark; a per-backend solver or tolerance; a `false` that
+clears a mark.

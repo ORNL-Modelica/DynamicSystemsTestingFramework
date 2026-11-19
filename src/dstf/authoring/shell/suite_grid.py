@@ -33,6 +33,7 @@ from ...reporting.status import (
     SCORING,
     SCORING_CLASS,
     SIM_FAIL,
+    SKIPPED,
     STATUS_CLASSES,
     STATUS_LABELS,
 )
@@ -82,7 +83,7 @@ FILTER_NOTE = {"model": "Reads the full test name. "}
 PILLS: tuple[tuple[str, str, bool], ...] = (
     *(
         (STATUS_CLASSES[s], STATUS_LABELS[s], False)
-        for s in (PASS, FAIL, SIM_FAIL, NO_REF, NOT_RUN)
+        for s in (PASS, FAIL, SIM_FAIL, NO_REF, NOT_RUN, SKIPPED)
     ),
     ("edited", "EDITED", False),
     (SCORING_CLASS, SCORING, True),

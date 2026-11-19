@@ -150,6 +150,47 @@ def test_the_pills_count_filter_and_clear(tmp_path, playwright_browser):
     page.close()
 
 
+def test_a_skipped_test_has_its_pill_its_badge_and_its_reason(
+    tmp_path, playwright_browser
+):
+    """A test marked skip for this backend reads SKIPPED: its own pill,
+    which counts it and filters to it, a badge in its own fill — not NOT
+    RUN's grey — and its reason in the Message cell, as written."""
+    from conftest import make_test_model
+    from dstf.comparison.comparator import skipped
+    from dstf.comparison.types import TestComparison
+    from dstf.discovery.marks import SkipMark
+
+    reason = 'broken on "linux" <see #12> & co'
+    (tmp_path / "status.json").write_text(
+        json.dumps({"total": 0, "elapsed": 1.0, "tests": [], "updated_at": 2.0}),
+        encoding="utf-8",
+    )
+    render_final(
+        tmp_path,
+        comparisons=[
+            TestComparison("Lib.A", passed=True),
+            skipped(make_test_model("Lib.B"), SkipMark("Python", reason)),
+            TestComparison("Lib.C", passed=False, sim_success=False, ran=False),
+        ],
+    )
+    page = playwright_browser.new_page()
+    page.goto((tmp_path / "dashboard.html").as_uri())
+    pills = _pills(page)
+    assert pills["skipped"] == ["SKIPPED", "1"]
+    assert pills["not-run"] == ["NOT RUN", "1"]
+    assert pills["total"] == ["Total", "3"]
+    page.click('.counter[data-pill="skipped"]')
+    assert _visible(page) == ["Lib.B"]
+    row = page.locator('tbody tr[data-model="Lib.B"]')
+    fill = row.locator(".status-badge").evaluate(
+        "e => getComputedStyle(e).backgroundColor"
+    )
+    assert fill == "rgb(0, 137, 123)"  # #00897B: the owner's teal
+    assert row.locator(".detail-cell").inner_text() == f"skipped on Python: {reason}"
+    page.close()
+
+
 def test_a_row_with_no_value_sorts_last_both_ways(tmp_path, playwright_browser):
     page = playwright_browser.new_page()
     page.goto(_four_verdicts(tmp_path).as_uri())

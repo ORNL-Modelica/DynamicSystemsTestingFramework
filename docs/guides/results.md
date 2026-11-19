@@ -35,6 +35,24 @@ criterion under a `warn` group cannot fail its test: its block starts
 `advisory —` and is listed after the failures, and a test whose only failures
 are advisory passes, saying so on its line.
 
+A test marked `skip` for the run's backend and OS ([Add a
+test](add-a-test.md#a-test-that-does-not-run-on-one-simulator)) reads
+`SKIPPED` with its reason, and the totals count it apart:
+
+```text
+  SKIPPED  PythonTestingLib.Examples.ConstantCsv (skipped on Python: its CSV reader is not ready here)
+  PASS  PythonTestingLib.Examples.PointsCheck
+  PASS  PythonTestingLib.Examples.SimpleRamp
+
+Results: 2/2 passed · 1 skipped
+```
+
+A marked test run anyway (`--include-skipped`) keeps its real status and says
+`(marked skip on Python)` beside it, and after the report a line says what to
+do with the mark: `…: marked skip on Python, passes now — remove the mark`, or
+`…: marked skip on Python, still does not pass (FAIL)`. Its failure is counted
+under `Failed:`, and fails no run.
+
 ## The dashboard
 
 `dashboard.html` in the work directory is the suite on one page. During a run
@@ -60,11 +78,15 @@ verdicts:
   field came from where).
 - A row reads `SIMULATED` when its simulation ran and nothing scored it — after
   `run --accept`, for example.
+- A `SKIPPED` row, in teal, has its own pill; its Message is the reason it
+  was skipped, and it shows no time, page or folder link of an earlier run.
+  The `Total` card counts every row, the SKIPPED ones included.
 
 ## The page of one test
 
 `run --report` (or `compare --report`) also writes a page per test, linked
-from the Test column of the dashboard:
+from the Test column of the dashboard. A SKIPPED test gets no page: it was
+not run, and its row says why.
 
 ![A test's page: its criteria tree with each verdict, and a plot of the run against its baseline](../img/report-page.png)
 
@@ -89,12 +111,20 @@ Two files in the work directory are written for programs:
 - `verdicts.json` — written by every `run` and `compare` that scores. One
   entry per test: its model id, the baseline it was scored against
   (`ref_id`: `ref_<code>`, or null), its status word (`PASS`, `FAIL`,
-  `SIM_FAIL`, `NO_REF`, `NOT RUN`), a message where there is one, its warnings, and its criteria
-  tree with each node's verdict, score and tolerance. Beside them, the totals
-  by status and the exit code they give, the run's `metadata` (backend,
+  `SIM_FAIL`, `NO_REF`, `NOT RUN`, `SKIPPED`), a message where there is one, its warnings, its criteria
+  tree with each node's verdict, score and tolerance, and its `mark`: the
+  skip mark that applies here (`Python: <reason>`), or null — set also for a
+  marked test that ran anyway, so a script can see why a `FAIL` left the
+  exit code 0. Beside them, the totals by status — a `SKIPPED` count always,
+  and `total` without the SKIPPED tests — and the exit code they give, the run's `metadata` (backend,
   tool version, OS), and `selection`: null for a run of every test the
   project has; for a run of fewer, how many tests were run (`selected`) of
-  how many the project has (`of`) and what chose them — `filter`,
+  how many the project has (`of`), how many of those the flags chose a mark
+  kept from running (`skipped`; under `--merge` or `--rerun` also each test
+  an earlier run in the work directory recorded that a mark keeps out,
+  chosen or not: it reads SKIPPED instead of being scored on its last
+  result, so `--merge --filter A,B` with C marked reads as a full run), and
+  what chose them — `filter`,
   `package` and `rerun` as given, `merged: true` where tests not run
   were scored on their last results (`--merge` or `--rerun` over a work
   directory that holds a result of at least one of them), and for
@@ -103,7 +133,8 @@ Two files in the work directory are written for programs:
   (`files`), how many of the tests could not be asked what they use
   (`could_not_be_asked`) and, where a changed file ran every test, why
   (`every_test`: `no class stores it`, or `its top package cannot be
-  named`). `selected` below `of` is not a full run. A compare that scored
+  named`). `selected` and `skipped` together below `of` is not a full run:
+  a run of every test its marks let run is a full one. A compare that scored
   fewer than the project's tests (its own `--filter` or `--package`)
   writes the same block with `compare: true`: `selected` is then the tests
   it scored, and it simulated none.
@@ -123,8 +154,10 @@ import json
 doc = json.load(open("testing_output/MyLib/Dymola/linux/verdicts.json"))
 print(doc["totals"])
 for test in doc["tests"]:
-    if test["status"] == "FAIL":
+    if test["status"] == "FAIL" and test["mark"] is None:
         print(test["model_id"], test["message"] or "")
+    elif test["status"] == "SKIPPED":
+        print(test["model_id"], "skipped:", test["mark"])
 ```
 
 `verdicts.json` holds the tests the last scoring command scored: after a
@@ -152,7 +185,12 @@ $ dstf --config testing.json run --report-format junit --output results.xml
 ```
 
 A failed test is a `<failure>` with one line per failed criterion, a failed
-simulation an `<error>`, and a test that did not run a skipped test case.
+simulation an `<error>`, and a test that did not run a skipped test case. A
+SKIPPED test is a `<skipped message="skipped on Python: <reason>">`, and the
+suite's `tests=` counts it. A marked test run anyway that does not pass is a
+`<skipped>` too, not a failure — `<skipped message="marked skip on Python
+(<reason>); still fails: FAIL">` — so a CI gate that reads the file agrees with
+the exit code.
 `--report-format html` writes the dashboard to a path of your choice instead.
 The console table is printed either way, and `--report` can be added to any of
 them.

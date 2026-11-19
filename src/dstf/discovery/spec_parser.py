@@ -2,12 +2,13 @@
 
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any
 
 from ..backends.types import variable_name
 from ..config import ConfigError, baseline_points_refused, json_from_bytes
-from ..json_types import HOLDS, SAID, is_whole
+from ..json_types import HOLDS, SAID, holds, is_whole, said
 from ..storage.ref_index import _atomic_write_text
 from . import spec_shape
 from .test_registry import TestModel
@@ -23,6 +24,40 @@ class EntryKeyError(ValueError):
         self.where = where
         self.message = message
         super().__init__(f"{where}: {message}")
+
+
+def check_backend_key(where: str, key: str) -> None:
+    """Refuse a key of an entry's ``backends`` that names no backend, or a
+    backend and an operating system that is none: ``"OpenModelica"`` and
+    ``"OpenModelica/windows"`` are keys, ``"OpenModelca"``,
+    ``"OpenModelica 1.23"`` (a testing.json entry's name) and
+    ``"OpenModelica/win"`` are not. A misspelt key would mark nothing, and
+    the test would run where it was meant to be skipped.
+
+    The backends are the ones registered now (``backend_names``): the
+    built-ins and the plug-ins the command loaded — none is loaded here.
+    The systems are testing.json's ``os`` choices, the other part of the
+    reference folders. Raises :class:`EntryKeyError`."""
+    from ..backends import backend_names
+    from ..config_shape import TESTING_JSON
+
+    backend, slash, system = key.partition("/")
+    names = backend_names()
+    if backend not in names:
+        raise EntryKeyError(
+            where,
+            "no backend has this name. A key here is a backend's name as the "
+            "reference folders spell it (Dymola, not a testing.json entry's "
+            'name like "Dymola 2025"), alone or with an operating system '
+            f"after a / (Dymola/linux); the backends are: {', '.join(names)}",
+        )
+    systems = TESTING_JSON["os"].schema["enum"]
+    if slash and system not in systems:
+        raise EntryKeyError(
+            where,
+            f"{json.dumps(system)} is no operating system; after the "
+            f"backend's name and a / a key names one of: {', '.join(systems)}",
+        )
 
 
 def check_entry_keys(entry: dict, model_id: str) -> None:
@@ -50,6 +85,12 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
     ``spec_shape.SIMULATION`` gives its key (``"stop_time": "abc"`` was a
     warning and a run to the default second; ``"100"`` and ``true`` were
     converted, ``2.5`` intervals cut to 2). ``null`` there stays "not set".
+
+    And refuse a mark that marks nothing: a ``skip`` that is no reason
+    (``""``, ``false``, ``null``), a ``backends`` key that names no backend
+    (:func:`check_backend_key`), a key of its block nothing reads
+    (``spec_shape.BACKEND``), a block that says none of them (``{}``), a
+    ``timeout`` there that is no whole number.
 
     Raises :class:`EntryKeyError`.
     """
@@ -113,6 +154,33 @@ def check_entry_keys(entry: dict, model_id: str) -> None:
                     f"{here}.simulation.{key}",
                     f"must be {SAID[kind]}, got {_as_json(value)}",
                 )
+
+    def mark_value(where: str, schema: Mapping[str, Any], value: object) -> None:
+        """``value`` of a mark: what ``schema`` takes, or refused — a
+        whole number of seconds written ``60.0`` too, as in ``simulation``.
+        ``null`` and ``false`` are refused: absent is the only "no mark"."""
+        if holds(schema, value):
+            return
+        if schema.get("type") == "integer" and is_whole(value):
+            return
+        raise EntryKeyError(where, f"must be {said(schema)}, got {_as_json(value)}")
+
+    if "skip" in entry:
+        mark_value(f"{here}.skip", spec_shape.ENTRY["skip"].schema, entry["skip"])
+    marks = block(here, entry, "backends")
+    for key, mark in (marks or {}).items():
+        where = f"{here}.backends.{key}"
+        check_backend_key(where, key)
+        if not isinstance(mark, dict):
+            raise EntryKeyError(where, f"must be an object, got {_as_json(mark)}")
+        refuse(where, mark, spec_shape.BACKEND)
+        if not mark:
+            raise EntryKeyError(
+                where, f"says nothing: a block names {' or '.join(spec_shape.BACKEND)}"
+            )
+        for name, value in mark.items():
+            mark_value(f"{where}.{name}", spec_shape.BACKEND[name].schema, value)
+
     comparison = block(here, entry, "comparison")
     if comparison is None:
         return
@@ -520,6 +588,17 @@ def spec_models_from_document(
         # The test's own diagnostic names, beside the project's
         # (`diagnostic_names`): a list of strings, `check_entry_keys`.
         test.diagnostic_variables = list(entry.get("diagnostic_variables", []))
+
+        # The marks, as written (`check_entry_keys` held each to its type),
+        # a timeout as an int; `marks` decides which applies to a run.
+        test.skip = entry.get("skip")
+        test.backend_marks = {
+            key: {
+                name: int(value) if name == "timeout" else value
+                for name, value in mark.items()
+            }
+            for key, mark in entry.get("backends", {}).items()
+        }
 
         tests.append(test)
 

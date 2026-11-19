@@ -269,6 +269,13 @@ is scored by its new criteria as soon as they are staged; run it again, from
 the queue or with `dstf run`, to score a new run. Accept stores the selected
 tests' results as their baselines, as `run --accept` does.
 
+A test marked `skip` for the project's backend and OS reads `SKIPPED` with
+its reason, and nothing an earlier run left of it is plotted or offered to
+Accept, whose list says `skipped on <where>: <reason> — queue it to run it`.
+Queue it to run it anyway: from the moment its run starts it is scored as any
+other, carrying its mark, and Accept offers its result. It stays that way
+until a project is opened again.
+
 To apply an edit made elsewhere — a script, another tool — write it as a
 JSON-Patch and apply it with `dstf spec update`.
 

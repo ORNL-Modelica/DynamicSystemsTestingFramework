@@ -28,12 +28,15 @@ from .status import (
     LIVE_STATES,
     SCORING,
     SCORING_CLASS,
+    SKIPPED,
     STATUS_CLASSES,
     STATUS_LABELS,
     STATUS_ORDER,
     classify_with_class,
     live_status,
+    marked_words,
     scored_status,
+    skipped_words,
 )
 
 #: The word a live row reads when its simulation ran and the compare phase
@@ -84,6 +87,12 @@ class TestRow:
     #: the tool's "not scored yet": no verdict, and no live run giving one —
     #: the Session has not scored this test (yet)
     waiting: bool = False
+
+    @property
+    def run_folder(self) -> str | None:
+        """The work directory's folder the Key cell links: the test's, but
+        for a SKIPPED row, whose folder holds only an earlier run's files."""
+        return None if self.status == SKIPPED else self.test_key
 
     @property
     def status_text(self) -> str:
@@ -360,6 +369,21 @@ def summary_fields(
         "total_wall": timing.get("total_wall"),
         "field_sources": dict(field_sources or {}),
     }
+
+
+def verdict_message(comp: TestComparison, message: str | None) -> str | None:
+    """The Message of a row with ``comp``'s verdict, ``message`` being what
+    it says otherwise: a SKIPPED test's is why it was skipped (``skipped on
+    Python: <reason>``), whatever an earlier run said; a marked test that
+    ran anyway says so after it (``(marked skip on Python)``), so a FAIL
+    counted in the FAIL pill is visibly one that fails no run. Both HTML
+    surfaces' rows read it: the dashboard's and the Suite's."""
+    if comp.mark is None:
+        return message
+    if comp.skipped:
+        return skipped_words(comp.mark)
+    said = f"({marked_words(comp.mark)})"
+    return f"{message} {said}" if message else said
 
 
 def row_from_status(entry: Mapping[str, Any]) -> TestRow:

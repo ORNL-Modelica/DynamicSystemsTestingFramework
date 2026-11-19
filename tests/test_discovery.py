@@ -396,8 +396,9 @@ class TestSpecParser:
             parse_test_spec(spec_path)
         assert str(caught.value).endswith(
             'tests[Model]: unknown field "fmu"; the fields here are: '
-            "baseline_points, comparison, description, diagnostic_variables, info, "
-            "metadata, metrics, model, plots, simulation, source, variables"
+            "backends, baseline_points, comparison, description, "
+            "diagnostic_variables, info, metadata, metrics, model, plots, "
+            "simulation, skip, source, variables"
         )
 
 

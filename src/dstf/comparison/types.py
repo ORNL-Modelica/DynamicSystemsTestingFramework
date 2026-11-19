@@ -16,6 +16,8 @@ from .geometry import Primitive
 from .sides import Sides, parse_sides
 
 if TYPE_CHECKING:
+    from ..discovery.marks import SkipMark
+
     # Annotation-only — runtime import is inside compare_test() in
     # comparator.py to break the comparator <-> metric_tree cycle.
     from .metric_tree import MetricResult
@@ -192,6 +194,15 @@ class TestComparison:
     tolerance_source: str | None = None
     #: That base tolerance: what a leaf without its own is scored with.
     base_tolerance: float | None = None
+    #: The mark that says this test is not run on the run's backend and OS
+    #: (``discovery.marks.skip_reason``), set for EVERY test so marked, run
+    #: or not; None for a test with none. A comparison that carries one
+    #: never fails a run (``reporting.status.counts_against``).
+    mark: SkipMark | None = None
+    #: True when the test was not simulated because of :attr:`mark`
+    #: (``comparator.skipped``): SKIPPED, whatever is on disk. A marked
+    #: test that ran anyway keeps its real status and carries the mark.
+    skipped: bool = False
     #: The path of the baseline file this test was scored against, None
     #: when no stored baseline was read — set by ``compare_one`` alone. Its
     #: name is the model's (``storage.names.baseline_stem``) in every

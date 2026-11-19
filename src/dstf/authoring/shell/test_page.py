@@ -1213,6 +1213,7 @@ class TestPage:
             refused=refusal(comp) if comp is not None else None,
             partial=session.partial(model_id),
             failure=comp.error_message if comp is not None else None,
+            mark=comp.mark if comp is not None and comp.skipped else None,
         )
 
     def sync(self, force: bool = False) -> None:

@@ -12,6 +12,7 @@ from typing import Any
 from ...config import Config
 from ...config_shape import FILE, Setting, default
 from ...discovery.library_state import dependency_file
+from ...discovery.marks import timeout_for
 from ...discovery.test_registry import TestModel, diagnostic_names
 from ...storage.batch_manifest import BatchManifest
 from .. import register
@@ -393,14 +394,11 @@ class DymolaBackend(Backend):
             test_items, startup_path, shutdown_path, work_dir, batch_id
         )
 
-        # Calculate total timeout: per-test timeout * number of tests + startup overhead
+        # The batch's limit: each test's own (`timeout_for`), added up, and
+        # the startup overhead
         startup_overhead = 120  # seconds for library loading
         total_timeout = (
-            sum(
-                t.timeout if t.timeout is not None else self.config.timeout
-                for t, _ in test_items
-            )
-            + startup_overhead
+            sum(timeout_for(t, self.config) for t, _ in test_items) + startup_overhead
         )
 
         # Run the batch
@@ -485,8 +483,10 @@ class DymolaBackend(Backend):
                         test_key=test_key,
                         success=False,
                         elapsed=per_elapsed,
+                        # The batch's limit, its tests' added up: no one
+                        # key sets it.
                         error_message=timeout_message(
-                            f"Batch timed out after {total_timeout}s"
+                            f"Batch timed out after {total_timeout}s", None
                         ),
                         timed_out=True,
                     )

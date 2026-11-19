@@ -8,6 +8,7 @@ from .status import (
     NO_REF,
     NOT_RUN,
     SIM_FAIL,
+    SKIPPED,
     STATUS_LABELS,
     FailedCriterion,
     advisory_failures,
@@ -16,6 +17,9 @@ from .status import (
     exit_code,
     failed_criteria,
     group_failures,
+    mark_line,
+    marked_words,
+    skipped_words,
 )
 
 # ANSI color codes
@@ -36,9 +40,11 @@ def _color(text: str, code: str) -> str:
 
 def print_report(comparisons: list[TestComparison], note: str | None = None) -> int:
     """Print a console report and return exit code (0 when nothing FAILED or
-    failed to simulate — NOT RUN and NO_REF do not fail it — and something
-    ran, else 1: ``exit_code``). ``note`` is said in brackets after the
-    Results line's counts."""
+    failed to simulate — NOT RUN, NO_REF, SKIPPED and a marked test do not
+    fail it — and something ran, else 1: ``exit_code``). ``note`` is said
+    in brackets after the Results line's counts. A test marked skip that
+    ran anyway is said once more after the report (``mark_line``): whether
+    its mark can go."""
     if not comparisons:
         print("No comparisons to report.")
         return 1
@@ -48,6 +54,7 @@ def print_report(comparisons: list[TestComparison], note: str | None = None) -> 
     n_no_ref = 0
     n_sim_fail = 0
     n_not_run = 0
+    n_skipped = 0
     failures: list[TestComparison] = []
     warned: list[TestComparison] = []
     advised: list[tuple[TestComparison, list[FailedCriterion]]] = []
@@ -56,7 +63,13 @@ def print_report(comparisons: list[TestComparison], note: str | None = None) -> 
         # Ordering (SIM_FAIL > FAIL > NO_REF > PASS) and its rationale live
         # in reporting.status — this is one of its call sites, not a copy.
         state = classify(comp)
-        if state == NOT_RUN:
+        # What the row says of a mark: why it was skipped, or that the
+        # status beside it is a marked test's — it fails no run.
+        marked = ""
+        if state == SKIPPED:
+            n_skipped += 1
+            status = _color(STATUS_LABELS[SKIPPED], _GREY)
+        elif state == NOT_RUN:
             # No result: nothing ran, so nothing failed (D145).
             n_not_run += 1
             status = _color(STATUS_LABELS[NOT_RUN], _GREY)
@@ -86,16 +99,21 @@ def print_report(comparisons: list[TestComparison], note: str | None = None) -> 
         if advisory:
             advised.append((comp, advisory))
             advisory_tag = _color(f" ({advisory_text(len(advisory))})", _YELLOW)
-        print(f"  {status}  {comp.model_id}{advisory_tag}{warn_tag}")
+        if comp.mark is not None:
+            words = skipped_words if comp.skipped else marked_words
+            marked = _color(f" ({words(comp.mark)})", _GREY)
+        print(f"  {status}  {comp.model_id}{marked}{advisory_tag}{warn_tag}")
 
         if not comp.passed and comp.sim_success:
             failures.append(comp)
 
     # Summary
-    total = len(comparisons)
+    # A SKIPPED test is not one of the tests a pass is counted over.
+    total = len(comparisons) - n_skipped
     print()
+    skipped = f" · {n_skipped} skipped" if n_skipped else ""
     said = f" ({note})" if note else ""
-    print(_color(f"Results: {n_passed}/{total} passed{said}", _BOLD))
+    print(_color(f"Results: {n_passed}/{total} passed{skipped}{said}", _BOLD))
     if n_failed:
         print(_color(f"  Failed: {n_failed}", _RED))
     if n_sim_fail:
@@ -146,6 +164,14 @@ def print_report(comparisons: list[TestComparison], note: str | None = None) -> 
             print(f"\n  {comp.model_id}")
             for w in comp.warnings:
                 print(f"    {w.text}")
+
+    # The tests marked skip that ran anyway (`--include-skipped`): one line
+    # each, last, whether the mark can go.
+    lines = [line for line in map(mark_line, comparisons) if line]
+    if lines:
+        print()
+        for line in lines:
+            print(line)
 
     return exit_code(comparisons)
 

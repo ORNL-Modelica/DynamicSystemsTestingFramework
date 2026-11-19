@@ -27,6 +27,7 @@ import numpy as np
 if TYPE_CHECKING:
     import psutil
 
+from ...discovery.marks import limit_hint, timeout_for
 from ...discovery.test_registry import TestModel, diagnostic_names
 from ..base import Backend
 from ..types import (
@@ -127,9 +128,7 @@ class JsonDriverBackend(Backend):
             self.progress.on_start(test_key)
             self.progress.on_phase(test_key, "simulating")
 
-        timeout = float(
-            test.timeout if test.timeout is not None else self.config.timeout
-        )
+        timeout = float(timeout_for(test, self.config))
 
         cmd = self.build_command(
             self.tool_binary,
@@ -164,7 +163,8 @@ class JsonDriverBackend(Backend):
             stdout_path.write_text(decode_output(exc.stdout), encoding="utf-8")
             stderr_path.write_text(decode_output(exc.stderr), encoding="utf-8")
             msg = timeout_message(
-                f"{self.tool_label} {self.action_label} exceeded {timeout}s timeout"
+                f"{self.tool_label} {self.action_label} exceeded {timeout}s timeout",
+                limit_hint(test, self.config),
             )
             if self.progress:
                 self.progress.on_finish(

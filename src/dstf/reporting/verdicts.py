@@ -26,7 +26,15 @@ from ..comparison.types import TestComparison
 from ..storage.names import baseline_stem
 from ..storage.ref_index import _atomic_write_text
 from .context_builder import build_tree_view, test_texts
-from .status import STATUS_LABELS, STATUS_ORDER, classify, count_by_status, exit_code
+from .status import (
+    SKIPPED,
+    STATUS_LABELS,
+    STATUS_ORDER,
+    classify,
+    count_by_status,
+    exit_code,
+    mark_words,
+)
 
 #: The file's name, beside ``status.json`` in the work dir.
 VERDICTS_FILE = "verdicts.json"
@@ -34,7 +42,7 @@ VERDICTS_FILE = "verdicts.json"
 
 def status_word(comp: TestComparison) -> str:
     """The word the console prints for ``comp``: ``PASS``, ``FAIL``,
-    ``SIM_FAIL``, ``NO_REF``, ``NOT RUN``."""
+    ``SIM_FAIL``, ``NO_REF``, ``NOT RUN``, ``SKIPPED``."""
     return STATUS_LABELS[classify(comp)]
 
 
@@ -42,14 +50,18 @@ def test_verdict(comp: TestComparison, test: Any, result: Any) -> dict:
     """One test of the file: its model id, the baseline it was scored
     against (``ref_<code>``, or null), its status word, what the
     comparison said where there is no tree to say it (a failed simulation's
-    error, a refusal, "No reference baseline stored"), its warnings, and
-    its criteria ``tree`` — None for a test nothing was compared for."""
+    error, a refusal, "No reference baseline stored", why it was
+    skipped), the mark it carries for this backend and OS (``Python:
+    <reason>``, or null — a script reads there why a FAIL left the exit
+    code 0), its warnings, and its criteria ``tree`` — None for a test
+    nothing was compared for."""
     return {
         "model_id": comp.model_id,
         # The baseline it was scored against, by its name: ``ref_<code>``.
         "ref_id": baseline_stem(comp.model_id) if comp.baseline_path else None,
         "status": status_word(comp),
         "message": comp.error_message or None,
+        "mark": mark_words(comp.mark) if comp.mark is not None else None,
         "warnings": [w.text for w in comp.warnings],
         "tree": build_tree_view(
             list(comp.variables),
@@ -69,7 +81,9 @@ def build_verdicts(
 ) -> dict:
     """The document :func:`write_verdicts` writes: the scored tests in the
     order given, and their totals by status word — every word of the
-    console's summary, zero included — with the exit code they give."""
+    console's summary, zero included — with the exit code they give. The
+    ``total`` is of the tests not SKIPPED: what the Results line counts
+    passes over."""
     comps = list(comparisons)
     by_model = {t.model_id: t for t in tests}
     counts = count_by_status(comps)
@@ -87,7 +101,7 @@ def build_verdicts(
         # (N of the project's M tests, and the filter, package, rerun or
         # revision that chose them), or null for a run of every test.
         "selection": dict(selection) if selection else None,
-        "totals": {"total": len(comps), **totals},
+        "totals": {"total": len(comps) - counts[SKIPPED], **totals},
         "exit_code": exit_code(comps),
         "tests": [
             test_verdict(c, by_model.get(c.model_id), (results or {}).get(c.model_id))
@@ -98,7 +112,7 @@ def build_verdicts(
 
 #: The words a total is always given for, a zero included: what a compare
 #: can say of a test. (A QUEUED or RUNNING row is the live page's.)
-_ALWAYS = frozenset({"PASS", "FAIL", "SIM_FAIL", "NO_REF", "NOT RUN"})
+_ALWAYS = frozenset({"PASS", "FAIL", "SIM_FAIL", "NO_REF", "NOT RUN", SKIPPED})
 
 
 def write_verdicts(

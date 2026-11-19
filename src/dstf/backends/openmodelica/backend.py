@@ -31,6 +31,7 @@ from typing import Any
 
 from ...config import Config
 from ...config_shape import default
+from ...discovery.marks import limit_hint, timeout_for
 from ...discovery.test_registry import TestModel, diagnostic_names
 from .. import register
 from ..base import Backend, Diagnosis
@@ -347,9 +348,7 @@ class OpenModelicaBackend(Backend):
         mos_path = test_dir / self.MOS_FILENAME
         mos_path.write_text(mos_text, encoding="utf-8")
 
-        timeout = float(
-            test.timeout if test.timeout is not None else self.config.timeout,
-        )
+        timeout = float(timeout_for(test, self.config))
 
         wall_start = time.monotonic()
         try:
@@ -364,7 +363,9 @@ class OpenModelicaBackend(Backend):
                 decode_output(exc.stdout) + "\n[TimeoutExpired]\n",
                 encoding="utf-8",
             )
-            msg = timeout_message(f"omc exceeded {timeout}s timeout")
+            msg = timeout_message(
+                f"omc exceeded {timeout}s timeout", limit_hint(test, self.config)
+            )
             logger.warning("Test %s: %s", test.model_id, msg)
             if self.progress:
                 self.progress.on_finish(

@@ -7,20 +7,23 @@ module exists to make impossible.
 
 Ordering, and why:
 
-0. ``NOT RUN`` — there is no result: the last run never ran the test, or
+0. ``SKIPPED`` — a mark in ``test_spec.json`` says the test is not run on
+   this backend and OS (``discovery.marks``), and it was not: whatever is
+   on disk from an earlier run is not its verdict.
+1. ``NOT RUN`` — there is no result: the last run never ran the test, or
    never finished it (D145). Nothing ran, so nothing failed, and no verdict
    about the trajectories exists. (A run in which NO test ran still exits
    1: ``exit_code``.)
-1. ``SIM_FAIL`` — the simulation never produced data, so no verdict
+2. ``SIM_FAIL`` — the simulation never produced data, so no verdict
    about the trajectories is meaningful.
-2. ``FAIL`` — a failing verdict outranks a missing baseline: baseline-free
+3. ``FAIL`` — a failing verdict outranks a missing baseline: baseline-free
    modes (``range``, ``points`` with explicit values) carry a real verdict
    with nothing stored. A test the comparison refused is here too, baseline
    or none (:func:`refusal`): one that scored NOTHING is not a pass.
-3. simulate-only — the pass criterion IS "it simulated", so a missing
+4. simulate-only — the pass criterion IS "it simulated", so a missing
    baseline is irrelevant and the verdict is PASS, never NO_REF.
-4. ``NO_REF`` — reserved for tests where nothing was evaluated at all.
-5. ``PASS``.
+5. ``NO_REF`` — reserved for tests where nothing was evaluated at all.
+6. ``PASS``.
 
 The buckets are mutually exclusive, so header counts always reconcile
 with row statuses.
@@ -32,11 +35,17 @@ now carries ``simulate_only`` itself, so the input asymmetry — and the
 copy — are gone. Every surface classifies here.
 """
 
+from __future__ import annotations
+
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..comparison.types import TestComparison, VariableComparison
+
+if TYPE_CHECKING:
+    from ..discovery.marks import SkipMark
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -46,10 +55,15 @@ NO_REF = "NO_REF"
 #: ``pending``. The key is the word a person reads, so a surface that shows
 #: the classifier's key reads it. Not a failure (``FAILURES``).
 NOT_RUN = "NOT RUN"
+#: A test marked skip for the run's backend and OS, and not simulated
+#: (``TestComparison.skipped``). Not a failure; and a test that carries a
+#: mark, run or not, never fails a run (:func:`counts_against`).
+SKIPPED = "SKIPPED"
 
 #: The statuses that fail a run: what ``compare`` and ``run`` exit on
-#: (``exit_code``), beside a run in which nothing ran. NO_REF and NOT RUN
-#: are not in it.
+#: (``exit_code``), beside a run in which nothing ran. NO_REF, NOT RUN and
+#: SKIPPED are not in it, and a marked test in it counts against nothing
+#: (:func:`counts_against`).
 FAILURES = frozenset({FAIL, SIM_FAIL})
 
 #: The states a test is in before it has a verdict, from a live run's
@@ -93,6 +107,7 @@ STATUS_ORDER = (
     NO_REF,
     TIMED_OUT,
     NOT_RUN,
+    SKIPPED,
     CANCELLED,
 )
 
@@ -112,6 +127,7 @@ STATUS_CLASSES = {
     RUNNING: "running",
     TIMED_OUT: "timed-out",
     NOT_RUN: "not-run",
+    SKIPPED: "skipped",
     CANCELLED: "not-run",
 }
 
@@ -139,7 +155,10 @@ def live_status(raw: str) -> str | None:
 
 
 def classify(comp: TestComparison) -> str:
-    """Return this test's status: NOT RUN / PASS / FAIL / SIM_FAIL / NO_REF."""
+    """Return this test's status: SKIPPED / NOT RUN / PASS / FAIL /
+    SIM_FAIL / NO_REF."""
+    if comp.skipped:
+        return SKIPPED
     if not comp.ran:
         return NOT_RUN
     if not comp.sim_success:
@@ -199,23 +218,80 @@ def count_by_status(comparisons: list[TestComparison]) -> Counter[str]:
     return Counter(classify(c) for c in comparisons)
 
 
+def counts_against(comp: TestComparison) -> bool:
+    """True when ``comp`` fails the run: it FAILED or failed to simulate
+    (:data:`FAILURES`) and carries no mark. THE one rule of "does this
+    count": a test marked skip for this backend and OS — skipped, or run
+    anyway and still failing — never fails a run, so every reader of a
+    verdict that decides an exit code asks here (:func:`exit_code`, the
+    review loop's unresolved count)."""
+    return comp.mark is None and classify(comp) in FAILURES
+
+
 def nothing_ran(comparisons: Iterable[TestComparison]) -> bool:
-    """True when no test ran: no comparisons at all, or every one NOT RUN.
+    """True when no test ran: no comparisons at all, or every one that
+    carries no mark NOT RUN.
 
     A compare over an empty or wrong work dir, or after a run whose worker
     pool never started (every test stamped pending), is here. That is not a
-    green run, though no test in it failed (D145 §5)."""
-    return not any(c.ran for c in comparisons)
+    green run, though no test in it failed (D145 §5). A marked test is no
+    part of it either way: a run whose every test is marked ran what it
+    was asked to (none), and one whose unmarked tests have no result is
+    still a run in which nothing ran."""
+    comps = list(comparisons)
+    rest = [c for c in comps if c.mark is None]
+    return (not comps or bool(rest)) and not any(c.ran for c in rest)
 
 
 def exit_code(comparisons: Iterable[TestComparison]) -> int:
-    """1 when any test FAILED or failed to simulate, or when nothing ran
-    (:func:`nothing_ran`), else 0: a test NOT RUN beside tests that ran, or
-    one with no baseline, does not fail a run (D145)."""
+    """1 when a test counts against the run (:func:`counts_against`: it
+    FAILED or failed to simulate, and carries no mark), or when nothing ran
+    (:func:`nothing_ran`), else 0: a test NOT RUN beside tests that ran,
+    one with no baseline, or one marked skip, does not fail a run (D145)."""
     comps = list(comparisons)
     if nothing_ran(comps):
         return 1
-    return 1 if any(classify(c) in FAILURES for c in comps) else 0
+    return 1 if any(counts_against(c) for c in comps) else 0
+
+
+def mark_words(mark: SkipMark) -> str:
+    """A mark as ``verdicts.json`` writes it: ``Python: <reason>``,
+    ``every backend: <reason>``. The words of a mark are spelt here and
+    nowhere else: every surface says one of these."""
+    return f"{mark.where}: {mark.reason}"
+
+
+def skipped_words(mark: SkipMark) -> str:
+    """Why a SKIPPED test was not run: ``skipped on Python: <reason>`` —
+    the console's row, JUnit's message, a row's Message."""
+    return f"skipped on {mark_words(mark)}"
+
+
+def marked_words(mark: SkipMark) -> str:
+    """What a marked test that ran anyway carries beside its real status:
+    ``marked skip on Python``."""
+    return f"marked skip on {mark.where}"
+
+
+def marked_with_reason(mark: SkipMark) -> str:
+    """A mark named beside a test it did not keep from being looked at —
+    ``marked skip on Python (<reason>)``: an accept's note of a test it
+    stored nothing of, JUnit's message for a marked test that still
+    fails."""
+    return f"{marked_words(mark)} ({mark.reason})"
+
+
+def mark_line(comp: TestComparison) -> str | None:
+    """The line said for a marked test that ran anyway, after the report:
+    a PASS asks for the mark to go, anything else says the mark still
+    holds. None for a test that carries no mark or was skipped by it."""
+    if comp.mark is None or comp.skipped:
+        return None
+    state = classify(comp)
+    said = marked_words(comp.mark)
+    if state == PASS:
+        return f"{comp.model_id}: {said}, passes now — remove the mark"
+    return f"{comp.model_id}: {said}, still does not pass ({STATUS_LABELS[state]})"
 
 
 def group_failures(comp: TestComparison) -> list[str]:

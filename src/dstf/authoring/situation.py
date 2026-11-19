@@ -21,13 +21,22 @@ from typing import TYPE_CHECKING
 
 from ..backends.pool import ItemState
 from ..comparison.tree_spec import tree_variables
-from ..reporting.status import FAIL, NO_REF, NOT_RUN, PASS, SIM_FAIL
+from ..reporting.status import (
+    FAIL,
+    NO_REF,
+    NOT_RUN,
+    PASS,
+    SIM_FAIL,
+    SKIPPED,
+    skipped_words,
+)
 from .capabilities import plural
 from .live_rows import CANCELLED, NOT_AVAILABLE
 from .queue_rows import one_line
 
 if TYPE_CHECKING:
     from ..backends.types import TestResult
+    from ..discovery.marks import SkipMark
     from ..discovery.test_registry import TestModel
     from .live_rows import Partial
     from .queue_rows import QueueRow
@@ -50,6 +59,9 @@ class Situation(Enum):
     #: backend's message; its last result stands
     START_FAILED = "start_failed"
     NO_RESULT = "no_result"
+    #: a mark in test_spec.json keeps it from running on this backend and
+    #: OS: SKIPPED, and nothing of an earlier run is read
+    SKIPPED = "skipped"
     SIM_FAIL = "sim_fail"
     #: saved criteria name a variable the last run did not record: a
     #: baseline accepted now would not hold it (the owner's ruling)
@@ -165,6 +177,7 @@ def strip_for(
     refused: str | None = None,
     partial: Partial | None = None,
     failure: str | None = None,
+    mark: SkipMark | None = None,
 ) -> Strip:
     """The strip for one test. ``queue`` is its row in the simulation
     queue (`queue_rows.queue_row`), None when the queue lists no item of
@@ -184,7 +197,8 @@ def strip_for(
     (`Session.partial`), or None; ``failure`` the message its comparison
     carries (`TestComparison.error_message`) — for a failed run the
     backend's own, read back from the run's stored result, so it is there
-    after the queue's row is cleared and after the tool is started again."""
+    after the queue's row is cleared and after the tool is started again;
+    ``mark`` the mark that kept a SKIPPED test from running."""
     S = Situation
     if queue is not None and queue.state is ItemState.WAITING:
         return Strip(S.QUEUED, "grey", f"Queued — {queue.words}")
@@ -213,6 +227,16 @@ def strip_for(
         return Strip(S.SCORING_FAILED, "red", "Scoring failed; the tree card says why.")
     if status is None and (has_result or loading):
         return Strip(S.WAITING, "grey", "Scoring…")
+    if status == SKIPPED and mark is not None:
+        # Before a partial result: a test its mark keeps from running has
+        # none of its own; nothing an earlier run left is read.
+        said = skipped_words(mark)
+        stop = "" if said.endswith(("?", "!", ".")) else "."
+        return Strip(
+            S.SKIPPED,
+            "grey",
+            f"{said[0].upper()}{said[1:]}{stop} Queue it to run it anyway.",
+        )
     if partial is not None and status in (None, NOT_RUN, SIM_FAIL):
         # Its last run did not finish and left a partial result (D151):
         # where it stopped, and that nothing of it is scored. A cancel is

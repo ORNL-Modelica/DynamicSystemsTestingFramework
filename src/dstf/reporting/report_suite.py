@@ -972,7 +972,9 @@ def generate_report_suite(
     run_metadata = _read_run_metadata(config.work_dir)
 
     # Resolve per-test args sequentially (cheap dict/store lookups), then
-    # render reports in parallel
+    # render reports in parallel. A SKIPPED test gets no page: its mark kept
+    # it from running, so there is nothing of this run to draw, and its
+    # dashboard row says why (and links none).
     work = [
         _build_per_test_args(
             comp,
@@ -985,6 +987,7 @@ def generate_report_suite(
             backend_cls,
         )
         for comp in comparisons
+        if not comp.skipped
     ]
     for args in work:
         args["run_metadata"] = run_metadata

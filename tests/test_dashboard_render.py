@@ -1134,6 +1134,7 @@ def test_the_pills_are_the_statuses(tmp_path):
         ["no-ref", "NO_REF"],
         ["timed-out", "TIMED OUT"],
         ["not-run", "NOT RUN"],
+        ["skipped", "SKIPPED"],
     ]
     assert "['warnings', 'warnings']" in html  # the cross-cut pill
 

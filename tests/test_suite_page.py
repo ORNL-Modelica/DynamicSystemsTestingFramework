@@ -463,7 +463,8 @@ async def test_rows_dropped_and_named_again_in_one_tick_are_repainted(shell, sen
 def test_the_count_pills_are_the_status_tables_and_include_not_run():
     """The Suite's pills are handed to its script from Python, in the words
     of `reporting.status` (the script spells none); NOT RUN has its own
-    (D145), after NO_REF. Three come and go — each drawn only while a row
+    (D145), after NO_REF, and SKIPPED (a test marked not to run here) after
+    it. Three come and go — each drawn only while a row
     counts under it, which the table says too (the script named two of
     them): SCORING, a row not scored yet, and the queue's QUEUED and
     RUNNING. A row waiting for its verdict counted under QUEUED."""
@@ -476,6 +477,7 @@ def test_the_count_pills_are_the_status_tables_and_include_not_run():
         "sim-fail",
         "no-ref",
         "not-run",
+        "skipped",
         "edited",
         "scoring",
         "queued",

@@ -105,7 +105,8 @@ SIMULATION: dict[str, Setting] = {
         {"type": "integer"},
         None,
         "The seconds this test may run before it is stopped and fails. "
-        "Without this key the run's --timeout applies. Under Dymola's "
+        "Without this key the run's --timeout applies. A backends block's "
+        "timeout wins over it on that backend. Under Dymola's "
         "--batch, the timeouts of a batch's tests add up to one limit for "
         "the batch.",
     ),
@@ -288,6 +289,26 @@ COMBINATOR: dict[str, Setting] = {
     ),
 }
 
+#: One block of an entry's ``backends``: what holds for this test on one
+#: backend, or on one backend and operating system. Read only by
+#: ``discovery.marks``.
+BACKEND: dict[str, Setting] = {
+    "skip": Setting(
+        {"type": "string", "minLength": 1},
+        None,
+        "Why this test is not run on this backend (or this backend and "
+        "operating system): a reason, shown beside the test. It wins over "
+        "the entry's skip. No value clears a mark: leave the key out.",
+    ),
+    "timeout": Setting(
+        {"type": "integer"},
+        None,
+        "The seconds this test may run on this backend (or this backend and "
+        "operating system) before it is stopped and fails. It wins over "
+        "simulation.timeout and the run's --timeout.",
+    ),
+}
+
 #: A test entry's own keys.
 ENTRY: dict[str, Setting] = {
     "model": Setting(
@@ -386,6 +407,25 @@ ENTRY: dict[str, Setting] = {
         "entry's variables match it. An index is written without spaces: "
         "a[1, 1] is read, stored and matched as a[1,1], whichever way the "
         "simulator writes it.",
+    ),
+    "skip": Setting(
+        {"type": "string", "minLength": 1},
+        None,
+        "Why this test is not run, on every backend: a reason, shown beside "
+        "the test. A backends block's skip wins over it. No value clears a "
+        "mark: leave the key out.",
+    ),
+    "backends": Setting(
+        {"type": "object"},
+        {},
+        "What holds for this test on one backend: "
+        '{"OpenModelica": {"skip": "...", "timeout": 600}}. A key is a '
+        "backend's name as the reference folders spell it (Dymola, not a "
+        'testing.json entry\'s name like "Dymola 2025"), or that name and '
+        'an operating system: "OpenModelica/windows". The most specific '
+        "block wins: the backend and operating system, then the backend, "
+        "then the entry's own skip and simulation.timeout. A key that names "
+        "a plug-in backend is refused where that plug-in is not installed.",
     ),
     **NOTES,
 }

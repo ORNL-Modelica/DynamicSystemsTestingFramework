@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ...backends.pool import ItemState
-from ...reporting.status import classify, refusal
+from ...reporting.status import classify, refusal, skipped_words
 from ...storage.accept import accept_run_results
 from ...storage.batch_manifest import unfinished_run_models
 from ..capabilities import Emphasis, Panel, Placement, StoreWrite, plural
@@ -41,6 +41,10 @@ if TYPE_CHECKING:
 #: what it stores. ``WILL_STORE`` is the one truth the button's count, its
 #: availability and this forecast share.
 REFUSED = "re-run before accepting"
+#: What a test its mark keeps from running here, unqueued, is told after
+#: its mark's words (``skipped on Python: <reason>``): nothing of a run
+#: before the mark is its.
+SKIPPED_ACTION = "queue it to run it"
 #: A run that did not finish left a partial result (D151): it is shown on
 #: the test's page, and is no baseline.
 PARTIAL = "a partial result is never a baseline: queue it again"
@@ -72,7 +76,9 @@ def _rows(s: SessionView) -> list[tuple[str, str, str]]:
         comp = s.comparisons.get(model_id)
         status = classify(comp) if comp is not None else ""
         result = project.results.get(model_id)
-        if s.partial(model_id) is not None:
+        if comp is not None and comp.skipped and comp.mark is not None:
+            action = f"{skipped_words(comp.mark)} — {SKIPPED_ACTION}"
+        elif s.partial(model_id) is not None:
             action = PARTIAL  # what its page draws is not a result
         elif model_id in unfinished:
             action = REFUSED  # the guard runs before the result is looked at
@@ -138,6 +144,7 @@ class Accept:
         Situation.NEW_VARIABLES: Emphasis.MENU,
         Situation.SIM_FAIL: Emphasis.MENU,
         Situation.NO_RESULT: Emphasis.MENU,
+        Situation.SKIPPED: Emphasis.MENU,
         Situation.QUEUED: Emphasis.MENU,
         Situation.RUNNING: Emphasis.MENU,
         Situation.CANCELLED: Emphasis.MENU,
@@ -192,13 +199,22 @@ class Accept:
         # by the Session and holds no view.
         tests = [t for t in project.tests if t.model_id in selection]
         results = dict(project.results)
+        # A test its mark keeps from running, unqueued, stores nothing: the
+        # write's line names it.
+        marks = {
+            m: comp.mark
+            for m in selection
+            if (comp := s.comparisons.get(m)) is not None
+            and comp.skipped
+            and comp.mark is not None
+        }
         work_dir = project.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
         reference_dir = project.config.reference_dir
 
         def run(store: ReferenceStore) -> str:
             return _report(
-                *accept_run_results(store, tests, results, work_dir),
+                *accept_run_results(store, tests, results, work_dir, marks=marks),
                 reference_dir=reference_dir,
             )
 

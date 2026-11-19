@@ -1529,17 +1529,20 @@ class _AlwaysTimeoutWorker(Worker):
         time.sleep(30)  # abandoned by the watchdog
 
 
-def test_timeout_message_names_the_per_test_override(tmp_path):
+def test_a_timeout_under_the_run_s_limit_names_it_and_every_key_that_wins(tmp_path):
     """Item 5: the message the dispatcher, the console report and the
     dashboard all read must say how to raise the limit for THIS test."""
     worker = _AlwaysTimeoutWorker(0, SimpleNamespace(work_dir=tmp_path))
     tr = worker.run_test_with_timeout(_tm(), "test_0001", timeout=0.05)
 
     assert tr.timed_out is True
-    assert "Timed out after 0s" in (tr.error_message or "")
-    assert "simulation.timeout" in (tr.error_message or "")
-    assert "test_spec.json" in (tr.error_message or "")
-    assert "--timeout" in (tr.error_message or "")
+    # no limit of its own: the run's fired, and every key that would win
+    # over it is named after it
+    assert tr.error_message == (
+        "Timed out after 0s (the limit is the run's --timeout: raise it with "
+        "--timeout, per test with simulation.timeout in test_spec.json, or "
+        "for one backend with backends.<Backend>.timeout there)"
+    )
 
 
 def test_timeout_detail_is_not_truncated_past_the_hint(tmp_path, capsys):
@@ -1559,6 +1562,43 @@ def test_timeout_detail_is_not_truncated_past_the_hint(tmp_path, capsys):
     )
 
     assert "simulation.timeout" in capsys.readouterr().err
+
+
+class _ThreeSecondWorker(_AlwaysTimeoutWorker):
+    """A test that takes 3 s: what a time limit of 1 s stops."""
+
+    def run_test(self, test, test_key, progress=None):
+        time.sleep(3)
+        return TestRunResult(model_id=test.model_id, test_key=test_key, success=True)
+
+
+def test_a_backend_time_limit_is_the_one_a_worker_is_held_to(tmp_path):
+    """``simulation.timeout`` 60 and ``backends.Dymola.timeout`` 1, run on
+    Dymola: the worker's watchdog stops the test after 1 s."""
+    cfg = SimpleNamespace(
+        timeout=60, parallel=1, work_dir=tmp_path, backend="Dymola", os_name="linux"
+    )
+    backend = _StubBackend(cfg)
+    test = _tm("Lib.A")
+    test.timeout = 60
+    test.backend_marks = {"Dymola": {"timeout": 1}}
+    items = [(test, "test_0001")]
+
+    started = time.monotonic()
+    (result,) = backend._dispatch_with_restart(
+        [_ThreeSecondWorker(0, cfg)],
+        items,
+        total=1,
+        manifest=_scratch_manifest(tmp_path, items),
+        progress=_RunProgress(),
+    )
+
+    assert time.monotonic() - started < 2.5
+    assert result.timed_out is True
+    assert result.error_message == (
+        "Timed out after 1s (the limit is backends.Dymola.timeout in "
+        "test_spec.json: raise it there)"
+    )
 
 
 class _FlakyStartWorker(_GoodWorker):
@@ -1756,7 +1796,7 @@ def test_dashboard_detail_keeps_the_whole_timeout_hint(tmp_path):
 
     backend = _stub_backend(tmp_path)
     backend.progress = _Progress()
-    long_msg = timeout_message("Julia simulation exceeded 600.0s timeout")
+    long_msg = timeout_message("Julia simulation exceeded 600.0s timeout", None)
     assert len(long_msg) > 120, "the regression needs an over-120-char message"
 
     class _TimeoutWorker(_GoodWorker):
