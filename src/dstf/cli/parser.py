@@ -381,7 +381,7 @@ UNREAD: tuple[Unread, ...] = (
     Unread(
         "run",
         ("merge",),
-        ("filter", "package", "rerun", "changed_since"),
+        ("filter", "package", "rerun", "changed_since", "only_skipped"),
         "without them every test runs, and there is nothing to merge in",
         with_=False,
     ),
@@ -847,6 +847,17 @@ _FLAGS: dict[str, tuple[tuple[str, ...], dict]] = {
             "nothing of it.",
         ),
     ),
+    "only_skipped": (
+        ("--only-skipped",),
+        dict(
+            action="store_true",
+            help="{what} only the tests marked skip for this backend and OS, "
+            "as --include-skipped does, and none of the others: a check of "
+            "whether each mark can go.{choose} --filter and --package narrow "
+            "them as usual, and the run is not a full one. With --accept they "
+            "are stored. When no test is marked here it says so and exits 0.",
+        ),
+    ),
     "package": (
         ("--package",),
         dict(
@@ -1094,11 +1105,13 @@ READS: dict[str, tuple[str, ...]] = {
         "rerun",
         "changed_since",
         "include_skipped",
+        "only_skipped",
     ),
     "compare": (
         *_ALL,
         *_SELECT,
         "include_skipped",
+        "only_skipped",
         "tolerance",
         "default_points",
         *_REPORTS,
@@ -1401,8 +1414,8 @@ def _add_run(tree: _Tree, top) -> None:
             a merge.
 
             A run of fewer than the project's tests — by --filter,
-            --package, --rerun or --changed-since — says it was not a full
-            run: on the console, the dashboard, in status.json and
+            --package, --rerun, --changed-since or --only-skipped — says it
+            was not a full run: on the console, the dashboard, in status.json and
             verdicts.json (`selection`), and in `dstf summary`.
 
             A test marked skip for this backend and OS (`skip` or
@@ -1411,14 +1424,15 @@ def _add_run(tree: _Tree, top) -> None:
             --changed-since does not ask what it uses, and --accept stores
             nothing of it. The run's start says how many tests it leaves
             out; a run of every test their marks let run is a full run.
-            --include-skipped runs them. A test that carries a mark never
-            changes the exit code.
+            --include-skipped runs them, and --only-skipped runs them and
+            no other test. A test that carries a mark never changes the exit
+            code.
 
             Exit code: 0 when every test that ran passed, and with nothing
             to run: no test is in --rerun's categories, no test uses what
-            changed since --changed-since's REV (then nothing is written,
-            not even the file --output names), or every test chosen is
-            marked skip; 1 when a test failed, failed to simulate or timed
+            changed since --changed-since's REV, or no test is marked skip
+            here for --only-skipped (then nothing is written, not even the
+            file --output names), or every test chosen is marked skip; 1 when a test failed, failed to simulate or timed
             out, when nothing ran at all, when an accept skipped a test not
             marked skip, or when the simulator could not be asked what the
             tests use; 2 for a config error, and for --changed-since when
@@ -1432,11 +1446,20 @@ def _add_run(tree: _Tree, top) -> None:
             "dstf run --config testing.json --report-format junit -o results.xml --no-browser",
             "dstf run --config testing.json -i failed",
             "dstf run --config testing.json --changed-since main",
+            "dstf run --config testing.json --only-skipped",
         ),
         creates=True,
     )
     _offer_selection(node)
     _offer(node, "include_skipped", fill={"what": "Run and score", "not_what": "run"})
+    _offer(
+        node,
+        "only_skipped",
+        fill={
+            "what": "Run and score",
+            "choose": " --rerun and --changed-since choose among them.",
+        },
+    )
     _offer_scoring(node)
     _offer_reports(node)
     # Review-then-accept (-i) and accept-everything (--accept) are mutually
@@ -1560,15 +1583,16 @@ def _add_compare(tree: _Tree, top) -> None:
             With --accept those results are stored as the new baselines
             instead of being scored.
 
-            A compare whose --filter or --package leave fewer than the
-            project's tests says so — "N of M tests scored; not a full
+            A compare whose --filter, --package or --only-skipped leave
+            fewer than the project's tests says so — "N of M tests scored; not a full
             compare" — on the console, the dashboard, in verdicts.json
             (`selection`, marked `compare`), and in `dstf summary`. Without
             them it says what the last run said.
 
             A test marked skip for this backend and OS reads SKIPPED with
             its reason, whatever its last result, and --accept stores
-            nothing of it; --include-skipped scores it.
+            nothing of it; --include-skipped scores it, and --only-skipped
+            scores it and no other test.
 
             Exit code: as `dstf run`.
             """,
@@ -1582,6 +1606,7 @@ def _add_compare(tree: _Tree, top) -> None:
     )
     _offer_selection(node)
     _offer(node, "include_skipped", fill={"what": "Score", "not_what": "scored"})
+    _offer(node, "only_skipped", fill={"what": "Score", "choose": ""})
     _offer_scoring(node)
     _offer_reports(node)
     _offer(

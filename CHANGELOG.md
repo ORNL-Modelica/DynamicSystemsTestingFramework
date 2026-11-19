@@ -27,9 +27,31 @@ this file says when they do.
 - `dstf discover` lists every mark; `dstf uses` flags a marked test;
   `--rerun` and `--changed-since` leave marked tests out; an accept stores
   nothing of a marked test it did not run.
+- `--only-skipped` on `run` and `compare` runs and scores only the tests
+  marked skip for this backend and OS — a check of the marks without the
+  rest of the suite. `--rerun` and `--changed-since` choose among them; the
+  run is not a full one and says so; with no test marked here it says so
+  and exits 0.
+- `dstf discover`'s header counts the marks by where each is, then how many
+  apply where the config runs (`Marked skip: 25 marks (25 on OpenModelica);
+  none keeps a test from running on Dymola/linux, …`), and a list of every
+  backend's time limit follows, the one that applies here said so.
+- A run in which more than half of the tests timed out (at least two) ends
+  with a warning to check that the library and the work dir are on a fast
+  disk and that the time limits suit the machine.
+- `dstf summary` lists the marked tests in a table like the failures one,
+  with the base's status beside each; the JSON gives each its `base`.
+- A marked test run anyway that has no baseline closes the report with
+  `runs now but has no baseline to score against — accept one, then remove
+  the mark`, not `still does not pass (NO_REF)`.
 
 ### Fixed
 
+- A failed OpenModelica run's message keeps omc's Errors first, then its
+  Warnings, then its Notifications: five Notifications about loaded
+  packages pushed out the Error that said why the model did not build.
+  `dstf summary` says the first part of a message that starts `Error`, and
+  never a `Notification:` when the message says anything else.
 - `dstf manifest cleanup` no longer ends with "every entry and directory
   belongs to a test" when it left a manifest entry it cannot read: the line
   names that entry as left as it is.

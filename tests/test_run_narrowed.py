@@ -90,7 +90,8 @@ def test_a_run_narrowed_by_filter_says_how_many_of_the_project_s_tests_ran(
     assert "| Python/linux | 1/1 · 1 of 3 tests run |" in markdown
     assert (
         '"N of M tests run" = the run simulated N of the project\'s M tests '
-        "(--filter, --package, --rerun or --changed-since): not a full run."
+        "(--filter, --package, --rerun, --changed-since or --only-skipped): "
+        "not a full run."
     ) in markdown
     assert [c["selection"] for c in cells] == [block]
 
@@ -295,7 +296,7 @@ def _compare(proj, capsys, *argv, rc: int = 0) -> str:
 #: The summary's key line for a compare of fewer than the project's tests.
 COMPARE_KEY = (
     ' "N of M tests scored" = a compare scored N of the project\'s M tests '
-    "(--filter or --package), the others not: not a full compare."
+    "(--filter, --package or --only-skipped), the others not: not a full compare."
 )
 
 

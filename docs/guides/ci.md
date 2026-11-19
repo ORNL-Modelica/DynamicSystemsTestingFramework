@@ -69,6 +69,14 @@ jobs:
 - **A test known to fail on the runner's simulator** can be marked `skip`
   there, with its reason: it is not run, reads `SKIPPED`, and fails no job.
   The JUnit file has it as a skipped test case with that reason.
+- **The marks are checked now and then** by a job that runs only the
+  marked tests, `run --only-skipped`, on a schedule: after the report, one
+  line for each says whether its mark can go (`passes now — remove the
+  mark`). A marked test never fails the job, and with no test marked on
+  the runner's simulator it exits 0 and writes nothing.
+- **When most tests time out**, the run ends with a warning under its
+  counts (`Warning: 256 of 317 tests timed out. …`): check that the library
+  and the work dir are on a fast disk and that the limits suit the runner.
 
 ## A pull request runs only what it touches
 
@@ -138,7 +146,7 @@ jobs:
 
 | Code | When |
 |---|---|
-| 0 | Every test that ran passed. A test with no baseline yet (`NO_REF`), a test that did not run beside tests that did, and a test marked `skip` for the run's backend and OS — `SKIPPED`, or run anyway under `--include-skipped` and still failing — do not fail the run. Also a run with nothing to run: `--changed-since` found no test a change touches, `--rerun` no test in its categories, or every test chosen is marked `skip`. |
+| 0 | Every test that ran passed. A test with no baseline yet (`NO_REF`), a test that did not run beside tests that did, and a test marked `skip` for the run's backend and OS — `SKIPPED`, or run anyway under `--include-skipped` and still failing — do not fail the run. Also a run with nothing to run: `--changed-since` found no test a change touches, `--rerun` no test in its categories, `--only-skipped` no test marked `skip` for the run's backend and OS, or every test chosen is marked `skip`. |
 | 1 | A test failed, failed to simulate or timed out; or no test ran at all; or an accept skipped a test not marked `skip`; or, with `--changed-since`, the simulator could not be asked what the tests use. |
 | 2 | The command line, `testing.json` or `test_spec.json` is wrong: the message names what. With `--changed-since`, also when git cannot answer, the project is not Modelica, or the backend cannot say what a test uses. |
 

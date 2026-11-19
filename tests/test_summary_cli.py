@@ -202,7 +202,8 @@ def test_a_run_of_only_the_tests_a_change_touches_says_so(tmp_path, capsys):
     ) in out
     assert (
         '"N of M tests run" = the run simulated N of the project\'s M tests '
-        "(--filter, --package, --rerun or --changed-since): not a full run."
+        "(--filter, --package, --rerun, --changed-since or --only-skipped): "
+        "not a full run."
     ) in out
     assert "last results" not in out
 

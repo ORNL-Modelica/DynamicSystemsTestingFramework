@@ -574,6 +574,111 @@ def test_a_compare_of_marked_tests_none_of_which_has_a_result_exits_0(proj, caps
     assert "Nothing ran" not in out
 
 
+# -- --only-skipped -------------------------------------------------------------
+
+#: The selection block of a run, or a compare, of the one marked test.
+ONLY = {"selected": 1, "skipped": 0, "of": 3, "only_skipped": True}
+
+
+def test_only_skipped_runs_just_the_marked_tests_and_says_it_is_no_full_run(
+    proj, capsys
+):
+    assert proj.dstf(capsys)[0] == 0
+    before = proj.runs()
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped")
+    assert rc == 0, out
+    after = proj.runs()
+    assert after[MARKED] != before[MARKED]
+    assert {m: after[m] for m in (POINTS, RAMP)} == {
+        m: before[m] for m in (POINTS, RAMP)
+    }
+    assert set(proj.verdicts()) == {MARKED}
+    assert (proj.verdicts()[MARKED]["status"], proj.verdicts()[MARKED]["mark"]) == (
+        "PASS",
+        SAID,
+    )
+    assert proj.read("status.json")["selection"] == ONLY
+    assert proj.read("verdicts.json")["selection"] == ONLY
+    assert "(1 of 3 tests run; not a full run)" in out
+    assert f"{MARKED}: marked skip on Python, passes now — remove the mark" in out
+    assert proj.notice() == (
+        "Not a full run. 1 of 3 tests was run: the one that a mark keeps from "
+        "running here (--only-skipped). The other 2 were not run."
+    )
+
+
+def test_only_skipped_with_merge_scores_the_others_on_their_last_results(proj, capsys):
+    assert proj.dstf(capsys)[0] == 0
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", "--merge")
+    assert rc == 0, out
+    assert {m: v["status"] for m, v in proj.verdicts().items()} == dict.fromkeys(
+        EVERY, "PASS"
+    )
+    assert proj.read("status.json")["selection"] == {**ONLY, "merged": True}
+
+
+@pytest.mark.parametrize("command", ["run", "compare"])
+def test_only_skipped_with_no_test_marked_here_does_nothing_and_exits_0(
+    proj, capsys, command
+):
+    """A mark for another backend is no mark here: nothing to run, and
+    nothing written."""
+    proj.edit(POINTS, backends={"OpenModelica": {"skip": "its solver differs"}})
+    rc, out = proj.dstf(capsys, "--only-skipped", command=command)
+    assert rc == 0, out
+    assert out.splitlines()[-1] == "No test is marked skip on Python/linux."
+    assert not proj.work.exists()
+
+
+def test_only_skipped_compare_scores_just_the_marked_tests(proj, capsys):
+    assert proj.dstf(capsys)[0] == 0
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", command="compare")
+    assert rc == 0, out
+    assert set(proj.verdicts()) == {MARKED}
+    assert proj.verdicts()[MARKED]["status"] == "PASS"
+    assert proj.read("verdicts.json")["selection"] == {**ONLY, "compare": True}
+    assert "(1 of 3 tests scored; not a full compare)" in out
+
+
+def test_only_skipped_narrows_before_rerun_chooses(proj, capsys):
+    """--rerun chooses among the marked tests: a failing test that is not
+    marked is not run again."""
+    proj.failing()
+    proj.edit(
+        RAMP,
+        comparison={
+            "variable_overrides": {
+                "x": {"mode": "range", "min_value": 50.0, "max_value": 60.0}
+            }
+        },
+    )
+    assert proj.dstf(capsys)[0] == 1
+    before = proj.runs()
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", "--rerun")
+    # RAMP's last result, scored beside the rerun, still fails the run
+    assert rc == 1, out
+    after = proj.runs()
+    assert after[MARKED] != before[MARKED]
+    assert after[RAMP] == before[RAMP]
+    assert proj.read("status.json")["selection"] == {
+        **ONLY,
+        "rerun": "failed",
+        "merged": True,
+    }
+
+
+def test_only_skipped_accept_stores_the_marked_tests_only(tmp_path, capsys):
+    proj = Project(tmp_path, baselines=False)
+    proj.mark()
+    rc, out = proj.dstf(capsys, "--only-skipped", "--accept")
+    assert rc == 0, out
+    assert proj.stored() == {MARKED}
+
+
 # -- discover -------------------------------------------------------------------
 
 

@@ -207,7 +207,8 @@ def as_markdown(summary: Summary) -> str:
     if any(cell.selected and not cell.compared for cell in summary.cells.values()):
         key += (
             ' "N of M tests run" = the run simulated N of the project\'s M tests '
-            "(--filter, --package, --rerun or --changed-since): not a full run."
+            "(--filter, --package, --rerun, --changed-since or --only-skipped): "
+            "not a full run."
         )
         if any(cell.selected and cell.merged for cell in summary.cells.values()):
             key += (
@@ -217,7 +218,8 @@ def as_markdown(summary: Summary) -> str:
     if any(cell.selected and cell.compared for cell in summary.cells.values()):
         key += (
             ' "N of M tests scored" = a compare scored N of the project\'s M tests '
-            "(--filter or --package), the others not: not a full compare."
+            "(--filter, --package or --only-skipped), the others not: not a "
+            "full compare."
         )
     lines += ["", key, ""]
     for folder in summary.folders:
