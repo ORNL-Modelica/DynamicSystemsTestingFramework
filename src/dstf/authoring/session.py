@@ -806,11 +806,7 @@ class Session:
         project = self._require_project()
         if project.test(model_id) is None:
             raise KeyError(model_id)
-        shown = (
-            None
-            if self._skipped(model_id)
-            else self.live_runs.series(model_id, variable)
-        )
+        shown = self.live_runs.series(model_id, variable)
         if shown is not None:
             return self._unfinished_view(model_id, variable, *shown)
         comp = self.comparisons.get(model_id)
@@ -1410,10 +1406,9 @@ class Session:
     def partial(self, model_id: str) -> Partial | None:
         """What ``model_id``'s last run left when it did not finish — how
         it ended and the time its file reached — or None. Shown on its
-        page; never scored, never a baseline. None for a test its mark
-        keeps from running (`_skipped`)."""
-        if self._skipped(model_id):
-            return None
+        page; never scored, never a baseline. A test its mark keeps from
+        running has none: only this session's queue runs are held, and a
+        run's start lets a marked test run here (`_ran_here`)."""
         return self.live_runs.partial(model_id)
 
     def _skipped(self, model_id: str) -> bool:
